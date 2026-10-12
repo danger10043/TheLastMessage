@@ -75,4 +75,4 @@ Plugins/**/Intermediate/*
 DerivedDataCache/*
 
 # Ignore External Assets folder
-Content/_ExternalAssets
+/Content/_ExternalAssets

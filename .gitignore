@@ -79,3 +79,4 @@ DerivedDataCache/*
 /Content/_ExternalAssets
 AGENTS.md
 *.slnx
+/Docs

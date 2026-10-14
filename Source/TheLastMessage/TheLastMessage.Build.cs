@@ -10,7 +10,7 @@ public class TheLastMessage : ModuleRules
 	
 		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", 
 															"GameplayAbilities", "GameplayTags", "GameplayTasks",
-                                                            "AIModule", "NavigationSystem",});
+                                                            "AIModule", "NavigationSystem","Niagara"});
 
 		PrivateDependencyModuleNames.AddRange(new string[] {  });
 

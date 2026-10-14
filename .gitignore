@@ -78,3 +78,4 @@ DerivedDataCache/*
 # Ignore External Assets folder
 /Content/_ExternalAssets
 AGENTS.md
+*.slnx

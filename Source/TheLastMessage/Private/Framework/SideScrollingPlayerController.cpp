@@ -10,7 +10,6 @@
 #include "Engine/LocalPlayer.h"
 #include "Engine/World.h"
 #include "Blueprint/UserWidget.h"
-#include "TheLastMessage.h"
 #include "Widgets/Input/SVirtualJoystick.h"
 
 void ASideScrollingPlayerController::BeginPlay()
@@ -57,7 +56,7 @@ void ASideScrollingPlayerController::SetupInputComponent()
 
 		} else {
 
-			UE_LOG(LogTheLastMessage, Error, TEXT("Could not spawn mobile controls widget."));
+			UE_LOG(LogTemp, Error, TEXT("Could not spawn mobile controls widget."));
 
 		}
 

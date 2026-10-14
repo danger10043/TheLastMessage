@@ -14,13 +14,27 @@ class THELASTMESSAGE_API UBossShieldComponent : public UActorComponent
 
 public:
     void ActivateShield(EBossPuzzleType PuzzleType);
+
     void DeactivateShield();
+
     void StartPuzzleTimer();
+
     void StopPuzzleTimer();
+
     void HandlePuzzleTimeout();
+
     void ApplyFailureRecovery();
+
+    bool CanApplyFailureRecovery() const;
+
+    bool TryApplyFailureRecovery();
+
     bool IsShieldActive();
+
     float GetRemainingPuzzleTime();
+
+protected:
+    virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
     UPROPERTY()

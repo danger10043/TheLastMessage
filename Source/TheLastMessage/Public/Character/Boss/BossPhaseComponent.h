@@ -12,14 +12,25 @@ class THELASTMESSAGE_API UBossPhaseComponent : public UActorComponent
 
 public:
     void CheckPhaseThreshold(float HealthPercent);
+
     void RequestPhaseTransition(EBossPhase NextPhase);
+
     void CommitPhaseTransition();
+
+    void CancelPhaseTransition();
+
     EBossPhase GetCurrentPhase();
+
+    bool TryGetPendingPhase(EBossPhase& OutPhase) const;
+
+    float GetDamageHealthFloorRatio() const;
+
     bool IsPhaseUnlocked(EBossPhase Phase);
+
     void ApplyPhaseSettings(EBossPhase NewPhase);
 
 private:
-    UPROPERTY()
+    UPROPERTY(VisibleInstanceOnly, Category = "Boss|Phase")
     EBossPhase CurrentPhase = EBossPhase::Phase1;
 
     UPROPERTY()

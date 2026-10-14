@@ -8,7 +8,9 @@ public class TheLastMessage : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 	
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "Niagara" });
+		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", 
+															"GameplayAbilities", "GameplayTags", "GameplayTasks",
+                                                            "AIModule", "NavigationSystem",});
 
 		PrivateDependencyModuleNames.AddRange(new string[] {  });
 

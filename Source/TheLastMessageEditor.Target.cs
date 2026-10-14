@@ -11,5 +11,6 @@ public class TheLastMessageEditorTarget : TargetRules
 		DefaultBuildSettings = BuildSettingsVersion.V7;
 
 		ExtraModuleNames.AddRange( new string[] { "TheLastMessage" } );
+		ExtraModuleNames.Add("TheLastMessageEditor");
 	}
 }

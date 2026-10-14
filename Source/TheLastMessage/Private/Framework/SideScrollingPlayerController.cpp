@@ -1,77 +1,98 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+
 #include "Framework/SideScrollingPlayerController.h"
-#include "Camera/SideScrollingCameraManager.h"
 #include "EnhancedInputSubsystems.h"
 #include "InputMappingContext.h"
+#include "Kismet/GameplayStatics.h"
+#include "GameFramework/PlayerStart.h"
+#include "Character/Player/SideScrollingCharacter.h"
 #include "Engine/LocalPlayer.h"
 #include "Engine/World.h"
-#include "GameFramework/PlayerStart.h"
-#include "Kismet/GameplayStatics.h"
 #include "Blueprint/UserWidget.h"
+#include "TheLastMessage.h"
 #include "Widgets/Input/SVirtualJoystick.h"
-#include "TimerManager.h"
-
-ASideScrollingPlayerController::ASideScrollingPlayerController()
-{
-	PlayerCameraManagerClass = ASideScrollingCameraManager::StaticClass();
-	bEnableTouchEvents = true;
-}
 
 void ASideScrollingPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
-	// Match the BP's one-frame delay for additional local players.
-	InputInitializationTimer = GetWorldTimerManager().SetTimerForNextTick(this, &ASideScrollingPlayerController::InitializeLocalInput);
 }
 
-void ASideScrollingPlayerController::InitializeLocalInput()
+void ASideScrollingPlayerController::SetupInputComponent()
 {
-	if (!IsLocalPlayerController()) return;
-	const bool bTouch = bForceTouchControls || SVirtualJoystick::ShouldDisplayTouchInterface();
-	if (UEnhancedInputLocalPlayerSubsystem* Input = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer()))
+	Super::SetupInputComponent();
+
+	// only add IMCs for local player controllers
+	if (IsLocalPlayerController())
 	{
-		if (SideScrollingMappingContext) Input->AddMappingContext(SideScrollingMappingContext, 0);
-		if (!bTouch && MouseMappingContext) Input->AddMappingContext(MouseMappingContext, 0);
+		// add the input mapping context
+		if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer()))
+		{
+			for (UInputMappingContext* CurrentContext : DefaultMappingContexts)
+			{
+				Subsystem->AddMappingContext(CurrentContext, 0);
+			}
+
+			// only add these IMCs if we're not using mobile touch input
+			if (!ShouldUseTouchControls())
+			{
+				for (UInputMappingContext* CurrentContext : MobileExcludedMappingContexts)
+				{
+					Subsystem->AddMappingContext(CurrentContext, 0);
+				}
+			}
+		}
 	}
-	if (bTouch && TouchControlsWidgetClass)
+
+	// only spawn touch controls on local player controllers
+	if (IsLocalPlayerController() && ShouldUseTouchControls())
 	{
-		TouchControlsWidget = CreateWidget<UUserWidget>(this, TouchControlsWidgetClass);
-		if (TouchControlsWidget) TouchControlsWidget->AddToPlayerScreen(0);
+		// spawn the mobile controls widget
+		MobileControlsWidget = CreateWidget<UUserWidget>(this, MobileControlsWidgetClass);
+
+		if (MobileControlsWidget)
+		{
+			// add the controls to the player screen
+			MobileControlsWidget->AddToPlayerScreen(0);
+
+		} else {
+
+			UE_LOG(LogTheLastMessage, Error, TEXT("Could not spawn mobile controls widget."));
+
+		}
+
 	}
 }
 
 void ASideScrollingPlayerController::OnPossess(APawn* InPawn)
 {
 	Super::OnPossess(InPawn);
-	if (APawn* Previous = ObservedPawn.Get()) Previous->OnDestroyed.RemoveDynamic(this, &ASideScrollingPlayerController::OnPawnDestroyed);
-	ObservedPawn = InPawn;
-	if (InPawn)
-	{
-		RespawnCharacterClass = InPawn->GetClass();
-		InPawn->OnDestroyed.AddUniqueDynamic(this, &ASideScrollingPlayerController::OnPawnDestroyed);
-	}
+
+	// subscribe to the pawn's OnDestroyed delegate
+	InPawn->OnDestroyed.AddDynamic(this, &ASideScrollingPlayerController::OnPawnDestroyed);
 }
 
 void ASideScrollingPlayerController::OnPawnDestroyed(AActor* DestroyedActor)
 {
-	if (!HasAuthority() || !GetWorld() || GetWorld()->bIsTearingDown || !RespawnCharacterClass) return;
-	TArray<AActor*> Starts;
-	UGameplayStatics::GetAllActorsOfClass(GetWorld(), APlayerStart::StaticClass(), Starts);
-	if (Starts.IsEmpty()) return;
-	const FTransform SpawnTransform = Starts[FMath::RandRange(0, Starts.Num() - 1)]->GetActorTransform();
-	FActorSpawnParameters Parameters;
-	Parameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButDontSpawnIfColliding;
-	if (APawn* RespawnedPawn = GetWorld()->SpawnActor<APawn>(RespawnCharacterClass, SpawnTransform, Parameters)) Possess(RespawnedPawn);
+	// find the player start
+	TArray<AActor*> ActorList;
+	UGameplayStatics::GetAllActorsOfClass(GetWorld(), APlayerStart::StaticClass(), ActorList);
+
+	if (ActorList.Num() > 0)
+	{
+		// spawn a character at the player start
+		const FTransform SpawnTransform = ActorList[0]->GetActorTransform();
+
+		if (ASideScrollingCharacter* RespawnedCharacter = GetWorld()->SpawnActor<ASideScrollingCharacter>(CharacterClass, SpawnTransform))
+		{
+			// possess the character
+			Possess(RespawnedCharacter);
+		}
+	}
 }
 
-void ASideScrollingPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
+bool ASideScrollingPlayerController::ShouldUseTouchControls() const
 {
-	GetWorldTimerManager().ClearTimer(InputInitializationTimer);
-	if (APawn* PreviousPawn = ObservedPawn.Get()) PreviousPawn->OnDestroyed.RemoveDynamic(this, &ASideScrollingPlayerController::OnPawnDestroyed);
-	if (TouchControlsWidget) TouchControlsWidget->RemoveFromParent();
-	if (UEnhancedInputLocalPlayerSubsystem* Input = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer()))
-	{
-		if (SideScrollingMappingContext) Input->RemoveMappingContext(SideScrollingMappingContext);
-		if (MouseMappingContext) Input->RemoveMappingContext(MouseMappingContext);
-	}
-	Super::EndPlay(EndPlayReason);
+	// are we on a mobile platform? Should we force touch?
+	return SVirtualJoystick::ShouldDisplayTouchInterface() || bForceTouchControls;
 }

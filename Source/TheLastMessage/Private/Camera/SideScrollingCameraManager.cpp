@@ -1,55 +1,105 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+
 #include "Camera/SideScrollingCameraManager.h"
 #include "GameFramework/Pawn.h"
-#include "GameFramework/PlayerController.h"
+#include "Engine/HitResult.h"
+#include "CollisionQueryParams.h"
 #include "Engine/World.h"
 
-void ASideScrollingCameraManager::UpdateViewTargetInternal(FTViewTarget& OutVT, float DeltaTime)
+void ASideScrollingCameraManager::UpdateViewTarget(FTViewTarget& OutVT, float DeltaTime)
 {
-	AActor* Target = OutVT.Target;
-	if (!IsValid(Target))
-	{
-		Super::UpdateViewTargetInternal(OutVT, DeltaTime);
-		return;
-	}
+	// ensure the view target is a pawn
+	APawn* TargetPawn = Cast<APawn>(OutVT.Target);
 
-	const FVector ActorLocation = Target->GetActorLocation();
-	const FVector CameraLocation = GetCameraLocation();
-	const float CameraY = ActorLocation.Y + CurrentZoom;
-	OutVT.POV.Rotation = FRotator(0.0f, -90.0f, 0.0f);
-	OutVT.POV.FOV = 65.0f;
+	// is our target valid?
+	if (IsValid(TargetPawn))
+	{
+		// set the view target FOV and rotation
+		OutVT.POV.Rotation = FRotator(0.0f, -90.0f, 0.0f);
+		OutVT.POV.FOV = 65.0f;
 
-	if (bSetup)
-	{
-		bSetup = false;
-		// The BP uses the Z offset on initialization, then tracks the stored height.
-		OutVT.POV.Location = FVector(ActorLocation.X, CameraY, ActorLocation.Z + CameraZOffset);
-		return;
-	}
+		// cache the current location
+		FVector CurrentActorLocation = OutVT.Target->GetActorLocation();
 
-	bool bUpdateHeight;
-	APawn* PlayerPawn = PCOwner ? PCOwner->GetPawn().Get() : Cast<APawn>(Target);
-	if (!PlayerPawn || PlayerPawn->GetVelocity().Z == 0.0)
-	{
-		bUpdateHeight = !FMath::IsNearlyEqual(CurrentZ, static_cast<float>(CameraLocation.Z), 25.0f);
-	}
-	else
-	{
-		FHitResult Hit;
-		FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(SideScrollerCamera), false, PlayerPawn);
-		const FVector TraceStart = PlayerPawn->GetActorLocation();
-		bUpdateHeight = !GetWorld()->LineTraceSingleByChannel(Hit, TraceStart,
-			TraceStart + FVector(0, 0, -1000), ECC_Visibility, QueryParams);
-	}
+		// copy the current camera location
+		FVector CurrentCameraLocation = GetCameraLocation();
 
-	if (bUpdateHeight)
-	{
-		CurrentZ = ActorLocation.Z;
-	}
-	else if (!FMath::IsNearlyEqual(CurrentZ, static_cast<float>(ActorLocation.Z), 100.0f))
-	{
-		CurrentZ = FMath::FInterpTo(CurrentZ, static_cast<float>(ActorLocation.Z), DeltaTime, InterpolationSpeed);
-	}
+		// calculate the "zoom distance" - in reality the distance we want to keep to the target
+		float CurrentY = CurrentZoom + CurrentActorLocation.Y;
 
-	const FVector Goal(FMath::Clamp(static_cast<float>(ActorLocation.X), CameraXMinBounds, CameraXMaxBounds), CameraY, CurrentZ);
-	OutVT.POV.Location = FMath::VInterpTo(CameraLocation, Goal, DeltaTime, InterpolationSpeed);
+		// do first-time setup
+		if (bSetup)
+		{
+			// lower the setup flag
+			bSetup = false;
+
+			// initialize the camera viewpoint and return
+			OutVT.POV.Location.X = CurrentActorLocation.X;
+			OutVT.POV.Location.Y = CurrentY;
+			OutVT.POV.Location.Z = CurrentActorLocation.Z + CameraZOffset;
+
+			// save the current camera height
+			CurrentZ = OutVT.POV.Location.Z;
+
+			// skip the rest of the calculations
+			return;
+		}
+
+		// check if the camera needs to update its height
+		bool bZUpdate = false;
+
+		// is the character moving vertically?
+		if (FMath::IsNearlyZero(TargetPawn->GetVelocity().Z))
+		{
+			// determine if we need to do a height update
+			bZUpdate = FMath::IsNearlyEqual(CurrentZ, CurrentCameraLocation.Z, 25.0f);
+
+		} else {
+
+			// run a trace below the character to determine if we need to do a height update
+			FHitResult OutHit;
+
+			const FVector End = CurrentActorLocation + FVector(0.0f, 0.0f, -1000.0f);
+
+			FCollisionQueryParams QueryParams;
+			QueryParams.AddIgnoredActor(TargetPawn);
+
+			// only update height if we're not about to hit ground
+			bZUpdate = !GetWorld()->LineTraceSingleByChannel(OutHit, CurrentActorLocation, End, ECC_Visibility, QueryParams);
+
+		}
+
+		// do we need to do a height update?
+		if (bZUpdate)
+		{
+
+			// set the height goal from the actor location
+			CurrentZ = CurrentActorLocation.Z;
+
+		} else {
+
+			// are we close enough to the target height?
+			if (FMath::IsNearlyEqual(CurrentZ, CurrentActorLocation.Z, 100.0f))
+			{
+				// set the height goal from the actor location
+				CurrentZ = CurrentActorLocation.Z;
+
+			} else {
+
+				// blend the height towards the actor location
+				CurrentZ = FMath::FInterpTo(CurrentZ, CurrentActorLocation.Z, DeltaTime, 2.0f);
+				
+			}
+
+		}
+
+		// clamp the X axis to the min and max camera bounds
+		float CurrentX = FMath::Clamp(CurrentActorLocation.X, CameraXMinBounds, CameraXMaxBounds);
+
+		// blend towards the new camera location and update the output
+		FVector TargetCameraLocation(CurrentX, CurrentY, CurrentZ);
+
+		OutVT.POV.Location = FMath::VInterpTo(CurrentCameraLocation, TargetCameraLocation, DeltaTime, 2.0f);
+	}
 }

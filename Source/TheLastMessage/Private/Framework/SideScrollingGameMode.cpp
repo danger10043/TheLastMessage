@@ -1,54 +1,77 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+
 #include "Framework/SideScrollingGameMode.h"
-#include "Framework/SideScrollingPlayerController.h"
-#include "Character/Player/RobotPlayerCharacter.h"
-#include "Interfaces/SideScrollerInterop.h"
+#include "Kismet/GameplayStatics.h"
 #include "Blueprint/UserWidget.h"
+#include "UI/SideScrollingUI.h"
+#include "Item/SideScrollingPickup.h"
+#include "Kismet/GameplayStatics.h"
 #include "GameFramework/PlayerStart.h"
 #include "Engine/World.h"
-#include "Kismet/GameplayStatics.h"
-
-ASideScrollingGameMode::ASideScrollingGameMode()
-{
-	DefaultPawnClass = ARobotPlayerCharacter::StaticClass();
-	PlayerControllerClass = ASideScrollingPlayerController::StaticClass();
-}
 
 void ASideScrollingGameMode::BeginPlay()
 {
 	Super::BeginPlay();
-	if (UserInterfaceClass)
+
+	// create the game UI
+	APlayerController* OwningPlayer = UGameplayStatics::GetPlayerController(GetWorld(), 0);
+	
+	UserInterface = CreateWidget<USideScrollingUI>(OwningPlayer, UserInterfaceClass);
+
+	// create each additional local player.
+	// Player 0 will be created automatically as part of regular game init
+	for (int32 i = 2; i <= NumberOfLocalPlayers; ++i)
 	{
-		UserInterface = CreateWidget<UUserWidget>(UGameplayStatics::GetPlayerController(this, 0), UserInterfaceClass);
-		USideScrollerInterop::UpdatePickupWidget(UserInterface, 0);
-	}
-	for (int32 Index = 1; Index < FMath::Clamp(NumberOfLocalPlayers, 1, 4); ++Index)
-	{
-		UGameplayStatics::CreatePlayer(this, -1, true);
+		UGameplayStatics::CreatePlayer(GetWorld(), -1, true);
 	}
 }
 
 AActor* ASideScrollingGameMode::ChoosePlayerStart_Implementation(AController* Player)
 {
-	TArray<AActor*> Starts;
-	const FName Tag(*FString::Printf(TEXT("Player%d"), CurrentPlayerStartAssignment++));
-	UGameplayStatics::GetAllActorsOfClassWithTag(this, APlayerStart::StaticClass(), Tag, Starts);
-	if (Starts.IsEmpty()) UGameplayStatics::GetAllActorsOfClass(this, APlayerStart::StaticClass(), Starts);
-	return Starts.IsEmpty() ? Super::ChoosePlayerStart_Implementation(Player) : Starts[0];
+	// build the current player tag
+	FName PlayerTag = FName(*FString::Printf(TEXT("Player%d"), CurrentPlayerStartAssignment));
+
+	// find all player starts with the matching player tag
+	TArray<AActor*> PlayerStarts;
+
+	UGameplayStatics::GetAllActorsOfClassWithTag(GetWorld(), APlayerStart::StaticClass(), PlayerTag, PlayerStarts);
+
+	// increment the player start assignment index
+	++CurrentPlayerStartAssignment;
+
+	// if no PlayerStarts were found, default to all PlayerStarts instead
+	if (PlayerStarts.IsEmpty())
+	{
+		UGameplayStatics::GetAllActorsOfClass(GetWorld(), APlayerStart::StaticClass(), PlayerStarts);
+	}
+
+	// have we found at least one PlayerStart?
+	if (!PlayerStarts.IsEmpty())
+	{
+		return PlayerStarts[ FMath::RandRange(0, PlayerStarts.Num() - 1) ];
+	}
+
+	// no PlayerStarts in the level
+	return nullptr;
 }
 
-void ASideScrollingGameMode::ProcessPickup(AActor* Interactor)
+void ASideScrollingGameMode::ProcessPickup()
 {
-	if (!IsValid(Interactor) || (PickupClass && !Interactor->IsA(PickupClass))) return;
+	// increment the pickups counter
 	++PickupsCollected;
+
 	if (UserInterface)
 	{
-		USideScrollerInterop::UpdatePickupWidget(UserInterface, PickupsCollected);
-		if (PickupsCollected == 1) UserInterface->AddToViewport();
-	}
-}
+		// if this is the first pickup we collect, show the UI
+		if (PickupsCollected == 1)
+		{
+		
+			UserInterface->AddToViewport(0);
+		}
 
-void ASideScrollingGameMode::EndPlay(const EEndPlayReason::Type EndPlayReason)
-{
-	if (UserInterface) UserInterface->RemoveFromParent();
-	Super::EndPlay(EndPlayReason);
+		// update the pickups counter on the UI
+		UserInterface->UpdatePickups(PickupsCollected);
+	}
+	
 }

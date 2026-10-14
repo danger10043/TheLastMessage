@@ -8,6 +8,7 @@
 class UBehaviorTree;
 class UBlackboardData;
 class ABossMonster;
+class UAISenseConfig_Sight;
 
 UCLASS()
 class THELASTMESSAGE_API ABossAIController : public AAIController
@@ -15,6 +16,9 @@ class THELASTMESSAGE_API ABossAIController : public AAIController
     GENERATED_BODY()
 
 public:
+    ABossAIController();
+    virtual void OnUnPossess() override;
+
     virtual void OnPossess(APawn* InPawn) override;
     void StartBossAI();
     void StopBossAI();
@@ -25,6 +29,14 @@ public:
     void UpdateBossState(EBossState NewState);
 
 protected:
+    UFUNCTION()
+    void HandlePerceptionUpdated(const TArray<AActor*>& UpdatedActors);
+
+    void RefreshTargetFromPerception();
+
+    UPROPERTY(VisibleAnywhere, Category = "Boss|AI")
+    TObjectPtr<UAISenseConfig_Sight> SightConfig;
+
     UPROPERTY(EditDefaultsOnly)
     TObjectPtr<UBehaviorTree> BehaviorTreeAsset;
 

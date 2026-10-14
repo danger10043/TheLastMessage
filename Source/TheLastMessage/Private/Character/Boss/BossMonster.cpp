@@ -824,3 +824,19 @@ float ABossMonster::GetRemainingPuzzleTime() const
     }
     return ShieldComponent->GetRemainingPuzzleTime();
 }
+
+AActor* ABossMonster::GetCurrentTarget()
+{
+    return IsValid(CurrentTarget.Get()) ? CurrentTarget.Get() : nullptr;
+}
+
+void ABossMonster::SetCurrentTarget(AActor* NewTarget)
+{
+    if (!HasAuthority())
+    {
+        return;
+    }
+
+    CurrentTarget = CurrentState != EBossState::Dead && IsValid(NewTarget)
+        ? NewTarget : nullptr;
+}

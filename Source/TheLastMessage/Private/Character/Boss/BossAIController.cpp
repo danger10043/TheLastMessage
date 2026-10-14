@@ -4,6 +4,32 @@
 #include "BehaviorTree/BehaviorTree.h"
 #include "BehaviorTree/BlackboardComponent.h"
 #include "BehaviorTree/BlackboardData.h"
+#include "Perception/AIPerceptionComponent.h"
+#include "Perception/AISenseConfig_Sight.h"
+#include "Perception/AISense_Sight.h"
+#include "GameFramework/Pawn.h"
+
+ABossAIController::ABossAIController()
+{
+    UAIPerceptionComponent* BossPerception =
+        CreateDefaultSubobject<UAIPerceptionComponent>(TEXT("BossPerception"));
+    SetPerceptionComponent(*BossPerception);
+
+    SightConfig =
+        CreateDefaultSubobject<UAISenseConfig_Sight>(TEXT("SightConfig"));
+    SightConfig->SightRadius = 2000.f;
+    SightConfig->LoseSightRadius = 2500.f;
+    SightConfig->PeripheralVisionAngleDegrees = 90.f;
+    SightConfig->AutoSuccessRangeFromLastSeenLocation = -1.f;
+    SightConfig->DetectionByAffiliation.bDetectEnemies = true;
+    SightConfig->DetectionByAffiliation.bDetectNeutrals = true;
+    SightConfig->DetectionByAffiliation.bDetectFriendlies = true;
+
+    BossPerception->ConfigureSense(*SightConfig);
+    BossPerception->SetDominantSense(UAISense_Sight::StaticClass());
+    BossPerception->OnPerceptionUpdated.AddDynamic(
+        this, &ABossAIController::HandlePerceptionUpdated);
+}
 
 void ABossAIController::OnPossess(APawn* InPawn)
 {
@@ -77,4 +103,117 @@ void ABossAIController::StartBossAI()
     UE_LOG(LogTemp, Log,
         TEXT("BossAIController::StartBossAI [%s] - Behavior Tree started: %s"),
         *GetName(), *GetNameSafe(BehaviorTreeAsset.Get()));
+
+    RefreshTargetFromPerception();
+}
+
+void ABossAIController::HandlePerceptionUpdated(
+    const TArray<AActor*>& UpdatedActors)
+{
+    if (UpdatedActors.Num() > 0)
+    {
+        RefreshTargetFromPerception();
+    }
+}
+
+void ABossAIController::RefreshTargetFromPerception()
+{
+    UAIPerceptionComponent* BossPerception = GetPerceptionComponent();
+    if (!HasAuthority() || !IsValid(ControlledBoss.Get())
+        || ControlledBoss.Get() != GetPawn()
+        || !IsValid(BossPerception) || !IsValid(GetBlackboardComponent()))
+    {
+        return;
+    }
+
+    if (ControlledBoss->GetBossState() == EBossState::Dead)
+    {
+        UpdateTargetActor(nullptr);
+        return;
+    }
+
+    TArray<AActor*> SeenActors;
+    BossPerception->GetCurrentlyPerceivedActors(
+        UAISense_Sight::StaticClass(), SeenActors);
+
+    AActor* CurrentTarget = ControlledBoss->GetCurrentTarget();
+    AActor* NewTarget = nullptr;
+    float BestDistanceSquared = TNumericLimits<float>::Max();
+
+    for (AActor* SeenActor : SeenActors)
+    {
+        APawn* PlayerPawn = Cast<APawn>(SeenActor);
+        if (!IsValid(PlayerPawn) || !PlayerPawn->IsPlayerControlled())
+        {
+            continue;
+        }
+
+        if (PlayerPawn == CurrentTarget)
+        {
+            NewTarget = PlayerPawn;
+            break;
+        }
+
+        const float DistanceSquared = FVector::DistSquared(
+            ControlledBoss->GetActorLocation(), PlayerPawn->GetActorLocation());
+        if (DistanceSquared < BestDistanceSquared)
+        {
+            BestDistanceSquared = DistanceSquared;
+            NewTarget = PlayerPawn;
+        }
+    }
+
+    UpdateTargetActor(NewTarget);
+}
+
+void ABossAIController::UpdateTargetActor(AActor* NewTarget)
+{
+    if (!HasAuthority() || !IsValid(ControlledBoss.Get()))
+    {
+        return;
+    }
+
+    APawn* PlayerPawn = Cast<APawn>(NewTarget);
+    if (!IsValid(PlayerPawn) || !PlayerPawn->IsPlayerControlled()
+        || ControlledBoss->GetBossState() == EBossState::Dead)
+    {
+        NewTarget = nullptr;
+    }
+
+    AActor* PreviousTarget = ControlledBoss->GetCurrentTarget();
+    ControlledBoss->SetCurrentTarget(NewTarget);
+
+    if (UBlackboardComponent* BlackboardComponent = GetBlackboardComponent())
+    {
+        if (NewTarget)
+        {
+            BlackboardComponent->SetValueAsObject(TEXT("TargetActor"), NewTarget);
+        }
+        else
+        {
+            BlackboardComponent->ClearValue(TEXT("TargetActor"));
+            BlackboardComponent->SetValueAsFloat(TEXT("TargetDistance"),
+                TNumericLimits<float>::Max());
+        }
+    }
+
+    if (!NewTarget)
+    {
+        StopMovement();
+        ClearFocus(EAIFocusPriority::Gameplay);
+    }
+
+    if (PreviousTarget != NewTarget)
+    {
+        UE_LOG(LogTemp, Log,
+            TEXT("BossAIController::UpdateTargetActor [%s] - Target: %s -> %s"),
+            *GetName(), *GetNameSafe(PreviousTarget), *GetNameSafe(NewTarget));
+    }
+}
+
+void ABossAIController::OnUnPossess()
+{
+    UpdateTargetActor(nullptr);
+    Super::OnUnPossess();
+    ControlledBoss = nullptr;
 }

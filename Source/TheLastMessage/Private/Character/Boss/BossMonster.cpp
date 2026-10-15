@@ -833,6 +833,19 @@ bool ABossMonster::IsDistanceInAttackRange(
             AttackType, TargetDistance);
 }
 
+float ABossMonster::GetAttackCooldownRemaining(EBossAttackType AttackType) const
+{
+    return IsValid(PatternComponent.Get())
+        ? PatternComponent->GetAttackCooldownRemaining(AttackType)
+        : -1.f;
+}
+
+bool ABossMonster::TryStartAttackCooldown(EBossAttackType AttackType)
+{
+    return HasAuthority() && IsValid(PatternComponent.Get())
+        && PatternComponent->TryStartAttackCooldown(AttackType);
+}
+
 AActor* ABossMonster::GetCurrentTarget()
 {
     return IsValid(CurrentTarget.Get()) ? CurrentTarget.Get() : nullptr;
@@ -845,6 +858,5 @@ void ABossMonster::SetCurrentTarget(AActor* NewTarget)
         return;
     }
 
-    CurrentTarget = CurrentState != EBossState::Dead && IsValid(NewTarget)
-        ? NewTarget : nullptr;
+    CurrentTarget = CurrentState != EBossState::Dead && IsValid(NewTarget) ? NewTarget : nullptr;
 }

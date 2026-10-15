@@ -55,6 +55,11 @@ public:
 
     bool IsDistanceInAttackRange(EBossAttackType AttackType, float TargetDistance) const;
 
+    UFUNCTION(BlueprintPure, Category = "Boss|Attack")
+    float GetAttackCooldownRemaining(EBossAttackType AttackType) const;
+
+    bool TryStartAttackCooldown(EBossAttackType AttackType);
+
     void SetCurrentTarget(AActor* NewTarget);
 
     void StartShieldPuzzle(EBossPuzzleType PuzzleType);

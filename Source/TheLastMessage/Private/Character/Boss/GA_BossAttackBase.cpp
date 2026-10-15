@@ -40,6 +40,36 @@ bool UGA_BossAttackBase::CanActivateAbility(
             AttackType, Boss->GetDistanceTo(Target));
 }
 
+bool UGA_BossAttackBase::CheckCooldown(
+    const FGameplayAbilitySpecHandle Handle,
+    const FGameplayAbilityActorInfo* ActorInfo,
+    FGameplayTagContainer* OptionalRelevantTags) const
+{
+    ABossMonster* Boss = ActorInfo
+        ? Cast<ABossMonster>(ActorInfo->AvatarActor.Get()) : nullptr;
+    if (!IsValid(Boss) || !Boss->HasAuthority())
+    {
+        return false;
+    }
+
+    // AttackConfigs is the cooldown source; no cooldown GE is used here.
+    return Boss->GetAttackCooldownRemaining(AttackType) == 0.f;
+}
+
+void UGA_BossAttackBase::ApplyCooldown(
+    const FGameplayAbilitySpecHandle Handle,
+    const FGameplayAbilityActorInfo* ActorInfo,
+    const FGameplayAbilityActivationInfo ActivationInfo) const
+{
+    ABossMonster* Boss = ActorInfo
+        ? Cast<ABossMonster>(ActorInfo->AvatarActor.Get()) : nullptr;
+    if (!IsValid(Boss) || !Boss->TryStartAttackCooldown(AttackType))
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("Boss attack: failed to start cooldown. Check AttackConfigs."));
+    }
+}
+
 ABossMonster* UGA_BossAttackBase::GetBossOwner() const
 {
     return Cast<ABossMonster>(GetAvatarActorFromActorInfo());

@@ -23,12 +23,19 @@ public:
 
     FBossMissileConfig GetMissileConfig(EBossPhase Phase);
 
-    bool IsDistanceInAttackRange(
-        EBossAttackType AttackType, float TargetDistance) const;
+    bool IsDistanceInAttackRange(EBossAttackType AttackType, float TargetDistance) const;
+
+    // Returns -1 when configuration is invalid; 0 means ready.
+    float GetAttackCooldownRemaining(EBossAttackType AttackType) const;
+
+    bool TryStartAttackCooldown(EBossAttackType AttackType);
 
     void CancelCurrentAttack();
 
 private:
+    // Runtime state per boss and attack type. Not cleared on target loss/cancel.
+    TMap<EBossAttackType, double> CooldownEndTimes;
+
     UPROPERTY()
     EBossAttackType CurrentAttackType = EBossAttackType::None;
 

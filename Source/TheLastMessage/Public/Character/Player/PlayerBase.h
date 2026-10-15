@@ -8,6 +8,7 @@
 
 class UAbilitySystemComponent;
 class UInteractionComponent;
+class UCoreComponent;
 class UGameplayAbility;
 class UGameplayEffect;
 class APlayerBase;
@@ -46,6 +47,8 @@ public:
 	virtual void DoJumpStart() override;
 	virtual void DoInteract() override;
 
+	UCoreComponent* GetCoreComponent() const;
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -60,6 +63,9 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|Interaction")
 	TObjectPtr<UInteractionComponent> InteractionComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|Core")
+	TObjectPtr<UCoreComponent> CoreComponent;
 
 	UPROPERTY(EditDefaultsOnly, Category="Player|GAS")
 	TSubclassOf<UGameplayEffect> InitialCombatStatsEffect;

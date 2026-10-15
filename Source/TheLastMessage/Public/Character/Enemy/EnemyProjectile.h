@@ -20,6 +20,7 @@ public:
 
 	void InitializeProjectile(AEnemyBase* InSource, float InDamage);
 	void LaunchProjectile(FVector Direction);
+	void SetProjectileSpeed(float InSpeed);
 	void HandleProjectileImpact(AActor* HitActor);
 	void DestroyProjectile();
 

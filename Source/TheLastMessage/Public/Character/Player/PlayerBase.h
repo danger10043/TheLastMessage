@@ -7,6 +7,7 @@
 #include "PlayerBase.generated.h"
 
 class UAbilitySystemComponent;
+class UCombatAttributeSet;
 class UInteractionComponent;
 class UCoreComponent;
 class UGameplayAbility;
@@ -24,6 +25,9 @@ class THELASTMESSAGE_API APlayerBase : public ASideScrollingCharacter, public IA
 public:
 	APlayerBase();
 	virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
+
+	UFUNCTION(BlueprintPure, Category = "Player|GAS")
+	UCombatAttributeSet* GetCombatAttributes() const { return CombatAttributes; }
 
 	/** Safe to call again after possession; startup grants are applied once. */
 	UFUNCTION(BlueprintCallable, Category="Player|GAS")
@@ -60,6 +64,9 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Player|GAS")
 	TObjectPtr<UAbilitySystemComponent> AbilitySystemComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|GAS")
+	TObjectPtr<UCombatAttributeSet> CombatAttributes;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|Interaction")
 	TObjectPtr<UInteractionComponent> InteractionComponent;

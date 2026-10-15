@@ -2,6 +2,7 @@
 #include "AbilitySystemComponent.h"
 #include "Abilities/GameplayAbility.h"
 #include "GameplayEffect.h"
+#include "GAS/CombatAttributeSet.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Gimmick/Component/InteractionComponent.h"
 #include "Core/CoreComponent.h"
@@ -16,6 +17,7 @@ APlayerBase::APlayerBase()
 	AbilitySystemComponent = CreateDefaultSubobject<UAbilitySystemComponent>(TEXT("AbilitySystemComponent"));
 	AbilitySystemComponent->SetIsReplicated(true);
 	AbilitySystemComponent->SetReplicationMode(EGameplayEffectReplicationMode::Mixed);
+	CombatAttributes = CreateDefaultSubobject<UCombatAttributeSet>(TEXT("CombatAttributes"));
 
 	InteractionComponent = CreateDefaultSubobject<UInteractionComponent>(TEXT("InteractionComponent"));
 
@@ -50,7 +52,8 @@ void APlayerBase::OnRep_Controller()
 void APlayerBase::InitializePlayer()
 {
 	AbilitySystemComponent->InitAbilityActorInfo(this, this);
-	CoreComponent->Initialize(AbilitySystemComponent);
+	// Explicitly register before applying initial stats; repeated calls do not duplicate the set.
+	AbilitySystemComponent->AddAttributeSetSubobject(CombatAttributes.Get());
 
 	if (!DoubleJumpTagChangedHandle.IsValid())
 	{
@@ -58,7 +61,11 @@ void APlayerBase::InitializePlayer()
 			.AddUObject(this, &APlayerBase::HandleDoubleJumpTagChanged);
 	}
 	UpdateJumpLimit();
-	if (!HasAuthority() || bStartupGranted || IsDead()) return;
+	if (!HasAuthority() || bStartupGranted || IsDead())
+	{
+		CoreComponent->Initialize(AbilitySystemComponent);
+		return;
+	}
 	bStartupGranted = true;
 
 	if (InitialCombatStatsEffect)
@@ -68,6 +75,7 @@ void APlayerBase::InitializePlayer()
 		const FGameplayEffectSpecHandle Spec = AbilitySystemComponent->MakeOutgoingSpec(InitialCombatStatsEffect, 1.0f, Context);
 		if (Spec.IsValid()) AbilitySystemComponent->ApplyGameplayEffectSpecToSelf(*Spec.Data.Get());
 	}
+	CoreComponent->Initialize(AbilitySystemComponent);
 	for (const TSubclassOf<UGameplayAbility>& AbilityClass : StartupAbilities)
 	{
 		if (AbilityClass && !AbilitySystemComponent->FindAbilitySpecFromClass(AbilityClass))

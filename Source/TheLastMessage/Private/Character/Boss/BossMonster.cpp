@@ -825,6 +825,14 @@ float ABossMonster::GetRemainingPuzzleTime() const
     return ShieldComponent->GetRemainingPuzzleTime();
 }
 
+bool ABossMonster::IsDistanceInAttackRange(
+    EBossAttackType AttackType, float TargetDistance) const
+{
+    return IsValid(PatternComponent.Get())
+        && PatternComponent->IsDistanceInAttackRange(
+            AttackType, TargetDistance);
+}
+
 AActor* ABossMonster::GetCurrentTarget()
 {
     return IsValid(CurrentTarget.Get()) ? CurrentTarget.Get() : nullptr;

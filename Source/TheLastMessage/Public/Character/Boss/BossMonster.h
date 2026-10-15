@@ -53,6 +53,8 @@ public:
 
     AActor* GetCurrentTarget();
 
+    bool IsDistanceInAttackRange(EBossAttackType AttackType, float TargetDistance) const;
+
     void SetCurrentTarget(AActor* NewTarget);
 
     void StartShieldPuzzle(EBossPuzzleType PuzzleType);

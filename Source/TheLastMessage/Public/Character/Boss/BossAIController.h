@@ -20,13 +20,23 @@ public:
     virtual void OnUnPossess() override;
 
     virtual void OnPossess(APawn* InPawn) override;
+
     void StartBossAI();
+
     void StopBossAI();
+
     void PauseBossAI();
+
     void ResumeBossAI();
+
     void UpdateTargetActor(AActor* NewTarget);
+
     void UpdateBossPhase(EBossPhase NewPhase);
+
     void UpdateBossState(EBossState NewState);
+
+    UFUNCTION(BlueprintCallable, Category = "Boss|AI")
+    void UpdateCombatRange(EBossAttackType AttackType, float CombatRadius);
 
 protected:
     UFUNCTION()

@@ -8,6 +8,7 @@
 #include "Perception/AISenseConfig_Sight.h"
 #include "Perception/AISense_Sight.h"
 #include "GameFramework/Pawn.h"
+#include "Misc/ScopeExit.h"
 
 ABossAIController::ABossAIController()
 {
@@ -19,7 +20,7 @@ ABossAIController::ABossAIController()
         CreateDefaultSubobject<UAISenseConfig_Sight>(TEXT("SightConfig"));
     SightConfig->SightRadius = 2000.f;
     SightConfig->LoseSightRadius = 2500.f;
-    SightConfig->PeripheralVisionAngleDegrees = 90.f;
+    SightConfig->PeripheralVisionAngleDegrees = 180.f;
     SightConfig->AutoSuccessRangeFromLastSeenLocation = -1.f;
     SightConfig->DetectionByAffiliation.bDetectEnemies = true;
     SightConfig->DetectionByAffiliation.bDetectNeutrals = true;
@@ -88,6 +89,8 @@ void ABossAIController::StartBossAI()
     BlackboardComponent->SetValueAsEnum(TEXT("BossPhase"), static_cast<uint8>(ControlledBoss->GetBossPhase()));
     BlackboardComponent->SetValueAsEnum(TEXT("BossState"), static_cast<uint8>(ControlledBoss->GetBossState()));
     BlackboardComponent->SetValueAsFloat(TEXT("TargetDistance"), TNumericLimits<float>::Max());
+    BlackboardComponent->SetValueAsBool(TEXT("bIsInCombatRange"), false);
+    BlackboardComponent->SetValueAsBool(TEXT("bIsInAttackRange"), false);
     BlackboardComponent->SetValueAsEnum(TEXT("SelectedAttack"), static_cast<uint8>(EBossAttackType::None));
     BlackboardComponent->SetValueAsBool(TEXT("bIsShieldActive"), false);
     BlackboardComponent->SetValueAsBool(TEXT("bIsPuzzleActive"), false);
@@ -192,8 +195,9 @@ void ABossAIController::UpdateTargetActor(AActor* NewTarget)
         else
         {
             BlackboardComponent->ClearValue(TEXT("TargetActor"));
-            BlackboardComponent->SetValueAsFloat(TEXT("TargetDistance"),
-                TNumericLimits<float>::Max());
+            BlackboardComponent->SetValueAsFloat(TEXT("TargetDistance"), TNumericLimits<float>::Max());
+            BlackboardComponent->SetValueAsBool(TEXT("bIsInCombatRange"), false);
+            BlackboardComponent->SetValueAsBool(TEXT("bIsInAttackRange"), false);
         }
     }
 
@@ -209,6 +213,70 @@ void ABossAIController::UpdateTargetActor(AActor* NewTarget)
             TEXT("BossAIController::UpdateTargetActor [%s] - Target: %s -> %s"),
             *GetName(), *GetNameSafe(PreviousTarget), *GetNameSafe(NewTarget));
     }
+}
+
+void ABossAIController::UpdateCombatRange(
+    EBossAttackType AttackType, float CombatRadius)
+{
+    if (!HasAuthority())
+    {
+        return;
+    }
+
+    UBlackboardComponent* BB = GetBlackboardComponent();
+    if (!IsValid(BB))
+    {
+        return;
+    }
+
+    // Notify BT observers only after all final range values have been written.
+    BB->PauseObserverNotifications();
+    ON_SCOPE_EXIT
+    {
+        BB->ResumeObserverNotifications(true);
+    };
+
+    BB->SetValueAsFloat(TEXT("TargetDistance"), TNumericLimits<float>::Max());
+    BB->SetValueAsBool(TEXT("bIsInCombatRange"), false);
+    BB->SetValueAsBool(TEXT("bIsInAttackRange"), false);
+
+    if (!IsValid(ControlledBoss.Get()) || ControlledBoss.Get() != GetPawn())
+    {
+        return;
+    }
+
+    const EBossState State = ControlledBoss->GetBossState();
+    BB->SetValueAsEnum(TEXT("BossState"), static_cast<uint8>(State));
+    BB->SetValueAsEnum(TEXT("BossPhase"),
+        static_cast<uint8>(ControlledBoss->GetBossPhase()));
+
+    AActor* Target = ControlledBoss->GetCurrentTarget();
+    APawn* PlayerPawn = Cast<APawn>(Target);
+    if (State == EBossState::Dead
+        || !IsValid(PlayerPawn) || !PlayerPawn->IsPlayerControlled())
+    {
+        UpdateTargetActor(nullptr);
+        return;
+    }
+
+    // 3D 중심 간 거리(cm). 높이 차이도 공격 거리 판정에 포함한다.
+    const float Distance = FVector::Distance(
+        ControlledBoss->GetActorLocation(), PlayerPawn->GetActorLocation());
+    if (!FMath::IsFinite(Distance))
+    {
+        return;
+    }
+    BB->SetValueAsFloat(TEXT("TargetDistance"), Distance);
+
+    const bool bNormalCombatState = State == EBossState::Idle
+        || State == EBossState::Combat || State == EBossState::Attacking;
+    const bool bInCombatRange = bNormalCombatState
+        && FMath::IsFinite(CombatRadius) && CombatRadius > 0.f
+        && Distance <= CombatRadius;
+
+    BB->SetValueAsBool(TEXT("bIsInCombatRange"), bInCombatRange);
+    BB->SetValueAsBool(TEXT("bIsInAttackRange"), bInCombatRange
+        && ControlledBoss->IsDistanceInAttackRange(AttackType, Distance));
 }
 
 void ABossAIController::OnUnPossess()

@@ -11,13 +11,21 @@ class THELASTMESSAGE_API UBossPatternComponent : public UActorComponent
     GENERATED_BODY()
 
 public:
-    EBossAttackType SelectAttackPattern(
-        EBossPhase Phase, float TargetDistance);
+    EBossAttackType SelectAttackPattern(EBossPhase Phase, float TargetDistance);
+
     bool ExecuteAttackPattern(EBossAttackType AttackType);
+
     bool CanExecuteAttack(EBossAttackType AttackType);
+
     TArray<EBossAttackType> GetAvailableAttacks(EBossPhase Phase);
+
     EBossAttackType SelectNextMissileAttack();
+
     FBossMissileConfig GetMissileConfig(EBossPhase Phase);
+
+    bool IsDistanceInAttackRange(
+        EBossAttackType AttackType, float TargetDistance) const;
+
     void CancelCurrentAttack();
 
 private:

@@ -14,6 +14,7 @@ ACorePickup::ACorePickup()
 	SetRootComponent(CoreMesh);
 
 	// 충돌 탐색에 사용하되, 플레이어의 이동은 막지 않는다.
+	// QueryOnly로 설정하면 충돌 이벤트를 발생시키지 않으므로, 상호작용은 인터페이스를 통해 처리한다.
 	CoreMesh->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 	CoreMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
 }

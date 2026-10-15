@@ -5,16 +5,25 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Character/Enemy/EnemyBase.h"
+#include "Character/Boss/BossMonster.h"
+#include "Character/CombatDamageLibrary.h"
 #include "Character/Player/PlayerBase.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "DataAsset/WeaponDataAsset.h"
 #include "Engine/World.h"
-#include "GAS/Effects/GE_WeaponMeleeDamage.h"
+#include "DrawDebugHelpers.h"
+#include "HAL/IConsoleManager.h"
+#include "GAS/CombatAttributeSet.h"
 #include "GAS/Effects/GE_WeaponPrimaryCooldown.h"
 #include "GAS/WeaponGameplayTags.h"
 #include "Kismet/GameplayStatics.h"
 #include "NiagaraFunctionLibrary.h"
 #include "Weapon/WeaponBase.h"
+
+#if ENABLE_DRAW_DEBUG
+static TAutoConsoleVariable<int32> CVarDebugMelee(
+	TEXT("tlm.DebugMelee"), 0, TEXT("Draw melee sweep volumes for one second: 0=off, 1=on."));
+#endif
 
 UGA_WeaponAttackBase::UGA_WeaponAttackBase()
 {
@@ -24,7 +33,6 @@ UGA_WeaponAttackBase::UGA_WeaponAttackBase()
 	ActivationOwnedTags.AddTag(WeaponGameplayTags::State_Attacking);
 	ActivationBlockedTags.AddTag(WeaponGameplayTags::State_Attacking);
 	ActivationBlockedTags.AddTag(WeaponGameplayTags::State_Dead);
-	DamageEffectClass = UGE_WeaponMeleeDamage::StaticClass();
 	CooldownEffectClass = UGE_WeaponPrimaryCooldown::StaticClass();
 	AttackCooldownTags.AddTag(WeaponGameplayTags::Cooldown_Primary);
 }
@@ -72,7 +80,15 @@ void UGA_WeaponAttackBase::ActivateAbility(const FGameplayAbilitySpecHandle Hand
 	HitActorsThisAttack.Reset();
 	APlayerBase* Player = ActorInfo ? Cast<APlayerBase>(ActorInfo->AvatarActor.Get()) : nullptr;
 	SourceWeapon = Player ? Player->GetPrimaryWeapon() : nullptr;
+	DamageEffectClass = Player ? Player->GetWeaponDamageEffectClass() : nullptr;
 	const UWeaponDataAsset* Data = SourceWeapon ? SourceWeapon->WeaponData.Get() : nullptr;
+	if (!DamageEffectClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("%s: assign GE_BP_CommonIncomingDamage to WeaponDamageEffectClass on the player."),
+			*GetNameSafe(Player));
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
 	if (!Data || !Data->AttackMontage || !CommitAbility(Handle, ActorInfo, ActivationInfo))
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -123,6 +139,7 @@ void UGA_WeaponAttackBase::HandleMeleeHit(FGameplayEventData Payload)
 		|| !Data || !DamageEffectClass || Payload.Instigator != Player || Payload.OptionalObject != Data->AttackMontage) return;
 
 	const FVector Direction = FVector::VectorPlaneProject(Player->GetActorForwardVector(), FVector::YAxisVector).GetSafeNormal();
+	if (Direction.IsNearlyZero()) return;
 	const FVector Start = Player->GetActorLocation();
 	const FVector End = Start + Direction * Data->AttackRange;
 	FCollisionObjectQueryParams ObjectParams;
@@ -132,27 +149,44 @@ void UGA_WeaponAttackBase::HandleMeleeHit(FGameplayEventData Payload)
 	Player->GetWorld()->SweepMultiByObjectType(Hits, Start, End, FQuat::Identity, ObjectParams,
 		FCollisionShape::MakeSphere(MeleeHitRadius), QueryParams);
 
+#if ENABLE_DRAW_DEBUG
+	if (CVarDebugMelee.GetValueOnGameThread() != 0)
+	{
+		// 구체를 Start~End로 훑으면 캡슐 모양의 검사 영역이 된다.
+		DrawDebugCapsule(Player->GetWorld(), (Start + End) * 0.5f,
+			Data->AttackRange * 0.5f + MeleeHitRadius, MeleeHitRadius,
+			FQuat::FindBetweenNormals(FVector::UpVector, Direction), FColor::Cyan, false, 1.0f);
+	}
+#endif
+
 	UAbilitySystemComponent* SourceASC = GetAbilitySystemComponentFromActorInfo();
+	if (!SourceASC) return;
+	// 공통 함수는 공격자 배율을 계산하지 않으므로 여기서 한 번만 적용한다.
+	float FinalDamage = FMath::Max(0.0f, Data->AttackPower);
+	if (SourceASC->HasAttributeSetForAttribute(UCombatAttributeSet::GetDamageDealtMultiplierAttribute()))
+	{
+		FinalDamage *= FMath::Max(0.0f, SourceASC->GetNumericAttribute(UCombatAttributeSet::GetDamageDealtMultiplierAttribute()));
+	}
+	if (!FMath::IsFinite(FinalDamage) || FinalDamage <= 0.0f) return;
 	for (const FHitResult& Hit : Hits)
 	{
-		AEnemyBase* Enemy = Cast<AEnemyBase>(Hit.GetActor());
-		if (!Enemy || Enemy->IsDead() || HitActorsThisAttack.Contains(TWeakObjectPtr<AActor>(Enemy))) continue;
+		AActor* Target = Hit.GetActor();
+		const TWeakObjectPtr<AActor> TargetKey(Target);
+		if (!IsValid(Target) || HitActorsThisAttack.Contains(TargetKey)) continue;
+		const AEnemyBase* Enemy = Cast<AEnemyBase>(Target);
+		ABossMonster* Boss = Cast<ABossMonster>(Target);
+		if ((!Enemy && !Boss) || (Enemy && Enemy->IsDead()) || (Boss && Boss->GetBossState() == EBossState::Dead)) continue;
 		// 대상 자신을 제외하고 사이의 장애물을 검사하여 벽 너머 타격을 막는다.
 		FCollisionQueryParams WallParams(QueryParams);
-		WallParams.AddIgnoredActor(Enemy);
+		WallParams.AddIgnoredActor(Target);
 		FHitResult WallHit;
-		if (Player->GetWorld()->LineTraceSingleByChannel(WallHit, Start, Enemy->GetActorLocation(), ECC_Visibility, WallParams)) continue;
-		UAbilitySystemComponent* TargetASC = Enemy->GetAbilitySystemComponent();
-		if (!SourceASC || !TargetASC) continue;
-		FGameplayEffectContextHandle Context = SourceASC->MakeEffectContext();
-		Context.AddSourceObject(SourceWeapon.Get());
-		Context.AddHitResult(Hit);
-		FGameplayEffectSpecHandle Spec = SourceASC->MakeOutgoingSpec(DamageEffectClass, GetAbilityLevel(), Context);
-		if (!Spec.IsValid()) continue;
-		Spec.Data->SetSetByCallerMagnitude(WeaponGameplayTags::Data_Damage, FMath::Max(0.0f, Data->AttackPower));
-		Spec.Data->AddDynamicAssetTag(WeaponGameplayTags::Damage_PlayerMelee);
-		HitActorsThisAttack.Add(TWeakObjectPtr<AActor>(Enemy));
-		SourceASC->ApplyGameplayEffectSpecToTarget(*Spec.Data.Get(), TargetASC);
+		if (Player->GetWorld()->LineTraceSingleByChannel(WallHit, Start, Target->GetActorLocation(), ECC_Visibility, WallParams)) continue;
+		// 피해 이벤트가 재진입할 수 있으므로 호출 전에 이번 공격의 명중을 기록한다.
+		HitActorsThisAttack.Add(TargetKey);
+		const bool bApplied = UCombatDamageLibrary::ApplyFinalDamageToTarget(
+			Player, Target, DamageEffectClass, FinalDamage, WeaponGameplayTags::Damage_PlayerMelee);
+		// true는 GE 승인 여부이며, 면역으로 실제 체력이 줄지 않아도 이 공격에서는 다시 적용하지 않는다.
+		if (!bApplied && IsActive() && !bFinishingAttack) HitActorsThisAttack.Remove(TargetKey);
 		// 피해 이벤트가 플레이어 사망·공격 취소를 유발했을 수도 있다.
 		if (!IsActive() || bFinishingAttack || Player->IsDead()) break;
 	}
@@ -177,5 +211,6 @@ void UGA_WeaponAttackBase::EndAbility(const FGameplayAbilitySpecHandle Handle,
 	HitActorsThisAttack.Reset();
 	ChargeElapsedTime = 0.0f;
 	SourceWeapon = nullptr;
+	DamageEffectClass = nullptr;
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 }

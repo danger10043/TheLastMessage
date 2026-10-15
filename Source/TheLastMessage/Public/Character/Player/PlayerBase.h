@@ -36,6 +36,8 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Player|Weapon")
 	UWeaponBase* GetPrimaryWeapon() const { return PrimaryWeapon; }
 
+	TSubclassOf<UGameplayEffect> GetWeaponDamageEffectClass() const { return WeaponDamageEffectClass; }
+
 	/** Safe to call again after possession; startup grants are applied once. */
 	UFUNCTION(BlueprintCallable, Category="Player|GAS")
 	void InitializePlayer();
@@ -82,6 +84,10 @@ protected:
 	// 시작할 때 장착할 근접 무기의 설정 데이터.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Weapon")
 	TObjectPtr<UWeaponDataAsset> InitialPrimaryWeaponData;
+
+	// GE_BP_CommonIncomingDamage: Instant, Modifier 없음, IncomingDamageExecution 하나.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Weapon")
+	TSubclassOf<UGameplayEffect> WeaponDamageEffectClass;
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Transient, Category = "Player|Weapon")
 	TObjectPtr<UWeaponBase> PrimaryWeapon;

@@ -55,8 +55,8 @@ protected:
 	UPROPERTY(Transient)
 	TSet<TWeakObjectPtr<AActor>> HitActorsThisAttack;
 
-	// 대상에게 피해를 전달하는 GE.
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Effects")
+	// 이번 공격에 사용할 공통 피해 GE. 플레이어 기본값에서 가져온다.
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "Weapon|Effects")
 	TSubclassOf<UGameplayEffect> DamageEffectClass;
 
 	// 원거리 공격 시 해당 슬롯의 에너지를 소비하는 GE.

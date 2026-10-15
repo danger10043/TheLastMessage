@@ -1,5 +1,8 @@
 #include "Core/CorePickup.h"
 
+#include "Character/Player/PlayerBase.h"
+#include "Components/CapsuleComponent.h"
+#include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Core/CoreComponent.h"
 #include "DataAsset/CoreDataAsset.h"
@@ -13,10 +16,42 @@ ACorePickup::ACorePickup()
 	CoreMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("CoreMesh"));
 	SetRootComponent(CoreMesh);
 
-	// 충돌 탐색에 사용하되, 플레이어의 이동은 막지 않는다.
-	// QueryOnly로 설정하면 충돌 이벤트를 발생시키지 않으므로, 상호작용은 인터페이스를 통해 처리한다.
-	CoreMesh->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-	CoreMesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
+	// 메시는 외형만 표시하도록 충돌과 오버랩 감지를 끈다.
+	CoreMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	PickupCollision = CreateDefaultSubobject<USphereComponent>(TEXT("PickupCollision"));
+	PickupCollision->SetupAttachment(CoreMesh);
+	PickupCollision->InitSphereRadius(50.0f);
+	PickupCollision->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	PickupCollision->SetGenerateOverlapEvents(true);
+
+	// DefaultEngine.ini의 CorePickup 채널을 사용한다. 플레이어 캡슐만 이 채널에 Overlap으로 응답해야 한다.
+	PickupCollision->SetCollisionObjectType(ECC_GameTraceChannel2);
+	PickupCollision->SetCollisionResponseToAllChannels(ECR_Ignore);
+	PickupCollision->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+
+	// 획득 범위에 들어온 대상을 자동 획득 처리로 연결한다.
+	PickupCollision->OnComponentBeginOverlap.AddDynamic(this, &ACorePickup::OnPickupBeginOverlap);
+}
+
+void ACorePickup::OnPickupBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor,
+	UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
+{
+	// 코어 지급은 서버에서 처리한다.
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	// 플레이어의 캡슐이 들어온 경우에만 획득을 요청한다.
+	APlayerBase* Player = Cast<APlayerBase>(OtherActor);
+	if (!IsValid(Player) || !Player->IsPlayerControlled() || OtherComp != Player->GetCapsuleComponent())
+	{
+		return;
+	}
+
+	// 획득 조건 검사와 성공 후 픽업 파괴는 기존 지급 함수에서 처리한다.
+	TryAcquireFixedCore(Player->GetCoreComponent());
 }
 
 bool ACorePickup::CanInteract_Implementation(AActor* Interactor) const

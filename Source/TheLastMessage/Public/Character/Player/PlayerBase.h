@@ -7,6 +7,7 @@
 #include "PlayerBase.generated.h"
 
 class UAbilitySystemComponent;
+class UInteractionComponent;
 class UGameplayAbility;
 class UGameplayEffect;
 class APlayerBase;
@@ -56,6 +57,9 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Player|GAS")
 	TObjectPtr<UAbilitySystemComponent> AbilitySystemComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|Interaction")
+	TObjectPtr<UInteractionComponent> InteractionComponent;
 
 	UPROPERTY(EditDefaultsOnly, Category="Player|GAS")
 	TSubclassOf<UGameplayEffect> InitialCombatStatsEffect;

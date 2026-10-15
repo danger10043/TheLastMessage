@@ -57,7 +57,7 @@ void ASideScrollingPlayerController::SetupInputComponent()
 
 		} else {
 
-			UE_LOG(LogTheLastMessage, Error, TEXT("Could not spawn mobile controls widget."));
+			UE_LOG(LogTemp, Error, TEXT("Could not spawn mobile controls widget."));
 
 		}
 

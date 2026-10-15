@@ -78,3 +78,9 @@ DerivedDataCache/*
 # Ignore External Assets folder
 /Content/_ExternalAssets
 AGENTS.md
+*.slnx
+/Docs
+
+# Local PlayerBase automation tests
+/Source/TheLastMessage/Private/Tests/PlayerBaseTests.cpp
+/Source/TheLastMessage/Private/Tests/PlayerBaseTestObserver.h

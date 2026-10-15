@@ -59,6 +59,11 @@ protected:
 		meta = (EditCondition = "RewardMode == ECoreRewardMode::Fixed", EditConditionHides))
 	TObjectPtr<UCoreDataAsset> CoreData = nullptr;
 
+	/** 선택형 보상에서 플레이어에게 제시할 후보를 추첨하는 데 사용하는 전체 코어 목록이다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Core|Reward",
+		meta = (EditCondition = "RewardMode == ECoreRewardMode::Choice", EditConditionHides))
+	TArray<TObjectPtr<UCoreDataAsset>> CandidatePool;
+
 	/** 보상 지급이 완료되었는지 나타낸다. 이미 소비한 보상의 재지급을 막는다. */
 	UPROPERTY(Transient, VisibleInstanceOnly, BlueprintReadOnly, Category = "Core|Reward")
 	bool bConsumed = false;

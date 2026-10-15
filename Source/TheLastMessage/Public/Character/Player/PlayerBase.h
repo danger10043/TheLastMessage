@@ -4,6 +4,7 @@
 #include "Character/Player/SideScrollingCharacter.h"
 #include "AbilitySystemInterface.h"
 #include "GameplayTagContainer.h"
+#include "Inputs/AbilityInputBinding.h"
 #include "PlayerBase.generated.h"
 
 class UAbilitySystemComponent;
@@ -14,6 +15,7 @@ class UGameplayAbility;
 class UGameplayEffect;
 class UWeaponBase;
 class UWeaponDataAsset;
+class UStaticMeshComponent;
 class APlayerBase;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnPlayerDiedSignature, APlayerBase*, Player);
@@ -56,9 +58,13 @@ public:
 	virtual void DoJumpStart() override;
 	virtual void DoInteract() override;
 
+	// 공격 시작 시 남은 입력과 수평 관성을 정리한다. 공중에서는 낙하를 유지한다.
+	void StopMovementForAttack();
+
 	UCoreComponent* GetCoreComponent() const;
 
 protected:
+	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void PossessedBy(AController* NewController) override;
@@ -80,6 +86,10 @@ protected:
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Transient, Category = "Player|Weapon")
 	TObjectPtr<UWeaponBase> PrimaryWeapon;
 
+	// 손 소켓에 부착할 주무기 외형. 공격 판정은 공격 능력에서 처리한다.
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|Weapon")
+	TObjectPtr<UStaticMeshComponent> PrimaryWeaponMesh;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|Interaction")
 	TObjectPtr<UInteractionComponent> InteractionComponent;
 
@@ -92,10 +102,16 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category="Player|GAS")
 	TArray<TSubclassOf<UGameplayAbility>> StartupAbilities;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Input")
+	TArray<FAbilityInputBinding> AbilityInputBindings;
+
 	/** Reserved for the slot recharge step; never used as an attack cooldown. */
 	FTimerHandle EnergyRechargeTimerHandle;
 
 private:
+	void AbilityInputPressed(FGameplayTag InputTag);
+	void AbilityInputReleased(FGameplayTag InputTag);
+	void RefreshPrimaryWeaponVisual();
 	void HandleDoubleJumpTagChanged(const FGameplayTag Tag, int32 NewCount);
 	void UpdateJumpLimit();
 	FDelegateHandle DoubleJumpTagChangedHandle;

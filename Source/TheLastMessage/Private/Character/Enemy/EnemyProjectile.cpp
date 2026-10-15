@@ -52,6 +52,15 @@ void AEnemyProjectile::InitializeProjectile(AEnemyBase* InSource, float InDamage
 	}
 }
 
+void AEnemyProjectile::SetProjectileSpeed(float InSpeed)
+{
+	if (InSpeed > 0.f)
+	{
+		ProjectileMovement->InitialSpeed = InSpeed;
+		ProjectileMovement->MaxSpeed = InSpeed;
+	}
+}
+
 void AEnemyProjectile::LaunchProjectile(FVector Direction)
 {
 	const FVector Dir = Direction.GetSafeNormal();
@@ -84,8 +93,15 @@ void AEnemyProjectile::HandleProjectileImpact(AActor* HitActor)
 	const APawn* HitPawn = Cast<APawn>(HitActor);
 	if (HitPawn && HitPawn->IsPlayerControlled())
 	{
-		// TODO: GAS 피해 GE(Damage.Type.Ranged)로 교체. 지금은 임시로 엔진 기본 피해 사용.
-		UGameplayStatics::ApplyDamage(HitActor, Damage, SourceEnemy ? SourceEnemy->GetController() : nullptr, this, nullptr);
+		if (SourceEnemy)
+		{
+			SourceEnemy->ApplyEnemyDamage(HitActor, Damage);
+		}
+		else
+		{
+			// 발사한 몬스터가 이미 사라졌다면 엔진 기본 피해로 대신한다.
+			UGameplayStatics::ApplyDamage(HitActor, Damage, nullptr, this, nullptr);
+		}
 	}
 
 	DestroyProjectile();

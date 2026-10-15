@@ -34,6 +34,19 @@ public:
 	FGameplayAttributeData MoveSpeed;
 	ENEMY_ATTRIBUTE_ACCESSORS(UEnemyAttributeSet, MoveSpeed)
 
+	/**
+	 * 받은 피해를 전달하는 임시(Meta) Attribute. 피해 GE가 여기에 값을 더하면
+	 * PostGameplayEffectExecute가 체력으로 옮기고 0으로 되돌린다. (플레이어 CombatAttributeSet과 같은 방식)
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Attributes")
+	FGameplayAttributeData IncomingDamage;
+	ENEMY_ATTRIBUTE_ACCESSORS(UEnemyAttributeSet, IncomingDamage)
+
+	/** 레벨에 따른 주는 피해 배율. 기본 1. (명세서 외 추가 Attribute) */
+	UPROPERTY(BlueprintReadOnly, Category = "Attributes")
+	FGameplayAttributeData DamageMultiplier;
+	ENEMY_ATTRIBUTE_ACCESSORS(UEnemyAttributeSet, DamageMultiplier)
+
 	float GetHealthPercent() const;
 
 	virtual void PreAttributeChange(const FGameplayAttribute& Attribute, float& NewValue) override;

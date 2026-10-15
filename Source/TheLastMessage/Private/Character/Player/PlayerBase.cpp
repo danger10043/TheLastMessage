@@ -6,6 +6,9 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Gimmick/Component/InteractionComponent.h"
 #include "Core/CoreComponent.h"
+#include "Components/CapsuleComponent.h"
+#include "DataAsset/WeaponDataAsset.h"
+#include "Weapon/MeleeWeaponBase.h"
 #include "NativeGameplayTags.h"
 #include "TimerManager.h"
 
@@ -22,6 +25,9 @@ APlayerBase::APlayerBase()
 	InteractionComponent = CreateDefaultSubobject<UInteractionComponent>(TEXT("InteractionComponent"));
 
 	CoreComponent = CreateDefaultSubobject<UCoreComponent>(TEXT("CoreComponent"));
+
+	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_GameTraceChannel2, ECR_Overlap);
+	GetCapsuleComponent()->SetGenerateOverlapEvents(true);
 
 	JumpMaxCount = 1;
 }
@@ -74,6 +80,23 @@ void APlayerBase::InitializePlayer()
 		Context.AddSourceObject(this);
 		const FGameplayEffectSpecHandle Spec = AbilitySystemComponent->MakeOutgoingSpec(InitialCombatStatsEffect, 1.0f, Context);
 		if (Spec.IsValid()) AbilitySystemComponent->ApplyGameplayEffectSpecToSelf(*Spec.Data.Get());
+	}
+	// 무기 객체는 플레이어가 소유하며, 공격 수치는 DataAsset을 참조한다.
+	if (!PrimaryWeapon && IsValid(InitialPrimaryWeaponData))
+	{
+		if (InitialPrimaryWeaponData->WeaponType == EWeaponType::LightMelee ||
+			InitialPrimaryWeaponData->WeaponType == EWeaponType::HeavyMelee)
+		{
+			UMeleeWeaponBase* Weapon = NewObject<UMeleeWeaponBase>(this);
+			if (Weapon->Initialize(InitialPrimaryWeaponData))
+			{
+				PrimaryWeapon = Weapon;
+			}
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("%s: InitialPrimaryWeaponData requires a melee weapon; ranged equipment is not implemented yet."), *GetName());
+		}
 	}
 	CoreComponent->Initialize(AbilitySystemComponent);
 	for (const TSubclassOf<UGameplayAbility>& AbilityClass : StartupAbilities)

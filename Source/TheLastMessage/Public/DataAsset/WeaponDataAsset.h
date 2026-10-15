@@ -7,6 +7,9 @@
 #include "Weapon/WeaponTypes.h"
 #include "Projectile/ProjectileBase.h"
 #include "WeaponDataAsset.generated.h"
+
+class UAnimMontage;
+class UNiagaraSystem;
 /**
  * 
  */
@@ -35,6 +38,28 @@ public:
 	// UI 아이콘
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
 	TObjectPtr<UTexture2D> WeaponIcon;
+
+	// 플레이어 캐릭터에서 재생할 일반 공격 몽타주.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Animation")
+	TObjectPtr<UAnimMontage> AttackMontage = nullptr;
+
+	// 무기 외형
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Mesh")
+	TObjectPtr<UStaticMesh> WeaponMesh;
+
+	// 캐릭터에 붙일 소켓
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Mesh")
+	FName AttachSocketName;
+
+	// 소켓 기준 위치·회전·크기 보정
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Mesh")
+	FTransform AttachOffset;
+
+	// 공격 연출
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Effect")
+	TObjectPtr<UNiagaraSystem> AttackEffect;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Effect")
+	TObjectPtr<USoundBase> AttackSound;
 
 	// 차지 지원 여부
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")

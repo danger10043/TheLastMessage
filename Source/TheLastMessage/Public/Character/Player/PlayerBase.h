@@ -12,6 +12,8 @@ class UInteractionComponent;
 class UCoreComponent;
 class UGameplayAbility;
 class UGameplayEffect;
+class UWeaponBase;
+class UWeaponDataAsset;
 class APlayerBase;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnPlayerDiedSignature, APlayerBase*, Player);
@@ -28,6 +30,9 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Player|GAS")
 	UCombatAttributeSet* GetCombatAttributes() const { return CombatAttributes; }
+
+	UFUNCTION(BlueprintPure, Category = "Player|Weapon")
+	UWeaponBase* GetPrimaryWeapon() const { return PrimaryWeapon; }
 
 	/** Safe to call again after possession; startup grants are applied once. */
 	UFUNCTION(BlueprintCallable, Category="Player|GAS")
@@ -67,6 +72,13 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|GAS")
 	TObjectPtr<UCombatAttributeSet> CombatAttributes;
+
+	// 시작할 때 장착할 근접 무기의 설정 데이터.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Weapon")
+	TObjectPtr<UWeaponDataAsset> InitialPrimaryWeaponData;
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Transient, Category = "Player|Weapon")
+	TObjectPtr<UWeaponBase> PrimaryWeapon;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|Interaction")
 	TObjectPtr<UInteractionComponent> InteractionComponent;

@@ -13,6 +13,11 @@ UInteractionComponent::UInteractionComponent()
 	// ...
 }
 
+void UInteractionComponent::RequestInteract()
+{
+	// 실제 상호작용 처리는 다음 작업에서 구현
+}
+
 
 // Called when the game starts
 void UInteractionComponent::BeginPlay()

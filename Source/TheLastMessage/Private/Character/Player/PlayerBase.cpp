@@ -2,8 +2,13 @@
 #include "AbilitySystemComponent.h"
 #include "Abilities/GameplayAbility.h"
 #include "GameplayEffect.h"
+#include "GAS/CombatAttributeSet.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Gimmick/Component/InteractionComponent.h"
+#include "Core/CoreComponent.h"
+#include "Components/CapsuleComponent.h"
+#include "DataAsset/WeaponDataAsset.h"
+#include "Weapon/MeleeWeaponBase.h"
 #include "NativeGameplayTags.h"
 #include "TimerManager.h"
 
@@ -15,8 +20,14 @@ APlayerBase::APlayerBase()
 	AbilitySystemComponent = CreateDefaultSubobject<UAbilitySystemComponent>(TEXT("AbilitySystemComponent"));
 	AbilitySystemComponent->SetIsReplicated(true);
 	AbilitySystemComponent->SetReplicationMode(EGameplayEffectReplicationMode::Mixed);
+	CombatAttributes = CreateDefaultSubobject<UCombatAttributeSet>(TEXT("CombatAttributes"));
 
 	InteractionComponent = CreateDefaultSubobject<UInteractionComponent>(TEXT("InteractionComponent"));
+
+	CoreComponent = CreateDefaultSubobject<UCoreComponent>(TEXT("CoreComponent"));
+
+	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_GameTraceChannel2, ECR_Overlap);
+	GetCapsuleComponent()->SetGenerateOverlapEvents(true);
 
 	JumpMaxCount = 1;
 }
@@ -47,13 +58,20 @@ void APlayerBase::OnRep_Controller()
 void APlayerBase::InitializePlayer()
 {
 	AbilitySystemComponent->InitAbilityActorInfo(this, this);
+	// Explicitly register before applying initial stats; repeated calls do not duplicate the set.
+	AbilitySystemComponent->AddAttributeSetSubobject(CombatAttributes.Get());
+
 	if (!DoubleJumpTagChangedHandle.IsValid())
 	{
 		DoubleJumpTagChangedHandle = AbilitySystemComponent->RegisterGameplayTagEvent(TAG_PlayerDoubleJump)
 			.AddUObject(this, &APlayerBase::HandleDoubleJumpTagChanged);
 	}
 	UpdateJumpLimit();
-	if (!HasAuthority() || bStartupGranted || IsDead()) return;
+	if (!HasAuthority() || bStartupGranted || IsDead())
+	{
+		CoreComponent->Initialize(AbilitySystemComponent);
+		return;
+	}
 	bStartupGranted = true;
 
 	if (InitialCombatStatsEffect)
@@ -63,6 +81,24 @@ void APlayerBase::InitializePlayer()
 		const FGameplayEffectSpecHandle Spec = AbilitySystemComponent->MakeOutgoingSpec(InitialCombatStatsEffect, 1.0f, Context);
 		if (Spec.IsValid()) AbilitySystemComponent->ApplyGameplayEffectSpecToSelf(*Spec.Data.Get());
 	}
+	// 무기 객체는 플레이어가 소유하며, 공격 수치는 DataAsset을 참조한다.
+	if (!PrimaryWeapon && IsValid(InitialPrimaryWeaponData))
+	{
+		if (InitialPrimaryWeaponData->WeaponType == EWeaponType::LightMelee ||
+			InitialPrimaryWeaponData->WeaponType == EWeaponType::HeavyMelee)
+		{
+			UMeleeWeaponBase* Weapon = NewObject<UMeleeWeaponBase>(this);
+			if (Weapon->Initialize(InitialPrimaryWeaponData))
+			{
+				PrimaryWeapon = Weapon;
+			}
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("%s: InitialPrimaryWeaponData requires a melee weapon; ranged equipment is not implemented yet."), *GetName());
+		}
+	}
+	CoreComponent->Initialize(AbilitySystemComponent);
 	for (const TSubclassOf<UGameplayAbility>& AbilityClass : StartupAbilities)
 	{
 		if (AbilityClass && !AbilitySystemComponent->FindAbilitySpecFromClass(AbilityClass))
@@ -131,6 +167,11 @@ void APlayerBase::DoInteract()
 	}
 
 	InteractionComponent->RequestInteract();
+}
+
+UCoreComponent* APlayerBase::GetCoreComponent() const
+{
+	return CoreComponent;
 }
 
 void APlayerBase::EndPlay(const EEndPlayReason::Type EndPlayReason)

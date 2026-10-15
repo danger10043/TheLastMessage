@@ -1,0 +1,117 @@
+// Fill out your copyright notice in the Description page of Project Settings.
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Engine/DataAsset.h"
+#include "Weapon/WeaponTypes.h"
+#include "Projectile/ProjectileBase.h"
+#include "WeaponDataAsset.generated.h"
+
+class UAnimMontage;
+class UNiagaraSystem;
+/**
+ * 
+ */
+UCLASS(BlueprintType)
+class THELASTMESSAGE_API UWeaponDataAsset : public UDataAsset
+{
+	GENERATED_BODY()
+
+public:
+	UWeaponDataAsset();
+
+public:
+	// ------------------------------공통------------------------------
+	// 무기 ID
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
+	FName WeaponId;
+	
+	// 무기 종류
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
+	EWeaponType WeaponType = EWeaponType::LightMelee;
+
+	// 기본 공격력
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
+	float AttackPower = 1.0f;
+
+	// UI 아이콘
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
+	TObjectPtr<UTexture2D> WeaponIcon;
+
+	// 플레이어 캐릭터에서 재생할 일반 공격 몽타주.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Animation")
+	TObjectPtr<UAnimMontage> AttackMontage = nullptr;
+
+	// 무기 외형
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Mesh")
+	TObjectPtr<UStaticMesh> WeaponMesh;
+
+	// 캐릭터에 붙일 소켓
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Mesh")
+	FName AttachSocketName;
+
+	// 소켓 기준 위치·회전·크기 보정
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Mesh")
+	FTransform AttachOffset;
+
+	// 공격 연출
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Effect")
+	TObjectPtr<UNiagaraSystem> AttackEffect;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Effect")
+	TObjectPtr<USoundBase> AttackSound;
+
+	// 차지 지원 여부
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
+	bool bSupportsChargeAttack = false;
+
+	// 최대 충전 시간
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
+	float MaxChargeTime = 1.0f;
+
+	// 충전 공격 시 피해 배율
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
+	float MaxChargeDamageMultiplier = 1.0f;
+
+	// ------------------------------근접------------------------------
+	// 근접 공격 간격(초)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
+	float AttackInterval = 0.5f;
+
+	// 근접 공격 사거리
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
+	float AttackRange;
+
+	// ------------------------------원거리-----------------------------
+	// 분당 발사 횟수
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
+	float RPM;
+
+	// 원거리 사거리
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
+	float Range;
+
+	// 기본 최대 에너지
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
+	float MaxEnergy;
+
+	// 일반 공격 소모량
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
+	float EnergyPerShot;
+
+	// 충전 대기 시간
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
+	float EnergyRechargeDelay;
+
+	// 초당 충전량
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
+	float EnergyRechargeRate;
+
+	// 탄환 클래스
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
+	TSubclassOf<AProjectileBase> ProjectileClass;
+
+	// 탄환 속도
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
+	float ProjectileSpeed;
+};

@@ -4,6 +4,7 @@
 #include "GameplayEffect.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Gimmick/Component/InteractionComponent.h"
+#include "Core/CoreComponent.h"
 #include "NativeGameplayTags.h"
 #include "TimerManager.h"
 
@@ -17,6 +18,8 @@ APlayerBase::APlayerBase()
 	AbilitySystemComponent->SetReplicationMode(EGameplayEffectReplicationMode::Mixed);
 
 	InteractionComponent = CreateDefaultSubobject<UInteractionComponent>(TEXT("InteractionComponent"));
+
+	CoreComponent = CreateDefaultSubobject<UCoreComponent>(TEXT("CoreComponent"));
 
 	JumpMaxCount = 1;
 }
@@ -47,6 +50,8 @@ void APlayerBase::OnRep_Controller()
 void APlayerBase::InitializePlayer()
 {
 	AbilitySystemComponent->InitAbilityActorInfo(this, this);
+	CoreComponent->Initialize(AbilitySystemComponent);
+
 	if (!DoubleJumpTagChangedHandle.IsValid())
 	{
 		DoubleJumpTagChangedHandle = AbilitySystemComponent->RegisterGameplayTagEvent(TAG_PlayerDoubleJump)
@@ -131,6 +136,11 @@ void APlayerBase::DoInteract()
 	}
 
 	InteractionComponent->RequestInteract();
+}
+
+UCoreComponent* APlayerBase::GetCoreComponent() const
+{
+	return CoreComponent;
 }
 
 void APlayerBase::EndPlay(const EEndPlayReason::Type EndPlayReason)

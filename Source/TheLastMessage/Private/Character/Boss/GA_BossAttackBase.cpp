@@ -1,6 +1,7 @@
 #include "Character/Boss/GA_BossAttackBase.h"
 #include "Character/Boss/BossMonster.h"
-#include "Character/Boss/BossAttributeSet.h"
+#include "Character/Player/PlayerBase.h"
+#include "GAS/CombatAttributeSet.h"
 #include "AbilitySystemBlueprintLibrary.h"
 #include "AbilitySystemComponent.h"
 #include "GameplayEffect.h"
@@ -78,32 +79,31 @@ ABossMonster* UGA_BossAttackBase::GetBossOwner() const
 void UGA_BossAttackBase::ApplyAttackDamage(AActor* Target)
 {
     ABossMonster* Boss = GetBossOwner();
+    APlayerBase* Player = Cast<APlayerBase>(Target);
     UAbilitySystemComponent* SourceASC = IsValid(Boss)
         ? Boss->GetAbilitySystemComponent() : nullptr;
-    UAbilitySystemComponent* TargetASC = IsValid(Target)
-        ? UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(Target) : nullptr;
+    UAbilitySystemComponent* TargetASC = IsValid(Player)
+        ? Player->GetAbilitySystemComponent() : nullptr;
 
     if (!IsValid(Boss) || !Boss->HasAuthority()
+        || !IsValid(Player) || Player->IsDead()
         || !IsValid(SourceASC) || !IsValid(TargetASC) || !DamageEffectClass)
     {
-        UE_LOG(LogTemp, Warning,
-            TEXT("BossMelee: damage skipped. Check source/target ASC and DamageEffectClass."));
         return;
     }
 
-    bool bFoundAttackPower = false;
-    const float Damage = SourceASC->GetGameplayAttributeValue(
-        UBossAttributeSet::GetAttackPowerAttribute(), bFoundAttackPower);
-    const FGameplayTag DamageTag = FGameplayTag::RequestGameplayTag(
-        FName(TEXT("Data.Damage")), false);
-    const FGameplayTag MeleeTag = FGameplayTag::RequestGameplayTag(
-        FName(TEXT("Damage.Type.Melee")), false);
-
-    if (!bFoundAttackPower || !FMath::IsFinite(Damage) || Damage <= 0.f
-        || !DamageTag.IsValid() || !MeleeTag.IsValid())
+    if (!TargetASC->HasAttributeSetForAttribute(
+        UCombatAttributeSet::GetIncomingDamageAttribute()))
     {
-        UE_LOG(LogTemp, Warning,
-            TEXT("BossMelee: check AttackPower, Data.Damage and Damage.Type.Melee."));
+        UE_LOG(LogTemp, Warning, TEXT("BossMelee: target CombatAttributeSet is missing."));
+        return;
+    }
+
+    const UGameplayEffect* EffectDefaults = DamageEffectClass.GetDefaultObject();
+    if (!EffectDefaults
+        || EffectDefaults->DurationPolicy != EGameplayEffectDurationType::Instant)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("BossMelee: DamageEffectClass must be Instant."));
         return;
     }
 
@@ -116,9 +116,15 @@ void UGA_BossAttackBase::ApplyAttackDamage(AActor* Target)
         return;
     }
 
-    Spec.Data->SetSetByCallerMagnitude(DamageTag, Damage);
-    Spec.Data->AddDynamicAssetTag(MeleeTag);
-    SourceASC->ApplyGameplayEffectSpecToTarget(*Spec.Data.Get(), TargetASC);
-    UE_LOG(LogTemp, Log, TEXT("BossMelee: damage GE submitted to %s, amount %.1f"),
-        *GetNameSafe(Target), Damage);
+    const FGameplayTag MeleeTag = FGameplayTag::RequestGameplayTag(
+        FName(TEXT("Damage.Type.Melee")), false);
+    if (MeleeTag.IsValid())
+    {
+        Spec.Data->AddDynamicAssetTag(MeleeTag);
+    }
+
+    // The GE defines the amount added to CombatAttributeSet.IncomingDamage.
+    TargetASC->ApplyGameplayEffectSpecToSelf(*Spec.Data.Get());
+    UE_LOG(LogTemp, Log, TEXT("BossMelee: damage GE submitted -> %s"),
+        *GetNameSafe(Player));
 }

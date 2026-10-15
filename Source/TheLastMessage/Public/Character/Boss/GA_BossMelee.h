@@ -2,9 +2,11 @@
 
 #include "CoreMinimal.h"
 #include "Character/Boss/GA_BossAttackBase.h"
+#include "Animation/AnimInstance.h"
 #include "GA_BossMelee.generated.h"
 
 class UAnimMontage;
+class UAbilityTask_PlayMontageAndWait;
 
 UCLASS()
 class THELASTMESSAGE_API UGA_BossMelee : public UGA_BossAttackBase
@@ -30,23 +32,32 @@ protected:
     UPROPERTY(EditDefaultsOnly, Category = "Boss|Melee")
     TObjectPtr<UAnimMontage> AttackMontage;
 
-    UPROPERTY(EditDefaultsOnly, Category = "Boss|Melee", meta = (ClampMin = "0.01"))
-    float WindupTime = 0.35f;
-
-    UPROPERTY(EditDefaultsOnly, Category = "Boss|Melee", meta = (ClampMin = "0.01"))
-    float RecoveryTime = 0.45f;
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|Melee")
+    FName HitNotifyName = TEXT("BossMeleeHit");
 
     UPROPERTY(EditDefaultsOnly, Category = "Boss|Melee",
         meta = (ClampMin = "0.0", ClampMax = "180.0"))
     float HitHalfAngle = 60.f;
 
 private:
-    void PerformHit();
-    void FinishMelee();
+    UFUNCTION()
+    void HandleHitNotify(FName NotifyName,
+        const FBranchingPointNotifyPayload& Payload);
 
+    UFUNCTION()
+    void HandleMontageCompleted();
+
+    UFUNCTION()
+    void HandleMontageCancelled();
+
+    void PerformHit();
+
+    UPROPERTY(Transient)
+    TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;
+
+    TWeakObjectPtr<UAnimInstance> BoundAnimInstance;
     TWeakObjectPtr<AActor> LockedTarget;
-    FTimerHandle HitTimer;
-    FTimerHandle FinishTimer;
+    int32 MontageInstanceID = INDEX_NONE;
     bool bHitProcessed = false;
     bool bEnding = false;
 };

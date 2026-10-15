@@ -1,6 +1,7 @@
 #include "Character/Boss/BossAttributeSet.h"
 #include "GameplayEffectExtension.h"
 #include "Character/Boss/BossMonster.h"
+#include "Character/CombatDamageLibrary.h"
 
 float UBossAttributeSet::GetHealthPercent()
 {
@@ -97,10 +98,74 @@ bool UBossAttributeSet::PreGameplayEffectExecute(
     return true;
 }
 
-void UBossAttributeSet::PostGameplayEffectExecute(
-    const FGameplayEffectModCallbackData& Data)
+void UBossAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCallbackData& Data)
 {
     Super::PostGameplayEffectExecute(Data);
+
+    if (Data.EvaluatedData.Attribute == GetIncomingDamageAttribute())
+    {
+        const float RequestedDamage = GetIncomingDamage();
+        SetIncomingDamage(0.f);
+
+        if (Data.EvaluatedData.ModifierOp != EGameplayModOp::Additive
+            || !FMath::IsFinite(RequestedDamage) || RequestedDamage <= 0.f)
+        {
+            return;
+        }
+
+        ABossMonster* Boss = Cast<ABossMonster>(Data.Target.GetAvatarActor());
+        if (!IsValid(Boss) || !Boss->HasAuthority())
+        {
+            return;
+        }
+
+        const EBossState State = Boss->GetBossState();
+        if (State == EBossState::Dead || State == EBossState::ShieldPuzzle
+            || State == EBossState::Cinematic)
+        {
+            return;
+        }
+
+        const FGameplayTag ShieldTag = FGameplayTag::RequestGameplayTag(
+            FName(TEXT("Boss.Immunity.Shield")), false);
+        if (!ShieldTag.IsValid() || Data.Target.HasMatchingGameplayTag(ShieldTag))
+        {
+            return;
+        }
+
+        FGameplayTag Category;
+        if (!UCombatDamageLibrary::TryGetDamageCategory(Data.EffectSpec, Category))
+        {
+            return;
+        }
+        if (Category.GetTagName() == FName(TEXT("Damage.Category.Player.Ranged"))
+            && Boss->IsRangedImmune())
+        {
+            return;
+        }
+
+        const float CurrentHealthValue = GetHealth();
+        const float MaxHealthValue = GetMaxHealth();
+        const float FloorRatio = Boss->GetDamageHealthFloorRatio();
+        if (!FMath::IsFinite(CurrentHealthValue) || !FMath::IsFinite(MaxHealthValue)
+            || MaxHealthValue <= 0.f || !FMath::IsFinite(FloorRatio)
+            || FloorRatio < 0.f || FloorRatio > 1.f)
+        {
+            return;
+        }
+
+        const float HealthFloor = MaxHealthValue * FloorRatio;
+        const float AllowedDamage = FMath::Max(0.f, CurrentHealthValue - HealthFloor);
+        const float AppliedDamage = FMath::Min(RequestedDamage, AllowedDamage);
+        SetHealth(FMath::Clamp(CurrentHealthValue - AppliedDamage, 0.f, MaxHealthValue));
+
+        Boss->CheckBossPhaseThreshold();
+        if (GetHealth() <= 0.f)
+        {
+            Boss->HandleBossDeath();
+        }
+        return;
+    }
 
     if (Data.EvaluatedData.Attribute == GetMaxHealthAttribute())
     {

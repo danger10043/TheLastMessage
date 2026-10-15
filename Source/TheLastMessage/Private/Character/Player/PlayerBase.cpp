@@ -3,6 +3,7 @@
 #include "Abilities/GameplayAbility.h"
 #include "GameplayEffect.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Gimmick/Component/InteractionComponent.h"
 #include "NativeGameplayTags.h"
 #include "TimerManager.h"
 
@@ -14,6 +15,9 @@ APlayerBase::APlayerBase()
 	AbilitySystemComponent = CreateDefaultSubobject<UAbilitySystemComponent>(TEXT("AbilitySystemComponent"));
 	AbilitySystemComponent->SetIsReplicated(true);
 	AbilitySystemComponent->SetReplicationMode(EGameplayEffectReplicationMode::Mixed);
+
+	InteractionComponent = CreateDefaultSubobject<UInteractionComponent>(TEXT("InteractionComponent"));
+
 	JumpMaxCount = 1;
 }
 
@@ -121,7 +125,12 @@ void APlayerBase::DoJumpStart()
 
 void APlayerBase::DoInteract()
 {
-	if (!IsDead()) Super::DoInteract();
+	if (IsDead() || !IsValid(InteractionComponent))
+	{
+		return;
+	}
+
+	InteractionComponent->RequestInteract();
 }
 
 void APlayerBase::EndPlay(const EEndPlayReason::Type EndPlayReason)

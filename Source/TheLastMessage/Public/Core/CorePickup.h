@@ -7,6 +7,8 @@
 
 class UCoreComponent;
 class UCoreDataAsset;
+class UPrimitiveComponent;
+class USphereComponent;
 class UStaticMeshComponent;
 
 /** 코어 보상을 지정된 코어로 지급할지, 선택지로 제공할지 구분한다. */
@@ -40,6 +42,10 @@ public:
 	bool TryAcquireFixedCore(UCoreComponent* InCoreComponent);
 
 protected:
+	/** 플레이어가 코어를 획득할 수 있는 범위를 감지한다. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Core|Components")
+	TObjectPtr<USphereComponent> PickupCollision = nullptr;
+
 	/** 코어 보상의 외형을 표시하는 메시 컴포넌트다. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Core|Components")
 	TObjectPtr<UStaticMeshComponent> CoreMesh = nullptr;
@@ -58,6 +64,11 @@ protected:
 	bool bConsumed = false;
 
 private:
+	/** 획득 범위에 들어온 플레이어에게 고정 코어의 획득을 요청한다. */
+	UFUNCTION()
+	void OnPickupBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor,
+		UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult);
+
 	/** 현재 코어 보상을 지급하는 중인지 나타낸다. 지급 중에는 추가 획득 요청을 막는다. */
 	bool bIsGrantingReward = false;
 };

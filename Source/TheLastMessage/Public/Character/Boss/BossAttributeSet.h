@@ -37,9 +37,17 @@ public:
     FGameplayAttributeData MoveSpeed;
     BOSS_ATTRIBUTE_ACCESSORS(UBossAttributeSet, MoveSpeed)
 
+    // Meta Attribute: consumed and reset after each damage effect.
+    UPROPERTY(BlueprintReadOnly, Category = "Boss|Damage")
+    FGameplayAttributeData IncomingDamage;
+    BOSS_ATTRIBUTE_ACCESSORS(UBossAttributeSet, IncomingDamage)
+
     float GetHealthPercent();
+
     virtual void PreAttributeChange(const FGameplayAttribute& Attribute, float& NewValue) override;
+
     virtual bool PreGameplayEffectExecute(FGameplayEffectModCallbackData& Data) override;
+
     virtual void PostGameplayEffectExecute(const FGameplayEffectModCallbackData& Data) override;
 };
 

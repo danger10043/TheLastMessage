@@ -49,22 +49,6 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Side Scrolling|Interaction")
 	float InteractionRadius = 200.0f;
 
-	/** Time to disable input after a wall jump to preserve momentum */
-	UPROPERTY(EditAnywhere, Category="Side Scrolling|Wall Jump")
-	float DelayBetweenWallJumps = 0.3f;
-
-	/** Distance to trace ahead of the character for wall jumps */
-	UPROPERTY(EditAnywhere, Category="Side Scrolling|Wall Jump")
-	float WallJumpTraceDistance = 50.0f;
-
-	/** Horizontal impulse to apply to the character during wall jumps */
-	UPROPERTY(EditAnywhere, Category="Side Scrolling|Wall Jump")
-	float WallJumpHorizontalImpulse = 500.0f;
-
-	/** Multiplies the jump Z velocity for wall jumps. */
-	UPROPERTY(EditAnywhere, Category="Side Scrolling|Wall Jump")
-	float WallJumpVerticalMultiplier = 1.4f;
-
 	/** Collision object type to use for soft collision traces (dropping down floors) */
 	UPROPERTY(VisibleAnywhere, Transient, Category="Side Scrolling|Soft Platforms")
 	TEnumAsByte<ECollisionChannel> SoftCollisionObjectType = ECC_GameTraceChannel1;
@@ -80,17 +64,11 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Side Scrolling|Coyote Time", meta = (ClampMin = 0, ClampMax = 5, Units = "s"))
 	float MaxCoyoteTime = 0.16f;
 
-	/** Wall jump lockout timer */
-	FTimerHandle WallJumpTimer;
-
 	/** Last captured horizontal movement input value */
 	float ActionValueY = 0.0f;
 
 	/** Last captured platform drop axis value */
 	float DropValue = 0.0f;
-
-	/** If true, this character has already wall jumped */
-	bool bHasWallJumped = false;
 
 	/** If true, this character has already double jumped */
 	bool bHasDoubleJumped = false;
@@ -106,9 +84,6 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
-
-	/** Gameplay cleanup */
-	virtual void EndPlay(EEndPlayReason::Type EndPlayReason) override;
 
 	/** Initialize input action bindings */
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
@@ -163,9 +138,6 @@ protected:
 	/** Checks for soft collision with platforms */
 	void CheckForSoftCollision();
 
-	/** Resets wall jump lockout. Called from timer after a wall jump */
-	void ResetWallJump();
-
 public:
 
 	/** Updates per-platform passage before movement; ordinary floors stay blocking. */
@@ -177,7 +149,4 @@ public:
 	UFUNCTION(BlueprintPure, Category="Side Scrolling")
 	bool HasDoubleJumped() const;
 
-	/** Returns true if the character has just wall jumped */
-	UFUNCTION(BlueprintPure, Category="Side Scrolling")
-	bool HasWallJumped() const;
 };

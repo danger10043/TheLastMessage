@@ -25,16 +25,12 @@ AGimmickBase::AGimmickBase()
 	InteractionEffect->SetAutoActivate(false);
 }
 
-bool AGimmickBase::CanInteractInternal(
-	ACharacter* Player) const
+bool AGimmickBase::CanInteractInternal(ACharacter* Player) const
 {
-	return bIsEnabled
-		&& bSupportsInteraction
-		&& IsValid(Player);
+	return bIsEnabled && bSupportsInteraction && IsValid(Player);
 }
 
-void AGimmickBase::PerformInteraction(
-	ACharacter* Player)
+void AGimmickBase::PerformInteraction(ACharacter* Player)
 {
 	if (!CanInteractInternal(Player))
 	{
@@ -62,16 +58,15 @@ void AGimmickBase::ApplyActiveState(bool bNewActive)
 	NotifyLinkedDevices(bNewActive);
 }
 
-void AGimmickBase::UpdateInteractionHighlight(
-	bool bVisible)
+void AGimmickBase::UpdateInteractionHighlight(bool bVisible)
 {
-	const bool bShowHighlight =
-		bVisible && bIsEnabled && bSupportsInteraction;
+	const bool bShowHighlight = bVisible && bIsEnabled && bSupportsInteraction;
 
+	// 실제 상호작용 대상인지 기록
 	bIsHighlighted = bShowHighlight;
 
-	const float TargetIntensity =
-		bShowHighlight ? GlowIntensity : 0.0f;
+	// 자식 클래스에서 발광 우선순위를 결정할 수 있도록 분리
+	const float TargetIntensity = CalculateGlowIntensity();
 
 	for (UMaterialInstanceDynamic* GlowMaterial : GlowMaterials)
 	{
@@ -80,9 +75,7 @@ void AGimmickBase::UpdateInteractionHighlight(
 			continue;
 		}
 
-		GlowMaterial->SetScalarParameterValue(
-			GlowParameterName,
-			TargetIntensity);
+		GlowMaterial->SetScalarParameterValue(GlowParameterName, TargetIntensity);
 	}
 
 	if (!IsValid(InteractionEffect))
@@ -159,4 +152,10 @@ void AGimmickBase::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
+}
+
+float AGimmickBase::CalculateGlowIntensity() const
+{
+	// 기본 기믹은 기존 상호작용 강조 상태에 따라 발광
+	return bIsHighlighted ? GlowIntensity : 0.0f;
 }

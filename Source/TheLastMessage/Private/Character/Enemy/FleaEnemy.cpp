@@ -1,4 +1,9 @@
 #include "Character/Enemy/FleaEnemy.h"
+#include "Components/CapsuleComponent.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "NiagaraComponent.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
 #include "GameFramework/Pawn.h"
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetSystemLibrary.h"
@@ -12,6 +17,7 @@ AFleaEnemy::AFleaEnemy()
 	StatConfig.MaxHealth = 250.f;
 	StatConfig.MoveSpeed = 220.f;
 	StatConfig.AttackRange = 180.f;
+	StatConfig.ChaseAcceptableRadius = 120.f;
 	StatConfig.AttackCooldown = 2.f;
 }
 
@@ -29,13 +35,41 @@ void AFleaEnemy::StartAreaAttack()
 {
 	bIsAttacking = true;
 	FaceTarget();
+	PlayAttackMontage();
 
 	// TODO: 공격 몽타주 재생 후 애님 노티파이 시점에 ExecuteAreaAttack 호출로 교체
 	GetWorldTimerManager().SetTimer(AreaAttackTimerHandle, this, &AFleaEnemy::ExecuteAreaAttack, AreaAttackWindup, false);
+
+	// 윈드업(차지) 동안 충전 이펙트를 재생한다.
+	if (ChargeEffect)
+	{
+		USceneComponent* AttachTo = GetRootComponent();
+		FName AttachSocket = NAME_None;
+		FVector AttachOffset = ChargeEffectOffset;
+		EAttachLocation::Type AttachType = EAttachLocation::KeepRelativeOffset;
+
+		if (!ChargeEffectSocketName.IsNone() && GetMesh() && GetMesh()->DoesSocketExist(ChargeEffectSocketName))
+		{
+			AttachTo = GetMesh();
+			AttachSocket = ChargeEffectSocketName;
+			AttachOffset = FVector::ZeroVector;
+			AttachType = EAttachLocation::SnapToTarget;
+		}
+
+		ChargeEffectComponent = UNiagaraFunctionLibrary::SpawnSystemAttached(ChargeEffect, AttachTo, AttachSocket,
+			AttachOffset, FRotator::ZeroRotator, AttachType, true);
+
+		if (ChargeEffectComponent && bScaleChargeEffectToAttackRadius && ShockwaveEffectBaseRadius > 0.f)
+		{
+			ChargeEffectComponent->SetWorldScale3D(FVector(AreaAttackRadius / ShockwaveEffectBaseRadius));
+		}
+	}
 }
 
 void AFleaEnemy::ExecuteAreaAttack()
 {
+	StopChargeEffect();
+
 	if (IsDead() || !IsAttacking())
 	{
 		return;
@@ -72,11 +106,23 @@ void AFleaEnemy::ExecuteAreaAttack()
 
 void AFleaEnemy::SpawnShockwaveEffect()
 {
-	// TODO: Niagara 모듈·플러그인 추가 후 UNiagaraSystem(ShockwaveEffect) 생성으로 구현
+	const float EffectScale = ShockwaveEffectBaseRadius > 0.f ? AreaAttackRadius / ShockwaveEffectBaseRadius : 1.f;
+	const FVector FeetLocation = GetActorLocation() - FVector(0.f, 0.f, GetCapsuleComponent()->GetScaledCapsuleHalfHeight());
+	SpawnEffectAtLocation(ShockwaveEffect, FeetLocation, FRotator::ZeroRotator, FVector(EffectScale));
+}
+
+void AFleaEnemy::StopChargeEffect()
+{
+	if (ChargeEffectComponent)
+	{
+		ChargeEffectComponent->Deactivate();
+		ChargeEffectComponent = nullptr;
+	}
 }
 
 void AFleaEnemy::CancelAttack()
 {
 	GetWorldTimerManager().ClearTimer(AreaAttackTimerHandle);
+	StopChargeEffect();
 	Super::CancelAttack();
 }

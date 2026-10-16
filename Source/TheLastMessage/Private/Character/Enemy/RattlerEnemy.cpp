@@ -9,6 +9,7 @@ ARattlerEnemy::ARattlerEnemy()
 	StatConfig.MaxHealth = 120.f;
 	StatConfig.MoveSpeed = 250.f;
 	StatConfig.AttackRange = 900.f;
+	StatConfig.ChaseAcceptableRadius = 700.f;
 }
 
 void ARattlerEnemy::StartAttack()
@@ -26,6 +27,7 @@ void ARattlerEnemy::StartBurst()
 	bIsAttacking = true;
 	RemainingBurst = BurstCount;
 	FaceTarget();
+	PlayAttackMontage();
 
 	FireOnce();
 
@@ -44,8 +46,16 @@ void ARattlerEnemy::FireOnce()
 		return;
 	}
 
-	const FVector Muzzle = GetActorTransform().TransformPosition(MuzzleOffset);
+	const FVector Muzzle = GetMuzzleLocation(MuzzleSocketName, MuzzleOffset);
+
+	FRotator FlashRotation = GetActorRotation();
+	if (const AActor* Target = GetCurrentTarget())
+	{
+		FlashRotation = (Target->GetActorLocation() - Muzzle).Rotation();
+	}
+
 	SpawnEnemyProjectile(ProjectileConfig, Muzzle);
+	SpawnEffectAtSocket(MuzzleFlashEffect, MuzzleSocketName, MuzzleOffset, FlashRotation);
 
 	--RemainingBurst;
 	if (RemainingBurst <= 0)

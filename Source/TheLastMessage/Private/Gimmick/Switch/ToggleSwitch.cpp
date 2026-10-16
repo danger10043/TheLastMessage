@@ -44,3 +44,28 @@ void AToggleSwitch::PerformInteraction(ACharacter * Player)
 
 	ToggleSwitch();
 }
+
+void AToggleSwitch::SetTimerGlow(bool bEnabled, float Alpha)
+{
+	bIsTimerGlowActive = bEnabled;
+	TimerGlowAlpha = FMath::Clamp(Alpha, 0.0f, 1.0f);
+
+	// 현재 상호작용 강조 상태를 유지하며 발광만 다시 계산
+	UpdateInteractionHighlight(bIsHighlighted);
+}
+
+float AToggleSwitch::CalculateGlowIntensity() const
+{
+	if (!bIsEnabled || !bSupportsInteraction)
+	{
+		return 0.0f;
+	}
+
+	if (bIsTimerGlowActive)
+	{
+		return GlowIntensity * TimerGlowAlpha;
+	}
+
+	// 타이머 연출이 끝나면 기존 상호작용 강조로 복귀
+	return Super::CalculateGlowIntensity();
+}

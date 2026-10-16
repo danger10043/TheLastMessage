@@ -33,9 +33,20 @@ public:
 	// 그룹의 C++ 코드에서 현재 상태를 읽는 보조 함수
 	bool IsSwitchActive() const { return bIsActive; }
 
+	// 시간 제한 그룹에서 타이머 발광 설정
+	// Alpha: 0이면 꺼짐, 1이면 설정된 세기로 발광
+	void SetTimerGlow(bool bEnabled, float Alpha);
+
 protected:
+	// 타이머 진행 중에는 타이머 발광을 우선
+	virtual float CalculateGlowIntensity() const override;
+
 	// 스위치 외형
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Gimmick|Components")
 	TObjectPtr<UStaticMeshComponent> SwitchMesh;
 
+private:
+	bool bIsTimerGlowActive = false;
+
+	float TimerGlowAlpha = 0.0f;
 };

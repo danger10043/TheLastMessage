@@ -191,9 +191,90 @@ void APlayerBase::ServerUpdateAim_Implementation(FVector_NetQuantize AimPoint)
 
 void APlayerBase::RequestGrapplingHook()
 {
+	if (IsGrappling())
+	{
+		GrapplingHookComponent->CancelGrapple();
+		return;
+	}
 	if (IsDead() || IsHitReacting()) return;
 	UpdateMouseAim();
 	if (bHasAimTarget) GrapplingHookComponent->RequestGrapple(GetAimTargetLocation());
+}
+
+void APlayerBase::ReleaseGrapplingHook()
+{
+	GrapplingHookComponent->CancelGrapple();
+}
+
+void APlayerBase::CaptureGrappleJumpState()
+{
+	SavedGrappleJumpCount = JumpCurrentCount;
+	SavedGrappleJumpCountPreJump = JumpCurrentCountPreJump;
+	bSavedGrappleDoubleJump = bHasDoubleJumped;
+	bGrappleJumpStateCaptured = true;
+	bGrappleCancelJumpAvailable = false;
+	// Grappling replaces the previous wall-jump momentum and its temporary input lock.
+	GetWorldTimerManager().ClearTimer(WallJumpTimer);
+	bHasWallJumped = false;
+}
+
+void APlayerBase::RestoreGrappleJumpState()
+{
+	if (!bGrappleJumpStateCaptured) return;
+	JumpCurrentCount = SavedGrappleJumpCount;
+	JumpCurrentCountPreJump = SavedGrappleJumpCountPreJump;
+	bHasDoubleJumped = bSavedGrappleDoubleJump;
+	bGrappleJumpStateCaptured = false;
+}
+
+void APlayerBase::GrantGrappleCancelJump()
+{
+	if (IsDead() || !GetCharacterMovement()->IsFalling()) return;
+	StopJumping();
+	bGrappleCancelJumpAvailable = true;
+	JumpCurrentCount = FMath::Max(0, JumpMaxCount - 1);
+	JumpCurrentCountPreJump = JumpCurrentCount;
+	bHasDoubleJumped = false;
+}
+
+bool APlayerBase::CanJumpWhileFalling() const
+{
+	return bGrappleCancelJumpAvailable || Super::CanJumpWhileFalling();
+}
+
+void APlayerBase::CheckJumpInput(float DeltaTime)
+{
+	UCharacterMovementComponent* Movement = GetCharacterMovement();
+	const bool bHadGrappleJump = bGrappleCancelJumpAvailable;
+	const FVector IncomingVelocity = Movement->Velocity;
+	Super::CheckJumpInput(DeltaTime);
+	if (bHadGrappleJump && !bGrappleCancelJumpAvailable && Movement->IsFalling())
+	{
+		// Normal jumping replaces vertical speed. A tether release adds lift to its momentum.
+		Movement->Velocity = Movement->ConstrainDirectionToPlane(IncomingVelocity + FVector::UpVector * Movement->JumpZVelocity);
+	}
+}
+
+void APlayerBase::OnJumped_Implementation()
+{
+	if (bGrappleCancelJumpAvailable)
+	{
+		bGrappleCancelJumpAvailable = false;
+		JumpCurrentCount = JumpMaxCount;
+		bHasDoubleJumped = true;
+	}
+	Super::OnJumped_Implementation();
+}
+
+void APlayerBase::Landed(const FHitResult& Hit)
+{
+	bGrappleCancelJumpAvailable = false;
+	Super::Landed(Hit);
+}
+
+bool APlayerBase::IsGrappling() const
+{
+	return GrapplingHookComponent && GrapplingHookComponent->IsPulling();
 }
 
 void APlayerBase::BeginPlay()
@@ -557,7 +638,11 @@ FName APlayerBase::GetDamageReactionSection(const FGameplayEffectContextHandle& 
 
 void APlayerBase::HandleHitReaction(FName ReactionSection)
 {
-	if (!HasAuthority() || IsDead() || IsHitReacting() || !HitReactMontage) return;
+	if (!HasAuthority() || IsDead()) return;
+	bGrappleCancelJumpAvailable = false;
+	// Actual damage interrupts grappling even when no reaction montage is assigned.
+	GrapplingHookComponent->ClearAnchor();
+	if (IsHitReacting() || !HitReactMontage) return;
 	const FName Section = PlayerReaction::ResolveSection(HitReactMontage, ReactionSection);
 	const int32 SectionIndex = HitReactMontage->GetSectionIndex(Section);
 	const float Length = SectionIndex != INDEX_NONE ? HitReactMontage->GetSectionLength(SectionIndex) : HitReactMontage->GetPlayLength();
@@ -658,6 +743,7 @@ void APlayerBase::HandleDeath(FName ReactionSection)
 
 void APlayerBase::CleanupPlayerActions()
 {
+	bGrappleCancelJumpAvailable = false;
 	GrapplingHookComponent->ClearAnchor();
 	FinishHitReaction();
 	AbilitySystemComponent->CancelAllAbilities();
@@ -682,7 +768,7 @@ void APlayerBase::UpdateJumpLimit()
 
 void APlayerBase::DoMove(float Forward)
 {
-	if (IsDead() || IsHitReacting() || AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking))
+	if (IsDead() || IsHitReacting() || IsGrappling() || AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking))
 	{
 		ActionValueY = 0.0f;
 		return;
@@ -692,7 +778,7 @@ void APlayerBase::DoMove(float Forward)
 
 void APlayerBase::DoDrop(float Value)
 {
-	if (IsDead() || IsHitReacting() || AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking))
+	if (IsDead() || IsHitReacting() || IsGrappling() || AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking))
 	{
 		DropValue = 0.0f;
 		return;
@@ -702,7 +788,15 @@ void APlayerBase::DoDrop(float Value)
 
 void APlayerBase::DoJumpStart()
 {
-	if (!IsDead() && !IsHitReacting() && !AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking))
+	if (IsDead() || IsHitReacting() || AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking)) return;
+	if (IsGrappling()) GrapplingHookComponent->CancelGrapple();
+	if (bGrappleCancelJumpAvailable && !IsGrappling())
+	{
+		// Keep the release trajectory even beside a wall or while holding drop input.
+		Jump();
+		return;
+	}
+	if (!IsGrappling())
 	{
 		Super::DoJumpStart();
 	}

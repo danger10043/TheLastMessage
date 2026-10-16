@@ -139,6 +139,7 @@ void ASideScrollingCharacter::Landed(const FHitResult& Hit)
 {
 	// reset the double jump
 	bHasDoubleJumped = false;
+	Super::Landed(Hit);
 }
 
 void ASideScrollingCharacter::OnMovementModeChanged(EMovementMode PrevMovementMode, uint8 PreviousCustomMode /*= 0*/)

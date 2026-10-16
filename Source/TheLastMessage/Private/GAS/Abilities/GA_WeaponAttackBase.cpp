@@ -34,6 +34,7 @@ UGA_WeaponAttackBase::UGA_WeaponAttackBase()
 	ActivationBlockedTags.AddTag(WeaponGameplayTags::State_Attacking);
 	ActivationBlockedTags.AddTag(WeaponGameplayTags::State_Dead);
 	ActivationBlockedTags.AddTag(WeaponGameplayTags::State_HitReacting);
+	ActivationBlockedTags.AddTag(WeaponGameplayTags::State_Grappling);
 	CooldownEffectClass = UGE_WeaponPrimaryCooldown::StaticClass();
 	AttackCooldownTags.AddTag(WeaponGameplayTags::Cooldown_Primary);
 }

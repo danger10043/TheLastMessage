@@ -4,6 +4,8 @@
 #include "Character/Enemy/EnemyBase.h"
 #include "RattlerEnemy.generated.h"
 
+class UNiagaraSystem;
+
 /** 덩치봇 1: 땅을 기어다니며 원거리 연발 공격 */
 UCLASS()
 class THELASTMESSAGE_API ARattlerEnemy : public AEnemyBase
@@ -37,6 +39,14 @@ protected:
 	/** 연발 종료 후 다음 공격까지 대기 시간(초) */
 	UPROPERTY(EditDefaultsOnly, Category = "Rattler")
 	float BurstCooldown = 1.5f;
+
+	/** 총구 화염 이펙트 (한 발마다 재생) */
+	UPROPERTY(EditDefaultsOnly, Category = "Rattler|Effects")
+	TObjectPtr<UNiagaraSystem> MuzzleFlashEffect;
+
+	/** 투사체·총구 화염이 나갈 스켈레탈 메시 소켓 이름. 소켓이 없으면 아래 MuzzleOffset을 쓴다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Rattler")
+	FName MuzzleSocketName = TEXT("Fire");
 
 	/** 투사체 발사 위치(몬스터 기준 로컬 좌표) */
 	UPROPERTY(EditDefaultsOnly, Category = "Rattler")

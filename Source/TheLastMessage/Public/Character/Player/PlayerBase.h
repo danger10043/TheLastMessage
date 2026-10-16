@@ -4,6 +4,7 @@
 #include "Character/Player/SideScrollingCharacter.h"
 #include "AbilitySystemInterface.h"
 #include "GameplayTagContainer.h"
+#include "Engine/NetSerialization.h"
 #include "Inputs/AbilityInputBinding.h"
 #include "Weapon/WeaponTypes.h"
 #include "PlayerBase.generated.h"
@@ -18,6 +19,7 @@ class UWeaponBase;
 class UWeaponDataAsset;
 class UStaticMeshComponent;
 class UAnimMontage;
+class UGrapplingHookComponent;
 class APlayerBase;
 struct FGameplayEffectContextHandle;
 
@@ -42,6 +44,7 @@ class THELASTMESSAGE_API APlayerBase : public ASideScrollingCharacter, public IA
 
 public:
 	APlayerBase();
+	virtual void Tick(float DeltaSeconds) override;
 	virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 	virtual float TakeDamage(float DamageAmount, const FDamageEvent& DamageEvent, AController* EventInstigator, AActor* DamageCauser) override;
@@ -88,8 +91,19 @@ public:
 	UPROPERTY(BlueprintAssignable, Category="Player|Events")
 	FOnPlayerDiedSignature OnPlayerDied;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Player|Aim")
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Replicated, Category="Player|Aim")
 	FVector AimDirection = FVector::ForwardVector;
+
+	// 커서 광선과 캐릭터의 이동 평면이 만나는 지점. 무기/훅 발사 위치에서도 사용한다.
+	UFUNCTION(BlueprintPure, Category="Player|Aim")
+	FVector GetAimTargetLocation() const;
+
+	// 커스텀 카메라/입력에서도 같은 조준 계산을 사용할 수 있다. 실패 시 이전 조준 유지.
+	UFUNCTION(BlueprintCallable, Category="Player|Aim")
+	bool UpdateAimFromWorldRay(FVector RayOrigin, FVector RayDirection);
+
+	UFUNCTION(BlueprintCallable, Category="Player|Grappling")
+	void RequestGrapplingHook();
 
 	virtual void DoMove(float Forward) override;
 	virtual void DoDrop(float Value) override;
@@ -102,6 +116,12 @@ public:
 	UCoreComponent* GetCoreComponent() const;
 
 protected:
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Player|Grappling")
+	TObjectPtr<UGrapplingHookComponent> GrapplingHookComponent;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Player|Input")
+	TObjectPtr<UInputAction> GrapplingHookAction;
+
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -192,7 +212,17 @@ private:
 	bool bDeathPresentationStarted = false;
 	// ServerOnly 공격 능력은 눌림/해제를 동일한 서버 경로로 전달한다.
 	UFUNCTION(Server, Reliable)
-	void ServerAbilityInput(FGameplayTag InputTag, uint8 InputState);
+	void ServerAbilityInput(FGameplayTag InputTag, uint8 InputState, FVector_NetQuantize AimPoint);
+	void UpdateMouseAim();
+	bool SetAimTarget(FVector WorldPoint);
+	FVector GetAimPlaneNormal() const;
+	UFUNCTION(Server, Unreliable)
+	void ServerUpdateAim(FVector_NetQuantize AimPoint);
+	UPROPERTY(Replicated)
+	FVector AimTargetLocation = FVector::ZeroVector;
+	UPROPERTY(Replicated)
+	bool bHasAimTarget = false;
+	float AimSendElapsed = 0.0f;
 	void AbilityInputPressed(FGameplayTag InputTag);
 	void AbilityInputReleased(FGameplayTag InputTag);
 	void AbilityInputCanceled(FGameplayTag InputTag);

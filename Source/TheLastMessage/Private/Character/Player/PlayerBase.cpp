@@ -1,4 +1,5 @@
 #include "Character/Player/PlayerBase.h"
+#include "Character/Player/GrapplingHookComponent.h"
 #include "AbilitySystemComponent.h"
 #include "Abilities/GameplayAbility.h"
 #include "GameplayEffect.h"
@@ -22,7 +23,12 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "GameFramework/Controller.h"
+#include "GameFramework/PlayerController.h"
+#include "DrawDebugHelpers.h"
+#include "HAL/IConsoleManager.h"
 #include "Engine/DamageEvents.h"
+#include "InputAction.h"
+#include "UObject/ConstructorHelpers.h"
 
 namespace PlayerReaction
 {
@@ -44,8 +50,16 @@ void SelectSection(UAnimInstance* AnimInstance, UAnimMontage* Montage, FName Req
 
 UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_PlayerDoubleJump, "Unlock.DoubleJump");
 
+#if ENABLE_DRAW_DEBUG
+static TAutoConsoleVariable<int32> CVarDebugAim(
+	TEXT("tlm.DebugAim"), 0, TEXT("Draw mouse aim direction and target: 0=off, 1=on."));
+#endif
+
 APlayerBase::APlayerBase()
 {
+	GrapplingHookComponent = CreateDefaultSubobject<UGrapplingHookComponent>(TEXT("GrapplingHookComponent"));
+	static ConstructorHelpers::FObjectFinder<UInputAction> GrappleAction(TEXT("/Game/Main/Inputs/Actions/IA_GrapplingHook.IA_GrapplingHook"));
+	GrapplingHookAction = GrappleAction.Object;
 	AbilitySystemComponent = CreateDefaultSubobject<UAbilitySystemComponent>(TEXT("AbilitySystemComponent"));
 	AbilitySystemComponent->SetIsReplicated(true);
 	AbilitySystemComponent->SetReplicationMode(EGameplayEffectReplicationMode::Mixed);
@@ -91,6 +105,95 @@ void APlayerBase::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifet
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(APlayerBase, VisibleWeaponSlot);
 	DOREPLIFETIME(APlayerBase, DeathState);
+	DOREPLIFETIME_CONDITION(APlayerBase, AimDirection, COND_SkipOwner);
+	DOREPLIFETIME_CONDITION(APlayerBase, AimTargetLocation, COND_SkipOwner);
+	DOREPLIFETIME_CONDITION(APlayerBase, bHasAimTarget, COND_SkipOwner);
+}
+
+FVector APlayerBase::GetAimPlaneNormal() const
+{
+	const UCharacterMovementComponent* Movement = GetCharacterMovement();
+	const FVector Normal = Movement->bConstrainToPlane ? Movement->GetPlaneConstraintNormal().GetSafeNormal() : FVector::YAxisVector;
+	return Normal.IsNearlyZero() ? FVector::YAxisVector : Normal;
+}
+
+FVector APlayerBase::GetAimTargetLocation() const
+{
+	return bHasAimTarget ? AimTargetLocation : GetActorLocation() + AimDirection * 1000.0f;
+}
+
+bool APlayerBase::SetAimTarget(FVector WorldPoint)
+{
+	if (WorldPoint.ContainsNaN() || IsDead()) return false;
+	const FVector Delta = FVector::VectorPlaneProject(WorldPoint - GetActorLocation(), GetAimPlaneNormal());
+	// 캐릭터 중심 부근에서 방향이 뒤집히거나 비정상 좌표가 전파되지 않도록 한다.
+	if (Delta.ContainsNaN() || Delta.SizeSquared() < 1.0f || Delta.SizeSquared() > 1.e12f) return false;
+	AimTargetLocation = GetActorLocation() + Delta;
+	AimDirection = Delta.GetSafeNormal();
+	bHasAimTarget = true;
+	return true;
+}
+
+bool APlayerBase::UpdateAimFromWorldRay(FVector RayOrigin, FVector RayDirection)
+{
+	if ((!HasAuthority() && !IsLocallyControlled()) || RayOrigin.ContainsNaN() || RayDirection.ContainsNaN()) return false;
+	RayDirection = RayDirection.GetSafeNormal();
+	const FVector Normal = GetAimPlaneNormal();
+	const double Denominator = FVector::DotProduct(RayDirection, Normal);
+	if (FMath::Abs(Denominator) < UE_SMALL_NUMBER) return false;
+	const double Distance = FVector::DotProduct(GetActorLocation() - RayOrigin, Normal) / Denominator;
+	if (Distance < 0.0) return false;
+	return SetAimTarget(RayOrigin + RayDirection * Distance);
+}
+
+void APlayerBase::UpdateMouseAim()
+{
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	if (!PC || !PC->IsLocalController() || IsDead()) return;
+	FVector RayOrigin, RayDirection;
+	if (PC->DeprojectMousePositionToWorld(RayOrigin, RayDirection))
+	{
+		UpdateAimFromWorldRay(RayOrigin, RayDirection);
+	}
+}
+
+void APlayerBase::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	UpdateMouseAim();
+	if (HasAuthority() && !IsLocallyControlled() && bHasAimTarget)
+	{
+		// 클라이언트의 다음 갱신 전에도 이동한 캐릭터 위치를 기준으로 방향을 계산한다.
+		SetAimTarget(AimTargetLocation);
+	}
+	if (IsLocallyControlled() && !HasAuthority() && bHasAimTarget && !IsDead())
+	{
+		AimSendElapsed += DeltaSeconds;
+		if (AimSendElapsed >= 0.05f)
+		{
+			ServerUpdateAim(AimTargetLocation);
+			AimSendElapsed = 0.0f;
+		}
+	}
+#if ENABLE_DRAW_DEBUG
+	if (IsLocallyControlled() && bHasAimTarget && CVarDebugAim.GetValueOnGameThread() != 0)
+	{
+		DrawDebugLine(GetWorld(), GetActorLocation(), GetAimTargetLocation(), FColor::Cyan);
+		DrawDebugSphere(GetWorld(), GetAimTargetLocation(), 8.0f, 12, FColor::Yellow);
+	}
+#endif
+}
+
+void APlayerBase::ServerUpdateAim_Implementation(FVector_NetQuantize AimPoint)
+{
+	SetAimTarget(AimPoint);
+}
+
+void APlayerBase::RequestGrapplingHook()
+{
+	if (IsDead() || IsHitReacting()) return;
+	UpdateMouseAim();
+	if (bHasAimTarget) GrapplingHookComponent->RequestGrapple(GetAimTargetLocation());
 }
 
 void APlayerBase::BeginPlay()
@@ -204,6 +307,16 @@ void APlayerBase::SetupPlayerInputComponent(UInputComponent* PlayerInputComponen
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
 	UEnhancedInputComponent* EnhancedInput = Cast<UEnhancedInputComponent>(PlayerInputComponent);
 	if (!EnhancedInput) return;
+	if (GrapplingHookAction)
+	{
+		EnhancedInput->BindAction(GrapplingHookAction, ETriggerEvent::Started, this, &APlayerBase::RequestGrapplingHook);
+	}
+	else
+	{
+		FInputKeyBinding GrappleBinding(FInputChord(EKeys::E), IE_Pressed);
+		GrappleBinding.KeyDelegate.GetDelegateForManualSet().BindUObject(this, &APlayerBase::RequestGrapplingHook);
+		EnhancedInput->KeyBindings.Add(MoveTemp(GrappleBinding));
+	}
 	TSet<const UInputAction*> BoundActions;
 	for (const FAbilityInputBinding& Binding : AbilityInputBindings)
 	{
@@ -231,9 +344,10 @@ void APlayerBase::SetupPlayerInputComponent(UInputComponent* PlayerInputComponen
 
 void APlayerBase::AbilityInputPressed(FGameplayTag InputTag)
 {
+	UpdateMouseAim();
 	if (!HasAuthority())
 	{
-		ServerAbilityInput(InputTag, 1);
+		ServerAbilityInput(InputTag, 1, GetAimTargetLocation());
 		return;
 	}
 	if (IsDead() || IsHitReacting()) return;
@@ -266,9 +380,10 @@ void APlayerBase::AbilityInputPressed(FGameplayTag InputTag)
 
 void APlayerBase::AbilityInputReleased(FGameplayTag InputTag)
 {
+	UpdateMouseAim();
 	if (!HasAuthority())
 	{
-		ServerAbilityInput(InputTag, 0);
+		ServerAbilityInput(InputTag, 0, GetAimTargetLocation());
 		return;
 	}
 	TArray<FGameplayAbilitySpecHandle> Handles;
@@ -328,7 +443,7 @@ void APlayerBase::AbilityInputCanceled(FGameplayTag InputTag)
 {
 	if (!HasAuthority())
 	{
-		ServerAbilityInput(InputTag, 2);
+		ServerAbilityInput(InputTag, 2, GetAimTargetLocation());
 		return;
 	}
 	TArray<FGameplayAbilitySpecHandle> Handles;
@@ -342,8 +457,9 @@ void APlayerBase::AbilityInputCanceled(FGameplayTag InputTag)
 	for (const auto Handle : Handles) AbilitySystemComponent->CancelAbilityHandle(Handle);
 }
 
-void APlayerBase::ServerAbilityInput_Implementation(FGameplayTag InputTag, uint8 InputState)
+void APlayerBase::ServerAbilityInput_Implementation(FGameplayTag InputTag, uint8 InputState, FVector_NetQuantize AimPoint)
 {
+	SetAimTarget(AimPoint);
 	if (!InputTag.IsValid()) return;
 	if (InputState == 1) AbilityInputPressed(InputTag);
 	else if (InputState == 0) AbilityInputReleased(InputTag);
@@ -542,6 +658,7 @@ void APlayerBase::HandleDeath(FName ReactionSection)
 
 void APlayerBase::CleanupPlayerActions()
 {
+	GrapplingHookComponent->ClearAnchor();
 	FinishHitReaction();
 	AbilitySystemComponent->CancelAllAbilities();
 	GetWorldTimerManager().ClearTimer(EnergyRechargeTimerHandle);

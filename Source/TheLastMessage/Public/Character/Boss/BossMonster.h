@@ -14,6 +14,7 @@ class UBossShieldComponent;
 class UBossCorePuzzleComponent;
 class UGameplayAbility;
 class UGameplayEffect;
+class UStaticMeshComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
     FOnBossPhaseChangedSignature, EBossPhase, NewPhase);
@@ -41,6 +42,8 @@ public:
 
     UFUNCTION(BlueprintPure, Category = "Boss|Phase")
     EBossPhase GetBossPhase();
+
+    FBossMissileConfig GetMissileConfig(EBossPhase Phase);
 
     EBossState GetBossState();
 
@@ -108,6 +111,14 @@ public:
 
 protected:
     virtual void BeginPlay() override;
+
+    void UpdateEquipmentForPhase(EBossPhase Phase);
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Boss|Equipment")
+    TObjectPtr<UStaticMeshComponent> GunMesh;
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Boss|Equipment")
+    TObjectPtr<UStaticMeshComponent> ShieldMesh;
 
     UPROPERTY(VisibleAnywhere)
     TObjectPtr<UAbilitySystemComponent> AbilitySystemComponent;

@@ -11,6 +11,9 @@
 #include "Character/Boss/BossPatternComponent.h"
 #include "Character/Boss/BossShieldComponent.h"
 #include "Character/Boss/BossCorePuzzleComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "BehaviorTree/BlackboardComponent.h"
 
 ABossMonster::ABossMonster()
 {
@@ -31,11 +34,35 @@ ABossMonster::ABossMonster()
     CorePuzzleComponent =
         CreateDefaultSubobject<UBossCorePuzzleComponent>(
             TEXT("CorePuzzleComponent"));
+
+    GunMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("GunMesh"));
+    GunMesh->SetupAttachment(GetMesh(), TEXT("Gun_Socket"));
+    GunMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    GunMesh->SetGenerateOverlapEvents(false);
+
+    ShieldMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ShieldMesh"));
+    ShieldMesh->SetupAttachment(GetMesh(), TEXT("Shield_Socket"));
+    ShieldMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    ShieldMesh->SetGenerateOverlapEvents(false);
+}
+
+void ABossMonster::UpdateEquipmentForPhase(EBossPhase Phase)
+{
+    const bool bShowShield = Phase == EBossPhase::Phase1;
+    const bool bShowGun = Phase == EBossPhase::Phase1
+        || Phase == EBossPhase::Phase2;
+
+    ShieldMesh->SetVisibility(bShowShield, true);
+    ShieldMesh->SetHiddenInGame(!bShowShield, true);
+
+    GunMesh->SetVisibility(bShowGun, true);
+    GunMesh->SetHiddenInGame(!bShowGun, true);
 }
 
 void ABossMonster::BeginPlay()
 {
     Super::BeginPlay();
+    UpdateEquipmentForPhase(GetBossPhase());
     InitializeBoss();
 }
 
@@ -247,6 +274,16 @@ void ABossMonster::InitializeBoss()
     }
 }
 
+FBossMissileConfig ABossMonster::GetMissileConfig(EBossPhase Phase)
+{
+    if (!IsValid(PatternComponent.Get()))
+    {
+        UE_LOG(LogTemp, Error, TEXT("BossMonster: PatternComponent is missing."));
+        return FBossMissileConfig{};
+    }
+    return PatternComponent->GetMissileConfig(Phase);
+}
+
 EBossPhase ABossMonster::GetBossPhase()
 {
     if (!IsValid(PhaseComponent.Get()))
@@ -292,6 +329,28 @@ void ABossMonster::SetBossState(EBossState NewState)
     }
 
     CurrentState = NewState;
+
+    if (CurrentState == EBossState::ShieldPuzzle)
+    {
+        if (AController* BossController = GetController())
+        {
+            BossController->StopMovement();
+        }
+        if (UCharacterMovementComponent* Movement = GetCharacterMovement())
+        {
+            Movement->StopMovementImmediately();
+        }
+    }
+
+    if (AAIController* AI = Cast<AAIController>(GetController()))
+    {
+        if (UBlackboardComponent* BB = AI->GetBlackboardComponent())
+        {
+            BB->SetValueAsEnum(TEXT("BossState"),
+                static_cast<uint8>(CurrentState));
+        }
+    }
+
     OnBossStateChanged.Broadcast(CurrentState);
 }
 
@@ -705,6 +764,8 @@ void ABossMonster::FinishPhaseCinematic()
         UE_LOG(LogTemp, Verbose, TEXT("BossMonster::FinishPhaseCinematic - 전환 중 사망했습니다."));
         return;
     }
+
+    UpdateEquipmentForPhase(NextPhase);
 
     SetBossState(EBossState::Combat);
     if (CurrentState != EBossState::Combat)

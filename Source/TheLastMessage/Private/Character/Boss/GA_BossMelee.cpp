@@ -21,11 +21,33 @@ void UGA_BossMelee::ActivateAbility(
     ABossMonster* Boss = GetBossOwner();
     APlayerBase* Target = IsValid(Boss)
         ? Cast<APlayerBase>(Boss->GetCurrentTarget()) : nullptr;
+
     UAnimInstance* AnimInstance = ActorInfo ? ActorInfo->GetAnimInstance() : nullptr;
+
+    FName StartSection = NAME_None;
+    if (IsValid(Boss))
+    {
+        switch (Boss->GetBossPhase())
+        {
+        case EBossPhase::Phase1:
+        case EBossPhase::Phase2:
+            StartSection = TEXT("Phase12");
+            break;
+
+        case EBossPhase::Phase3:
+            StartSection = TEXT("Phase3");
+            break;
+
+        default:
+            break;
+        }
+    }
 
     if (!IsValid(Boss) || !Boss->HasAuthority()
         || !IsValid(Target) || !Target->IsPlayerControlled() || Target->IsDead()
         || !IsValid(AnimInstance) || !AttackMontage || HitNotifyName.IsNone()
+        || StartSection.IsNone()
+        || AttackMontage->GetSectionIndex(StartSection) == INDEX_NONE
         || !FMath::IsFinite(HitHalfAngle) || HitHalfAngle < 0.f || HitHalfAngle > 180.f
         || !Boss->IsDistanceInAttackRange(AttackType, Boss->GetDistanceTo(Target))
         || !CommitAbility(Handle, ActorInfo, ActivationInfo))
@@ -52,19 +74,11 @@ void UGA_BossMelee::ActivateAbility(
         Movement->StopMovementImmediately();
     }
 
-    FVector Facing = Target->GetActorLocation() - Boss->GetActorLocation();
-    Facing.Z = 0.f;
-    if (!Facing.IsNearlyZero())
-    {
-        Boss->SetActorRotation(Facing.Rotation());
-    }
-
     BoundAnimInstance = AnimInstance;
     AnimInstance->OnPlayMontageNotifyBegin.AddUniqueDynamic(
         this, &UGA_BossMelee::HandleHitNotify);
 
-    MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
-        this, NAME_None, AttackMontage, 1.f, NAME_None, true, 1.f, 0.f, true);
+    MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, AttackMontage, 1.f, StartSection, true, 1.f, 0.f, true);
     if (!IsValid(MontageTask.Get()))
     {
         HandleMontageCancelled();

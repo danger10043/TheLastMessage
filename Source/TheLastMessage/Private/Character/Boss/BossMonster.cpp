@@ -273,6 +273,16 @@ void ABossMonster::InitializeBoss()
     }
 }
 
+FBossMissileConfig ABossMonster::GetMissileConfig(EBossPhase Phase)
+{
+    if (!IsValid(PatternComponent.Get()))
+    {
+        UE_LOG(LogTemp, Error, TEXT("BossMonster: PatternComponent is missing."));
+        return FBossMissileConfig{};
+    }
+    return PatternComponent->GetMissileConfig(Phase);
+}
+
 EBossPhase ABossMonster::GetBossPhase()
 {
     if (!IsValid(PhaseComponent.Get()))

@@ -43,6 +43,8 @@ public:
     UFUNCTION(BlueprintPure, Category = "Boss|Phase")
     EBossPhase GetBossPhase();
 
+    FBossMissileConfig GetMissileConfig(EBossPhase Phase);
+
     EBossState GetBossState();
 
     void SetBossState(EBossState NewState);

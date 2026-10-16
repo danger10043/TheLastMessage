@@ -3,6 +3,22 @@
 #include "AbilitySystemComponent.h"
 #include "Engine/World.h"
 
+FBossMissileConfig UBossPatternComponent::GetMissileConfig(EBossPhase Phase)
+{
+    switch (Phase)
+    {
+    case EBossPhase::Phase1:
+        return Phase1MissileConfig;
+    case EBossPhase::Phase2:
+        return Phase2MissileConfig;
+    case EBossPhase::Phase3:
+        return Phase3MissileConfig;
+    default:
+        UE_LOG(LogTemp, Error, TEXT("BossPatternComponent: invalid missile phase."));
+        return FBossMissileConfig{};
+    }
+}
+
 float UBossPatternComponent::GetAttackCooldownRemaining(
     EBossAttackType AttackType) const
 {

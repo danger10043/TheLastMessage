@@ -11,6 +11,8 @@
 #include "Character/Boss/BossPatternComponent.h"
 #include "Character/Boss/BossShieldComponent.h"
 #include "Character/Boss/BossCorePuzzleComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 
 ABossMonster::ABossMonster()
 {
@@ -31,11 +33,35 @@ ABossMonster::ABossMonster()
     CorePuzzleComponent =
         CreateDefaultSubobject<UBossCorePuzzleComponent>(
             TEXT("CorePuzzleComponent"));
+
+    GunMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("GunMesh"));
+    GunMesh->SetupAttachment(GetMesh(), TEXT("Gun_Socket"));
+    GunMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    GunMesh->SetGenerateOverlapEvents(false);
+
+    ShieldMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ShieldMesh"));
+    ShieldMesh->SetupAttachment(GetMesh(), TEXT("Shield_Socket"));
+    ShieldMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    ShieldMesh->SetGenerateOverlapEvents(false);
+}
+
+void ABossMonster::UpdateEquipmentForPhase(EBossPhase Phase)
+{
+    const bool bShowShield = Phase == EBossPhase::Phase1;
+    const bool bShowGun = Phase == EBossPhase::Phase1
+        || Phase == EBossPhase::Phase2;
+
+    ShieldMesh->SetVisibility(bShowShield, true);
+    ShieldMesh->SetHiddenInGame(!bShowShield, true);
+
+    GunMesh->SetVisibility(bShowGun, true);
+    GunMesh->SetHiddenInGame(!bShowGun, true);
 }
 
 void ABossMonster::BeginPlay()
 {
     Super::BeginPlay();
+    UpdateEquipmentForPhase(GetBossPhase());
     InitializeBoss();
 }
 
@@ -705,6 +731,8 @@ void ABossMonster::FinishPhaseCinematic()
         UE_LOG(LogTemp, Verbose, TEXT("BossMonster::FinishPhaseCinematic - 전환 중 사망했습니다."));
         return;
     }
+
+    UpdateEquipmentForPhase(NextPhase);
 
     SetBossState(EBossState::Combat);
     if (CurrentState != EBossState::Combat)

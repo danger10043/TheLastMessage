@@ -52,13 +52,6 @@ void UGA_BossMelee::ActivateAbility(
         Movement->StopMovementImmediately();
     }
 
-    FVector Facing = Target->GetActorLocation() - Boss->GetActorLocation();
-    Facing.Z = 0.f;
-    if (!Facing.IsNearlyZero())
-    {
-        Boss->SetActorRotation(Facing.Rotation());
-    }
-
     BoundAnimInstance = AnimInstance;
     AnimInstance->OnPlayMontageNotifyBegin.AddUniqueDynamic(
         this, &UGA_BossMelee::HandleHitNotify);

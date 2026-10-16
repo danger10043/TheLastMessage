@@ -352,4 +352,21 @@ void AEnemyBase::HandleDeath()
 	SpawnEffectAtLocation(DeathEffect, GetActorLocation());
 
 	OnEnemyDied.Broadcast(this);
+
+	// 사망 연출이 끝난 뒤 시체를 제거한다.
+	if (CorpseLifeSpan > 0.f)
+	{
+		SetLifeSpan(CorpseLifeSpan);
+	}
+}
+
+void AEnemyBase::Destroyed()
+{
+	// 몬스터가 제거될 때 AI 컨트롤러가 남지 않도록 함께 제거한다.
+	if (AController* OwnerController = GetController())
+	{
+		OwnerController->Destroy();
+	}
+
+	Super::Destroyed();
 }

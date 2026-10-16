@@ -9,6 +9,7 @@ ARattlerEnemy::ARattlerEnemy()
 	StatConfig.MaxHealth = 120.f;
 	StatConfig.MoveSpeed = 250.f;
 	StatConfig.AttackRange = 900.f;
+	StatConfig.ChaseAcceptableRadius = 700.f;
 }
 
 void ARattlerEnemy::StartAttack()

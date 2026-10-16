@@ -61,5 +61,8 @@ protected:
 	TObjectPtr<AEnemyBase> SourceEnemy;
 
 private:
+	/** LaunchProjectile이 호출된 뒤에만 충돌을 처리한다. */
+	bool bLaunched = false;
+
 	bool bImpactHandled = false;
 };

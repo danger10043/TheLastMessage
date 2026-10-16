@@ -64,6 +64,9 @@ protected:
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
 
+	// 실제 머티리얼에 적용할 발광 세기 계산
+	virtual float CalculateGlowIntensity() const;
+
 protected:
 	// 액터 위치와 회전의 기준
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Gimmick|Components")

@@ -13,6 +13,7 @@
 #include "Character/Boss/BossCorePuzzleComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "BehaviorTree/BlackboardComponent.h"
 
 ABossMonster::ABossMonster()
 {
@@ -328,6 +329,28 @@ void ABossMonster::SetBossState(EBossState NewState)
     }
 
     CurrentState = NewState;
+
+    if (CurrentState == EBossState::ShieldPuzzle)
+    {
+        if (AController* BossController = GetController())
+        {
+            BossController->StopMovement();
+        }
+        if (UCharacterMovementComponent* Movement = GetCharacterMovement())
+        {
+            Movement->StopMovementImmediately();
+        }
+    }
+
+    if (AAIController* AI = Cast<AAIController>(GetController()))
+    {
+        if (UBlackboardComponent* BB = AI->GetBlackboardComponent())
+        {
+            BB->SetValueAsEnum(TEXT("BossState"),
+                static_cast<uint8>(CurrentState));
+        }
+    }
+
     OnBossStateChanged.Broadcast(CurrentState);
 }
 

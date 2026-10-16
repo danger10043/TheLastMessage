@@ -3,6 +3,7 @@
 #include "Character/Boss/BossMonster.h"
 #include "BehaviorTree/BehaviorTreeComponent.h"
 #include "BehaviorTree/BlackboardComponent.h"
+#include "Character/Player/PlayerBase.h"
 
 UBTService_BossCombatRange::UBTService_BossCombatRange()
 {
@@ -58,4 +59,20 @@ void UBTService_BossCombatRange::UpdateValues(UBehaviorTreeComponent& OwnerComp)
         }
     }
     BB->SetValueAsBool(TEXT("bNeedsTurn180"), bNeedsTurn);
+
+    bool bCanUseCircularMissile = false;
+    APlayerBase* Player = Cast<APlayerBase>(Target);
+    if (IsValid(Boss) && IsValid(Player)
+        && Player->IsPlayerControlled() && !Player->IsDead()
+        && !BB->GetValueAsBool(TEXT("bIsTurning"))
+        && (Boss->GetBossState() == EBossState::Idle
+            || Boss->GetBossState() == EBossState::Combat))
+    {
+        const float Distance = Boss->GetDistanceTo(Player);
+        bCanUseCircularMissile = Boss->IsDistanceInAttackRange(
+            EBossAttackType::CircularMissile, Distance)
+            && Boss->GetAttackCooldownRemaining(
+                EBossAttackType::CircularMissile) == 0.f;
+    }
+    BB->SetValueAsBool(TEXT("bCanUseCircularMissile"), bCanUseCircularMissile);
 }

@@ -56,6 +56,7 @@ void UCombatAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCall
 		: nullptr;
 
 	bool bCheckDeath = false;
+	bool bReceivedDamage = false;
 
 	if (Data.EvaluatedData.Attribute == GetIncomingDamageAttribute())
 	{
@@ -66,7 +67,9 @@ void UCombatAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCall
 
 		if (Damage > 0.0f && (!Player || !Player->IsDead()))
 		{
+			const float PreviousHealth = GetHealth();
 			SetHealth(FMath::Clamp(GetHealth() - Damage, 0.0f, GetMaxHealth()));
+			bReceivedDamage = GetHealth() < PreviousHealth;
 			
 			bCheckDeath = true;
 		}
@@ -76,11 +79,16 @@ void UCombatAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCall
 		// 체력을 직접 변경하는 GE에도 범위 제한 적용
 		SetHealth(FMath::Clamp(GetHealth(), 0.0f, GetMaxHealth()));
 		bCheckDeath = true;
+		bReceivedDamage = Data.EvaluatedData.ModifierOp == EGameplayModOp::Additive && Data.EvaluatedData.Magnitude < 0.0f;
 	}
 
 	if (bCheckDeath && GetHealth() <= 0.0f && Player)
 	{
-		Player->HandleDeath();
+		Player->HandleDeath(Player->GetDamageReactionSection(Data.EffectSpec.GetContext()));
+	}
+	else if (bReceivedDamage && GetHealth() > 0.0f && Player)
+	{
+		Player->HandleHitReaction(Player->GetDamageReactionSection(Data.EffectSpec.GetContext()));
 	}
 }
 

@@ -19,6 +19,28 @@
 #include "InputCoreTypes.h"
 #include "GAS/WeaponGameplayTags.h"
 #include "Net/UnrealNetwork.h"
+#include "Animation/AnimInstance.h"
+#include "Animation/AnimMontage.h"
+#include "GameFramework/Controller.h"
+#include "Engine/DamageEvents.h"
+
+namespace PlayerReaction
+{
+FName ResolveSection(const UAnimMontage* Montage, FName Requested)
+{
+	if (Requested.IsNone()) Requested = TEXT("Backward");
+	return Montage && Montage->GetSectionIndex(Requested) != INDEX_NONE ? Requested : NAME_None;
+}
+
+void SelectSection(UAnimInstance* AnimInstance, UAnimMontage* Montage, FName Requested)
+{
+	const FName Section = ResolveSection(Montage, Requested);
+	if (Section.IsNone()) return;
+	AnimInstance->Montage_JumpToSection(Section, Montage);
+	// 다음 섹션으로 연결돼 있어도 이번에는 선택한 방향의 모션만 재생한다.
+	AnimInstance->Montage_SetNextSection(Section, NAME_None, Montage);
+}
+}
 
 UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_PlayerDoubleJump, "Unlock.DoubleJump");
 
@@ -68,6 +90,7 @@ void APlayerBase::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifet
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(APlayerBase, VisibleWeaponSlot);
+	DOREPLIFETIME(APlayerBase, DeathState);
 }
 
 void APlayerBase::BeginPlay()
@@ -213,7 +236,7 @@ void APlayerBase::AbilityInputPressed(FGameplayTag InputTag)
 		ServerAbilityInput(InputTag, 1);
 		return;
 	}
-	if (IsDead()) return;
+	if (IsDead() || IsHitReacting()) return;
 	TArray<FGameplayAbilitySpecHandle> Handles;
 	{
 		FScopedAbilityListLock Lock(*AbilitySystemComponent);
@@ -359,20 +382,167 @@ void APlayerBase::RefreshWeaponVisual(const UWeaponDataAsset* Data, UStaticMeshC
 
 bool APlayerBase::IsDead() const
 {
-	return AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Dead);
+	return DeathState.bDead || AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Dead);
 }
 
-void APlayerBase::HandleDeath()
+float APlayerBase::TakeDamage(float DamageAmount, const FDamageEvent& DamageEvent, AController* EventInstigator, AActor* DamageCauser)
 {
-	if (!HasAuthority() || bDeathHandled) return;
-	bDeathHandled = true;
+	if (!HasAuthority() || IsDead() || !CanBeDamaged() || !FMath::IsFinite(DamageAmount) || DamageAmount <= 0.0f) return 0.0f;
+	const float AcceptedDamage = Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
+	if (IsDead() || !FMath::IsFinite(AcceptedDamage) || AcceptedDamage <= 0.0f) return 0.0f;
+	// 엔진 기본 피해도 GAS와 같은 IncomingDamage 경로로 전달한다.
+	UGameplayEffect* DamageEffect = NewObject<UGameplayEffect>();
+	DamageEffect->DurationPolicy = EGameplayEffectDurationType::Instant;
+	FGameplayModifierInfo Modifier;
+	Modifier.Attribute = UCombatAttributeSet::GetIncomingDamageAttribute();
+	Modifier.ModifierOp = EGameplayModOp::Additive;
+	Modifier.ModifierMagnitude = FGameplayEffectModifierMagnitude(FScalableFloat(AcceptedDamage));
+	DamageEffect->Modifiers.Add(Modifier);
+	FGameplayEffectContextHandle Context = AbilitySystemComponent->MakeEffectContext();
+	Context.AddInstigator(EventInstigator ? EventInstigator->GetPawn() : DamageCauser, DamageCauser);
+	FHitResult HitInfo;
+	FVector ImpulseDirection;
+	DamageEvent.GetBestHitInfo(this, DamageCauser, HitInfo, ImpulseDirection);
+	if (DamageEvent.IsOfType(FPointDamageEvent::ClassID))
+	{
+		const FPointDamageEvent& PointDamage = static_cast<const FPointDamageEvent&>(DamageEvent);
+		HitInfo.TraceStart = HitInfo.ImpactPoint - PointDamage.ShotDirection;
+		HitInfo.TraceEnd = HitInfo.ImpactPoint;
+	}
+	Context.AddHitResult(HitInfo, true);
+	const float PreviousHealth = CombatAttributes->GetHealth();
+	FGameplayEffectSpec Spec(DamageEffect, Context, 1.0f);
+	AbilitySystemComponent->ApplyGameplayEffectSpecToSelf(Spec);
+	return FMath::Max(0.0f, PreviousHealth - CombatAttributes->GetHealth());
+}
+
+bool APlayerBase::IsHitReacting() const
+{
+	return AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_HitReacting);
+}
+
+FName APlayerBase::GetDamageReactionSection(const FGameplayEffectContextHandle& Context) const
+{
+	FVector DirectionToSource = FVector::ZeroVector;
+	const FHitResult* Hit = Context.GetHitResult();
+	if (Hit) DirectionToSource = Hit->TraceStart - Hit->TraceEnd;
+	if (DirectionToSource.IsNearlyZero())
+	{
+		AActor* Source = Context.GetOriginalInstigator();
+		if (!IsValid(Source) || Source == this) Source = Context.GetEffectCauser();
+		if (IsValid(Source) && Source != this) DirectionToSource = Source->GetActorLocation() - GetActorLocation();
+	}
+	if (DirectionToSource.IsNearlyZero() && Hit) DirectionToSource = Hit->ImpactNormal;
+	DirectionToSource = FVector::VectorPlaneProject(DirectionToSource, FVector::YAxisVector).GetSafeNormal();
+	const float FacingDot = FVector::DotProduct(GetActorForwardVector(), DirectionToSource);
+	// 출처가 없거나 정확히 옆/위인 피해는 기본적으로 앞에서 맞은 모션을 사용한다.
+	return FacingDot < -KINDA_SMALL_NUMBER ? FName(TEXT("Forward")) : FName(TEXT("Backward"));
+}
+
+void APlayerBase::HandleHitReaction(FName ReactionSection)
+{
+	if (!HasAuthority() || IsDead() || IsHitReacting() || !HitReactMontage) return;
+	const FName Section = PlayerReaction::ResolveSection(HitReactMontage, ReactionSection);
+	const int32 SectionIndex = HitReactMontage->GetSectionIndex(Section);
+	const float Length = SectionIndex != INDEX_NONE ? HitReactMontage->GetSectionLength(SectionIndex) : HitReactMontage->GetPlayLength();
+	const float Duration = Length /
+		FMath::Max(0.01f, HitReactPlayRate * FMath::Abs(HitReactMontage->RateScale));
+	if (!FMath::IsFinite(Duration) || Duration <= 0.0f) return;
+	AbilitySystemComponent->AddLooseGameplayTag(WeaponGameplayTags::State_HitReacting, 1, EGameplayTagReplicationState::TagAndCountToAll);
+	// 피격 중 재활성화를 먼저 막은 다음 공격과 차지만 취소한다.
+	TArray<FGameplayAbilitySpecHandle> Attacks;
+	{
+		FScopedAbilityListLock Lock(*AbilitySystemComponent);
+		for (const FGameplayAbilitySpec& Spec : AbilitySystemComponent->GetActivatableAbilities())
+		{
+			if (Spec.IsActive() && Spec.Ability && Spec.Ability->IsA<UGA_WeaponAttackBase>()) Attacks.Add(Spec.Handle);
+		}
+	}
+	for (const auto Handle : Attacks) AbilitySystemComponent->CancelAbilityHandle(Handle);
+	if (IsDead()) return;
+	StopMovementForAttack();
+	StopJumping();
+	GetWorldTimerManager().SetTimer(HitReactionTimer, this, &APlayerBase::FinishHitReaction, Duration, false);
+	MulticastHitReaction(Section);
+}
+
+void APlayerBase::MulticastHitReaction_Implementation(FName ReactionSection)
+{
+	if (IsDead() || bDeathPresentationStarted || !HitReactMontage) return;
+	UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance();
+	if (!AnimInstance) return;
+	if (AnimInstance->Montage_Play(HitReactMontage, FMath::Max(0.01f, HitReactPlayRate)) > 0.0f)
+	{
+		PlayerReaction::SelectSection(AnimInstance, HitReactMontage, ReactionSection);
+		if (HasAuthority())
+		{
+			FOnMontageEnded EndDelegate;
+			EndDelegate.BindUObject(this, &APlayerBase::HandleHitMontageEnded);
+			AnimInstance->Montage_SetEndDelegate(EndDelegate, HitReactMontage);
+		}
+	}
+}
+
+void APlayerBase::HandleHitMontageEnded(UAnimMontage* Montage, bool bInterrupted)
+{
+	if (Montage == HitReactMontage) FinishHitReaction();
+}
+
+void APlayerBase::FinishHitReaction()
+{
+	GetWorldTimerManager().ClearTimer(HitReactionTimer);
+	if (HasAuthority() && IsHitReacting())
+	{
+		AbilitySystemComponent->RemoveLooseGameplayTag(WeaponGameplayTags::State_HitReacting, 1, EGameplayTagReplicationState::TagAndCountToAll);
+	}
+}
+
+void APlayerBase::MulticastDeath_Implementation(FName ReactionSection)
+{
+	PlayDeathPresentation(ReactionSection);
+}
+
+void APlayerBase::OnRep_DeathHandled()
+{
+	if (DeathState.bDead) PlayDeathPresentation(DeathState.Section);
+}
+
+void APlayerBase::PlayDeathPresentation(FName ReactionSection)
+{
+	if (bDeathPresentationStarted) return;
+	bDeathPresentationStarted = true;
+	StopJumping();
+	GetCharacterMovement()->StopMovementImmediately();
+	GetCharacterMovement()->DisableMovement();
+	UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance();
+	if (!AnimInstance) return;
+	AnimInstance->StopAllMontages(0.1f);
+	if (DeathMontage && AnimInstance->Montage_Play(DeathMontage, FMath::Max(0.01f, DeathPlayRate)) > 0.0f)
+	{
+		PlayerReaction::SelectSection(AnimInstance, DeathMontage, ReactionSection);
+		if (FAnimMontageInstance* Instance = AnimInstance->GetActiveInstanceForMontage(DeathMontage))
+		{
+			// 공유 에셋은 변경하지 않고 이번 재생만 마지막 사망 자세를 유지한다.
+			Instance->bEnableAutoBlendOut = false;
+		}
+	}
+}
+
+void APlayerBase::HandleDeath(FName ReactionSection)
+{
+	if (!HasAuthority() || DeathState.bDead) return;
+	DeathState.bDead = true;
+	DeathState.Section = PlayerReaction::ResolveSection(DeathMontage, ReactionSection);
 	AbilitySystemComponent->AddLooseGameplayTag(WeaponGameplayTags::State_Dead, 1, EGameplayTagReplicationState::TagAndCountToAll);
 	CleanupPlayerActions();
+	MulticastDeath(DeathState.Section);
+	ForceNetUpdate();
 	OnPlayerDied.Broadcast(this);
 }
 
 void APlayerBase::CleanupPlayerActions()
 {
+	FinishHitReaction();
 	AbilitySystemComponent->CancelAllAbilities();
 	GetWorldTimerManager().ClearTimer(EnergyRechargeTimerHandle);
 	GetWorldTimerManager().ClearTimer(WallJumpTimer);
@@ -395,7 +565,7 @@ void APlayerBase::UpdateJumpLimit()
 
 void APlayerBase::DoMove(float Forward)
 {
-	if (IsDead() || AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking))
+	if (IsDead() || IsHitReacting() || AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking))
 	{
 		ActionValueY = 0.0f;
 		return;
@@ -405,7 +575,7 @@ void APlayerBase::DoMove(float Forward)
 
 void APlayerBase::DoDrop(float Value)
 {
-	if (IsDead() || AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking))
+	if (IsDead() || IsHitReacting() || AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking))
 	{
 		DropValue = 0.0f;
 		return;
@@ -415,7 +585,7 @@ void APlayerBase::DoDrop(float Value)
 
 void APlayerBase::DoJumpStart()
 {
-	if (!IsDead() && !AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking))
+	if (!IsDead() && !IsHitReacting() && !AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking))
 	{
 		Super::DoJumpStart();
 	}
@@ -436,7 +606,7 @@ void APlayerBase::StopMovementForAttack()
 
 void APlayerBase::DoInteract()
 {
-	if (IsDead() || !IsValid(InteractionComponent))
+	if (IsDead() || IsHitReacting() || !IsValid(InteractionComponent))
 	{
 		return;
 	}
@@ -451,6 +621,7 @@ UCoreComponent* APlayerBase::GetCoreComponent() const
 
 void APlayerBase::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	GetWorldTimerManager().ClearTimer(HitReactionTimer);
 	if (DoubleJumpTagChangedHandle.IsValid())
 	{
 		AbilitySystemComponent->RegisterGameplayTagEvent(TAG_PlayerDoubleJump).Remove(DoubleJumpTagChangedHandle);

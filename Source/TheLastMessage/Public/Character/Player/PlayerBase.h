@@ -17,7 +17,20 @@ class UGameplayEffect;
 class UWeaponBase;
 class UWeaponDataAsset;
 class UStaticMeshComponent;
+class UAnimMontage;
 class APlayerBase;
+struct FGameplayEffectContextHandle;
+
+// 사망 여부와 섹션을 함께 복제하여 수신 순서와 관계없이 같은 사망 모션을 재생한다.
+USTRUCT()
+struct FPlayerDeathPresentationState
+{
+	GENERATED_BODY()
+	UPROPERTY()
+	bool bDead = false;
+	UPROPERTY()
+	FName Section = NAME_None;
+};
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnPlayerDiedSignature, APlayerBase*, Player);
 
@@ -31,6 +44,7 @@ public:
 	APlayerBase();
 	virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+	virtual float TakeDamage(float DamageAmount, const FDamageEvent& DamageEvent, AController* EventInstigator, AActor* DamageCauser) override;
 
 	UFUNCTION(BlueprintPure, Category = "Player|GAS")
 	UCombatAttributeSet* GetCombatAttributes() const { return CombatAttributes; }
@@ -59,7 +73,14 @@ public:
 
 	/** Also callable by lethal gimmicks, independently of ordinary damage. */
 	UFUNCTION(BlueprintCallable, Category="Player|Death")
-	void HandleDeath();
+	void HandleDeath(FName ReactionSection = NAME_None);
+
+	// 체력이 실제로 감소했고 아직 살아 있을 때 AttributeSet에서 호출한다.
+	void HandleHitReaction(FName ReactionSection = NAME_None);
+	FName GetDamageReactionSection(const FGameplayEffectContextHandle& Context) const;
+
+	UFUNCTION(BlueprintPure, Category = "Player|Combat")
+	bool IsHitReacting() const;
 
 	UFUNCTION(BlueprintPure, Category="Player|Death")
 	bool IsDead() const;
@@ -95,6 +116,18 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|GAS")
 	TObjectPtr<UCombatAttributeSet> CombatAttributes;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Animation")
+	TObjectPtr<UAnimMontage> HitReactMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Animation")
+	TObjectPtr<UAnimMontage> DeathMontage;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Animation", meta = (ClampMin = "0.01"))
+	float HitReactPlayRate = 1.0f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Animation", meta = (ClampMin = "0.01"))
+	float DeathPlayRate = 1.0f;
 
 	// 시작할 때 장착할 근접 무기의 설정 데이터.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Weapon")
@@ -146,6 +179,17 @@ protected:
 	FTimerHandle EnergyRechargeTimerHandle;
 
 private:
+	void FinishHitReaction();
+	void HandleHitMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+	void PlayDeathPresentation(FName ReactionSection);
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastHitReaction(FName ReactionSection);
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastDeath(FName ReactionSection);
+	UFUNCTION()
+	void OnRep_DeathHandled();
+	FTimerHandle HitReactionTimer;
+	bool bDeathPresentationStarted = false;
 	// ServerOnly 공격 능력은 눌림/해제를 동일한 서버 경로로 전달한다.
 	UFUNCTION(Server, Reliable)
 	void ServerAbilityInput(FGameplayTag InputTag, uint8 InputState);
@@ -161,5 +205,6 @@ private:
 	FDelegateHandle DoubleJumpTagChangedHandle;
 	bool bStartupGranted = false;
 	/** Reentrancy guard for cleanup/event delivery; gameplay state lives on ASC. */
-	bool bDeathHandled = false;
+	UPROPERTY(ReplicatedUsing = OnRep_DeathHandled)
+	FPlayerDeathPresentationState DeathState;
 };

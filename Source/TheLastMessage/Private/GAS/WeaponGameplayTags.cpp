@@ -5,6 +5,7 @@ namespace WeaponGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(Input_Primary, "Input.Weapon.Primary");
 	UE_DEFINE_GAMEPLAY_TAG(Input_Secondary, "Input.Weapon.Secondary");
 	UE_DEFINE_GAMEPLAY_TAG(State_Attacking, "State.Attacking");
+	UE_DEFINE_GAMEPLAY_TAG(State_HitReacting, "State.HitReacting");
 	UE_DEFINE_GAMEPLAY_TAG(State_Dead, "State.Dead");
 	UE_DEFINE_GAMEPLAY_TAG(Cooldown_Primary, "Cooldown.Weapon.Primary");
 	UE_DEFINE_GAMEPLAY_TAG(Cooldown_Secondary, "Cooldown.Weapon.Secondary");

@@ -5,6 +5,7 @@
 #include "AbilitySystemInterface.h"
 #include "GameplayTagContainer.h"
 #include "Inputs/AbilityInputBinding.h"
+#include "Weapon/WeaponTypes.h"
 #include "PlayerBase.generated.h"
 
 class UAbilitySystemComponent;
@@ -29,12 +30,26 @@ class THELASTMESSAGE_API APlayerBase : public ASideScrollingCharacter, public IA
 public:
 	APlayerBase();
 	virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 	UFUNCTION(BlueprintPure, Category = "Player|GAS")
 	UCombatAttributeSet* GetCombatAttributes() const { return CombatAttributes; }
 
 	UFUNCTION(BlueprintPure, Category = "Player|Weapon")
 	UWeaponBase* GetPrimaryWeapon() const { return PrimaryWeapon; }
+
+	UFUNCTION(BlueprintPure, Category = "Player|Weapon")
+	UWeaponBase* GetSecondaryWeapon() const { return SecondaryWeapon; }
+
+	// None 슬롯은 nullptr을 반환한다. 두 슬롯은 동시에 장착된다.
+	UFUNCTION(BlueprintPure, Category = "Player|Weapon")
+	UWeaponBase* GetWeaponInSlot(EWeaponSlot Slot) const;
+
+	// 실제 공격 활성화에 성공한 슬롯의 외형을 표시한다.
+	void ShowWeaponInSlot(EWeaponSlot Slot);
+
+	UFUNCTION(BlueprintPure, Category = "Player|Weapon")
+	EWeaponSlot GetVisibleWeaponSlot() const { return VisibleWeaponSlot; }
 
 	TSubclassOf<UGameplayEffect> GetWeaponDamageEffectClass() const { return WeaponDamageEffectClass; }
 
@@ -60,7 +75,7 @@ public:
 	virtual void DoJumpStart() override;
 	virtual void DoInteract() override;
 
-	// 공격 시작 시 남은 입력과 수평 관성을 정리한다. 공중에서는 낙하를 유지한다.
+	// 공격 시작 시 남은 입력을 지운다. 지상에서는 정지하고 공중에서는 기존 속도를 유지한다.
 	void StopMovementForAttack();
 
 	UCoreComponent* GetCoreComponent() const;
@@ -85,6 +100,9 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Weapon")
 	TObjectPtr<UWeaponDataAsset> InitialPrimaryWeaponData;
 
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Weapon")
+	TObjectPtr<UWeaponDataAsset> InitialSecondaryWeaponData;
+
 	// GE_BP_CommonIncomingDamage: Instant, Modifier 없음, IncomingDamageExecution 하나.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Weapon")
 	TSubclassOf<UGameplayEffect> WeaponDamageEffectClass;
@@ -92,9 +110,22 @@ protected:
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Transient, Category = "Player|Weapon")
 	TObjectPtr<UWeaponBase> PrimaryWeapon;
 
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Transient, Category = "Player|Weapon")
+	TObjectPtr<UWeaponBase> SecondaryWeapon;
+
 	// 손 소켓에 부착할 주무기 외형. 공격 판정은 공격 능력에서 처리한다.
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|Weapon")
 	TObjectPtr<UStaticMeshComponent> PrimaryWeaponMesh;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|Weapon")
+	TObjectPtr<UStaticMeshComponent> SecondaryWeaponMesh;
+
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, ReplicatedUsing = OnRep_VisibleWeaponSlot, Category = "Player|Weapon")
+	EWeaponSlot VisibleWeaponSlot = EWeaponSlot::Primary;
+
+	// 무기별 소켓이 없을 때 사용할 공통 손 소켓. 이것도 없으면 외형을 숨긴다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Weapon")
+	FName FallbackWeaponSocketName = TEXT("SK_Weapon");
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|Interaction")
 	TObjectPtr<UInteractionComponent> InteractionComponent;
@@ -115,9 +146,16 @@ protected:
 	FTimerHandle EnergyRechargeTimerHandle;
 
 private:
+	// ServerOnly 공격 능력은 눌림/해제를 동일한 서버 경로로 전달한다.
+	UFUNCTION(Server, Reliable)
+	void ServerAbilityInput(FGameplayTag InputTag, uint8 InputState);
 	void AbilityInputPressed(FGameplayTag InputTag);
 	void AbilityInputReleased(FGameplayTag InputTag);
+	void AbilityInputCanceled(FGameplayTag InputTag);
 	void RefreshPrimaryWeaponVisual();
+	void RefreshWeaponVisual(const UWeaponDataAsset* Data, UStaticMeshComponent* WeaponMesh, bool bShow);
+	UFUNCTION()
+	void OnRep_VisibleWeaponSlot();
 	void HandleDoubleJumpTagChanged(const FGameplayTag Tag, int32 NewCount);
 	void UpdateJumpLimit();
 	FDelegateHandle DoubleJumpTagChangedHandle;

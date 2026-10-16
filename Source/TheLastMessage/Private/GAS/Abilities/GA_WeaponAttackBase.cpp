@@ -43,9 +43,9 @@ bool UGA_WeaponAttackBase::CanActivateAbility(const FGameplayAbilitySpecHandle H
 {
 	if (!Super::CanActivateAbility(Handle, ActorInfo, SourceTags, TargetTags, OptionalRelevantTags)) return false;
 	const APlayerBase* Player = ActorInfo ? Cast<APlayerBase>(ActorInfo->AvatarActor.Get()) : nullptr;
-	const UWeaponBase* Weapon = Player ? Player->GetPrimaryWeapon() : nullptr;
+	const UWeaponBase* Weapon = Player ? Player->GetWeaponInSlot(WeaponSlot) : nullptr;
 	const UWeaponDataAsset* Data = IsValid(Weapon) ? Weapon->WeaponData.Get() : nullptr;
-	return Player && !Player->IsDead() && WeaponSlot == EWeaponSlot::Primary && IsValid(Data)
+	return Player && !Player->IsDead() && IsValid(Data)
 		&& (Data->WeaponType == EWeaponType::LightMelee || Data->WeaponType == EWeaponType::HeavyMelee)
 		&& IsValid(Data->AttackMontage) && Player->GetMesh()->GetAnimInstance()
 		&& Data->AttackRange > 0.0f && MeleeHitRadius > 0.0f && Data->AttackPower > 0.0f;
@@ -76,10 +76,13 @@ void UGA_WeaponAttackBase::ActivateAbility(const FGameplayAbilitySpecHandle Hand
 	const FGameplayEventData* TriggerEventData)
 {
 	bFinishingAttack = false;
+	bWaitingForRelease = false;
+	bAttackExecuted = false;
+	ChargeDamageMultiplier = 1.0f;
 	ChargeElapsedTime = 0.0f;
 	HitActorsThisAttack.Reset();
 	APlayerBase* Player = ActorInfo ? Cast<APlayerBase>(ActorInfo->AvatarActor.Get()) : nullptr;
-	SourceWeapon = Player ? Player->GetPrimaryWeapon() : nullptr;
+	SourceWeapon = Player ? Player->GetWeaponInSlot(WeaponSlot) : nullptr;
 	DamageEffectClass = Player ? Player->GetWeaponDamageEffectClass() : nullptr;
 	const UWeaponDataAsset* Data = SourceWeapon ? SourceWeapon->WeaponData.Get() : nullptr;
 	if (!DamageEffectClass)
@@ -89,12 +92,59 @@ void UGA_WeaponAttackBase::ActivateAbility(const FGameplayAbilitySpecHandle Hand
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
-	if (!Data || !Data->AttackMontage || !CommitAbility(Handle, ActorInfo, ActivationInfo))
+	if (!Data || !Data->AttackMontage)
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
+	Player->ShowWeaponInSlot(WeaponSlot);
 	Player->StopMovementForAttack();
+	if (Data->bSupportsChargeAttack && Data->MaxChargeTime > 0.0f)
+	{
+		ChargeStartTime = GetWorld()->GetTimeSeconds();
+		bWaitingForRelease = true;
+		// 빠른 클릭으로 활성화 전에 해제된 경우도 한 번만 공격한다.
+		const FGameplayAbilitySpec* Spec = GetAbilitySystemComponentFromActorInfo()->FindAbilitySpecFromHandle(Handle);
+		if (!Spec || !Spec->InputPressed) InputReleased(Handle, ActorInfo, ActivationInfo);
+		return;
+	}
+	ExecuteAttack();
+}
+
+float UGA_WeaponAttackBase::GetChargeRatio() const
+{
+	const UWeaponDataAsset* Data = SourceWeapon ? SourceWeapon->WeaponData.Get() : nullptr;
+	if (!Data || !Data->bSupportsChargeAttack || Data->MaxChargeTime <= 0.0f) return 0.0f;
+	const float Elapsed = bWaitingForRelease ? float(GetWorld()->GetTimeSeconds() - ChargeStartTime) : ChargeElapsedTime;
+	return FMath::Clamp(Elapsed / Data->MaxChargeTime, 0.0f, 1.0f);
+}
+
+void UGA_WeaponAttackBase::InputReleased(const FGameplayAbilitySpecHandle Handle,
+	const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo)
+{
+	Super::InputReleased(Handle, ActorInfo, ActivationInfo);
+	if (!IsActive() || bFinishingAttack || !bWaitingForRelease) return;
+	const UWeaponDataAsset* Data = SourceWeapon ? SourceWeapon->WeaponData.Get() : nullptr;
+	const float Ratio = GetChargeRatio();
+	ChargeElapsedTime = Data ? Ratio * Data->MaxChargeTime : 0.0f;
+	ChargeDamageMultiplier = Data ? FMath::Lerp(1.0f, FMath::Max(1.0f, Data->MaxChargeDamageMultiplier), Ratio) : 1.0f;
+	bWaitingForRelease = false;
+	ExecuteAttack();
+}
+
+void UGA_WeaponAttackBase::ExecuteAttack()
+{
+	if (!IsActive() || bFinishingAttack || bAttackExecuted) return;
+	APlayerBase* Player = Cast<APlayerBase>(GetAvatarActorFromActorInfo());
+	const UWeaponDataAsset* Data = SourceWeapon ? SourceWeapon->WeaponData.Get() : nullptr;
+	if (!Player || Player->IsDead() || !Data || !Data->AttackMontage ||
+		Player->GetWeaponInSlot(WeaponSlot) != SourceWeapon ||
+		!CommitAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo))
+	{
+		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
+		return;
+	}
+	bAttackExecuted = true;
 
 	UAbilityTask_WaitGameplayEvent* HitTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(
 		this, WeaponGameplayTags::Event_MeleeHit, nullptr, false, true);
@@ -135,7 +185,7 @@ void UGA_WeaponAttackBase::HandleMeleeHit(FGameplayEventData Payload)
 {
 	APlayerBase* Player = Cast<APlayerBase>(GetAvatarActorFromActorInfo());
 	const UWeaponDataAsset* Data = SourceWeapon ? SourceWeapon->WeaponData.Get() : nullptr;
-	if (!IsActive() || bFinishingAttack || !Player || !Player->HasAuthority() || Player->IsDead()
+	if (!IsActive() || bFinishingAttack || !bAttackExecuted || !Player || !Player->HasAuthority() || Player->IsDead()
 		|| !Data || !DamageEffectClass || Payload.Instigator != Player || Payload.OptionalObject != Data->AttackMontage) return;
 
 	const FVector Direction = FVector::VectorPlaneProject(Player->GetActorForwardVector(), FVector::YAxisVector).GetSafeNormal();
@@ -162,7 +212,7 @@ void UGA_WeaponAttackBase::HandleMeleeHit(FGameplayEventData Payload)
 	UAbilitySystemComponent* SourceASC = GetAbilitySystemComponentFromActorInfo();
 	if (!SourceASC) return;
 	// 공통 함수는 공격자 배율을 계산하지 않으므로 여기서 한 번만 적용한다.
-	float FinalDamage = FMath::Max(0.0f, Data->AttackPower);
+	float FinalDamage = FMath::Max(0.0f, Data->AttackPower) * ChargeDamageMultiplier;
 	if (SourceASC->HasAttributeSetForAttribute(UCombatAttributeSet::GetDamageDealtMultiplierAttribute()))
 	{
 		FinalDamage *= FMath::Max(0.0f, SourceASC->GetNumericAttribute(UCombatAttributeSet::GetDamageDealtMultiplierAttribute()));
@@ -208,6 +258,10 @@ void UGA_WeaponAttackBase::EndAbility(const FGameplayAbilitySpecHandle Handle,
 {
 	if (bFinishingAttack || !IsEndAbilityValid(Handle, ActorInfo)) return;
 	bFinishingAttack = true;
+	bWaitingForRelease = false;
+	bAttackExecuted = false;
+	ChargeStartTime = 0.0;
+	ChargeDamageMultiplier = 1.0f;
 	HitActorsThisAttack.Reset();
 	ChargeElapsedTime = 0.0f;
 	SourceWeapon = nullptr;

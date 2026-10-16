@@ -1,0 +1,210 @@
+#include "UI/CoreChoiceWidget.h"
+
+#include "Components/Button.h"
+#include "Components/HorizontalBox.h"
+#include "Components/HorizontalBoxSlot.h"
+#include "Components/TextBlock.h"
+#include "DataAsset/CoreDataAsset.h"
+#include "GameFramework/PlayerController.h"
+#include "Input/Reply.h"
+#include "InputCoreTypes.h"
+#include "UI/CoreChoiceCardWidget.h"
+
+
+
+UCoreChoiceWidget* UCoreChoiceWidget::OpenCoreChoiceUI(APlayerController* PlayerController,
+	const TArray<UCoreDataAsset*>& Choices, TSubclassOf<UCoreChoiceWidget> ScreenClass)
+{
+	if (!IsValid(PlayerController) || !PlayerController->IsLocalController()
+		|| !ScreenClass || ScreenClass->HasAnyClassFlags(CLASS_Abstract)) return nullptr;
+
+	// 비어 있거나 ID가 중복된 항목을 걸러, 표시 가능한 후보를 최대 3개 준비한다.
+	TArray<UCoreDataAsset*> ValidChoices;
+	TSet<FName> Ids;
+	for (UCoreDataAsset* Data : Choices)
+	{
+		if (!IsValid(Data) || Data->CoreId.IsNone() || Ids.Contains(Data->CoreId)) continue;
+		ValidChoices.Add(Data);
+		Ids.Add(Data->CoreId);
+		if (ValidChoices.Num() == 3) break;
+	}
+	if (ValidChoices.IsEmpty()) return nullptr;
+
+	// 전달받은 WBP 클래스로 화면을 만들어 디자이너에서 작성한 배치를 사용한다.
+	UCoreChoiceWidget* Screen = CreateWidget<UCoreChoiceWidget>(PlayerController, ScreenClass);
+	if (!Screen || !Screen->CardsBox || !Screen->CardWidgetClass) return nullptr;
+	for (UCoreDataAsset* Data : ValidChoices) Screen->DisplayedChoices.Add(Data);
+	Screen->PopulateCards();
+	// 카드 준비가 끝나면 화면을 표시하고 플레이어 입력을 이 화면으로 옮긴다.
+	Screen->AddToViewport(100);
+	Screen->CapturePlayerInput();
+	return Screen;
+}
+
+void UCoreChoiceWidget::NativeOnInitialized()
+{
+	Super::NativeOnInitialized();
+	SetIsFocusable(true);
+	// WBP에서 만든 버튼에 동작을 연결한다. 배치와 색상은 디자이너에서 관리한다.
+	if (CancelButton) CancelButton->OnClicked.AddDynamic(this, &UCoreChoiceWidget::HandleCancel);
+	if (FirstRerollButton) FirstRerollButton->OnClicked.AddDynamic(this, &UCoreChoiceWidget::HandleFirstReroll);
+	if (SecondRerollButton) SecondRerollButton->OnClicked.AddDynamic(this, &UCoreChoiceWidget::HandleSecondReroll);
+	if (ThirdRerollButton) ThirdRerollButton->OnClicked.AddDynamic(this, &UCoreChoiceWidget::HandleThirdReroll);
+}
+
+void UCoreChoiceWidget::PopulateCards()
+{
+	if (!CardsBox || !CardWidgetClass) return;
+	// WBP의 미리보기 카드 또는 이전에 생성한 카드를 비우고 현재 후보로 다시 구성한다.
+	CardsBox->ClearChildren();
+	Cards.Reset();
+	for (int32 Index = 0; Index < DisplayedChoices.Num(); ++Index)
+	{
+		UCoreChoiceCardWidget* Card = CreateWidget<UCoreChoiceCardWidget>(GetOwningPlayer(), CardWidgetClass);
+		if (!Card) continue;
+		Card->SetCoreData(DisplayedChoices[Index], Index);
+		// 카드가 보낸 클릭·마우스 알림을 부모 화면의 처리 함수에 연결한다.
+		Card->OnCoreChosen.AddUObject(this, &UCoreChoiceWidget::HandleCardChosen);
+		Card->OnCoreHovered.AddUObject(this, &UCoreChoiceWidget::SetActiveCardIndex);
+		Cards.Add(Card);
+		// 카드는 코드에서 추가하되, 간격은 WBP의 클래스 기본값에 지정한 설정을 사용한다.
+		CardsBox->AddChildToHorizontalBox(Card)->SetPadding(CardPadding);
+	}
+	// 후보가 없는 위치의 버튼과 여백을 함께 접어, 카드와 버튼의 가운데 정렬을 맞춘다.
+	if (RerollButtonsBox)
+	{
+		for (int32 Index = 0; Index < RerollButtonsBox->GetChildrenCount(); ++Index)
+		{
+			RerollButtonsBox->GetChildAt(Index)->SetVisibility(Index < Cards.Num()
+				? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+		}
+	}
+	SetActiveCardIndex(0);
+}
+
+void UCoreChoiceWidget::SetActiveCardIndex(int32 Index)
+{
+	if (!Cards.IsValidIndex(Index)) return;
+	ActiveCardIndex = Index;
+	// 어느 카드를 강조할지 전달한다. 색상과 애니메이션은 카드 WBP에서 정한다.
+	for (int32 CardIndex = 0; CardIndex < Cards.Num(); ++CardIndex)
+	{
+		Cards[CardIndex]->SetHighlighted(CardIndex == Index);
+	}
+	if (SelectionCounter) SelectionCounter->SetText(FText::FromString(FString::Printf(TEXT("%02d / %02d"), Index + 1, Cards.Num())));
+	// 마우스로 카드를 가리킨 뒤에도 방향키와 취소 키를 부모 화면에서 받을 수 있게 한다.
+	if (IsInViewport()) SetKeyboardFocus();
+}
+
+void UCoreChoiceWidget::HandleCardChosen(UCoreDataAsset* CoreData)
+{
+	if (bClosing || !IsValid(CoreData)) return;
+	SetKeyboardFocus();
+	// 지급 성공 여부에 따라 화면을 유지하거나 닫을 수 있도록 선택 결과만 전달한다.
+	OnCoreSelected.Broadcast(CoreData);
+}
+
+void UCoreChoiceWidget::HandleCancel()
+{
+	if (bClosing) return;
+	// 취소 알림을 처리하는 도중 취소가 다시 호출돼도 한 번만 종료하도록 먼저 표시한다.
+	bClosing = true;
+	OnChoiceCancelled.Broadcast();
+	RemoveFromParent();
+}
+
+void UCoreChoiceWidget::HandleReroll(int32 ChoiceIndex)
+{
+	if (bClosing || !DisplayedChoices.IsValidIndex(ChoiceIndex)) return;
+	SetKeyboardFocus();
+	// 여기서는 어떤 카드의 버튼인지 알린다. 후보 변경은 이 알림을 받은 쪽에서 처리한다.
+	OnRerollRequested.Broadcast(ChoiceIndex);
+}
+
+void UCoreChoiceWidget::HandleFirstReroll()
+{
+	HandleReroll(0);
+}
+
+void UCoreChoiceWidget::HandleSecondReroll()
+{
+	HandleReroll(1);
+}
+
+void UCoreChoiceWidget::HandleThirdReroll()
+{
+	HandleReroll(2);
+}
+
+void UCoreChoiceWidget::CapturePlayerInput()
+{
+	if (APlayerController* Player = GetOwningPlayer())
+	{
+		bPreviousMouseCursorVisible = Player->bShowMouseCursor;
+		// UIOnly는 입력을 UI에만 전달한다. TakeWidget은 이 UMG 위젯의 내부 Slate 위젯을 가져온다.
+		FInputModeUIOnly InputMode;
+		InputMode.SetWidgetToFocus(TakeWidget());
+		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+		Player->SetInputMode(InputMode);
+		Player->SetShowMouseCursor(true);
+		// 화면을 열기 전에 누르고 있던 이동·공격 키 상태가 남지 않도록 비운다.
+		Player->FlushPressedKeys();
+		bCapturedInput = true;
+		SetKeyboardFocus();
+	}
+}
+
+void UCoreChoiceWidget::RestorePlayerInput()
+{
+	if (!bCapturedInput) return;
+	// CloseChoiceUI뿐 아니라 외부 RemoveFromParent로 제거된 경우에도 한 번만 복구한다.
+	bCapturedInput = false;
+	if (APlayerController* Player = GetOwningPlayer())
+	{
+		Player->SetInputMode(FInputModeGameOnly());
+		Player->SetShowMouseCursor(bPreviousMouseCursorVisible);
+		Player->FlushPressedKeys();
+	}
+}
+
+void UCoreChoiceWidget::CloseChoiceUI()
+{
+	if (bClosing) return;
+	bClosing = true;
+	RemoveFromParent();
+}
+
+void UCoreChoiceWidget::NativeDestruct()
+{
+	// 화면이 부모에서 제거되어 내부 Slate 위젯이 해제될 때 입력 관리도 끝낸다.
+	RestorePlayerInput();
+	Super::NativeDestruct();
+}
+
+FReply UCoreChoiceWidget::NativeOnKeyDown(const FGeometry& Geometry, const FKeyEvent& Event)
+{
+	const FKey Key = Event.GetKey();
+	if (Key == EKeys::Escape || Key == EKeys::Gamepad_FaceButton_Right)
+	{
+		HandleCancel();
+		// Handled는 이 입력을 UI가 처리했음을 뜻한다. Unhandled는 다른 처리 경로로 넘길 수 있다.
+		return FReply::Handled();
+	}
+	// 나머지 연산(%)으로 처음과 마지막 카드 사이를 순환한다.
+	if (Key == EKeys::Left || Key == EKeys::Gamepad_DPad_Left || (Key == EKeys::Tab && Event.IsShiftDown()))
+	{
+		if (!Cards.IsEmpty()) SetActiveCardIndex((ActiveCardIndex + Cards.Num() - 1) % Cards.Num());
+		return FReply::Handled();
+	}
+	if (Key == EKeys::Right || Key == EKeys::Gamepad_DPad_Right || Key == EKeys::Tab)
+	{
+		if (!Cards.IsEmpty()) SetActiveCardIndex((ActiveCardIndex + 1) % Cards.Num());
+		return FReply::Handled();
+	}
+	if (Key == EKeys::Enter || Key == EKeys::SpaceBar || Key == EKeys::Gamepad_FaceButton_Bottom)
+	{
+		if (DisplayedChoices.IsValidIndex(ActiveCardIndex)) HandleCardChosen(DisplayedChoices[ActiveCardIndex]);
+		return FReply::Handled();
+	}
+	return Super::NativeOnKeyDown(Geometry, Event);
+}

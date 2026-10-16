@@ -1,5 +1,6 @@
 #include "UI/CoreChoiceCardWidget.h"
 
+#include "Components/Border.h"
 #include "Components/Button.h"
 #include "Components/Image.h"
 #include "Components/TextBlock.h"
@@ -18,6 +19,9 @@ void UCoreChoiceCardWidget::NativeOnInitialized()
 	{
 		DefaultCoreIcon = Cast<UTexture2D>(CoreIconImage->GetBrush().GetResourceObject());
 	}
+	if (FrameBorder) NormalFrameColor = FrameBorder->GetBrushColor();
+	if (SurfaceBorder) NormalSurfaceColor = SurfaceBorder->GetBrushColor();
+	if (ActionText) NormalActionColor = ActionText->GetColorAndOpacity();
 
 	// WBP에 배치된 버튼의 입력을 C++ 처리 함수에 연결한다.
 	if (CardButton)
@@ -36,6 +40,10 @@ void UCoreChoiceCardWidget::SetCoreData(UCoreDataAsset* InCoreData, int32 InDisp
 
 	// CoreData가 유효한지 확인한다.
 	const bool bHasCore = IsValid(CoreData);
+	if (ModuleNumberText)
+	{
+		ModuleNumberText->SetText(FText::FromString(FString::Printf(TEXT("/ %02d"), DisplayIndex + 1)));
+	}
 
 	// 레이아웃은 WBP가 담당하고, C++은 데이터 에셋의 내용을 위젯에 표시한다.
 
@@ -72,7 +80,10 @@ void UCoreChoiceCardWidget::SetHighlighted(bool bInHighlighted)
 {
 	if (bIsHighlighted == bInHighlighted) return;
 	bIsHighlighted = bInHighlighted;
-	// C++은 상태 변경만 알리고, 강조를 그리는 방법은 WBP에 맡긴다.
+	// 같은 선택 상태를 마우스와 방향키 모두에 적용한다. 기본 색상은 WBP 설정으로 복구한다.
+	if (FrameBorder) FrameBorder->SetBrushColor(bIsHighlighted ? HighlightColor : NormalFrameColor);
+	if (SurfaceBorder) SurfaceBorder->SetBrushColor(bIsHighlighted ? HighlightedSurfaceColor : NormalSurfaceColor);
+	if (ActionText) ActionText->SetColorAndOpacity(bIsHighlighted ? FSlateColor(HighlightColor) : NormalActionColor);
 	OnHighlightChanged(bIsHighlighted);
 }
 

@@ -49,8 +49,17 @@ public:
 	 */
 	bool SelectCore(FName CoreId);
 
+	/** 진행 중인 코어 선택지만 취소한다. 이미 보유한 코어의 능력과 효과는 유지한다. */
+	void CancelCoreChoices();
+
 	/** 현재 코어 선택지를 다시 뽑는다. 처음 전달받은 전체 후보에서 획득 가능한 코어를 다시 추첨한다. */
 	TArray<UCoreDataAsset*> RerollCoreChoices();
+
+	/** 현재 표시하지 않은 미보유 코어가 있어, 카드를 다른 코어로 바꿀 수 있는지 확인한다. */
+	bool CanRerollCoreChoices() const;
+
+	/** 지정한 선택지 하나만 다른 코어로 바꾼다. 대체 후보가 없으면 기존 선택지를 유지하고 nullptr를 반환한다. */
+	UCoreDataAsset* RerollCoreChoice(int32 ChoiceIndex);
 
 	/**
 	 * 플레이어의 보유 코어와 진행 중인 코어 선택 상태를 초기화한다.
@@ -63,6 +72,9 @@ public:
 	FOnCoreChangedSignature OnCoreChanged;
 
 private:
+	/** 보유 코어와 현재 선택지 전체를 제외하고, 중복 없는 재추첨 후보를 모은다. */
+	TArray<UCoreDataAsset*> GetRerollCandidates() const;
+
 	/**
 	 * 해당 코어를 획득할 수 있는지 사전에 확인한다. 보상 후보를 거를 때도 같은 기준을 사용한다.
 	 * 데이터와 ASC, 보유 여부, GE/GA 설정을 검사하며 실제 획득 성공 여부는 AcquireCore에서 확인한다.

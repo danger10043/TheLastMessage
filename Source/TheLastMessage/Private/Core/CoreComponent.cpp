@@ -329,6 +329,14 @@ bool UCoreComponent::SelectCore(FName CoreId)
 	return true;
 }
 
+void UCoreComponent::CancelCoreChoices()
+{
+	// 코어 지급 도중에는 선택 목록을 변경하지 않는다.
+	if (bIsChangingCoreGrants || bIsSelectingCore) return;
+	CurrentChoices.Reset();
+	CurrentCandidatePool.Reset();
+}
+
 TArray<UCoreDataAsset*> UCoreComponent::RerollCoreChoices()
 {
 	if (bIsChangingCoreGrants || bIsSelectingCore || CurrentChoices.IsEmpty())
@@ -346,4 +354,42 @@ TArray<UCoreDataAsset*> UCoreComponent::RerollCoreChoices()
 
 	CurrentChoices.Reset();
 	return GenerateCoreChoices(CandidatePool);
+}
+
+TArray<UCoreDataAsset*> UCoreComponent::GetRerollCandidates() const
+{
+	if (bIsChangingCoreGrants || bIsSelectingCore || CurrentChoices.IsEmpty()) return {};
+
+	// 교체 대상도 제외해야 리롤 직후 같은 코어가 다시 나오는 일을 막을 수 있다.
+	TSet<FName> ExcludedIds;
+	for (const TObjectPtr<UCoreDataAsset>& Choice : CurrentChoices)
+	{
+		if (IsValid(Choice.Get())) ExcludedIds.Add(Choice->CoreId);
+	}
+
+	TArray<UCoreDataAsset*> Candidates;
+	for (const TObjectPtr<UCoreDataAsset>& Data : CurrentCandidatePool)
+	{
+		if (!CanAcquireCore(Data.Get()) || ExcludedIds.Contains(Data->CoreId)) continue;
+		ExcludedIds.Add(Data->CoreId);
+		Candidates.Add(Data.Get());
+	}
+	return Candidates;
+}
+
+bool UCoreComponent::CanRerollCoreChoices() const
+{
+	return !GetRerollCandidates().IsEmpty();
+}
+
+UCoreDataAsset* UCoreComponent::RerollCoreChoice(int32 ChoiceIndex)
+{
+	if (!CurrentChoices.IsValidIndex(ChoiceIndex)) return nullptr;
+	const TArray<UCoreDataAsset*> Candidates = GetRerollCandidates();
+	if (Candidates.IsEmpty()) return nullptr;
+
+	UCoreDataAsset* Replacement = Candidates[FMath::RandRange(0, Candidates.Num() - 1)];
+	// 나머지 선택지와 전체 후보 풀은 그대로 유지한다.
+	CurrentChoices[ChoiceIndex] = Replacement;
+	return Replacement;
 }

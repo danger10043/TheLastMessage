@@ -1,5 +1,6 @@
 #include "UI/CoreChoiceWidget.h"
 
+#include "Blueprint/WidgetBlueprintLibrary.h"
 #include "Components/Button.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
@@ -17,6 +18,14 @@ UCoreChoiceWidget* UCoreChoiceWidget::OpenCoreChoiceUI(APlayerController* Player
 {
 	if (!IsValid(PlayerController) || !PlayerController->IsLocalController()
 		|| !ScreenClass || ScreenClass->HasAnyClassFlags(CLASS_Abstract)) return nullptr;
+
+	// 이전 화면이 사라지는 중에도 새 화면이 입력 복구 상태를 덮어쓰지 않도록 한다.
+	TArray<UUserWidget*> ExistingScreens;
+	UWidgetBlueprintLibrary::GetAllWidgetsOfClass(PlayerController, ExistingScreens, StaticClass(), true);
+	for (UUserWidget* Existing : ExistingScreens)
+	{
+		if (Existing->IsInViewport() && Existing->GetOwningPlayer() == PlayerController) return nullptr;
+	}
 
 	// 비어 있거나 ID가 중복된 항목을 걸러, 표시 가능한 후보를 최대 3개 준비한다.
 	TArray<UCoreDataAsset*> ValidChoices;
@@ -50,6 +59,7 @@ void UCoreChoiceWidget::NativeOnInitialized()
 	if (FirstRerollButton) FirstRerollButton->OnClicked.AddDynamic(this, &UCoreChoiceWidget::HandleFirstReroll);
 	if (SecondRerollButton) SecondRerollButton->OnClicked.AddDynamic(this, &UCoreChoiceWidget::HandleSecondReroll);
 	if (ThirdRerollButton) ThirdRerollButton->OnClicked.AddDynamic(this, &UCoreChoiceWidget::HandleThirdReroll);
+	SetRerollEnabled(false);
 }
 
 void UCoreChoiceWidget::PopulateCards()
@@ -84,9 +94,9 @@ void UCoreChoiceWidget::PopulateCards()
 
 void UCoreChoiceWidget::SetActiveCardIndex(int32 Index)
 {
-	if (!Cards.IsValidIndex(Index)) return;
+	if (bClosing || !Cards.IsValidIndex(Index)) return;
 	ActiveCardIndex = Index;
-	// 어느 카드를 강조할지 전달한다. 색상과 애니메이션은 카드 WBP에서 정한다.
+	// 어느 카드를 강조할지 전달한다. 카드는 WBP에 지정한 기본 색상과 강조 색상을 적용한다.
 	for (int32 CardIndex = 0; CardIndex < Cards.Num(); ++CardIndex)
 	{
 		Cards[CardIndex]->SetHighlighted(CardIndex == Index);
@@ -106,19 +116,37 @@ void UCoreChoiceWidget::HandleCardChosen(UCoreDataAsset* CoreData)
 
 void UCoreChoiceWidget::HandleCancel()
 {
-	if (bClosing) return;
-	// 취소 알림을 처리하는 도중 취소가 다시 호출돼도 한 번만 종료하도록 먼저 표시한다.
-	bClosing = true;
-	OnChoiceCancelled.Broadcast();
-	RemoveFromParent();
+	BeginClose(true, true);
 }
 
 void UCoreChoiceWidget::HandleReroll(int32 ChoiceIndex)
 {
-	if (bClosing || !DisplayedChoices.IsValidIndex(ChoiceIndex)) return;
+	if (bClosing || !bRerollEnabled || !DisplayedChoices.IsValidIndex(ChoiceIndex)) return;
 	SetKeyboardFocus();
 	// 여기서는 어떤 카드의 버튼인지 알린다. 후보 변경은 이 알림을 받은 쪽에서 처리한다.
 	OnRerollRequested.Broadcast(ChoiceIndex);
+}
+
+bool UCoreChoiceWidget::UpdateCoreChoice(int32 ChoiceIndex, UCoreDataAsset* CoreData)
+{
+	if (bClosing || !DisplayedChoices.IsValidIndex(ChoiceIndex) || !Cards.IsValidIndex(ChoiceIndex)
+		|| !IsValid(CoreData) || CoreData->CoreId.IsNone()) return false;
+	for (int32 Index = 0; Index < DisplayedChoices.Num(); ++Index)
+	{
+		if (Index != ChoiceIndex && DisplayedChoices[Index]->CoreId == CoreData->CoreId) return false;
+	}
+	DisplayedChoices[ChoiceIndex] = CoreData;
+	Cards[ChoiceIndex]->SetCoreData(CoreData, ChoiceIndex);
+	SetActiveCardIndex(ChoiceIndex);
+	return true;
+}
+
+void UCoreChoiceWidget::SetRerollEnabled(bool bEnabled)
+{
+	bRerollEnabled = bEnabled && !bClosing;
+	if (FirstRerollButton) FirstRerollButton->SetIsEnabled(bRerollEnabled && DisplayedChoices.IsValidIndex(0));
+	if (SecondRerollButton) SecondRerollButton->SetIsEnabled(bRerollEnabled && DisplayedChoices.IsValidIndex(1));
+	if (ThirdRerollButton) ThirdRerollButton->SetIsEnabled(bRerollEnabled && DisplayedChoices.IsValidIndex(2));
 }
 
 void UCoreChoiceWidget::HandleFirstReroll()
@@ -167,22 +195,60 @@ void UCoreChoiceWidget::RestorePlayerInput()
 	}
 }
 
-void UCoreChoiceWidget::CloseChoiceUI()
+void UCoreChoiceWidget::CloseChoiceUI(bool bAnimate)
 {
-	if (bClosing) return;
+	BeginClose(false, bAnimate);
+}
+
+void UCoreChoiceWidget::BeginClose(bool bCancelled, bool bAnimate)
+{
+	if (bClosing)
+	{
+		// 액터 파괴나 화면 교체 시에는 진행 중인 페이드도 즉시 끝낼 수 있다.
+		if (!bAnimate && IsInViewport()) RemoveFromParent();
+		return;
+	}
 	bClosing = true;
-	RemoveFromParent();
+	CloseFadeElapsed = 0.0f;
+	CloseStartOpacity = GetRenderOpacity();
+	// 비활성화 색상이 입혀지지 않도록, 색상은 유지하면서 마우스 입력만 막는다.
+	SetVisibility(ESlateVisibility::HitTestInvisible);
+	if (bCancelled) OnChoiceCancelled.Broadcast();
+	if (!bAnimate || CloseFadeDuration <= KINDA_SMALL_NUMBER) RemoveFromParent();
+}
+
+void UCoreChoiceWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+	if (!bClosing || !IsInViewport()) return;
+
+	CloseFadeElapsed += InDeltaTime;
+	const float Progress = FMath::Clamp(CloseFadeElapsed / FMath::Max(CloseFadeDuration, KINDA_SMALL_NUMBER), 0.0f, 1.0f);
+	// 시작과 끝의 변화 속도를 완만하게 하여 갑자기 사라지는 느낌을 줄인다.
+	SetRenderOpacity(CloseStartOpacity * (1.0f - FMath::SmoothStep(0.0f, 1.0f, Progress)));
+	if (Progress >= 1.0f) RemoveFromParent();
 }
 
 void UCoreChoiceWidget::NativeDestruct()
 {
 	// 화면이 부모에서 제거되어 내부 Slate 위젯이 해제될 때 입력 관리도 끝낸다.
+	bClosing = true;
 	RestorePlayerInput();
+	OnChoiceClosed.Broadcast();
 	Super::NativeDestruct();
+}
+
+FReply UCoreChoiceWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, const FKeyEvent& Event)
+{
+	// 버튼 자체의 확인 입력도 실행되지 않도록 Space와 Enter를 자식에게 전달하기 전에 소비한다.
+	const FKey Key = Event.GetKey();
+	if (bClosing || Key == EKeys::SpaceBar || Key == EKeys::Enter) return FReply::Handled();
+	return Super::NativeOnPreviewKeyDown(Geometry, Event);
 }
 
 FReply UCoreChoiceWidget::NativeOnKeyDown(const FGeometry& Geometry, const FKeyEvent& Event)
 {
+	if (bClosing) return FReply::Handled();
 	const FKey Key = Event.GetKey();
 	if (Key == EKeys::Escape || Key == EKeys::Gamepad_FaceButton_Right)
 	{
@@ -201,7 +267,7 @@ FReply UCoreChoiceWidget::NativeOnKeyDown(const FGeometry& Geometry, const FKeyE
 		if (!Cards.IsEmpty()) SetActiveCardIndex((ActiveCardIndex + 1) % Cards.Num());
 		return FReply::Handled();
 	}
-	if (Key == EKeys::Enter || Key == EKeys::SpaceBar || Key == EKeys::Gamepad_FaceButton_Bottom)
+	if (Key == EKeys::Gamepad_FaceButton_Bottom)
 	{
 		if (DisplayedChoices.IsValidIndex(ActiveCardIndex)) HandleCardChosen(DisplayedChoices[ActiveCardIndex]);
 		return FReply::Handled();

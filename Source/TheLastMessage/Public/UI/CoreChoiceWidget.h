@@ -14,6 +14,7 @@ class UTextBlock;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnCoreChoiceSelected, UCoreDataAsset*, CoreData);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnCoreChoiceCancelled);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnCoreChoiceClosed);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnCoreRerollRequested, int32, ChoiceIndex);
 
 /**
@@ -31,9 +32,17 @@ public:
 	static UCoreChoiceWidget* OpenCoreChoiceUI(APlayerController* PlayerController,
 		const TArray<UCoreDataAsset*>& Choices, TSubclassOf<UCoreChoiceWidget> ScreenClass);
 
-	/** 지급 성공 후 호출하여 선택 화면을 닫고 플레이어 조작을 게임으로 돌려준다. */
+	/** 기본적으로 페이드를 마친 뒤 화면을 닫는다. 강제 정리가 필요하면 bAnimate를 false로 전달한다. */
 	UFUNCTION(BlueprintCallable, Category = "Core|UI")
-	void CloseChoiceUI();
+	void CloseChoiceUI(bool bAnimate = true);
+
+	/** 재추첨 결과를 해당 카드 한 장에 반영한다. 나머지 카드는 그대로 유지한다. */
+	UFUNCTION(BlueprintCallable, Category = "Core|UI")
+	bool UpdateCoreChoice(int32 ChoiceIndex, UCoreDataAsset* CoreData);
+
+	/** 보상 쪽에서 확인한 대체 후보 유무에 따라 리롤 버튼을 활성화한다. */
+	UFUNCTION(BlueprintCallable, Category = "Core|UI")
+	void SetRerollEnabled(bool bEnabled);
 
 	/** 선택한 코어를 알린다. 호출한 쪽에서 지급 성공 여부를 확인한 뒤 화면을 닫는다. */
 	UPROPERTY(BlueprintAssignable, Category = "Core|UI")
@@ -42,6 +51,10 @@ public:
 	/** 선택 취소를 알린다. 호출한 쪽에서 임시 후보와 보상 선택 상태를 정리한다. */
 	UPROPERTY(BlueprintAssignable, Category = "Core|UI")
 	FOnCoreChoiceCancelled OnChoiceCancelled;
+
+	/** 획득 완료·취소·외부 제거 등으로 화면이 닫혔음을 알린다. 보상 쪽에서 선택 상태를 정리한다. */
+	UPROPERTY(BlueprintAssignable, Category = "Core|UI")
+	FOnCoreChoiceClosed OnChoiceClosed;
 
 	/** 리롤을 요청한 카드의 위치(0부터 시작)를 알린다. 실제 재추첨은 보상 처리 쪽에서 진행한다. */
 	UPROPERTY(BlueprintAssignable, Category = "Core|UI")
@@ -52,6 +65,10 @@ protected:
 	virtual void NativeOnInitialized() override;
 	/** 화면이 제거되면 게임 입력과 마우스 커서 상태를 복구한다. */
 	virtual void NativeDestruct() override;
+	/** 화면을 닫는 동안 투명도를 줄이고, 페이드가 끝나면 위젯을 제거한다. */
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
+	/** Space·Enter 입력을 자식 버튼보다 먼저 차단하여 키보드 확인 키로 버튼이 실행되지 않게 한다. */
+	virtual FReply NativeOnPreviewKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
 	/** 방향키·확인·취소 키 입력을 화면 동작으로 바꾼다. */
 	virtual FReply NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
 
@@ -62,6 +79,10 @@ protected:
 	/** 동적으로 생성하는 카드의 바깥 여백. WBP의 클래스 기본값에서 카드 간격을 조절한다. */
 	UPROPERTY(EditDefaultsOnly, Category = "Core|Layout")
 	FMargin CardPadding = FMargin(12.0f, 0.0f);
+
+	/** 선택 화면이 사라지는 데 걸리는 시간. 0이면 즉시 닫는다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Core|Appearance", meta = (ClampMin = "0.0", UIMax = "1.0"))
+	float CloseFadeDuration = 0.35f;
 
 	/** 후보 카드들을 가로로 배치할 WBP 영역. */
 	UPROPERTY(meta = (BindWidget))
@@ -102,6 +123,8 @@ private:
 	void CapturePlayerInput();
 	/** 화면 입력 관리가 끝나면 게임 전용 입력으로 바꾸고 이전 커서 표시 상태를 복구한다. */
 	void RestorePlayerInput();
+	/** 추가 입력을 막고 종료를 시작한다. 취소 요청이면 취소 알림도 한 번 전달한다. */
+	void BeginClose(bool bCancelled, bool bAnimate);
 
 	/** 취소를 알리고 화면을 닫는다. */
 	UFUNCTION()
@@ -136,4 +159,9 @@ private:
 	bool bPreviousMouseCursorVisible = false;
 	/** 화면을 닫는 중인지 나타낸다. 종료 중 추가 선택·취소·리롤 요청을 막는다. */
 	bool bClosing = false;
+	/** 보상 쪽에서 재추첨을 허용했는지 나타낸다. 대체 후보가 없으면 요청을 보내지 않는다. */
+	bool bRerollEnabled = false;
+	/** 페이드 경과 시간과 시작 투명도. 현재 투명도에서 자연스럽게 사라지도록 계산한다. */
+	float CloseFadeElapsed = 0.0f;
+	float CloseStartOpacity = 1.0f;
 };

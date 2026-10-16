@@ -16,6 +16,11 @@ class THELASTMESSAGE_API UGA_WeaponAttackBase : public UGameplayAbility
 
 public:
 	UGA_WeaponAttackBase();
+	virtual void InputReleased(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo,
+		const FGameplayAbilityActivationInfo ActivationInfo) override;
+
+	UFUNCTION(BlueprintPure, Category = "Weapon|Charge")
+	float GetChargeRatio() const;
 	virtual bool CanActivateAbility(const FGameplayAbilitySpecHandle Handle,
 		const FGameplayAbilityActorInfo* ActorInfo, const FGameplayTagContainer* SourceTags = nullptr,
 		const FGameplayTagContainer* TargetTags = nullptr, FGameplayTagContainer* OptionalRelevantTags = nullptr) const override;
@@ -68,7 +73,16 @@ protected:
 	TSubclassOf<UGameplayEffect> CooldownEffectClass;
 
 private:
+	void ExecuteAttack();
+	double ChargeStartTime = 0.0;
+	float ChargeDamageMultiplier = 1.0f;
+	bool bWaitingForRelease = false;
+	bool bAttackExecuted = false;
+
+protected:
 	FGameplayTagContainer AttackCooldownTags;
+
+private:
 	// GAS 태그가 실제 공격 상태를 관리하며, 이 값은 종료 콜백 재진입만 방지한다.
 	bool bFinishingAttack = false;
 };

@@ -46,6 +46,9 @@ struct FEnemyStatConfig
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) float MoveSpeed = 300.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) float DetectRange = 1500.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) float AttackRange = 200.f;
+
+	/** 추격 중 타겟에게 이만큼 가까워지면 멈추는 거리(Move To 허용 반경). 공격 범위보다 작게 둔다. 0 이하이면 공격 범위의 80%를 쓴다. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) float ChaseAcceptableRadius = 150.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) float AttackDamage = 10.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) float AttackCooldown = 1.f;
 };

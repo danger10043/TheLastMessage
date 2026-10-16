@@ -5,6 +5,7 @@
 #include "FleaEnemy.generated.h"
 
 class UNiagaraSystem;
+class UNiagaraComponent;
 
 /** 눈깔봇: 땅을 기어다니며 근접 범위 전파 공격. 체력이 높다. */
 UCLASS()
@@ -31,6 +32,25 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Flea")
 	float AreaAttackDamage = 15.f;
 
+	/**
+	 * 충전 이펙트. 공격 시작부터 판정이 터지기 전(Area Attack Windup 동안)까지 재생된다.
+	 * 반복(Looping) 시스템으로 만들면 판정 순간·공격 취소 시 자동으로 멈춘다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Flea|Effects")
+	TObjectPtr<UNiagaraSystem> ChargeEffect;
+
+	/** 충전 이펙트를 붙일 스켈레탈 메시 소켓. 비우거나 없으면 몬스터 기준 오프셋에 붙는다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Flea|Effects")
+	FName ChargeEffectSocketName;
+
+	/** 소켓이 없을 때 충전 이펙트를 붙일 위치(몬스터 기준 로컬 좌표) */
+	UPROPERTY(EditDefaultsOnly, Category = "Flea|Effects")
+	FVector ChargeEffectOffset = FVector::ZeroVector;
+
+	/** 켜면 충전 이펙트 크기를 범위 공격 반경에 맞춰 키운다(위험 범위 표시용). 기준 반경은 Shockwave Effect Base Radius를 쓴다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Flea|Effects")
+	bool bScaleChargeEffectToAttackRadius = false;
+
 	/** 범위 공격 충격파 이펙트 (발밑에서 재생) */
 	UPROPERTY(EditDefaultsOnly, Category = "Flea|Effects")
 	TObjectPtr<UNiagaraSystem> ShockwaveEffect;
@@ -44,5 +64,10 @@ protected:
 	float AreaAttackWindup = 0.4f;
 
 private:
+	void StopChargeEffect();
+
+	UPROPERTY()
+	TObjectPtr<UNiagaraComponent> ChargeEffectComponent;
+
 	FTimerHandle AreaAttackTimerHandle;
 };

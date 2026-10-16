@@ -79,11 +79,22 @@ void AEnemyProjectile::LaunchProjectile(FVector Direction)
 
 	ProjectileMovement->Velocity = Dir * ProjectileMovement->InitialSpeed;
 	ProjectileMovement->Activate(true);
+	bLaunched = true;
+
+	// 스폰되는 순간 이미 대상과 겹쳐 있던 경우(바로 앞에 붙은 경우)는 스폰 중의 겹침 이벤트가 무시되므로,
+	// 발사자·피해량 설정이 끝난 이 시점에 겹친 대상을 한 번 처리한다.
+	TArray<AActor*> OverlappingActors;
+	GetOverlappingActors(OverlappingActors);
+	for (AActor* OverlappingActor : OverlappingActors)
+	{
+		HandleProjectileImpact(OverlappingActor);
+	}
 }
 
 void AEnemyProjectile::HandleProjectileImpact(AActor* HitActor)
 {
-	if (bImpactHandled || !HitActor || HitActor == this || HitActor == SourceEnemy)
+	// 발사(LaunchProjectile) 전에는 발사자·피해량이 아직 설정되지 않았으므로 충돌을 처리하지 않는다.
+	if (!bLaunched || bImpactHandled || !HitActor || HitActor == this || HitActor == SourceEnemy)
 	{
 		return;
 	}

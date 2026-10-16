@@ -121,6 +121,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void Destroyed() override;
 
 	/** 공격 쿨다운(초). 서브클래스가 다른 값을 쓰려면 오버라이드한다. */
 	virtual float GetAttackCooldown() const { return GetStatConfig().AttackCooldown; }
@@ -185,6 +186,10 @@ protected:
 	/** 피해를 받을 때 재생할 이펙트 */
 	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Effects")
 	TObjectPtr<UNiagaraSystem> HitEffect;
+
+	/** 사망 후 시체가 남아 있는 시간(초). 이 시간이 지나면 몬스터가 제거된다. 0 이하이면 계속 남긴다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Death", meta = (ClampMin = "0.0"))
+	float CorpseLifeSpan = 5.f;
 
 	/** 사망할 때 재생할 이펙트 */
 	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Effects")

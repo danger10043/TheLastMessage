@@ -13,13 +13,6 @@ UCombatAttributeSet::UCombatAttributeSet()
 	InitDamageDealtMultiplier(1.0f);
 	InitHighHealthDamageMultiplier(1.0f);
 	InitLowHealthDamageMultiplier(1.0f);
-
-	InitHealth(100.0f);
-	InitMaxHealth(100.0f);
-	InitCriticalChance(0.2f);
-
-	InitHighHealthThresholdRatio(0.9f);
-	InitLowHealthThresholdRatio(0.3f);
 }
 
 void UCombatAttributeSet::PreAttributeChange(const FGameplayAttribute& Attribute, float& NewValue)

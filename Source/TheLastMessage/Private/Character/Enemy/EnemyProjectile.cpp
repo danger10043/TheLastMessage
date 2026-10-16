@@ -5,6 +5,9 @@
 #include "GameFramework/Pawn.h"
 #include "GameFramework/ProjectileMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "NiagaraComponent.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
 
 AEnemyProjectile::AEnemyProjectile()
 {
@@ -23,6 +26,10 @@ AEnemyProjectile::AEnemyProjectile()
 	ProjectileMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ProjectileMesh"));
 	ProjectileMesh->SetupAttachment(CollisionComponent);
 	ProjectileMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	FlareEffect = CreateDefaultSubobject<UNiagaraComponent>(TEXT("FlareEffect"));
+	FlareEffect->SetupAttachment(CollisionComponent);
+	FlareEffect->bAutoActivate = true;
 
 	ProjectileMovement = CreateDefaultSubobject<UProjectileMovementComponent>(TEXT("ProjectileMovement"));
 	ProjectileMovement->UpdatedComponent = CollisionComponent;
@@ -109,6 +116,16 @@ void AEnemyProjectile::HandleProjectileImpact(AActor* HitActor)
 
 void AEnemyProjectile::DestroyProjectile()
 {
+	if (IsActorBeingDestroyed())
+	{
+		return;
+	}
+
+	if (ImpactEffect && GetWorld())
+	{
+		UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(), ImpactEffect, GetActorLocation(), GetActorRotation());
+	}
+
 	Destroy();
 }
 

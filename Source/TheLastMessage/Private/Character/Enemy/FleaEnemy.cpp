@@ -1,4 +1,5 @@
 #include "Character/Enemy/FleaEnemy.h"
+#include "Components/CapsuleComponent.h"
 #include "GameFramework/Pawn.h"
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetSystemLibrary.h"
@@ -29,6 +30,7 @@ void AFleaEnemy::StartAreaAttack()
 {
 	bIsAttacking = true;
 	FaceTarget();
+	PlayAttackMontage();
 
 	// TODO: 공격 몽타주 재생 후 애님 노티파이 시점에 ExecuteAreaAttack 호출로 교체
 	GetWorldTimerManager().SetTimer(AreaAttackTimerHandle, this, &AFleaEnemy::ExecuteAreaAttack, AreaAttackWindup, false);
@@ -72,7 +74,9 @@ void AFleaEnemy::ExecuteAreaAttack()
 
 void AFleaEnemy::SpawnShockwaveEffect()
 {
-	// TODO: Niagara 모듈·플러그인 추가 후 UNiagaraSystem(ShockwaveEffect) 생성으로 구현
+	const float EffectScale = ShockwaveEffectBaseRadius > 0.f ? AreaAttackRadius / ShockwaveEffectBaseRadius : 1.f;
+	const FVector FeetLocation = GetActorLocation() - FVector(0.f, 0.f, GetCapsuleComponent()->GetScaledCapsuleHalfHeight());
+	SpawnEffectAtLocation(ShockwaveEffect, FeetLocation, FRotator::ZeroRotator, FVector(EffectScale));
 }
 
 void AFleaEnemy::CancelAttack()

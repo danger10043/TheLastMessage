@@ -4,6 +4,9 @@
 #include "Character/Enemy/EnemyBase.h"
 #include "SentryEnemy.generated.h"
 
+class UNiagaraSystem;
+class UNiagaraComponent;
+
 /** 에너지포 봇: 이동 없이 고정된 채 조준 → 충전 → 발사를 반복하는 포탑. 느리고 강력한 원거리 공격. */
 UCLASS()
 class THELASTMESSAGE_API ASentryEnemy : public AEnemyBase
@@ -80,9 +83,17 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Sentry|Aim")
 	FName AimPivotBoneName = TEXT("GunVert");
 
-	/** 투사체가 나갈 총구 본·소켓 이름 */
+	/** 투사체·발사 화염이 나갈 스켈레탈 메시 소켓 이름 */
 	UPROPERTY(EditDefaultsOnly, Category = "Sentry")
-	FName MuzzleSocketName = TEXT("GunOut");
+	FName MuzzleSocketName = TEXT("SFire");
+
+	/** 충전 중 총구에 붙어 재생될 이펙트. 반복(Looping) 시스템으로 만든다. 발사·취소 시 멈춘다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Sentry|Effects")
+	TObjectPtr<UNiagaraSystem> ChargeEffect;
+
+	/** 발사 순간 총구에서 재생될 화염 이펙트 */
+	UPROPERTY(EditDefaultsOnly, Category = "Sentry|Effects")
+	TObjectPtr<UNiagaraSystem> MuzzleFlashEffect;
 
 	/** 총구 소켓이 없을 때 쓰는 발사 위치(포탑 기준 로컬 좌표) */
 	UPROPERTY(EditDefaultsOnly, Category = "Sentry")
@@ -92,5 +103,10 @@ protected:
 	bool bIsCharging = false;
 
 private:
+	void StopChargeEffect();
+
+	UPROPERTY()
+	TObjectPtr<UNiagaraComponent> ChargeEffectComponent;
+
 	FTimerHandle ChargeTimerHandle;
 };

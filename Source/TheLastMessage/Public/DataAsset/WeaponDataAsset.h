@@ -70,11 +70,11 @@ public:
 	bool bSupportsChargeAttack = false;
 
 	// 최대 충전 시간
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon", meta = (ClampMin = "0.01", EditCondition = "bSupportsChargeAttack"))
 	float MaxChargeTime = 1.0f;
 
 	// 충전 공격 시 피해 배율
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon", meta = (ClampMin = "1.0", EditCondition = "bSupportsChargeAttack"))
 	float MaxChargeDamageMultiplier = 1.0f;
 
 	// ------------------------------근접------------------------------

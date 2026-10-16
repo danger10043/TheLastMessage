@@ -1,6 +1,9 @@
 #include "Character/Enemy/SentryEnemy.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "NiagaraComponent.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
 #include "TimerManager.h"
 
 ASentryEnemy::ASentryEnemy()
@@ -85,7 +88,23 @@ void ASentryEnemy::StartCharge()
 {
 	bIsAttacking = true;
 	bIsCharging = true;
+	PlayAttackMontage();
 	OnChargeStarted();
+
+	// 충전 이펙트를 총구에 붙여 재생한다(총이 돌아도 따라간다).
+	if (ChargeEffect)
+	{
+		if (GetMesh() && GetMesh()->DoesSocketExist(MuzzleSocketName))
+		{
+			ChargeEffectComponent = UNiagaraFunctionLibrary::SpawnSystemAttached(ChargeEffect, GetMesh(), MuzzleSocketName,
+				FVector::ZeroVector, FRotator::ZeroRotator, EAttachLocation::SnapToTarget, true);
+		}
+		else
+		{
+			ChargeEffectComponent = UNiagaraFunctionLibrary::SpawnSystemAttached(ChargeEffect, GetRootComponent(), NAME_None,
+				MuzzleOffset, FRotator::ZeroRotator, EAttachLocation::KeepRelativeOffset, true);
+		}
+	}
 
 	GetWorldTimerManager().SetTimer(ChargeTimerHandle, this, &ASentryEnemy::FireProjectile, ChargeTime, false);
 }
@@ -108,7 +127,16 @@ void ASentryEnemy::FireProjectile()
 		Muzzle = GetMesh()->GetSocketLocation(MuzzleSocketName);
 	}
 
+	StopChargeEffect();
+
+	FRotator FlashRotation = GetActorRotation();
+	if (const AActor* Target = GetCurrentTarget())
+	{
+		FlashRotation = (Target->GetActorLocation() - Muzzle).Rotation();
+	}
+
 	SpawnEnemyProjectile(ProjectileConfig, Muzzle);
+	SpawnEffectAtSocket(MuzzleFlashEffect, MuzzleSocketName, MuzzleOffset, FlashRotation);
 	OnFired();
 
 	FinishAttack();
@@ -119,9 +147,19 @@ void ASentryEnemy::CancelCharge()
 	CancelAttack();
 }
 
+void ASentryEnemy::StopChargeEffect()
+{
+	if (ChargeEffectComponent)
+	{
+		ChargeEffectComponent->Deactivate();
+		ChargeEffectComponent = nullptr;
+	}
+}
+
 void ASentryEnemy::CancelAttack()
 {
 	GetWorldTimerManager().ClearTimer(ChargeTimerHandle);
+	StopChargeEffect();
 
 	if (bIsCharging)
 	{

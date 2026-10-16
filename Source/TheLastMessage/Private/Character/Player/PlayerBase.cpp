@@ -213,9 +213,6 @@ void APlayerBase::CaptureGrappleJumpState()
 	bSavedGrappleDoubleJump = bHasDoubleJumped;
 	bGrappleJumpStateCaptured = true;
 	bGrappleCancelJumpAvailable = false;
-	// Grappling replaces the previous wall-jump momentum and its temporary input lock.
-	GetWorldTimerManager().ClearTimer(WallJumpTimer);
-	bHasWallJumped = false;
 }
 
 void APlayerBase::RestoreGrappleJumpState()
@@ -748,7 +745,6 @@ void APlayerBase::CleanupPlayerActions()
 	FinishHitReaction();
 	AbilitySystemComponent->CancelAllAbilities();
 	GetWorldTimerManager().ClearTimer(EnergyRechargeTimerHandle);
-	GetWorldTimerManager().ClearTimer(WallJumpTimer);
 	ActionValueY = 0;
 	DropValue = 0;
 	StopJumping();

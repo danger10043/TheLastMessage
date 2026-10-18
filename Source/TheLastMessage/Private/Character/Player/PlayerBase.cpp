@@ -6,6 +6,7 @@
 #include "GAS/CombatAttributeSet.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Gimmick/Component/InteractionComponent.h"
+#include "Gimmick/Component/GravityStateComponent.h"
 #include "Core/CoreComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -29,6 +30,7 @@
 #include "Engine/DamageEvents.h"
 #include "InputAction.h"
 #include "UObject/ConstructorHelpers.h"
+#include "Engine/World.h"
 
 namespace PlayerReaction
 {
@@ -278,6 +280,7 @@ void APlayerBase::BeginPlay()
 {
 	Super::BeginPlay();
 	InitializePlayer();
+	if (HasAuthority() && !bHasCheckpoint) SetCheckpoint(GetActorTransform());
 }
 
 void APlayerBase::PossessedBy(AController* NewController)
@@ -703,6 +706,7 @@ void APlayerBase::MulticastDeath_Implementation(FName ReactionSection)
 void APlayerBase::OnRep_DeathHandled()
 {
 	if (DeathState.bDead) PlayDeathPresentation(DeathState.Section);
+	else if (bDeathPresentationStarted) ResetRespawnPresentation();
 }
 
 void APlayerBase::PlayDeathPresentation(FName ReactionSection)
@@ -736,6 +740,96 @@ void APlayerBase::HandleDeath(FName ReactionSection)
 	MulticastDeath(DeathState.Section);
 	ForceNetUpdate();
 	OnPlayerDied.Broadcast(this);
+	if (bAutoRespawn && IsValid(this) && DeathState.bDead)
+	{
+		GetWorldTimerManager().SetTimer(RespawnTimer, this, &APlayerBase::TryAutoRespawn, FMath::Max(0.1f, RespawnDelay), false);
+	}
+}
+
+bool APlayerBase::SetCheckpoint(const FTransform& Transform)
+{
+	if (!HasAuthority() || IsDead() || Transform.ContainsNaN()) return false;
+	CheckpointTransform = FTransform(Transform.GetRotation(), Transform.GetLocation(), GetActorScale3D());
+	CheckpointGravity = GetCharacterMovement()->GetGravityDirection();
+	bCheckpointGravityReversed = AbilitySystemComponent->HasMatchingGameplayTag(
+		FGameplayTag::RequestGameplayTag(TEXT("State.Gravity.Reversed")));
+	bHasCheckpoint = true;
+	return true;
+}
+
+void APlayerBase::TryAutoRespawn()
+{
+	// A temporarily obstructed checkpoint is retried instead of reviving inside geometry.
+	if (IsDead() && !RespawnAtCheckpoint())
+	{
+		GetWorldTimerManager().SetTimer(RespawnTimer, this, &APlayerBase::TryAutoRespawn, 0.5f, false);
+	}
+}
+
+bool APlayerBase::RespawnAtCheckpoint()
+{
+	if (!HasAuthority() || !DeathState.bDead || !bHasCheckpoint || CombatAttributes->GetMaxHealth() <= 0.0f) return false;
+	const UCapsuleComponent* Capsule = GetCapsuleComponent();
+	FCollisionQueryParams Query(SCENE_QUERY_STAT(CheckpointRespawn), false, this);
+	if (GetWorld()->OverlapBlockingTestByProfile(CheckpointTransform.GetLocation(), CheckpointTransform.GetRotation(),
+		Capsule->GetCollisionProfileName(), FCollisionShape::MakeCapsule(
+			Capsule->GetScaledCapsuleRadius(), Capsule->GetScaledCapsuleHalfHeight()), Query)) return false;
+	if (!TeleportTo(CheckpointTransform.GetLocation(), CheckpointTransform.Rotator())) return false;
+	GetWorldTimerManager().ClearTimer(RespawnTimer);
+	// Keep equipment, core grants and permanent effects on the existing ASC.
+	const bool bGravityReversed = AbilitySystemComponent->HasMatchingGameplayTag(
+		FGameplayTag::RequestGameplayTag(TEXT("State.Gravity.Reversed")));
+	// ToggleGravityState requires a living player; movement stays disabled until reset.
+	DeathState.bDead = false;
+	AbilitySystemComponent->RemoveLooseGameplayTag(WeaponGameplayTags::State_Dead, 1, EGameplayTagReplicationState::TagAndCountToAll);
+	if (bGravityReversed != bCheckpointGravityReversed)
+	{
+		if (UGravityStateComponent* Gravity = FindComponentByClass<UGravityStateComponent>()) Gravity->ToggleGravityState();
+	}
+	GetCharacterMovement()->SetGravityDirection(CheckpointGravity);
+	SetActorRotation(CheckpointTransform.GetRotation(), ETeleportType::TeleportPhysics);
+	CombatAttributes->SetIncomingDamage(0.0f);
+	CombatAttributes->SetHealth(CombatAttributes->GetMaxHealth());
+	DeathState.Section = NAME_None;
+	MulticastRespawn();
+	ForceNetUpdate();
+	OnPlayerRespawned.Broadcast(this);
+	return true;
+}
+
+void APlayerBase::MulticastRespawn_Implementation()
+{
+	ResetRespawnPresentation();
+}
+
+void APlayerBase::ResetRespawnPresentation()
+{
+	bDeathPresentationStarted = false;
+	if (UAnimInstance* Anim = GetMesh()->GetAnimInstance()) Anim->StopAllMontages(0.0f);
+	ActionValueY = DropValue = 0.0f;
+	bHasDoubleJumped = bMovingHorizontally = false;
+	bGrappleJumpStateCaptured = bGrappleCancelJumpAvailable = false;
+	StopJumping();
+	ResetJumpState();
+	ConsumeMovementInputVector();
+	for (const auto& Platform : IgnoredSoftPlatforms)
+	{
+		if (Platform.IsValid()) GetCapsuleComponent()->IgnoreComponentWhenMoving(Platform.Get(), false);
+	}
+	IgnoredSoftPlatforms.Empty();
+	DropThroughPlatform.Reset();
+	SetBase(static_cast<FMovementBaseInterfaceData*>(nullptr));
+	GetCharacterMovement()->StopMovementImmediately();
+	GetCharacterMovement()->ClearAccumulatedForces();
+	GetCharacterMovement()->SetMovementMode(MOVE_Falling);
+	RefreshSoftPlatformCollision();
+	bHasAimTarget = false;
+}
+
+void APlayerBase::FellOutOfWorld(const UDamageType& DamageType)
+{
+	// The engine normally destroys the pawn here, which would lose its checkpoint and core grants.
+	if (HasAuthority()) HandleDeath();
 }
 
 void APlayerBase::CleanupPlayerActions()
@@ -828,6 +922,7 @@ UCoreComponent* APlayerBase::GetCoreComponent() const
 
 void APlayerBase::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	GetWorldTimerManager().ClearTimer(RespawnTimer);
 	GetWorldTimerManager().ClearTimer(HitReactionTimer);
 	if (DoubleJumpTagChangedHandle.IsValid())
 	{

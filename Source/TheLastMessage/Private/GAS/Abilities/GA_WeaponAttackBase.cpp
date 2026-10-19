@@ -147,6 +147,7 @@ void UGA_WeaponAttackBase::ActivateAbility(const FGameplayAbilitySpecHandle Hand
 	{
 		ChargeStartTime = GetWorld()->GetTimeSeconds();
 		bWaitingForRelease = true;
+		Player->BeginWeaponCharge(WeaponSlot, Data->MaxChargeTime);
 		// 빠른 클릭으로 활성화 전에 해제된 경우도 한 번만 공격한다.
 		const FGameplayAbilitySpec* Spec = GetAbilitySystemComponentFromActorInfo()->FindAbilitySpecFromHandle(Handle);
 		if (!Spec || !Spec->InputPressed) InputReleased(Handle, ActorInfo, ActivationInfo);
@@ -173,6 +174,7 @@ void UGA_WeaponAttackBase::InputReleased(const FGameplayAbilitySpecHandle Handle
 	ChargeElapsedTime = Data ? Ratio * Data->MaxChargeTime : 0.0f;
 	ChargeDamageMultiplier = Data ? FMath::Lerp(1.0f, FMath::Max(1.0f, Data->MaxChargeDamageMultiplier), Ratio) : 1.0f;
 	bWaitingForRelease = false;
+	if (APlayerBase* Player = Cast<APlayerBase>(GetAvatarActorFromActorInfo())) Player->ClearWeaponCharge(WeaponSlot);
 	ExecuteAttack();
 }
 
@@ -345,6 +347,7 @@ void UGA_WeaponAttackBase::EndAbility(const FGameplayAbilitySpecHandle Handle,
 {
 	if (bFinishingAttack || !IsEndAbilityValid(Handle, ActorInfo)) return;
 	bFinishingAttack = true;
+	if (APlayerBase* Player = ActorInfo ? Cast<APlayerBase>(ActorInfo->AvatarActor.Get()) : nullptr) Player->ClearWeaponCharge(WeaponSlot);
 	bWaitingForRelease = false;
 	bAttackExecuted = false;
 	ChargeStartTime = 0.0;

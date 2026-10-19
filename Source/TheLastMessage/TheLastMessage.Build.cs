@@ -13,7 +13,7 @@ public class TheLastMessage : ModuleRules
                                                             "AIModule", "NavigationSystem","Niagara", "EnhancedInput",
                                                             "StateTreeModule", "GameplayStateTreeModule", "UMG", "Slate"});
 
-        PrivateDependencyModuleNames.AddRange(new string[] { "CableComponent" });
+        PrivateDependencyModuleNames.AddRange(new string[] { "CableComponent", "SlateCore" });
 
         // Uncomment if you are using Slate UI
         // PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });

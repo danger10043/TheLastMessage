@@ -24,6 +24,15 @@ class UGrapplingHookComponent;
 class APlayerBase;
 struct FGameplayEffectContextHandle;
 
+USTRUCT(BlueprintType)
+struct FPlayerWeaponChargeState
+{
+	GENERATED_BODY()
+	UPROPERTY(BlueprintReadOnly) EWeaponSlot Slot = EWeaponSlot::None;
+	UPROPERTY(BlueprintReadOnly) double ServerStartTime = 0.0;
+	UPROPERTY(BlueprintReadOnly) float Duration = 0.0f;
+};
+
 // 사망 여부와 섹션을 함께 복제하여 수신 순서와 관계없이 같은 사망 모션을 재생한다.
 USTRUCT()
 struct FPlayerDeathPresentationState
@@ -36,6 +45,7 @@ struct FPlayerDeathPresentationState
 };
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnPlayerDiedSignature, APlayerBase*, Player);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnPlayerWeaponDataChanged);
 
 /** Player GAS foundation. Movement remains in ASideScrollingCharacter. */
 UCLASS()
@@ -66,6 +76,19 @@ public:
 	// None 슬롯은 nullptr을 반환한다. 두 슬롯은 동시에 장착된다.
 	UFUNCTION(BlueprintPure, Category = "Player|Weapon")
 	UWeaponBase* GetWeaponInSlot(EWeaponSlot Slot) const;
+	// On clients the replicated data is available without the server-owned weapon UObject.
+	UFUNCTION(BlueprintPure, Category="Player|Weapon")
+	UWeaponDataAsset* GetWeaponDataInSlot(EWeaponSlot Slot) const;
+	UPROPERTY(BlueprintAssignable, Category="Player|Weapon")
+	FOnPlayerWeaponDataChanged OnWeaponDataChanged;
+	UFUNCTION(BlueprintPure, Category="Player|Weapon|Charge")
+	bool IsChargingWeapon() const;
+	UFUNCTION(BlueprintPure, Category="Player|Weapon|Charge")
+	float GetWeaponChargeRatio() const;
+	UFUNCTION(BlueprintPure, Category="Player|Weapon|Charge")
+	EWeaponSlot GetChargingWeaponSlot() const { return WeaponChargeState.Slot; }
+	void BeginWeaponCharge(EWeaponSlot Slot, float Duration);
+	void ClearWeaponCharge(EWeaponSlot Slot);
 
 	// 실제 공격 활성화에 성공한 슬롯의 외형을 표시한다.
 	void ShowWeaponInSlot(EWeaponSlot Slot);
@@ -235,6 +258,9 @@ protected:
 	FTimerHandle EnergyRechargeTimerHandle;
 
 private:
+	UPROPERTY(Replicated)
+	FPlayerWeaponChargeState WeaponChargeState;
+	double GetChargeClockTime() const;
 	void RechargeWeaponEnergy();
 	double LastEnergyRechargeTime = 0.0;
 	FTransform CheckpointTransform;

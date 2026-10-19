@@ -33,6 +33,7 @@
 #include "InputAction.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Engine/World.h"
+#include "GameFramework/GameStateBase.h"
 
 namespace PlayerReaction
 {
@@ -109,6 +110,7 @@ void APlayerBase::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifet
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(APlayerBase, VisibleWeaponSlot);
+	DOREPLIFETIME_CONDITION(APlayerBase, WeaponChargeState, COND_OwnerOnly);
 	DOREPLIFETIME(APlayerBase, InitialPrimaryWeaponData);
 	DOREPLIFETIME(APlayerBase, InitialSecondaryWeaponData);
 	DOREPLIFETIME(APlayerBase, DeathState);
@@ -491,6 +493,7 @@ void APlayerBase::ShowWeaponInSlot(EWeaponSlot Slot)
 void APlayerBase::OnRep_VisibleWeaponSlot()
 {
 	RefreshPrimaryWeaponVisual();
+	OnWeaponDataChanged.Broadcast();
 }
 
 UWeaponBase* APlayerBase::GetWeaponInSlot(EWeaponSlot Slot) const
@@ -498,6 +501,47 @@ UWeaponBase* APlayerBase::GetWeaponInSlot(EWeaponSlot Slot) const
 	if (Slot == EWeaponSlot::Primary) return PrimaryWeapon;
 	if (Slot == EWeaponSlot::Secondary) return SecondaryWeapon;
 	return nullptr;
+}
+
+UWeaponDataAsset* APlayerBase::GetWeaponDataInSlot(EWeaponSlot Slot) const
+{
+	if (const UWeaponBase* Weapon = GetWeaponInSlot(Slot)) return Weapon->WeaponData;
+	if (Slot == EWeaponSlot::Primary) return InitialPrimaryWeaponData;
+	if (Slot == EWeaponSlot::Secondary) return InitialSecondaryWeaponData;
+	return nullptr;
+}
+
+double APlayerBase::GetChargeClockTime() const
+{
+	const AGameStateBase* GS = GetWorld() ? GetWorld()->GetGameState() : nullptr;
+	return GS ? GS->GetServerWorldTimeSeconds() : (GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0);
+}
+
+bool APlayerBase::IsChargingWeapon() const
+{
+	return !IsDead() && WeaponChargeState.Slot != EWeaponSlot::None && WeaponChargeState.Duration > 0.0f;
+}
+
+float APlayerBase::GetWeaponChargeRatio() const
+{
+	return IsChargingWeapon() ? FMath::Clamp(float((GetChargeClockTime() - WeaponChargeState.ServerStartTime)
+		/ WeaponChargeState.Duration), 0.0f, 1.0f) : 0.0f;
+}
+
+void APlayerBase::BeginWeaponCharge(EWeaponSlot Slot, float Duration)
+{
+	if (!HasAuthority() || IsDead() || Slot == EWeaponSlot::None || !FMath::IsFinite(Duration) || Duration <= 0.0f) return;
+	WeaponChargeState.Slot = Slot;
+	WeaponChargeState.Duration = Duration;
+	WeaponChargeState.ServerStartTime = GetChargeClockTime();
+	ForceNetUpdate();
+}
+
+void APlayerBase::ClearWeaponCharge(EWeaponSlot Slot)
+{
+	if (!HasAuthority() || WeaponChargeState.Slot != Slot) return;
+	WeaponChargeState = FPlayerWeaponChargeState();
+	ForceNetUpdate();
 }
 
 bool APlayerBase::EquipWeapon(EWeaponSlot Slot, UWeaponDataAsset* Data)
@@ -518,6 +562,7 @@ bool APlayerBase::EquipWeapon(EWeaponSlot Slot, UWeaponDataAsset* Data)
 	AbilitySystemComponent->SetNumericAttributeBase(UWeaponSlotAttributeSet::EnergyAttribute(Slot),
 		AbilitySystemComponent->GetNumericAttribute(UWeaponSlotAttributeSet::MaxEnergyAttribute(Slot)));
 	RefreshPrimaryWeaponVisual();
+	OnWeaponDataChanged.Broadcast();
 	return true;
 }
 
@@ -858,6 +903,7 @@ void APlayerBase::FellOutOfWorld(const UDamageType& DamageType)
 
 void APlayerBase::CleanupPlayerActions()
 {
+	WeaponChargeState = FPlayerWeaponChargeState();
 	bGrappleCancelJumpAvailable = false;
 	GrapplingHookComponent->ClearAnchor();
 	FinishHitReaction();

@@ -111,15 +111,18 @@ bool FRangedWeaponTest::RunTest(const FString& Parameters)
 	Spec->InputPressed = true;
 	const float BeforeChargeEnergy = Energy->GetPrimaryEnergy();
 	TestTrue(TEXT("Charge starts"), ASC->TryActivateAbility(Spec->Handle));
+	TestTrue(TEXT("Charge is exposed to HUD"), Player->IsChargingWeapon());
 	Advance(0.2f);
 	TestEqual(TEXT("Holding charge does not spend energy"), Energy->GetPrimaryEnergy(), BeforeChargeEnergy);
 	ASC->AbilitySpecInputReleased(*Spec);
+	TestFalse(TEXT("Released charge hides HUD presentation"), Player->IsChargingWeapon());
 	Advance(0.4f);
 	TestEqual(TEXT("Charged shot applies multiplier"), EnemyStats->GetHealth(), BeforeWallShot - 20.0f);
 	Spec->InputPressed = true;
 	TestTrue(TEXT("Another charge starts"), ASC->TryActivateAbility(Spec->Handle));
 	const float BeforeCancel = Energy->GetPrimaryEnergy();
 	ASC->CancelAbilityHandle(Spec->Handle);
+	TestFalse(TEXT("Canceled charge hides HUD presentation"), Player->IsChargingWeapon());
 	TestEqual(TEXT("Canceled charge has no cost"), Energy->GetPrimaryEnergy(), BeforeCancel);
 	TestFalse(TEXT("Cancel clears attack state"), ASC->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking));
 	Data->bSupportsChargeAttack = false;

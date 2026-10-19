@@ -15,6 +15,8 @@ class UBossCorePuzzleComponent;
 class UGameplayAbility;
 class UGameplayEffect;
 class UStaticMeshComponent;
+class UAnimInstance;
+class UAnimMontage;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
     FOnBossPhaseChangedSignature, EBossPhase, NewPhase);
@@ -111,6 +113,36 @@ public:
 
 protected:
     virtual void BeginPlay() override;
+
+    virtual void Tick(float DeltaSeconds) override;
+    virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
+    void UpdatePuzzlePresentation();
+    void ResumeCombatAfterPuzzleBlend();
+
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Boss|Puzzle|Presentation")
+    TObjectPtr<UStaticMeshComponent> PuzzleShieldMesh;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|Puzzle|Presentation")
+    TObjectPtr<UAnimMontage> PuzzleGroggyMontage;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|Puzzle|Presentation")
+    FName PuzzleLoopSection = TEXT("Loop");
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|Puzzle|Presentation")
+    float PuzzleShieldYawSpeed = 20.f;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|Puzzle|Presentation",
+        meta = (ClampMin = "0.0"))
+    float PuzzleGroggyBlendOutTime = 0.8f;
+
+    UPROPERTY(Transient)
+    TObjectPtr<UAnimMontage> ActivePuzzleMontage;
+
+    TWeakObjectPtr<UAnimInstance> PuzzleAnimInstance;
+    bool bPuzzlePresentationActive = false;
+    bool bPuzzleExitPending = false;
+    int32 PuzzleMontageInstanceID = INDEX_NONE;
 
     void UpdateEquipmentForPhase(EBossPhase Phase);
 

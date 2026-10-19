@@ -14,6 +14,13 @@
 #include "Components/StaticMeshComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "BehaviorTree/BlackboardComponent.h"
+#include "Animation/AnimInstance.h"
+#include "Animation/AnimMontage.h"
+#include "Gimmick/GimmickBase.h"
+#include "Gimmick/Laser/LaserEmitter.h"
+#include "Gimmick/Laser/LaserReceiver.h"
+#include "Gimmick/Laser/LaserReflector.h"
+#include "Engine/World.h"
 
 ABossMonster::ABossMonster()
 {
@@ -44,6 +51,17 @@ ABossMonster::ABossMonster()
     ShieldMesh->SetupAttachment(GetMesh(), TEXT("Shield_Socket"));
     ShieldMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     ShieldMesh->SetGenerateOverlapEvents(false);
+
+    PuzzleShieldMesh = CreateDefaultSubobject<UStaticMeshComponent>(
+        TEXT("PuzzleShieldMesh"));
+    PuzzleShieldMesh->SetupAttachment(GetRootComponent());
+    PuzzleShieldMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    PuzzleShieldMesh->SetGenerateOverlapEvents(false);
+    PuzzleShieldMesh->SetCanEverAffectNavigation(false);
+    PuzzleShieldMesh->SetHiddenInGame(true);
+    PuzzleShieldMesh->SetVisibility(false);
+
+    PrimaryActorTick.bCanEverTick = true;
 }
 
 void ABossMonster::UpdateEquipmentForPhase(EBossPhase Phase)
@@ -351,6 +369,8 @@ void ABossMonster::SetBossState(EBossState NewState)
         }
     }
 
+    UpdatePuzzlePresentation();
+
     OnBossStateChanged.Broadcast(CurrentState);
 }
 
@@ -451,6 +471,22 @@ void ABossMonster::StartShieldPuzzle(EBossPuzzleType PuzzleType)
         return;
     }
 
+    if (PuzzleType == EBossPuzzleType::CorePuzzle
+        && (!IsValid(CorePuzzleComponent.Get())
+            || !CorePuzzleComponent->CanStartCorePuzzle(ActivationCores)))
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("Boss core puzzle: check placed cores and their animation settings."));
+        return;
+    }
+
+    if (PuzzleType == EBossPuzzleType::LaserPuzzle && !CanStartLaserPuzzle())
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("Boss laser puzzle: check placed actors and emitter configs."));
+        return;
+    }
+
     ShieldComponent->ActivateShield(PuzzleType);
     if (!ShieldComponent->IsShieldActive())
     {
@@ -479,6 +515,19 @@ void ABossMonster::StartShieldPuzzle(EBossPuzzleType PuzzleType)
         return;
     }
 
+    if (PuzzleType == EBossPuzzleType::CorePuzzle
+        && !CorePuzzleComponent->StartCorePuzzle(ActivationCores))
+    {
+        FailShieldPuzzle();
+        return;
+    }
+
+    if (PuzzleType == EBossPuzzleType::LaserPuzzle && !StartLaserPuzzle())
+    {
+        FailShieldPuzzle();
+        return;
+    }
+
     OnBossPuzzleStarted.Broadcast(PuzzleType);
 
     // 레이저 장치 활성화와 코어 생성은 퍼즐 구현 단계에서 연결한다.
@@ -499,6 +548,7 @@ void ABossMonster::HandleBossDeath()
 
     // 취소·체력 알림·이벤트 콜백보다 먼저 사망 상태를 확정한다.
     CurrentState = EBossState::Dead;
+    UpdatePuzzlePresentation();
     CurrentTarget = nullptr;
     bIsRangedImmune = false;
 
@@ -598,7 +648,13 @@ void ABossMonster::CompleteShieldPuzzle()
     }
     if (CurrentState != EBossState::ShieldPuzzle)
     {
-        UE_LOG(LogTemp, Warning, TEXT("BossMonster::CompleteShieldPuzzle - 실드 퍼즐 진행 중이 아닙니다."));
+        UE_LOG(LogTemp, Warning,
+            TEXT("BossMonster::CompleteShieldPuzzle - Boss=%s State=%s ExitPending=%d MontageID=%d"),
+            *GetPathName(),
+            *StaticEnum<EBossState>()->GetNameStringByValue(
+                static_cast<int64>(CurrentState)),
+            bPuzzleExitPending,
+            PuzzleMontageInstanceID);
         return;
     }
     if (!IsValid(PhaseComponent.Get()))
@@ -729,7 +785,13 @@ void ABossMonster::FinishPhaseCinematic()
     }
     if (CurrentState != EBossState::Cinematic)
     {
-        UE_LOG(LogTemp, Warning, TEXT("BossMonster::FinishPhaseCinematic - 시네마틱 상태가 아닙니다."));
+        UE_LOG(LogTemp, Warning,
+            TEXT("BossMonster::FinishPhaseCinematic - Boss=%s State=%s ExitPending=%d MontageID=%d"),
+            *GetPathName(),
+            *StaticEnum<EBossState>()->GetNameStringByValue(
+                static_cast<int64>(CurrentState)),
+            bPuzzleExitPending,
+            PuzzleMontageInstanceID);
         return;
     }
     if (!IsValid(PhaseComponent.Get()))
@@ -742,9 +804,10 @@ void ABossMonster::FinishPhaseCinematic()
         UE_LOG(LogTemp, Error, TEXT("BossMonster::FinishPhaseCinematic - ShieldComponent가 없습니다."));
         return;
     }
-    if (ShieldComponent->IsShieldActive())
+    if (ShieldComponent->IsShieldActive() || bPuzzleExitPending)
     {
-        UE_LOG(LogTemp, Warning, TEXT("BossMonster::FinishPhaseCinematic - 실드 성공 정리가 아직 완료되지 않았습니다."));
+        UE_LOG(LogTemp, Warning,
+            TEXT("BossMonster::FinishPhaseCinematic - 실드 또는 종료 몽타주 정리가 아직 완료되지 않았습니다."));
         return;
     }
     EBossPhase NextPhase;
@@ -773,13 +836,7 @@ void ABossMonster::FinishPhaseCinematic()
         UE_LOG(LogTemp, Warning, TEXT("BossMonster::FinishPhaseCinematic - 상태 변경 콜백에서 전투 복귀가 중단되었습니다."));
         return;
     }
-    if (AAIController* AI = Cast<AAIController>(GetController()))
-    {
-        if (UBrainComponent* Brain = AI->GetBrainComponent())
-        {
-            Brain->ResumeLogic(TEXT("Boss phase cinematic finished"));
-        }
-    }
+    ResumeCombatAfterPuzzleBlend();
     OnBossPhaseChanged.Broadcast(NextPhase);
 }
 
@@ -861,13 +918,7 @@ void ABossMonster::FailShieldPuzzle()
     SetBossState(EBossState::Combat);
     if (CurrentState == EBossState::Combat)
     {
-        if (AAIController* AI = Cast<AAIController>(GetController()))
-        {
-            if (UBrainComponent* Brain = AI->GetBrainComponent())
-            {
-                Brain->ResumeLogic(TEXT("Boss puzzle failed"));
-            }
-        }
+        ResumeCombatAfterPuzzleBlend();
     }
     if (CurrentState == EBossState::Dead)
     {
@@ -920,4 +971,366 @@ void ABossMonster::SetCurrentTarget(AActor* NewTarget)
     }
 
     CurrentTarget = CurrentState != EBossState::Dead && IsValid(NewTarget) ? NewTarget : nullptr;
+}
+
+void ABossMonster::UpdatePuzzlePresentation()
+{
+    const bool bShouldShow = CurrentState == EBossState::ShieldPuzzle;
+    if (bPuzzlePresentationActive == bShouldShow
+        && CurrentState != EBossState::Dead)
+    {
+        return;
+    }
+
+    bPuzzlePresentationActive = bShouldShow;
+    PuzzleShieldMesh->SetVisibility(bShouldShow, true);
+    PuzzleShieldMesh->SetHiddenInGame(!bShouldShow, true);
+
+    if (bShouldShow)
+    {
+        bPuzzleExitPending = false;
+        PuzzleMontageInstanceID = INDEX_NONE;
+        PuzzleShieldMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        PuzzleShieldMesh->SetGenerateOverlapEvents(false);
+
+        if (AAIController* AI = Cast<AAIController>(GetController()))
+        {
+            if (UBrainComponent* Brain = AI->GetBrainComponent())
+            {
+                Brain->PauseLogic(TEXT("Boss shield puzzle"));
+            }
+        }
+
+        UAnimInstance* Anim = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr;
+        UAnimMontage* Montage = PuzzleGroggyMontage.Get();
+        const FName StartSection(TEXT("GroggyStart"));
+        const FName EndSection(TEXT("GroggyEnd"));
+
+        if (!Anim || !Montage
+            || Montage->GetSectionIndex(StartSection) == INDEX_NONE
+            || Montage->GetSectionIndex(PuzzleLoopSection) == INDEX_NONE
+            || Montage->GetSectionIndex(EndSection) == INDEX_NONE)
+        {
+            UE_LOG(LogTemp, Warning,
+                TEXT("Boss puzzle: GroggyStart, Loop and GroggyEnd sections are required."));
+            return;
+        }
+
+        if (Anim->Montage_Play(Montage) > 0.f)
+        {
+            FAnimMontageInstance* Instance =
+                Anim->GetActiveInstanceForMontage(Montage);
+            if (!Instance)
+            {
+                Anim->Montage_Stop(0.f, Montage);
+                UE_LOG(LogTemp, Warning,
+                    TEXT("Boss puzzle: montage instance was not created."));
+                return;
+            }
+
+            ActivePuzzleMontage = Montage;
+            PuzzleAnimInstance = Anim;
+            PuzzleMontageInstanceID = Instance->GetInstanceID();
+
+            Anim->Montage_SetNextSection(
+                StartSection, PuzzleLoopSection, Montage);
+            Anim->Montage_SetNextSection(
+                PuzzleLoopSection, PuzzleLoopSection, Montage);
+            Anim->Montage_SetNextSection(
+                EndSection, NAME_None, Montage);
+            Anim->Montage_JumpToSection(StartSection, Montage);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("Boss puzzle: groggy montage failed to play."));
+        }
+        return;
+    }
+
+    UAnimInstance* Anim = PuzzleAnimInstance.Get();
+    UAnimMontage* Montage = ActivePuzzleMontage.Get();
+
+    if (CurrentState == EBossState::Dead)
+    {
+        bPuzzleExitPending = false;
+        PuzzleMontageInstanceID = INDEX_NONE;
+        ActivePuzzleMontage = nullptr;
+        PuzzleAnimInstance.Reset();
+
+        if (Anim && Montage)
+        {
+            Anim->Montage_Stop(0.f, Montage);
+        }
+        return;
+    }
+
+    bPuzzleExitPending = true;
+
+    if (Anim && Montage
+        && PuzzleMontageInstanceID != INDEX_NONE
+        && Anim->GetMontageInstanceForID(PuzzleMontageInstanceID)
+        && !Anim->Montage_GetIsStopped(Montage))
+    {
+        const FName EndSection(TEXT("GroggyEnd"));
+        if (Montage->GetSectionIndex(EndSection) != INDEX_NONE)
+        {
+            Anim->Montage_SetNextSection(
+                PuzzleLoopSection, EndSection, Montage);
+            Anim->Montage_SetNextSection(
+                EndSection, NAME_None, Montage);
+            Anim->Montage_JumpToSection(EndSection, Montage);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning,
+                TEXT("Boss puzzle: GroggyEnd is missing; stopping montage."));
+            Anim->Montage_Stop(
+                FMath::Max(0.f, PuzzleGroggyBlendOutTime), Montage);
+        }
+    }
+}
+
+void ABossMonster::ResumeCombatAfterPuzzleBlend()
+{
+    if (!HasAuthority() || CurrentState != EBossState::Combat
+        || bPuzzleExitPending)
+    {
+        return;
+    }
+
+    if (AAIController* AI = Cast<AAIController>(GetController()))
+    {
+        if (UBrainComponent* Brain = AI->GetBrainComponent())
+        {
+            Brain->ResumeLogic(TEXT("Boss puzzle presentation finished"));
+        }
+    }
+}
+
+void ABossMonster::Tick(float DeltaSeconds)
+{
+    Super::Tick(DeltaSeconds);
+
+    CheckLaserPuzzleCompletion();
+
+    if (bPuzzlePresentationActive)
+    {
+        PuzzleShieldMesh->AddLocalRotation(
+            FRotator(0.f, PuzzleShieldYawSpeed * DeltaSeconds, 0.f));
+        return;
+    }
+    if (!bPuzzleExitPending)
+    {
+        return;
+    }
+
+    if (UAnimInstance* Anim = PuzzleAnimInstance.Get())
+    {
+        if (PuzzleMontageInstanceID != INDEX_NONE
+            && Anim->GetMontageInstanceForID(PuzzleMontageInstanceID))
+        {
+            return;
+        }
+    }
+
+    PuzzleMontageInstanceID = INDEX_NONE;
+    ActivePuzzleMontage = nullptr;
+    PuzzleAnimInstance.Reset();
+
+    bPuzzleExitPending = false;
+    if (HasAuthority())
+    {
+        if (CurrentState == EBossState::Cinematic)
+        {
+            FinishPhaseCinematic();
+        }
+        else if (CurrentState == EBossState::Combat)
+        {
+            ResumeCombatAfterPuzzleBlend();
+        }
+    }
+
+}
+
+void ABossMonster::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+    StopLaserPuzzle();
+
+    if (UAnimInstance* Anim = PuzzleAnimInstance.Get())
+    {
+        if (ActivePuzzleMontage)
+        {
+            Anim->Montage_Stop(0.f, ActivePuzzleMontage.Get());
+        }
+    }
+    PuzzleShieldMesh->SetVisibility(false, true);
+    PuzzleShieldMesh->SetHiddenInGame(true, true);
+    bPuzzlePresentationActive = false;
+    bPuzzleExitPending = false;
+    ActivePuzzleMontage = nullptr;
+    PuzzleAnimInstance.Reset();
+    Super::EndPlay(EndPlayReason);
+}
+
+int32 ABossMonster::GetRemainingCoreCount() const
+{
+    return IsValid(CorePuzzleComponent.Get())
+        ? CorePuzzleComponent->GetRemainingCoreCount() : 0;
+}
+
+void ABossMonster::PostInitializeComponents()
+{
+    Super::PostInitializeComponents();
+
+    if (GetWorld() && GetWorld()->IsGameWorld())
+    {
+        StopLaserPuzzle();
+    }
+}
+
+bool ABossMonster::CanStartLaserPuzzle() const
+{
+    if (!HasAuthority() || bLaserPuzzleActive
+        || LaserEmitters.IsEmpty() || LaserReceivers.IsEmpty())
+    {
+        return false;
+    }
+
+    TSet<const AGimmickBase*> Seen;
+    const auto ValidateActors = [&Seen](const auto& Actors)
+        {
+            for (const auto& Entry : Actors)
+            {
+                const AGimmickBase* Actor = Entry.Get();
+                if (!IsValid(Actor) || Seen.Contains(Actor))
+                {
+                    return false;
+                }
+                Seen.Add(Actor);
+            }
+            return true;
+        };
+
+    if (!ValidateActors(LaserEmitters)
+        || !ValidateActors(LaserReceivers)
+        || !ValidateActors(LaserReflectors))
+    {
+        return false;
+    }
+
+    for (ALaserEmitter* Emitter : LaserEmitters)
+    {
+        if (!Emitter->LoadLaserConfig())
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ABossMonster::StartLaserPuzzle()
+{
+    if (CurrentState != EBossState::ShieldPuzzle
+        || !IsValid(ShieldComponent.Get())
+        || !ShieldComponent->IsShieldActive()
+        || ShieldComponent->GetRemainingPuzzleTime() <= 0.f
+        || !CanStartLaserPuzzle())
+    {
+        return false;
+    }
+
+    StopLaserPuzzle();
+    bLaserPuzzleActive = true;
+    SetActorTickEnabled(true);
+
+    const auto EnableActor = [](AGimmickBase* Actor)
+        {
+            Actor->SetActorHiddenInGame(false);
+            Actor->SetActorEnableCollision(true);
+            Actor->SetGimmickEnabled(true);
+        };
+
+    for (ALaserReceiver* Receiver : LaserReceivers)
+    {
+        EnableActor(Receiver);
+    }
+    for (ALaserReflector* Reflector : LaserReflectors)
+    {
+        Reflector->ResetReflector();
+        EnableActor(Reflector);
+    }
+    for (ALaserEmitter* Emitter : LaserEmitters)
+    {
+        if (!bLaserPuzzleActive || CurrentState != EBossState::ShieldPuzzle)
+        {
+            return false;
+        }
+
+        // 접촉 목록 갱신이 끝난 뒤 보스가 성공 여부를 검사한다.
+        AddTickPrerequisiteActor(Emitter);
+        EnableActor(Emitter);
+        Emitter->ApplyActiveState(true);
+    }
+
+    return bLaserPuzzleActive && CurrentState == EBossState::ShieldPuzzle;
+}
+
+void ABossMonster::StopLaserPuzzle()
+{
+    bLaserPuzzleActive = false;
+
+    const auto DisableActor = [](AGimmickBase* Actor)
+        {
+            if (!IsValid(Actor))
+            {
+                return;
+            }
+
+            Actor->SetGimmickEnabled(false);
+            Actor->SetActorEnableCollision(false);
+            Actor->SetActorHiddenInGame(true);
+        };
+
+    // 발신기를 먼저 꺼서 빔과 수신기 접촉을 즉시 정리한다.
+    for (ALaserEmitter* Emitter : LaserEmitters)
+    {
+        DisableActor(Emitter);
+    }
+    for (ALaserReceiver* Receiver : LaserReceivers)
+    {
+        DisableActor(Receiver);
+    }
+    for (ALaserReflector* Reflector : LaserReflectors)
+    {
+        DisableActor(Reflector);
+    }
+}
+
+void ABossMonster::CheckLaserPuzzleCompletion()
+{
+    if (!HasAuthority() || !bLaserPuzzleActive
+        || CurrentState != EBossState::ShieldPuzzle
+        || !IsValid(ShieldComponent.Get())
+        || !ShieldComponent->IsShieldActive()
+        || ShieldComponent->GetRemainingPuzzleTime() <= 0.f)
+    {
+        return;
+    }
+
+    for (ALaserReceiver* Receiver : LaserReceivers)
+    {
+        if (!IsValid(Receiver))
+        {
+            continue;
+        }
+
+        for (ALaserEmitter* Emitter : LaserEmitters)
+        {
+            if (Receiver->HasLaserContactFrom(Emitter))
+            {
+                CompleteShieldPuzzle();
+                return;
+            }
+        }
+    }
 }

@@ -159,3 +159,13 @@ float AGimmickBase::CalculateGlowIntensity() const
 	// 기본 기믹은 기존 상호작용 강조 상태에 따라 발광
 	return bIsHighlighted ? GlowIntensity : 0.0f;
 }
+
+void AGimmickBase::SetGimmickEnabled(bool bNewEnabled)
+{
+	bIsEnabled = bNewEnabled;
+	if (!bIsEnabled)
+	{
+		UpdateInteractionHighlight(false);
+		ApplyActiveState(false);
+	}
+}

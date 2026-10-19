@@ -4,11 +4,11 @@
 #include "GameFramework/Actor.h"
 #include "BossActivationCore.generated.h"
 
-class UStaticMeshComponent;
+class USkeletalMeshComponent;
 class USphereComponent;
-class UPrimitiveComponent;
+class UAnimMontage;
+class UMaterialInstanceDynamic;
 class UBossCorePuzzleComponent;
-class AActor;
 
 UCLASS()
 class THELASTMESSAGE_API ABossActivationCore : public AActor
@@ -17,33 +17,63 @@ class THELASTMESSAGE_API ABossActivationCore : public AActor
 
 public:
     ABossActivationCore();
-    void InitializeCore(
+    virtual void Tick(float DeltaSeconds) override;
+
+    bool CanActivateFor(
+        const UBossCorePuzzleComponent* InPuzzleComponent) const;
+    bool InitializeCore(
         int32 InCoreIndex, UBossCorePuzzleComponent* InPuzzleComponent);
+
     void HandleMissileHit(AActor* Missile);
     void DeactivateCore();
     void ResetCore();
-    bool IsCoreActive();
+
+    bool IsCoreActive() const { return bIsActive; }
+    bool IsBroken() const { return bIsBroken; }
 
 protected:
-    UFUNCTION()
-    void OnCoreOverlap(
-        UPrimitiveComponent* OverlappedComponent, AActor* OtherActor,
-        UPrimitiveComponent* OtherComp, int32 OtherBodyIndex,
-        bool bFromSweep, const FHitResult& SweepResult);
+    virtual void BeginPlay() override;
 
-    UPROPERTY(VisibleAnywhere)
-    TObjectPtr<UStaticMeshComponent> CoreMesh;
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Boss|Core")
+    TObjectPtr<USkeletalMeshComponent> CoreMesh;
 
-    UPROPERTY(VisibleAnywhere)
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Boss|Core")
     TObjectPtr<USphereComponent> CollisionComponent;
 
-private:
-    UPROPERTY()
-    bool bIsActive = true;
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|Core|Animation")
+    TObjectPtr<UAnimMontage> SpawnMontage;
 
-    UPROPERTY()
-    int32 CoreIndex = -1;
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|Core|Animation")
+    TObjectPtr<UAnimMontage> RetractMontage;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|Core|Animation")
+    TObjectPtr<UAnimMontage> BreakMontage;
+
+private:
+    enum class ECoreState : uint8
+    {
+        Hidden,
+        Spawning,
+        Active,
+        Retracting,
+        Breaking,
+        Fading
+    };
+
+    bool PlayCoreMontage(UAnimMontage* Montage);
+    void HideCore();
+    void SetCoreOpacity(float Opacity);
+
+    UPROPERTY(Transient)
+    TArray<TObjectPtr<UMaterialInstanceDynamic>> DynamicMaterials;
 
     UPROPERTY()
     TObjectPtr<UBossCorePuzzleComponent> PuzzleComponent = nullptr;
+
+    ECoreState CoreState = ECoreState::Hidden;
+    bool bIsActive = false;
+    bool bIsBroken = false;
+    int32 CoreIndex = INDEX_NONE;
+    int32 MontageInstanceID = INDEX_NONE;
+    float FadeElapsed = 0.f;
 };

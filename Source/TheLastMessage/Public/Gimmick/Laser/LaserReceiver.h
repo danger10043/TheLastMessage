@@ -27,6 +27,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Gimmick|Laser")
 	void UpdateReceiverState();
 
+	UFUNCTION(BlueprintPure, Category = "Gimmick|Laser")
+	bool HasLaserContactFrom(const ALaserEmitter* Emitter) const;
+
 protected:
 	virtual void BeginPlay() override;
 

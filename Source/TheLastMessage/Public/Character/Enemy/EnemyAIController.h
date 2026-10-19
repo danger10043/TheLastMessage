@@ -36,6 +36,9 @@ public:
 	void StartEnemyAI();
 	void StopEnemyAI();
 
+	/** AI를 멈추고 Blackboard의 타겟·조사 위치를 비운 뒤 처음부터 다시 시작한다(풀에서 재사용할 때). */
+	void RestartEnemyAI();
+
 	UFUNCTION()
 	void OnTargetPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus);
 

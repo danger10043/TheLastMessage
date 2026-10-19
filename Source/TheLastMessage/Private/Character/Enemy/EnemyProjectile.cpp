@@ -1,5 +1,7 @@
 #include "Character/Enemy/EnemyProjectile.h"
 #include "Character/Enemy/EnemyBase.h"
+#include "Framework/ActorPoolSubsystem.h"
+#include "TimerManager.h"
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/Pawn.h"
@@ -12,7 +14,7 @@
 AEnemyProjectile::AEnemyProjectile()
 {
 	PrimaryActorTick.bCanEverTick = false;
-	InitialLifeSpan = 5.f; // 생성 측에서 FEnemyProjectileConfig::Lifetime으로 SetLifeSpan 가능
+	InitialLifeSpan = 0.f; // 수명은 SetProjectileLifetime(타이머)으로 관리하고 풀로 돌려보낸다.
 
 	CollisionComponent = CreateDefaultSubobject<USphereComponent>(TEXT("CollisionComponent"));
 	CollisionComponent->InitSphereRadius(15.f);
@@ -59,6 +61,14 @@ void AEnemyProjectile::InitializeProjectile(AEnemyBase* InSource, float InDamage
 	}
 }
 
+void AEnemyProjectile::SetProjectileLifetime(float Lifetime)
+{
+	if (Lifetime > 0.f)
+	{
+		GetWorldTimerManager().SetTimer(LifetimeTimerHandle, this, &AEnemyProjectile::ReturnToPool, Lifetime, false);
+	}
+}
+
 void AEnemyProjectile::SetProjectileSpeed(float InSpeed)
 {
 	if (InSpeed > 0.f)
@@ -80,6 +90,9 @@ void AEnemyProjectile::LaunchProjectile(FVector Direction)
 	ProjectileMovement->Velocity = Dir * ProjectileMovement->InitialSpeed;
 	ProjectileMovement->Activate(true);
 	bLaunched = true;
+
+	// 풀에서 위치를 옮긴 직후라 겹침 정보를 최신으로 갱신한다.
+	CollisionComponent->UpdateOverlaps();
 
 	// 스폰되는 순간 이미 대상과 겹쳐 있던 경우(바로 앞에 붙은 경우)는 스폰 중의 겹침 이벤트가 무시되므로,
 	// 발사자·피해량 설정이 끝난 이 시점에 겹친 대상을 한 번 처리한다.
@@ -127,7 +140,7 @@ void AEnemyProjectile::HandleProjectileImpact(AActor* HitActor)
 
 void AEnemyProjectile::DestroyProjectile()
 {
-	if (IsActorBeingDestroyed())
+	if (IsActorBeingDestroyed() || bInPool)
 	{
 		return;
 	}
@@ -137,7 +150,62 @@ void AEnemyProjectile::DestroyProjectile()
 		UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(), ImpactEffect, GetActorLocation(), GetActorRotation());
 	}
 
+	ReturnToPool();
+}
+
+void AEnemyProjectile::ReturnToPool()
+{
+	if (bInPool || IsActorBeingDestroyed())
+	{
+		return;
+	}
+
+	if (UWorld* World = GetWorld())
+	{
+		if (UActorPoolSubsystem* Pool = World->GetSubsystem<UActorPoolSubsystem>())
+		{
+			Pool->ReleaseActor(this);
+			return;
+		}
+	}
+
 	Destroy();
+}
+
+void AEnemyProjectile::OnAcquiredFromPool()
+{
+	bInPool = false;
+	bLaunched = false;
+	bImpactHandled = false;
+	SourceEnemy = nullptr;
+	Damage = 0.f;
+
+	CollisionComponent->ClearMoveIgnoreActors();
+
+	if (FlareEffect)
+	{
+		FlareEffect->Activate(true);
+	}
+}
+
+void AEnemyProjectile::OnReturnedToPool()
+{
+	bInPool = true;
+	bLaunched = false;
+	bImpactHandled = false;
+	SourceEnemy = nullptr;
+	Damage = 0.f;
+
+	GetWorldTimerManager().ClearTimer(LifetimeTimerHandle);
+
+	ProjectileMovement->StopMovementImmediately();
+	ProjectileMovement->Deactivate();
+	CollisionComponent->ClearMoveIgnoreActors();
+
+	if (FlareEffect)
+	{
+		FlareEffect->DeactivateImmediate();
+	}
 }
 
 void AEnemyProjectile::OnCollisionBeginOverlap(UPrimitiveComponent* OverlappedComp, AActor* OtherActor, UPrimitiveComponent* OtherComp,

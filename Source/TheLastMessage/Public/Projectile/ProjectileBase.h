@@ -7,6 +7,7 @@
 class USphereComponent;
 class UStaticMeshComponent;
 class UProjectileMovementComponent;
+class UGameplayEffect;
 
 UCLASS()
 class THELASTMESSAGE_API AProjectileBase : public AActor
@@ -15,6 +16,7 @@ class THELASTMESSAGE_API AProjectileBase : public AActor
 
 public:
 	AProjectileBase();
+	bool InitializeProjectile(AActor* Source, TSubclassOf<UGameplayEffect> Effect, float InDamage, float Speed, float Range, float InFeedbackStrength = 1.0f);
 
 	void LaunchProjectile(const FVector& Direction);
 	void DestroyProjectile();
@@ -43,5 +45,13 @@ protected:
 	float Damage = 0.f;
 
 private:
+	void HandleImpact(AActor* OtherActor, bool bBlocking);
+	UPROPERTY(Transient)
+	TWeakObjectPtr<AActor> SourceActor;
+	UPROPERTY(Transient)
+	TSubclassOf<UGameplayEffect> DamageEffectClass;
+	float MaxTravelTime = 0.0f;
+	float FeedbackStrength = 1.0f;
+	bool bLaunched = false;
 	bool bImpactHandled = false;
 };

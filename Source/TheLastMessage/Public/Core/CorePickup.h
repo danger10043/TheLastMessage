@@ -2,9 +2,11 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
-#include "Interface/InteractableInterface.h"
+#include "Core/CoreChoiceState.h"
 #include "CorePickup.generated.h"
 
+class APlayerBase;
+class UCoreChoiceWidget;
 class UCoreComponent;
 class UCoreDataAsset;
 class UPrimitiveComponent;
@@ -24,24 +26,25 @@ enum class ECoreRewardMode : uint8
  * 실제 코어의 능력과 효과 부여는 전달받은 UCoreComponent에 맡긴다.
  */
 UCLASS(Blueprintable)
-class THELASTMESSAGE_API ACorePickup : public AActor, public IInteractableInterface
+class THELASTMESSAGE_API ACorePickup : public AActor
 {
 	GENERATED_BODY()
 
 public:
 	ACorePickup();
 
-	/** 요청한 액터가 이 고정 코어 보상과 상호작용할 수 있는지 확인한다. */
-	virtual bool CanInteract_Implementation(AActor* Interactor) const override;
-
-	/** 상호작용한 액터의 코어 컴포넌트에 고정 코어 획득을 요청한다. */
-	virtual void Interact_Implementation(AActor* Interactor) override;
-
 	/** 지정된 코어의 획득을 요청한다. 성공하면 보상을 소비하고 true를 반환한다. */
 	UFUNCTION(BlueprintCallable, Category = "Core|Reward")
 	bool TryAcquireFixedCore(UCoreComponent* InCoreComponent);
 
+	/** 플레이어에게 코어 후보 선택 화면을 연다. 선택에 성공하기 전에는 픽업을 소비하지 않는다. */
+	UFUNCTION(BlueprintCallable, Category = "Core|Reward")
+	bool TryOpenCoreChoice(APlayerBase* Player);
+
 protected:
+	/** 픽업이 제거되면 선택 화면과 보관 중인 선택 기록도 정리한다. */
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
 	/** 플레이어가 코어를 획득할 수 있는 범위를 감지한다. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Core|Components")
 	TObjectPtr<USphereComponent> PickupCollision = nullptr;
@@ -59,16 +62,72 @@ protected:
 		meta = (EditCondition = "RewardMode == ECoreRewardMode::Fixed", EditConditionHides))
 	TObjectPtr<UCoreDataAsset> CoreData = nullptr;
 
+	/** 선택형 보상에 사용할 화면 WBP. 카드 배치와 모양은 해당 WBP에서 편집한다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Core|Reward",
+		meta = (EditCondition = "RewardMode == ECoreRewardMode::Choice", EditConditionHides))
+	TSubclassOf<UCoreChoiceWidget> ChoiceWidgetClass;
+
 	/** 보상 지급이 완료되었는지 나타낸다. 이미 소비한 보상의 재지급을 막는다. */
 	UPROPERTY(Transient, VisibleInstanceOnly, BlueprintReadOnly, Category = "Core|Reward")
 	bool bConsumed = false;
 
 private:
-	/** 획득 범위에 들어온 플레이어에게 고정 코어의 획득을 요청한다. */
+	/** 선택·리롤을 처리할 수 있는 플레이어와 보상 상태인지 확인하고, 유효한 코어 컴포넌트를 반환한다. */
+	UCoreComponent* GetValidChoosingCoreComponent() const;
+
+	/** 대체 후보와 카드별 사용 횟수에 따라 각 리롤 버튼의 활성 상태를 갱신한다. */
+	void UpdateRerollButtons();
+
+	/** 획득 범위에 들어온 플레이어에게 보상 모드에 맞는 획득 처리를 시작한다. */
 	UFUNCTION()
 	void OnPickupBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor,
 		UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult);
 
-	/** 현재 코어 보상을 지급하는 중인지 나타낸다. 지급 중에는 추가 획득 요청을 막는다. */
+	/** 화면에서 선택한 코어의 지급을 요청한다. 성공하면 화면을 닫고 픽업을 파괴한다. */
+	UFUNCTION()
+	void HandleCoreSelected(UCoreDataAsset* SelectedCore);
+
+	/** 누른 카드만 재추첨하고, 새 코어와 리롤 가능 상태를 화면에 반영한다. */
+	UFUNCTION()
+	void HandleCoreReroll(int32 ChoiceIndex);
+
+	/** 창이 닫히면 마지막 선택 목록과 카드별 리롤 기록을 보관한다. */
+	UFUNCTION()
+	void HandleChoiceClosed();
+
+	/** 플레이어가 사망하면 선택 기록을 보관하고 화면을 닫는다. */
+	UFUNCTION()
+	void HandleChoosingPlayerDied(APlayerBase* Player);
+
+	/** 플레이어가 파괴되면 선택 기록을 보관하고 화면을 닫는다. */
+	UFUNCTION()
+	void HandleChoosingPlayerDestroyed(AActor* Player);
+
+	/** 다음에 같은 보상을 열 수 있도록 선택 기록을 옮긴 뒤 화면을 닫는다. */
+	void SuspendChoiceReward();
+
+	/** 화면과 입력 이벤트 연결만 정리한다. 획득 성공 시에는 페이드를 허용한다. */
+	void CloseChoiceScreen(bool bAnimateClose = false);
+
+	/** 획득 완료나 픽업 제거 시 화면과 선택 기록을 모두 정리한다. */
+	void ClearChoiceReward(bool bAnimateClose = false);
+
+	/** 현재 이 픽업의 후보를 표시하는 선택 화면. */
+	UPROPERTY(Transient)
+	TObjectPtr<UCoreChoiceWidget> ActiveChoiceWidget;
+
+	/** 현재 보상을 선택하는 플레이어. 생존 여부와 선택 권한을 확인한다. */
+	UPROPERTY(Transient)
+	TWeakObjectPtr<APlayerBase> ChoosingPlayer;
+
+	/** 현재 선택을 처리하는 컴포넌트. 화면 종료 시 선택 기록을 이 픽업으로 옮긴다. */
+	UPROPERTY(Transient)
+	TWeakObjectPtr<UCoreComponent> ChoosingCoreComponent;
+
+	/** 화면을 닫아 둔 동안 보관하는 이 보상의 기록. 재진입 시 같은 목록과 리롤 사용 횟수를 복원한다. */
+	UPROPERTY(Transient)
+	FCoreChoiceState SavedChoiceState;
+
+	/** 현재 보상을 처리 중인지 나타낸다. 획득·재추첨 요청이 겹치는 것을 막는다. */
 	bool bIsGrantingReward = false;
 };

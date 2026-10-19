@@ -38,6 +38,9 @@ public:
 	float CameraXMaxBounds = 10000.0f;
 
 protected:
+	// Follow the stable camera position, never the previous frame's shake offset.
+	FVector UnmodifiedCameraLocation = FVector::ZeroVector;
+	void FinalizeViewTarget(FTViewTarget& OutVT, float DeltaTime);
 
 	/** Last cached camera vertical location. The camera only adjusts its height if necessary. */
 	float CurrentZ = 0.0f;

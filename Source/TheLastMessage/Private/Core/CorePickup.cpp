@@ -6,7 +6,10 @@
 #include "Components/StaticMeshComponent.h"
 #include "Core/CoreComponent.h"
 #include "DataAsset/CoreDataAsset.h"
+#include "Engine/AssetManager.h"
+#include "GameFramework/PlayerController.h"
 #include "Templates/UnrealTemplate.h"
+#include "UI/CoreChoiceWidget.h"
 
 ACorePickup::ACorePickup()
 {
@@ -50,34 +53,15 @@ void ACorePickup::OnPickupBeginOverlap(UPrimitiveComponent* OverlappedComponent,
 		return;
 	}
 
-	// 획득 조건 검사와 성공 후 픽업 파괴는 기존 지급 함수에서 처리한다.
-	TryAcquireFixedCore(Player->GetCoreComponent());
-}
-
-bool ACorePickup::CanInteract_Implementation(AActor* Interactor) const
-{
-	// 지급 가능한 보상과 상호작용 대상이 준비되어 있는지 확인한다.
-	if (IsActorBeingDestroyed() || bConsumed || bIsGrantingReward
-		|| RewardMode != ECoreRewardMode::Fixed || !IsValid(CoreData)
-		|| CoreData->CoreId.IsNone() || !IsValid(Interactor))
+	// 고정 보상은 즉시 획득하고, 선택형 보상은 화면에서 선택을 마친 뒤 지급한다.
+	if (RewardMode == ECoreRewardMode::Choice)
 	{
-		return false;
+		TryOpenCoreChoice(Player);
 	}
-
-	// 코어를 받을 수 있고, 해당 코어를 아직 보유하지 않은 액터만 허용한다.
-	const UCoreComponent* CoreComponent = Interactor->FindComponentByClass<UCoreComponent>();
-	return IsValid(CoreComponent) && !CoreComponent->HasCore(CoreData->CoreId);
-}
-
-void ACorePickup::Interact_Implementation(AActor* Interactor)
-{
-	// 요청 시점에도 조건을 확인한 뒤, 실제 지급과 소비는 획득 함수에 맡긴다.
-	if (!IsValid(Interactor) || !IInteractableInterface::Execute_CanInteract(this, Interactor))
+	else
 	{
-		return;
+		TryAcquireFixedCore(Player->GetCoreComponent());
 	}
-
-	TryAcquireFixedCore(Interactor->FindComponentByClass<UCoreComponent>());
 }
 
 bool ACorePickup::TryAcquireFixedCore(UCoreComponent* InCoreComponent)
@@ -103,4 +87,191 @@ bool ACorePickup::TryAcquireFixedCore(UCoreComponent* InCoreComponent)
 	bConsumed = true;
 	Destroy();
 	return true;
+}
+
+bool ACorePickup::TryOpenCoreChoice(APlayerBase* Player)
+{
+	if (!HasAuthority() || IsActorBeingDestroyed() || bConsumed || bIsGrantingReward
+		|| RewardMode != ECoreRewardMode::Choice || IsValid(ActiveChoiceWidget)
+		|| !IsValid(Player) || Player->IsDead() || !ChoiceWidgetClass)
+	{
+		return false;
+	}
+
+	APlayerController* Controller = Cast<APlayerController>(Player->GetController());
+	UCoreComponent* CoreComponent = Player->GetCoreComponent();
+	if (!IsValid(Controller) || !Controller->IsLocalController() || !IsValid(CoreComponent))
+	{
+		return false;
+	}
+
+	TGuardValue<bool> GrantingRewardGuard(bIsGrantingReward, true);
+	TArray<UCoreDataAsset*> Choices;
+	if (!SavedChoiceState.ShownCoreIds.IsEmpty())
+	{
+		// 같은 픽업을 다시 열 때는 마지막 카드와 리롤 기록을 그대로 이어 간다.
+		Choices = CoreComponent->ResumeCoreChoices(SavedChoiceState);
+	}
+	else
+	{
+		// 처음 여는 보상만 전체 코어를 조회하여 후보를 추첨한다.
+		UAssetManager& AssetManager = UAssetManager::Get();
+		TArray<FPrimaryAssetId> CoreAssetIds;
+		AssetManager.GetPrimaryAssetIdList(UCoreDataAsset::StaticClass()->GetFName(), CoreAssetIds);
+		TArray<UCoreDataAsset*> Pool;
+		for (const FPrimaryAssetId& AssetId : CoreAssetIds)
+		{
+			UCoreDataAsset* Data = Cast<UCoreDataAsset>(AssetManager.GetPrimaryAssetPath(AssetId).TryLoad());
+			// 더블점프처럼 고정 보상으로만 지급할 코어는 후보에서 제외한다.
+			if (IsValid(Data) && Data->bIncludeInRandomPool)
+			{
+				Pool.Add(Data);
+			}
+		}
+		Choices = CoreComponent->GenerateCoreChoices(Pool);
+	}
+	if (Choices.IsEmpty()) return false;
+
+	ChoosingPlayer = Player;
+	ChoosingCoreComponent = CoreComponent;
+	ActiveChoiceWidget = UCoreChoiceWidget::OpenCoreChoiceUI(Controller, Choices, ChoiceWidgetClass);
+	if (!IsValid(ActiveChoiceWidget) || IsActorBeingDestroyed() || !IsValid(Player) || Player->IsDead()
+		|| Player->GetController() != Controller)
+	{
+		// 화면 준비에 실패해도 이 보상의 기록은 보관하고, 다른 보상의 선택은 막지 않는다.
+		SuspendChoiceReward();
+		return false;
+	}
+
+	ActiveChoiceWidget->OnCoreSelected.AddDynamic(this, &ACorePickup::HandleCoreSelected);
+	ActiveChoiceWidget->OnRerollRequested.AddDynamic(this, &ACorePickup::HandleCoreReroll);
+	UpdateRerollButtons();
+	ActiveChoiceWidget->OnChoiceClosed.AddDynamic(this, &ACorePickup::HandleChoiceClosed);
+	Player->OnPlayerDied.AddDynamic(this, &ACorePickup::HandleChoosingPlayerDied);
+	Player->OnDestroyed.AddDynamic(this, &ACorePickup::HandleChoosingPlayerDestroyed);
+	return true;
+}
+
+UCoreComponent* ACorePickup::GetValidChoosingCoreComponent() const
+{
+	APlayerBase* Player = ChoosingPlayer.Get();
+	UCoreComponent* CoreComponent = ChoosingCoreComponent.Get();
+	if (!HasAuthority() || IsActorBeingDestroyed() || bConsumed || bIsGrantingReward
+		|| !IsValid(ActiveChoiceWidget)
+		|| !IsValid(Player) || Player->IsDead() || !IsValid(CoreComponent)
+		|| Player->GetCoreComponent() != CoreComponent
+		|| Player->GetController() != ActiveChoiceWidget->GetOwningPlayer())
+	{
+		return nullptr;
+	}
+	return CoreComponent;
+}
+
+void ACorePickup::UpdateRerollButtons()
+{
+	UCoreComponent* CoreComponent = ChoosingCoreComponent.Get();
+	if (!IsValid(ActiveChoiceWidget) || !IsValid(CoreComponent)) return;
+	for (int32 Index = 0; Index < 3; ++Index)
+	{
+		ActiveChoiceWidget->SetRerollEnabled(Index, CoreComponent->CanRerollCoreChoice(Index));
+	}
+}
+
+void ACorePickup::HandleCoreSelected(UCoreDataAsset* SelectedCore)
+{
+	UCoreComponent* CoreComponent = GetValidChoosingCoreComponent();
+	if (!CoreComponent || !IsValid(SelectedCore)) return;
+
+	// 획득 알림 중 다른 카드가 선택되더라도 한 보상은 한 번만 지급한다.
+	TGuardValue<bool> GrantingRewardGuard(bIsGrantingReward, true);
+	if (!CoreComponent->SelectCore(SelectedCore->CoreId))
+	{
+		// 실패하면 화면과 선택지를 유지하여 다른 코어를 선택하거나 취소할 수 있게 한다.
+		return;
+	}
+
+	bConsumed = true;
+	ClearChoiceReward(true);
+	Destroy();
+}
+
+void ACorePickup::HandleCoreReroll(int32 ChoiceIndex)
+{
+	UCoreComponent* CoreComponent = GetValidChoosingCoreComponent();
+	if (!CoreComponent) return;
+
+	TGuardValue<bool> GrantingRewardGuard(bIsGrantingReward, true);
+	UCoreChoiceWidget* Widget = ActiveChoiceWidget;
+	UCoreDataAsset* Replacement = CoreComponent->RerollCoreChoice(ChoiceIndex);
+	if (Replacement && !Widget->UpdateCoreChoice(ChoiceIndex, Replacement))
+	{
+		// 화면 반영에 실패해도 변경된 코어와 사용 횟수를 보관하여 재진입 시 복원한다.
+		SuspendChoiceReward();
+		return;
+	}
+	// 카드의 강조 알림에서 화면이 닫혔다면, 종료된 선택 화면을 다시 갱신하지 않는다.
+	if (ActiveChoiceWidget == Widget) UpdateRerollButtons();
+}
+
+void ACorePickup::HandleChoiceClosed()
+{
+	SuspendChoiceReward();
+}
+
+void ACorePickup::HandleChoosingPlayerDied(APlayerBase* Player)
+{
+	SuspendChoiceReward();
+}
+
+void ACorePickup::HandleChoosingPlayerDestroyed(AActor* Player)
+{
+	SuspendChoiceReward();
+}
+
+void ACorePickup::SuspendChoiceReward()
+{
+	if (UCoreComponent* CoreComponent = ChoosingCoreComponent.Get(); IsValid(CoreComponent))
+	{
+		SavedChoiceState = CoreComponent->SuspendCoreChoices();
+	}
+	CloseChoiceScreen();
+}
+
+void ACorePickup::CloseChoiceScreen(bool bAnimateClose)
+{
+	UCoreChoiceWidget* Widget = ActiveChoiceWidget;
+	APlayerBase* Player = ChoosingPlayer.Get();
+
+	// 화면 종료 알림에서 이 함수가 다시 호출되어도 같은 상태를 정리하지 않도록 먼저 비운다.
+	ActiveChoiceWidget = nullptr;
+	ChoosingCoreComponent.Reset();
+	ChoosingPlayer.Reset();
+	if (IsValid(Player))
+	{
+		Player->OnPlayerDied.RemoveDynamic(this, &ACorePickup::HandleChoosingPlayerDied);
+		Player->OnDestroyed.RemoveDynamic(this, &ACorePickup::HandleChoosingPlayerDestroyed);
+	}
+	if (IsValid(Widget))
+	{
+		Widget->OnCoreSelected.RemoveDynamic(this, &ACorePickup::HandleCoreSelected);
+		Widget->OnRerollRequested.RemoveDynamic(this, &ACorePickup::HandleCoreReroll);
+		Widget->OnChoiceClosed.RemoveDynamic(this, &ACorePickup::HandleChoiceClosed);
+		Widget->CloseChoiceUI(bAnimateClose);
+	}
+}
+
+void ACorePickup::ClearChoiceReward(bool bAnimateClose)
+{
+	if (UCoreComponent* CoreComponent = ChoosingCoreComponent.Get(); IsValid(CoreComponent))
+	{
+		CoreComponent->CancelCoreChoices();
+	}
+	SavedChoiceState = FCoreChoiceState();
+	CloseChoiceScreen(bAnimateClose);
+}
+
+void ACorePickup::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	ClearChoiceReward();
+	Super::EndPlay(EndPlayReason);
 }

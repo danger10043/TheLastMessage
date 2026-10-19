@@ -2,6 +2,8 @@
 #include "Character/Enemy/EnemyAIController.h"
 #include "Character/Enemy/EnemyAttributeSet.h"
 #include "Character/Enemy/EnemyProjectile.h"
+#include "Framework/ActorPoolSubsystem.h"
+#include "TimerManager.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemGlobals.h"
 #include "GameplayEffect.h"
@@ -32,6 +34,9 @@ UAbilitySystemComponent* AEnemyBase::GetAbilitySystemComponent() const
 void AEnemyBase::BeginPlay()
 {
 	Super::BeginPlay();
+
+	DefaultCapsuleCollision = GetCapsuleComponent()->GetCollisionEnabled();
+
 	InitializeEnemy();
 
 	OnEnemyDamaged.AddUniqueDynamic(this, &AEnemyBase::HandleDamagedEffect);
@@ -49,7 +54,7 @@ void AEnemyBase::InitializeEnemy()
 
 	AbilitySystemComponent->InitAbilityActorInfo(this, this);
 
-	ApplyLevelScaling(); // MaxHealth, Health, DamageMultiplier
+	ApplyLevelScaling(false); // MaxHealth, Health(가득), DamageMultiplier
 	AttributeSet->InitAttackPower(GetStatConfig().AttackDamage);
 	AttributeSet->InitMoveSpeed(GetStatConfig().MoveSpeed);
 
@@ -64,7 +69,7 @@ void AEnemyBase::InitializeEnemy()
 	}
 }
 
-void AEnemyBase::ApplyLevelScaling()
+void AEnemyBase::ApplyLevelScaling(bool bKeepHealthRatio)
 {
 	const FEnemyStatConfig& Stats = GetStatConfig();
 	const float DamageScale = EnemyData ? EnemyData->DamageScalePerLevel : 0.2f;
@@ -72,7 +77,7 @@ void AEnemyBase::ApplyLevelScaling()
 	const int32 LevelOffset = FMath::Max(EnemyLevel, 1) - 1;
 
 	// 이미 초기화된 상태에서 레벨이 바뀌면 현재 체력 비율을 유지한다.
-	const float HealthRatio = AttributeSet->GetMaxHealth() > 0.f ? AttributeSet->GetHealthPercent() : 1.f;
+	const float HealthRatio = (bKeepHealthRatio && AttributeSet->GetMaxHealth() > 0.f) ? AttributeSet->GetHealthPercent() : 1.f;
 	const float NewMaxHealth = Stats.MaxHealth * (1.f + HealthScale * LevelOffset);
 
 	AttributeSet->InitMaxHealth(NewMaxHealth);
@@ -151,7 +156,7 @@ void AEnemyBase::SetCurrentTarget(AActor* NewTarget)
 
 void AEnemyBase::OnPlayerDetected(AActor* Player)
 {
-	if (IsDead() || !Player)
+	if (IsDead() || bInPool || !Player)
 	{
 		return;
 	}
@@ -263,6 +268,40 @@ FVector AEnemyBase::GetMuzzleLocation(FName SocketName, const FVector& LocalOffs
 void AEnemyBase::HandleDamagedEffect(float Damage)
 {
 	SpawnEffectAtLocation(HitEffect, GetActorLocation());
+	PlayHitReaction();
+}
+
+void AEnemyBase::PlayHitReaction()
+{
+	if (!HitMontage || !GetWorld() || IsDead() || bInPool)
+	{
+		return;
+	}
+
+	// 치명타는 사망 몽타주가 재생되므로 피격 몽타주를 재생하지 않는다.
+	if (AttributeSet && AttributeSet->GetHealth() <= 0.f)
+	{
+		return;
+	}
+
+	if (bIsAttacking && !bHitReactionInterruptsAttack)
+	{
+		return;
+	}
+
+	const double Now = GetWorld()->GetTimeSeconds();
+	if (Now - LastHitReactionTime < HitReactionCooldown)
+	{
+		return;
+	}
+	LastHitReactionTime = Now;
+
+	if (bIsAttacking)
+	{
+		CancelAttack(); // 진행 중인 공격(몽타주, 타이머, 이펙트)을 취소한다.
+	}
+
+	PlayAnimMontage(HitMontage);
 }
 
 void AEnemyBase::PlayAttackMontage()
@@ -304,12 +343,23 @@ AEnemyProjectile* AEnemyBase::SpawnEnemyProjectile(const FEnemyProjectileConfig&
 
 	const FVector Direction = (CurrentTarget->GetActorLocation() - MuzzleLocation).GetSafeNormal();
 
-	FActorSpawnParameters Params;
-	Params.Owner = this;
-	Params.Instigator = this;
-	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	// 투사체는 오브젝트 풀에서 꺼내 쓴다(풀이 없으면 새로 만든다).
+	const FTransform SpawnTransform(Direction.Rotation(), MuzzleLocation);
+	AEnemyProjectile* Projectile = nullptr;
 
-	AEnemyProjectile* Projectile = GetWorld()->SpawnActor<AEnemyProjectile>(ProjectileClass, MuzzleLocation, Direction.Rotation(), Params);
+	if (UActorPoolSubsystem* Pool = GetWorld()->GetSubsystem<UActorPoolSubsystem>())
+	{
+		Projectile = Cast<AEnemyProjectile>(Pool->AcquireActor(ProjectileClass, SpawnTransform, this, this));
+	}
+	else
+	{
+		FActorSpawnParameters Params;
+		Params.Owner = this;
+		Params.Instigator = this;
+		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		Projectile = GetWorld()->SpawnActor<AEnemyProjectile>(ProjectileClass, SpawnTransform, Params);
+	}
+
 	if (!Projectile)
 	{
 		return nullptr;
@@ -317,7 +367,7 @@ AEnemyProjectile* AEnemyBase::SpawnEnemyProjectile(const FEnemyProjectileConfig&
 
 	Projectile->InitializeProjectile(this, GetScaledDamage(Config.Damage));
 	Projectile->SetProjectileSpeed(Config.Speed);
-	Projectile->SetLifeSpan(Config.Lifetime);
+	Projectile->SetProjectileLifetime(Config.Lifetime);
 	Projectile->LaunchProjectile(Direction);
 	return Projectile;
 }
@@ -353,10 +403,89 @@ void AEnemyBase::HandleDeath()
 
 	OnEnemyDied.Broadcast(this);
 
-	// 사망 연출이 끝난 뒤 시체를 제거한다.
+	// 사망 연출이 끝난 뒤 시체를 풀로 돌려보낸다.
 	if (CorpseLifeSpan > 0.f)
 	{
-		SetLifeSpan(CorpseLifeSpan);
+		GetWorldTimerManager().SetTimer(CorpseTimerHandle, this, &AEnemyBase::ReturnToPool, CorpseLifeSpan, false);
+	}
+}
+
+void AEnemyBase::ReturnToPool()
+{
+	if (bInPool)
+	{
+		return;
+	}
+
+	if (UWorld* World = GetWorld())
+	{
+		if (UActorPoolSubsystem* Pool = World->GetSubsystem<UActorPoolSubsystem>())
+		{
+			Pool->ReleaseActor(this);
+			return;
+		}
+	}
+
+	Destroy();
+}
+
+void AEnemyBase::OnReturnedToPool()
+{
+	bInPool = true;
+
+	GetWorldTimerManager().ClearAllTimersForObject(this);
+	CancelAttack();
+
+	if (AEnemyAIController* AIC = Cast<AEnemyAIController>(GetController()))
+	{
+		AIC->StopEnemyAI();
+	}
+
+	StopAnimMontage();
+	AbilitySystemComponent->CancelAllAbilities();
+
+	CurrentTarget = nullptr;
+	GetCharacterMovement()->StopMovementImmediately();
+	GetCharacterMovement()->DisableMovement();
+
+	// 스폰 포인트 등이 참조를 정리하도록 알린 뒤, 이 몬스터에 걸린 외부 바인딩을 모두 끊는다.
+	OnEnemyReleased.Broadcast(this);
+	OnEnemyDied.Clear();
+	OnEnemyReleased.Clear();
+}
+
+void AEnemyBase::OnAcquiredFromPool()
+{
+	bInPool = false;
+	ResetEnemy();
+}
+
+void AEnemyBase::ResetEnemy()
+{
+	GetWorldTimerManager().ClearAllTimersForObject(this);
+	CancelAttack();
+	StopAnimMontage();
+
+	// 상태를 처음으로 되돌린다.
+	CurrentTarget = nullptr;
+	CurrentState = EEnemyState::Patrol;
+	LastAttackTime = -1000000.0;
+	LastHitReactionTime = -1000000.0;
+
+	// 사망 처리에서 꺼 둔 충돌과 이동을 복구한다.
+	GetCapsuleComponent()->SetCollisionEnabled(DefaultCapsuleCollision);
+	GetCharacterMovement()->Velocity = FVector::ZeroVector;
+	GetCharacterMovement()->SetDefaultMovementMode();
+
+	// 능력과 능력치를 다시 설정한다(능력이 중복 부여되지 않도록 먼저 비운다).
+	AbilitySystemComponent->ClearAllAbilities();
+	bInitialized = false;
+	InitializeEnemy();
+
+	// AI를 처음부터 다시 시작한다.
+	if (AEnemyAIController* AIC = Cast<AEnemyAIController>(GetController()))
+	{
+		AIC->RestartEnemyAI();
 	}
 }
 

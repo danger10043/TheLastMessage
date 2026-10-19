@@ -4,6 +4,7 @@
 #include "GameFramework/Character.h"
 #include "AbilitySystemInterface.h"
 #include "GameplayTagContainer.h"
+#include "Interface/PoolableInterface.h"
 #include "Character/Enemy/DataAsset/EnemyTypes.h"
 #include "Character/Enemy/DataAsset/EnemyDataAsset.h"
 #include "EnemyBase.generated.h"
@@ -20,9 +21,10 @@ class AEnemyProjectile;
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEnemyStateChangedSignature, EEnemyState, NewState);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEnemyDamagedSignature, float, Damage);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEnemyDiedSignature, AEnemyBase*, Enemy);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEnemyReleasedSignature, AEnemyBase*, Enemy);
 
 UCLASS()
-class THELASTMESSAGE_API AEnemyBase : public ACharacter, public IAbilitySystemInterface
+class THELASTMESSAGE_API AEnemyBase : public ACharacter, public IAbilitySystemInterface, public IPoolableInterface
 {
 	GENERATED_BODY()
 
@@ -110,6 +112,24 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Enemy")
 	bool IsAttacking() const { return bIsAttacking; }
 
+	// --- 오브젝트 풀 ---
+	virtual void OnAcquiredFromPool() override;
+	virtual void OnReturnedToPool() override;
+
+	/** 몬스터를 처음 상태로 되돌린다(체력·상태·AI·충돌). 풀에서 꺼낼 때 호출된다. */
+	virtual void ResetEnemy();
+
+	/** 풀로 돌려보낸다. 풀이 없으면 제거한다. */
+	void ReturnToPool();
+
+	/** 풀에 보관 중(비활성)인지 */
+	UFUNCTION(BlueprintPure, Category = "Enemy|Pool")
+	bool IsPooled() const { return bInPool; }
+
+	/** 풀로 돌아갈 때 호출된다(스폰 포인트가 참조를 정리하는 데 사용). */
+	UPROPERTY(BlueprintAssignable, Category = "Enemy|Events")
+	FOnEnemyReleasedSignature OnEnemyReleased;
+
 	UPROPERTY(BlueprintAssignable, Category = "Enemy|Events")
 	FOnEnemyStateChangedSignature OnEnemyStateChanged;
 
@@ -143,6 +163,9 @@ protected:
 	/** 피해를 받았을 때 피격 이펙트를 재생한다. */
 	UFUNCTION()
 	void HandleDamagedEffect(float Damage);
+
+	/** 피격 몽타주를 재생한다(조건을 만족할 때만). */
+	void PlayHitReaction();
 
 	/** 공격 몽타주를 재생한다(지정돼 있을 때만). 공격 클래스가 공격을 시작할 때 호출한다. */
 	void PlayAttackMontage();
@@ -183,11 +206,23 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Animation")
 	TObjectPtr<UAnimMontage> DeathMontage;
 
+	/** 피해를 받을 때 재생할 피격 몽타주(비워 두면 재생하지 않음). 몽타주는 DefaultSlot을 사용한다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Animation")
+	TObjectPtr<UAnimMontage> HitMontage;
+
+	/** 피격 몽타주를 다시 재생할 수 있기까지의 최소 간격(초). 연속 피격 때 계속 끊기는 것을 막는다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Animation", meta = (ClampMin = "0.0"))
+	float HitReactionCooldown = 0.4f;
+
+	/** 켜면 공격 중에 맞아도 피격 몽타주가 재생되고 공격이 취소된다. 끄면 공격 중에는 피격 몽타주를 재생하지 않는다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Animation")
+	bool bHitReactionInterruptsAttack = false;
+
 	/** 피해를 받을 때 재생할 이펙트 */
 	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Effects")
 	TObjectPtr<UNiagaraSystem> HitEffect;
 
-	/** 사망 후 시체가 남아 있는 시간(초). 이 시간이 지나면 몬스터가 제거된다. 0 이하이면 계속 남긴다. */
+	/** 사망 후 시체가 남아 있는 시간(초). 이 시간이 지나면 몬스터가 풀로 돌아간다. 0 이하이면 계속 남긴다. */
 	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Death", meta = (ClampMin = "0.0"))
 	float CorpseLifeSpan = 5.f;
 
@@ -222,7 +257,8 @@ protected:
 
 private:
 	/** 레벨에 맞춰 MaxHealth·Health·DamageMultiplier Attribute를 설정한다. */
-	void ApplyLevelScaling();
+	/** bKeepHealthRatio가 true면 현재 체력 비율을 유지하고, false면 체력을 가득 채운다. */
+	void ApplyLevelScaling(bool bKeepHealthRatio = true);
 
 	UPROPERTY(VisibleInstanceOnly, Category = "Enemy|State")
 	EEnemyState CurrentState = EEnemyState::Patrol;
@@ -235,4 +271,15 @@ private:
 
 	bool bInitialized = false;
 	double LastAttackTime = -1000000.0;
+
+	/** 마지막으로 피격 몽타주를 재생한 시각 */
+	double LastHitReactionTime = -1000000.0;
+
+	/** 풀에 보관 중인지 */
+	bool bInPool = false;
+
+	/** 사망으로 꺼 두는 캡슐 충돌을 풀에서 다시 꺼낼 때 복구하기 위한 원래 값 */
+	ECollisionEnabled::Type DefaultCapsuleCollision = ECollisionEnabled::QueryAndPhysics;
+
+	FTimerHandle CorpseTimerHandle;
 };

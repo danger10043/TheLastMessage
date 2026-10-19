@@ -1,17 +1,21 @@
 #include "Character/Player/PlayerBase.h"
 #include "Character/Player/GrapplingHookComponent.h"
+#include "Character/Player/CombatFeedbackComponent.h"
 #include "AbilitySystemComponent.h"
 #include "Abilities/GameplayAbility.h"
 #include "GameplayEffect.h"
 #include "GAS/CombatAttributeSet.h"
+#include "GAS/WeaponSlotAttributeSet.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Gimmick/Component/InteractionComponent.h"
+#include "Gimmick/Component/GravityStateComponent.h"
 #include "Core/CoreComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "DataAsset/WeaponDataAsset.h"
 #include "Weapon/MeleeWeaponBase.h"
+#include "Weapon/RangedWeaponBase.h"
 #include "NativeGameplayTags.h"
 #include "TimerManager.h"
 #include "EnhancedInputComponent.h"
@@ -29,6 +33,8 @@
 #include "Engine/DamageEvents.h"
 #include "InputAction.h"
 #include "UObject/ConstructorHelpers.h"
+#include "Engine/World.h"
+#include "GameFramework/GameStateBase.h"
 
 namespace PlayerReaction
 {
@@ -57,6 +63,8 @@ static TAutoConsoleVariable<int32> CVarDebugAim(
 
 APlayerBase::APlayerBase()
 {
+	GravityStateComponent = CreateDefaultSubobject<UGravityStateComponent>(TEXT("GravityStateComponent"));
+	CombatFeedbackComponent = CreateDefaultSubobject<UCombatFeedbackComponent>(TEXT("CombatFeedbackComponent"));
 	GrapplingHookComponent = CreateDefaultSubobject<UGrapplingHookComponent>(TEXT("GrapplingHookComponent"));
 	static ConstructorHelpers::FObjectFinder<UInputAction> GrappleAction(TEXT("/Game/Main/Inputs/Actions/IA_GrapplingHook.IA_GrapplingHook"));
 	GrapplingHookAction = GrappleAction.Object;
@@ -64,6 +72,7 @@ APlayerBase::APlayerBase()
 	AbilitySystemComponent->SetIsReplicated(true);
 	AbilitySystemComponent->SetReplicationMode(EGameplayEffectReplicationMode::Mixed);
 	CombatAttributes = CreateDefaultSubobject<UCombatAttributeSet>(TEXT("CombatAttributes"));
+	WeaponSlotAttributes = CreateDefaultSubobject<UWeaponSlotAttributeSet>(TEXT("WeaponSlotAttributes"));
 
 	InteractionComponent = CreateDefaultSubobject<UInteractionComponent>(TEXT("InteractionComponent"));
 
@@ -104,6 +113,9 @@ void APlayerBase::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifet
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(APlayerBase, VisibleWeaponSlot);
+	DOREPLIFETIME_CONDITION(APlayerBase, WeaponChargeState, COND_OwnerOnly);
+	DOREPLIFETIME(APlayerBase, InitialPrimaryWeaponData);
+	DOREPLIFETIME(APlayerBase, InitialSecondaryWeaponData);
 	DOREPLIFETIME(APlayerBase, DeathState);
 	DOREPLIFETIME_CONDITION(APlayerBase, AimDirection, COND_SkipOwner);
 	DOREPLIFETIME_CONDITION(APlayerBase, AimTargetLocation, COND_SkipOwner);
@@ -278,6 +290,7 @@ void APlayerBase::BeginPlay()
 {
 	Super::BeginPlay();
 	InitializePlayer();
+	if (HasAuthority() && !bHasCheckpoint) SetCheckpoint(GetActorTransform());
 }
 
 void APlayerBase::PossessedBy(AController* NewController)
@@ -297,6 +310,7 @@ void APlayerBase::InitializePlayer()
 	AbilitySystemComponent->InitAbilityActorInfo(this, this);
 	// Explicitly register before applying initial stats; repeated calls do not duplicate the set.
 	AbilitySystemComponent->AddAttributeSetSubobject(CombatAttributes.Get());
+	AbilitySystemComponent->AddAttributeSetSubobject(WeaponSlotAttributes.Get());
 
 	if (!DoubleJumpTagChangedHandle.IsValid())
 	{
@@ -319,36 +333,10 @@ void APlayerBase::InitializePlayer()
 		const FGameplayEffectSpecHandle Spec = AbilitySystemComponent->MakeOutgoingSpec(InitialCombatStatsEffect, 1.0f, Context);
 		if (Spec.IsValid()) AbilitySystemComponent->ApplyGameplayEffectSpecToSelf(*Spec.Data.Get());
 	}
-	// 무기 객체는 플레이어가 소유하며, 공격 수치는 DataAsset을 참조한다.
-	if (!PrimaryWeapon && IsValid(InitialPrimaryWeaponData))
-	{
-		if (InitialPrimaryWeaponData->WeaponType == EWeaponType::LightMelee ||
-			InitialPrimaryWeaponData->WeaponType == EWeaponType::HeavyMelee)
-		{
-			UMeleeWeaponBase* Weapon = NewObject<UMeleeWeaponBase>(this);
-			if (Weapon->Initialize(InitialPrimaryWeaponData))
-			{
-				PrimaryWeapon = Weapon;
-			}
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("%s: InitialPrimaryWeaponData requires a melee weapon; ranged equipment is not implemented yet."), *GetName());
-		}
-	}
-	if (!SecondaryWeapon && IsValid(InitialSecondaryWeaponData))
-	{
-		if (InitialSecondaryWeaponData->WeaponType == EWeaponType::LightMelee ||
-			InitialSecondaryWeaponData->WeaponType == EWeaponType::HeavyMelee)
-		{
-			UMeleeWeaponBase* Weapon = NewObject<UMeleeWeaponBase>(this);
-			if (Weapon->Initialize(InitialSecondaryWeaponData)) SecondaryWeapon = Weapon;
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("%s: InitialSecondaryWeaponData requires a melee weapon; ranged equipment is not implemented yet."), *GetName());
-		}
-	}
+	if (!PrimaryWeapon && IsValid(InitialPrimaryWeaponData)) EquipWeapon(EWeaponSlot::Primary, InitialPrimaryWeaponData);
+	if (!SecondaryWeapon && IsValid(InitialSecondaryWeaponData)) EquipWeapon(EWeaponSlot::Secondary, InitialSecondaryWeaponData);
+	LastEnergyRechargeTime = GetWorld()->GetTimeSeconds();
+	GetWorldTimerManager().SetTimer(EnergyRechargeTimerHandle, this, &APlayerBase::RechargeWeaponEnergy, 0.05f, true);
 	RefreshPrimaryWeaponVisual();
 	CoreComponent->Initialize(AbilitySystemComponent);
 	TArray<TSubclassOf<UGameplayAbility>> AbilitiesToGrant = StartupAbilities;
@@ -437,6 +425,28 @@ void APlayerBase::AbilityInputPressed(FGameplayTag InputTag)
 			if (Spec.GetDynamicSpecSourceTags().HasTagExact(InputTag)) Handles.Add(Spec.Handle);
 		}
 	}
+	const EWeaponSlot RequestedSlot = InputTag == WeaponGameplayTags::Input_Primary ? EWeaponSlot::Primary
+		: InputTag == WeaponGameplayTags::Input_Secondary ? EWeaponSlot::Secondary : EWeaponSlot::None;
+	if (IsChargingWeapon() && RequestedSlot != EWeaponSlot::None && RequestedSlot != GetChargingWeaponSlot()
+		&& IsValid(GetWeaponInSlot(RequestedSlot)) && !Handles.IsEmpty())
+	{
+		// 반대 슬롯 입력은 발사 전 차지만 취소한다. 비용과 쿨다운은 실제 공격 실행 때 적용된다.
+		const FGameplayTag ChargingInput = GetChargingWeaponSlot() == EWeaponSlot::Primary
+			? WeaponGameplayTags::Input_Primary : WeaponGameplayTags::Input_Secondary;
+		TArray<FGameplayAbilitySpecHandle> ChargingHandles;
+		{
+			FScopedAbilityListLock Lock(*AbilitySystemComponent);
+			for (const FGameplayAbilitySpec& Spec : AbilitySystemComponent->GetActivatableAbilities())
+			{
+				if (Spec.IsActive() && Spec.Ability && Spec.Ability->IsA<UGA_WeaponAttackBase>()
+					&& Spec.GetDynamicSpecSourceTags().HasTagExact(ChargingInput)) ChargingHandles.Add(Spec.Handle);
+			}
+		}
+		for (const FGameplayAbilitySpecHandle Handle : ChargingHandles)
+		{
+			AbilitySystemComponent->CancelAbilityHandle(Handle);
+		}
+	}
 	for (const FGameplayAbilitySpecHandle Handle : Handles)
 	{
 		FGameplayAbilitySpec* Spec = AbilitySystemComponent->FindAbilitySpecFromHandle(Handle);
@@ -508,6 +518,7 @@ void APlayerBase::ShowWeaponInSlot(EWeaponSlot Slot)
 void APlayerBase::OnRep_VisibleWeaponSlot()
 {
 	RefreshPrimaryWeaponVisual();
+	OnWeaponDataChanged.Broadcast();
 }
 
 UWeaponBase* APlayerBase::GetWeaponInSlot(EWeaponSlot Slot) const
@@ -515,6 +526,90 @@ UWeaponBase* APlayerBase::GetWeaponInSlot(EWeaponSlot Slot) const
 	if (Slot == EWeaponSlot::Primary) return PrimaryWeapon;
 	if (Slot == EWeaponSlot::Secondary) return SecondaryWeapon;
 	return nullptr;
+}
+
+UWeaponDataAsset* APlayerBase::GetWeaponDataInSlot(EWeaponSlot Slot) const
+{
+	if (const UWeaponBase* Weapon = GetWeaponInSlot(Slot)) return Weapon->WeaponData;
+	if (Slot == EWeaponSlot::Primary) return InitialPrimaryWeaponData;
+	if (Slot == EWeaponSlot::Secondary) return InitialSecondaryWeaponData;
+	return nullptr;
+}
+
+double APlayerBase::GetChargeClockTime() const
+{
+	const AGameStateBase* GS = GetWorld() ? GetWorld()->GetGameState() : nullptr;
+	return GS ? GS->GetServerWorldTimeSeconds() : (GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0);
+}
+
+bool APlayerBase::IsChargingWeapon() const
+{
+	return !IsDead() && WeaponChargeState.Slot != EWeaponSlot::None && WeaponChargeState.Duration > 0.0f;
+}
+
+float APlayerBase::GetWeaponChargeRatio() const
+{
+	return IsChargingWeapon() ? FMath::Clamp(float((GetChargeClockTime() - WeaponChargeState.ServerStartTime)
+		/ WeaponChargeState.Duration), 0.0f, 1.0f) : 0.0f;
+}
+
+void APlayerBase::BeginWeaponCharge(EWeaponSlot Slot, float Duration)
+{
+	if (!HasAuthority() || IsDead() || Slot == EWeaponSlot::None || !FMath::IsFinite(Duration) || Duration <= 0.0f) return;
+	WeaponChargeState.Slot = Slot;
+	WeaponChargeState.Duration = Duration;
+	WeaponChargeState.ServerStartTime = GetChargeClockTime();
+	ForceNetUpdate();
+}
+
+void APlayerBase::ClearWeaponCharge(EWeaponSlot Slot)
+{
+	if (!HasAuthority() || WeaponChargeState.Slot != Slot) return;
+	WeaponChargeState = FPlayerWeaponChargeState();
+	ForceNetUpdate();
+}
+
+bool APlayerBase::EquipWeapon(EWeaponSlot Slot, UWeaponDataAsset* Data)
+{
+	if (!HasAuthority() || IsDead() || !IsValid(Data) || Slot == EWeaponSlot::None) return false;
+	// Equipment changes during a charge/swing must not replace its captured weapon.
+	if (AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking)) return false;
+	const bool bRanged = Data->WeaponType == EWeaponType::LightRanged || Data->WeaponType == EWeaponType::HeavyRanged;
+	UWeaponBase* Weapon = bRanged ? static_cast<UWeaponBase*>(NewObject<URangedWeaponBase>(this))
+		: static_cast<UWeaponBase*>(NewObject<UMeleeWeaponBase>(this));
+	if (!Weapon->Initialize(Data)) return false;
+	if (Slot == EWeaponSlot::Primary) { PrimaryWeapon = Weapon; InitialPrimaryWeaponData = Data; }
+	else if (Slot == EWeaponSlot::Secondary) { SecondaryWeapon = Weapon; InitialSecondaryWeaponData = Data; }
+	else return false;
+	// Set base maximum so existing GAS modifiers still participate in the effective maximum.
+	AbilitySystemComponent->SetNumericAttributeBase(UWeaponSlotAttributeSet::MaxEnergyAttribute(Slot),
+		bRanged ? FMath::Max(0.0f, Data->MaxEnergy) : 0.0f);
+	AbilitySystemComponent->SetNumericAttributeBase(UWeaponSlotAttributeSet::EnergyAttribute(Slot),
+		AbilitySystemComponent->GetNumericAttribute(UWeaponSlotAttributeSet::MaxEnergyAttribute(Slot)));
+	RefreshPrimaryWeaponVisual();
+	OnWeaponDataChanged.Broadcast();
+	return true;
+}
+
+void APlayerBase::RechargeWeaponEnergy()
+{
+	const double Now = GetWorld()->GetTimeSeconds();
+	const double Previous = LastEnergyRechargeTime;
+	LastEnergyRechargeTime = Now;
+	if (!HasAuthority() || IsDead()) return;
+	for (EWeaponSlot Slot : {EWeaponSlot::Primary, EWeaponSlot::Secondary})
+	{
+		const URangedWeaponBase* Weapon = Cast<URangedWeaponBase>(GetWeaponInSlot(Slot));
+		const UWeaponDataAsset* Data = Weapon ? Weapon->WeaponData.Get() : nullptr;
+		if (!Data || !FMath::IsFinite(Data->EnergyRechargeRate) || Data->EnergyRechargeRate <= 0.0f) continue;
+		const double Start = FMath::Max(Previous, Weapon->LastSuccessfulFireTime + FMath::Max(0.0f, Data->EnergyRechargeDelay));
+		const float Amount = float(FMath::Max(0.0, Now - Start)) * Data->EnergyRechargeRate;
+		if (Amount <= 0.0f) continue;
+		const FGameplayAttribute Energy = UWeaponSlotAttributeSet::EnergyAttribute(Slot);
+		const float Current = AbilitySystemComponent->GetNumericAttribute(Energy);
+		const float Maximum = AbilitySystemComponent->GetNumericAttribute(UWeaponSlotAttributeSet::MaxEnergyAttribute(Slot));
+		if (Current < Maximum) AbilitySystemComponent->ApplyModToAttribute(Energy, EGameplayModOp::Additive, FMath::Min(Amount, Maximum - Current));
+	}
 }
 
 void APlayerBase::AbilityInputCanceled(FGameplayTag InputTag)
@@ -703,6 +798,7 @@ void APlayerBase::MulticastDeath_Implementation(FName ReactionSection)
 void APlayerBase::OnRep_DeathHandled()
 {
 	if (DeathState.bDead) PlayDeathPresentation(DeathState.Section);
+	else if (bDeathPresentationStarted) ResetRespawnPresentation();
 }
 
 void APlayerBase::PlayDeathPresentation(FName ReactionSection)
@@ -736,10 +832,103 @@ void APlayerBase::HandleDeath(FName ReactionSection)
 	MulticastDeath(DeathState.Section);
 	ForceNetUpdate();
 	OnPlayerDied.Broadcast(this);
+	if (bAutoRespawn && IsValid(this) && DeathState.bDead)
+	{
+		GetWorldTimerManager().SetTimer(RespawnTimer, this, &APlayerBase::TryAutoRespawn, FMath::Max(0.1f, RespawnDelay), false);
+	}
+}
+
+bool APlayerBase::SetCheckpoint(const FTransform& Transform)
+{
+	if (!HasAuthority() || IsDead() || Transform.ContainsNaN()) return false;
+	CheckpointTransform = FTransform(Transform.GetRotation(), Transform.GetLocation(), GetActorScale3D());
+	CheckpointGravity = GetCharacterMovement()->GetGravityDirection();
+	bCheckpointGravityReversed = AbilitySystemComponent->HasMatchingGameplayTag(
+		FGameplayTag::RequestGameplayTag(TEXT("State.Gravity.Reversed")));
+	bHasCheckpoint = true;
+	return true;
+}
+
+void APlayerBase::TryAutoRespawn()
+{
+	// A temporarily obstructed checkpoint is retried instead of reviving inside geometry.
+	if (IsDead() && !RespawnAtCheckpoint())
+	{
+		GetWorldTimerManager().SetTimer(RespawnTimer, this, &APlayerBase::TryAutoRespawn, 0.5f, false);
+	}
+}
+
+bool APlayerBase::RespawnAtCheckpoint()
+{
+	if (!HasAuthority() || !DeathState.bDead || !bHasCheckpoint || CombatAttributes->GetMaxHealth() <= 0.0f) return false;
+	const UCapsuleComponent* Capsule = GetCapsuleComponent();
+	FCollisionQueryParams Query(SCENE_QUERY_STAT(CheckpointRespawn), false, this);
+	if (GetWorld()->OverlapBlockingTestByProfile(CheckpointTransform.GetLocation(), CheckpointTransform.GetRotation(),
+		Capsule->GetCollisionProfileName(), FCollisionShape::MakeCapsule(
+			Capsule->GetScaledCapsuleRadius(), Capsule->GetScaledCapsuleHalfHeight()), Query)) return false;
+	if (!TeleportTo(CheckpointTransform.GetLocation(), CheckpointTransform.Rotator())) return false;
+	GetWorldTimerManager().ClearTimer(RespawnTimer);
+	// Keep equipment, core grants and permanent effects on the existing ASC.
+	const bool bGravityReversed = AbilitySystemComponent->HasMatchingGameplayTag(
+		FGameplayTag::RequestGameplayTag(TEXT("State.Gravity.Reversed")));
+	// ToggleGravityState requires a living player; movement stays disabled until reset.
+	DeathState.bDead = false;
+	AbilitySystemComponent->RemoveLooseGameplayTag(WeaponGameplayTags::State_Dead, 1, EGameplayTagReplicationState::TagAndCountToAll);
+	if (bGravityReversed != bCheckpointGravityReversed)
+	{
+		if (UGravityStateComponent* Gravity = FindComponentByClass<UGravityStateComponent>()) Gravity->ToggleGravityState();
+	}
+	GetCharacterMovement()->SetGravityDirection(CheckpointGravity);
+	SetActorRotation(CheckpointTransform.GetRotation(), ETeleportType::TeleportPhysics);
+	CombatAttributes->SetIncomingDamage(0.0f);
+	CombatAttributes->SetHealth(CombatAttributes->GetMaxHealth());
+	DeathState.Section = NAME_None;
+	LastEnergyRechargeTime = GetWorld()->GetTimeSeconds();
+	GetWorldTimerManager().SetTimer(EnergyRechargeTimerHandle, this, &APlayerBase::RechargeWeaponEnergy, 0.05f, true);
+	MulticastRespawn();
+	ForceNetUpdate();
+	OnPlayerRespawned.Broadcast(this);
+	return true;
+}
+
+void APlayerBase::MulticastRespawn_Implementation()
+{
+	ResetRespawnPresentation();
+}
+
+void APlayerBase::ResetRespawnPresentation()
+{
+	bDeathPresentationStarted = false;
+	if (UAnimInstance* Anim = GetMesh()->GetAnimInstance()) Anim->StopAllMontages(0.0f);
+	ActionValueY = DropValue = 0.0f;
+	bHasDoubleJumped = bMovingHorizontally = false;
+	bGrappleJumpStateCaptured = bGrappleCancelJumpAvailable = false;
+	StopJumping();
+	ResetJumpState();
+	ConsumeMovementInputVector();
+	for (const auto& Platform : IgnoredSoftPlatforms)
+	{
+		if (Platform.IsValid()) GetCapsuleComponent()->IgnoreComponentWhenMoving(Platform.Get(), false);
+	}
+	IgnoredSoftPlatforms.Empty();
+	DropThroughPlatform.Reset();
+	SetBase(static_cast<FMovementBaseInterfaceData*>(nullptr));
+	GetCharacterMovement()->StopMovementImmediately();
+	GetCharacterMovement()->ClearAccumulatedForces();
+	GetCharacterMovement()->SetMovementMode(MOVE_Falling);
+	RefreshSoftPlatformCollision();
+	bHasAimTarget = false;
+}
+
+void APlayerBase::FellOutOfWorld(const UDamageType& DamageType)
+{
+	// The engine normally destroys the pawn here, which would lose its checkpoint and core grants.
+	if (HasAuthority()) HandleDeath();
 }
 
 void APlayerBase::CleanupPlayerActions()
 {
+	WeaponChargeState = FPlayerWeaponChargeState();
 	bGrappleCancelJumpAvailable = false;
 	GrapplingHookComponent->ClearAnchor();
 	FinishHitReaction();
@@ -828,6 +1017,7 @@ UCoreComponent* APlayerBase::GetCoreComponent() const
 
 void APlayerBase::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	GetWorldTimerManager().ClearTimer(RespawnTimer);
 	GetWorldTimerManager().ClearTimer(HitReactionTimer);
 	if (DoubleJumpTagChangedHandle.IsValid())
 	{

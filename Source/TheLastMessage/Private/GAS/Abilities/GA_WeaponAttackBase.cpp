@@ -14,6 +14,9 @@
 #include "DrawDebugHelpers.h"
 #include "HAL/IConsoleManager.h"
 #include "GAS/CombatAttributeSet.h"
+#include "GAS/WeaponSlotAttributeSet.h"
+#include "GAS/Effects/GE_WeaponEnergyCost.h"
+#include "Projectile/ProjectileBase.h"
 #include "GAS/Effects/GE_WeaponPrimaryCooldown.h"
 #include "GAS/WeaponGameplayTags.h"
 #include "Kismet/GameplayStatics.h"
@@ -36,6 +39,7 @@ UGA_WeaponAttackBase::UGA_WeaponAttackBase()
 	ActivationBlockedTags.AddTag(WeaponGameplayTags::State_HitReacting);
 	ActivationBlockedTags.AddTag(WeaponGameplayTags::State_Grappling);
 	CooldownEffectClass = UGE_WeaponPrimaryCooldown::StaticClass();
+	CostEffectClass = UGE_WeaponPrimaryEnergyCost::StaticClass();
 	AttackCooldownTags.AddTag(WeaponGameplayTags::Cooldown_Primary);
 }
 
@@ -47,10 +51,46 @@ bool UGA_WeaponAttackBase::CanActivateAbility(const FGameplayAbilitySpecHandle H
 	const APlayerBase* Player = ActorInfo ? Cast<APlayerBase>(ActorInfo->AvatarActor.Get()) : nullptr;
 	const UWeaponBase* Weapon = Player ? Player->GetWeaponInSlot(WeaponSlot) : nullptr;
 	const UWeaponDataAsset* Data = IsValid(Weapon) ? Weapon->WeaponData.Get() : nullptr;
-	return Player && !Player->IsDead() && IsValid(Data)
-		&& (Data->WeaponType == EWeaponType::LightMelee || Data->WeaponType == EWeaponType::HeavyMelee)
-		&& IsValid(Data->AttackMontage) && Player->GetMesh()->GetAnimInstance()
-		&& Data->AttackRange > 0.0f && MeleeHitRadius > 0.0f && Data->AttackPower > 0.0f;
+	if (!Player || Player->IsDead() || !IsValid(Data) || !FMath::IsFinite(Data->AttackPower) || Data->AttackPower <= 0.0f) return false;
+	if (Data->AttackMontage && !Player->GetMesh()->GetAnimInstance()) return false;
+	if (Data->WeaponType == EWeaponType::LightRanged || Data->WeaponType == EWeaponType::HeavyRanged)
+	{
+		return Data->ProjectileClass && !Data->ProjectileClass->HasAnyClassFlags(CLASS_Abstract)
+			&& FMath::IsFinite(Data->RPM) && Data->RPM > 0.0f
+			&& FMath::IsFinite(Data->ProjectileSpeed) && Data->ProjectileSpeed > 0.0f
+			&& FMath::IsFinite(Data->Range) && Data->Range > 0.0f
+			&& FMath::IsFinite(Data->EnergyPerShot) && Data->EnergyPerShot >= 0.0f;
+	}
+	return IsValid(Data->AttackMontage) && Player->GetMesh()->GetAnimInstance()
+		&& Data->AttackRange > 0.0f && MeleeHitRadius > 0.0f;
+}
+
+bool UGA_WeaponAttackBase::CheckCost(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo,
+	FGameplayTagContainer* OptionalRelevantTags) const
+{
+	if (!Super::CheckCost(Handle, ActorInfo, OptionalRelevantTags)) return false;
+	const APlayerBase* Player = ActorInfo ? Cast<APlayerBase>(ActorInfo->AvatarActor.Get()) : nullptr;
+	const UWeaponBase* Weapon = Player ? Player->GetWeaponInSlot(WeaponSlot) : nullptr;
+	const UWeaponDataAsset* Data = Weapon ? Weapon->WeaponData.Get() : nullptr;
+	if (!Data) return false;
+	if (Data->WeaponType != EWeaponType::LightRanged && Data->WeaponType != EWeaponType::HeavyRanged) return true;
+	return CostEffectClass && FMath::IsFinite(Data->EnergyPerShot) && Data->EnergyPerShot >= 0.0f
+		&& Player->GetAbilitySystemComponent()->GetNumericAttribute(UWeaponSlotAttributeSet::EnergyAttribute(WeaponSlot)) >= Data->EnergyPerShot;
+}
+
+void UGA_WeaponAttackBase::ApplyCost(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo,
+	const FGameplayAbilityActivationInfo ActivationInfo) const
+{
+	Super::ApplyCost(Handle, ActorInfo, ActivationInfo);
+	const UWeaponDataAsset* Data = SourceWeapon ? SourceWeapon->WeaponData.Get() : nullptr;
+	if (!Data || (Data->WeaponType != EWeaponType::LightRanged && Data->WeaponType != EWeaponType::HeavyRanged)) return;
+	FGameplayEffectSpecHandle Spec = MakeOutgoingGameplayEffectSpec(Handle, ActorInfo, ActivationInfo,
+		CostEffectClass, GetAbilityLevel(Handle, ActorInfo));
+	if (Spec.IsValid())
+	{
+		Spec.Data->SetSetByCallerMagnitude(WeaponGameplayTags::Data_EnergyCost, -Data->EnergyPerShot);
+		ApplyGameplayEffectSpecToOwner(Handle, ActorInfo, ActivationInfo, Spec);
+	}
 }
 
 const FGameplayTagContainer* UGA_WeaponAttackBase::GetCooldownTags() const
@@ -62,7 +102,9 @@ void UGA_WeaponAttackBase::ApplyCooldown(const FGameplayAbilitySpecHandle Handle
 	const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo) const
 {
 	if (!SourceWeapon || !SourceWeapon->WeaponData || !CooldownEffectClass) return;
-	const float Duration = FMath::Max(0.0f, SourceWeapon->WeaponData->AttackInterval);
+	const UWeaponDataAsset* Data = SourceWeapon->WeaponData;
+	const bool bRanged = Data->WeaponType == EWeaponType::LightRanged || Data->WeaponType == EWeaponType::HeavyRanged;
+	const float Duration = bRanged ? 60.0f / Data->RPM : FMath::Max(0.0f, Data->AttackInterval);
 	if (Duration <= 0.0f) return;
 	FGameplayEffectSpecHandle Spec = MakeOutgoingGameplayEffectSpec(Handle, ActorInfo, ActivationInfo,
 		CooldownEffectClass, GetAbilityLevel(Handle, ActorInfo));
@@ -94,7 +136,7 @@ void UGA_WeaponAttackBase::ActivateAbility(const FGameplayAbilitySpecHandle Hand
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
-	if (!Data || !Data->AttackMontage)
+	if (!Data)
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
@@ -105,6 +147,7 @@ void UGA_WeaponAttackBase::ActivateAbility(const FGameplayAbilitySpecHandle Hand
 	{
 		ChargeStartTime = GetWorld()->GetTimeSeconds();
 		bWaitingForRelease = true;
+		Player->BeginWeaponCharge(WeaponSlot, Data->MaxChargeTime);
 		// 빠른 클릭으로 활성화 전에 해제된 경우도 한 번만 공격한다.
 		const FGameplayAbilitySpec* Spec = GetAbilitySystemComponentFromActorInfo()->FindAbilitySpecFromHandle(Handle);
 		if (!Spec || !Spec->InputPressed) InputReleased(Handle, ActorInfo, ActivationInfo);
@@ -131,6 +174,7 @@ void UGA_WeaponAttackBase::InputReleased(const FGameplayAbilitySpecHandle Handle
 	ChargeElapsedTime = Data ? Ratio * Data->MaxChargeTime : 0.0f;
 	ChargeDamageMultiplier = Data ? FMath::Lerp(1.0f, FMath::Max(1.0f, Data->MaxChargeDamageMultiplier), Ratio) : 1.0f;
 	bWaitingForRelease = false;
+	if (APlayerBase* Player = Cast<APlayerBase>(GetAvatarActorFromActorInfo())) Player->ClearWeaponCharge(WeaponSlot);
 	ExecuteAttack();
 }
 
@@ -139,37 +183,79 @@ void UGA_WeaponAttackBase::ExecuteAttack()
 	if (!IsActive() || bFinishingAttack || bAttackExecuted) return;
 	APlayerBase* Player = Cast<APlayerBase>(GetAvatarActorFromActorInfo());
 	const UWeaponDataAsset* Data = SourceWeapon ? SourceWeapon->WeaponData.Get() : nullptr;
-	if (!Player || Player->IsDead() || !Data || !Data->AttackMontage ||
-		Player->GetWeaponInSlot(WeaponSlot) != SourceWeapon ||
-		!CommitAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo))
+	if (!Player || Player->IsDead() || !Data || Player->GetWeaponInSlot(WeaponSlot) != SourceWeapon)
 	{
 		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
 		return;
 	}
+	const bool bRanged = Data->WeaponType == EWeaponType::LightRanged || Data->WeaponType == EWeaponType::HeavyRanged;
+	AProjectileBase* Projectile = nullptr;
+	FTransform SpawnTransform;
+	FVector ShotDirection = FVector::ZeroVector;
+	if (bRanged)
+	{
+		// Fire from the aim plane at capsule center; no offset may skip a nearby wall.
+		ShotDirection = (Player->GetAimTargetLocation() - Player->GetActorLocation()).GetSafeNormal();
+		float FinalDamage = Data->AttackPower * ChargeDamageMultiplier;
+		FinalDamage *= FMath::Max(0.0f, Player->GetCombatAttributes()->GetDamageDealtMultiplier());
+		if (ShotDirection.IsNearlyZero() || !FMath::IsFinite(FinalDamage) || FinalDamage <= 0.0f)
+		{
+			EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
+			return;
+		}
+		SpawnTransform = FTransform(ShotDirection.Rotation(), Player->GetActorLocation());
+		Projectile = GetWorld()->SpawnActorDeferred<AProjectileBase>(Data->ProjectileClass, SpawnTransform,
+			Player, Player, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+		if (!Projectile || !Projectile->InitializeProjectile(Player, DamageEffectClass, FinalDamage, Data->ProjectileSpeed, Data->Range, GetImpactFeedbackStrength()))
+		{
+			if (Projectile) Projectile->Destroy();
+			EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
+			return;
+		}
+	}
+	if (!CommitAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo))
+	{
+		if (Projectile) Projectile->Destroy();
+		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
+		return;
+	}
 	bAttackExecuted = true;
+	if (Projectile)
+	{
+		SourceWeapon->LastSuccessfulFireTime = GetWorld()->GetTimeSeconds();
+		Projectile->FinishSpawning(SpawnTransform);
+		Projectile->LaunchProjectile(ShotDirection);
+		if (!IsActive() || bFinishingAttack) return;
+	}
 
-	UAbilityTask_WaitGameplayEvent* HitTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(
-		this, WeaponGameplayTags::Event_MeleeHit, nullptr, false, true);
-	HitTask->EventReceived.AddDynamic(this, &UGA_WeaponAttackBase::HandleMeleeHit);
-	HitTask->ReadyForActivation();
+	if (!bRanged)
+	{
+		UAbilityTask_WaitGameplayEvent* HitTask = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(
+			this, WeaponGameplayTags::Event_MeleeHit, nullptr, false, true);
+		HitTask->EventReceived.AddDynamic(this, &UGA_WeaponAttackBase::HandleMeleeHit);
+		HitTask->ReadyForActivation();
+	}
 
 	FName AttackSection = NAME_None;
-	if (Data->bRandomizeAttackSection && Data->AttackMontage->GetNumSections() > 0)
+	if (Data->AttackMontage)
 	{
-		const int32 SectionIndex = FMath::RandRange(0, Data->AttackMontage->GetNumSections() - 1);
-		AttackSection = Data->AttackMontage->GetSectionName(SectionIndex);
-	}
-	UAbilityTask_PlayMontageAndWait* MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
-		this, NAME_None, Data->AttackMontage, 1.0f, AttackSection);
-	MontageTask->OnCompleted.AddDynamic(this, &UGA_WeaponAttackBase::HandleMontageCompleted);
-	MontageTask->OnInterrupted.AddDynamic(this, &UGA_WeaponAttackBase::HandleMontageCancelled);
-	MontageTask->OnCancelled.AddDynamic(this, &UGA_WeaponAttackBase::HandleMontageCancelled);
-	MontageTask->ReadyForActivation();
-	if (!IsActive()) return;
-	if (!AttackSection.IsNone())
-	{
-		// 에셋의 원래 연결은 유지하고, 이번 재생에서만 다음 섹션 진행을 끊는다.
-		Player->GetMesh()->GetAnimInstance()->Montage_SetNextSection(AttackSection, NAME_None, Data->AttackMontage);
+		if (Data->bRandomizeAttackSection && Data->AttackMontage->GetNumSections() > 0)
+		{
+			const int32 SectionIndex = FMath::RandRange(0, Data->AttackMontage->GetNumSections() - 1);
+			AttackSection = Data->AttackMontage->GetSectionName(SectionIndex);
+		}
+		UAbilityTask_PlayMontageAndWait* MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
+			this, NAME_None, Data->AttackMontage, 1.0f, AttackSection);
+		MontageTask->OnCompleted.AddDynamic(this, &UGA_WeaponAttackBase::HandleMontageCompleted);
+		MontageTask->OnInterrupted.AddDynamic(this, &UGA_WeaponAttackBase::HandleMontageCancelled);
+		MontageTask->OnCancelled.AddDynamic(this, &UGA_WeaponAttackBase::HandleMontageCancelled);
+		MontageTask->ReadyForActivation();
+		if (!IsActive()) return;
+		if (!AttackSection.IsNone())
+		{
+			// 에셋의 원래 연결은 유지하고, 이번 재생에서만 다음 섹션 진행을 끊는다.
+			Player->GetMesh()->GetAnimInstance()->Montage_SetNextSection(AttackSection, NAME_None, Data->AttackMontage);
+		}
 	}
 
 	if (Data->AttackEffect)
@@ -181,6 +267,7 @@ void UGA_WeaponAttackBase::ExecuteAttack()
 	{
 		UGameplayStatics::PlaySoundAtLocation(Player, Data->AttackSound, Player->GetActorLocation());
 	}
+	if (!Data->AttackMontage) EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
 }
 
 void UGA_WeaponAttackBase::HandleMeleeHit(FGameplayEventData Payload)
@@ -236,12 +323,20 @@ void UGA_WeaponAttackBase::HandleMeleeHit(FGameplayEventData Payload)
 		// 피해 이벤트가 재진입할 수 있으므로 호출 전에 이번 공격의 명중을 기록한다.
 		HitActorsThisAttack.Add(TargetKey);
 		const bool bApplied = UCombatDamageLibrary::ApplyFinalDamageToTarget(
-			Player, Target, DamageEffectClass, FinalDamage, WeaponGameplayTags::Damage_PlayerMelee);
+			Player, Target, DamageEffectClass, FinalDamage, WeaponGameplayTags::Damage_PlayerMelee, GetImpactFeedbackStrength());
 		// true는 GE 승인 여부이며, 면역으로 실제 체력이 줄지 않아도 이 공격에서는 다시 적용하지 않는다.
 		if (!bApplied && IsActive() && !bFinishingAttack) HitActorsThisAttack.Remove(TargetKey);
 		// 피해 이벤트가 플레이어 사망·공격 취소를 유발했을 수도 있다.
 		if (!IsActive() || bFinishingAttack || Player->IsDead()) break;
 	}
+}
+
+float UGA_WeaponAttackBase::GetImpactFeedbackStrength() const
+{
+	const UWeaponDataAsset* Data = SourceWeapon ? SourceWeapon->WeaponData.Get() : nullptr;
+	if (!Data) return 1.0f;
+	const bool bHeavy = Data->WeaponType == EWeaponType::HeavyMelee || Data->WeaponType == EWeaponType::HeavyRanged;
+	return (bHeavy ? 1.5f : 1.0f) * FMath::Lerp(1.0f, 1.35f, GetChargeRatio());
 }
 
 void UGA_WeaponAttackBase::HandleMontageCompleted()
@@ -260,6 +355,7 @@ void UGA_WeaponAttackBase::EndAbility(const FGameplayAbilitySpecHandle Handle,
 {
 	if (bFinishingAttack || !IsEndAbilityValid(Handle, ActorInfo)) return;
 	bFinishingAttack = true;
+	if (APlayerBase* Player = ActorInfo ? Cast<APlayerBase>(ActorInfo->AvatarActor.Get()) : nullptr) Player->ClearWeaponCharge(WeaponSlot);
 	bWaitingForRelease = false;
 	bAttackExecuted = false;
 	ChargeStartTime = 0.0;

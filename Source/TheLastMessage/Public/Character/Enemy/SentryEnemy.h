@@ -19,6 +19,7 @@ public:
 	virtual void Tick(float DeltaTime) override;
 	virtual void StartAttack() override;
 	virtual void CancelAttack() override;
+	virtual void ResetEnemy() override;
 
 	/**
 	 * 타겟을 향한 조준 각도(AimYaw, AimPitch)를 갱신한다.

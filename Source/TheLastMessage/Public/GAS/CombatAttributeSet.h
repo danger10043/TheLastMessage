@@ -55,6 +55,46 @@ public:
 	FGameplayAttributeData DamageDealtMultiplier;
 	ATTRIBUTE_ACCESSORS_BASIC(UCombatAttributeSet, DamageDealtMultiplier);
 
+	/** 근접 공격의 피해 배율. 1.0은 기본 피해, 1.2는 피해 20% 증가를 뜻한다. */
+	UPROPERTY(BlueprintReadOnly, Category = "Base Stat")
+	FGameplayAttributeData MeleeDamageMultiplier;
+	ATTRIBUTE_ACCESSORS_BASIC(UCombatAttributeSet, MeleeDamageMultiplier);
+
+	/** 최대 차지 시간에 적용할 배율. 1.0은 기본 시간, 0.8은 20% 단축이다. */
+	UPROPERTY(BlueprintReadOnly, Category = "Base Stat")
+	FGameplayAttributeData ChargeTimeMultiplier;
+	ATTRIBUTE_ACCESSORS_BASIC(UCombatAttributeSet, ChargeTimeMultiplier);
+
+	/** 원거리 공격의 에너지 소모 배율. 1.0은 기본 소모량, 0.8은 20% 감소이다. */
+	UPROPERTY(BlueprintReadOnly, Category = "Base Stat")
+	FGameplayAttributeData RangedEnergyCostMultiplier;
+	ATTRIBUTE_ACCESSORS_BASIC(UCombatAttributeSet, RangedEnergyCostMultiplier);
+
+	/** 무기의 초당 에너지 충전량 배율. 1.0은 기본 충전량, 1.25는 25% 증가이다. */
+	UPROPERTY(BlueprintReadOnly, Category = "Base Stat")
+	FGameplayAttributeData EnergyRechargeRateMultiplier;
+	ATTRIBUTE_ACCESSORS_BASIC(UCombatAttributeSet, EnergyRechargeRateMultiplier);
+
+	/** 기본 이동속도에 적용할 배율. 1.0은 기존 이동속도를 유지한다. */
+	UPROPERTY(BlueprintReadOnly, Category = "Base Stat")
+	FGameplayAttributeData MoveSpeedMultiplier;
+	ATTRIBUTE_ACCESSORS_BASIC(UCombatAttributeSet, MoveSpeedMultiplier);
+
+	/** 실제로 감소시킨 적 체력 중 회복할 비율. 0.0은 회복 없음, 0.1은 10% 회복이다. */
+	UPROPERTY(BlueprintReadOnly, Category = "Base Stat")
+	FGameplayAttributeData LifeStealRatio;
+	ATTRIBUTE_ACCESSORS_BASIC(UCombatAttributeSet, LifeStealRatio);
+
+	/** 적 한 마리를 처치했을 때 회복할 체력량. 0.0은 추가 회복이 없음을 뜻한다. */
+	UPROPERTY(BlueprintReadOnly, Category = "Base Stat")
+	FGameplayAttributeData KillHealAmount;
+	ATTRIBUTE_ACCESSORS_BASIC(UCombatAttributeSet, KillHealAmount);
+
+	/** 원래 공격 피해 대비 보조 타격의 피해 비율. 0.0은 추가 피해 없음, 0.1은 10%이다. */
+	UPROPERTY(BlueprintReadOnly, Category = "Base Stat")
+	FGameplayAttributeData AssistStrikeDamageRatio;
+	ATTRIBUTE_ACCESSORS_BASIC(UCombatAttributeSet, AssistStrikeDamageRatio);
+
 	UPROPERTY(BlueprintReadOnly, Category = "Base Stat")
 	FGameplayAttributeData HighHealthThresholdRatio;
 	ATTRIBUTE_ACCESSORS_BASIC(UCombatAttributeSet, HighHealthThresholdRatio);

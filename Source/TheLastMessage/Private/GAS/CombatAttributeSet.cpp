@@ -11,8 +11,18 @@ UCombatAttributeSet::UCombatAttributeSet()
 	InitCriticalDamageMultiplier(1.0f);
 	InitDamageTakenMultiplier(1.0f);
 	InitDamageDealtMultiplier(1.0f);
+	InitMeleeDamageMultiplier(1.0f);
+	InitChargeTimeMultiplier(1.0f);
+	InitRangedEnergyCostMultiplier(1.0f);
+	InitEnergyRechargeRateMultiplier(1.0f);
+	InitMoveSpeedMultiplier(1.0f);
 	InitHighHealthDamageMultiplier(1.0f);
 	InitLowHealthDamageMultiplier(1.0f);
+
+	// 코어가 부여하기 전에는 추가 회복과 보조 타격 피해가 없다.
+	InitLifeStealRatio(0.0f);
+	InitKillHealAmount(0.0f);
+	InitAssistStrikeDamageRatio(0.0f);
 }
 
 void UCombatAttributeSet::PreAttributeChange(const FGameplayAttribute& Attribute, float& NewValue)

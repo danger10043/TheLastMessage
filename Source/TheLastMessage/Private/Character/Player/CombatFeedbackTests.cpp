@@ -17,6 +17,7 @@
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Camera/PlayerCameraManager.h"
+#include "Camera/SideScrollingCameraManager.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCombatFeedbackTest, "TheLastMessage.Combat.FeedbackAndHitStop",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -59,9 +60,13 @@ bool FCombatFeedbackTest::RunTest(const FString& Parameters)
 	Settings->SetTimeDilation(1.0f);
 
 	APlayerBase* Player = World->SpawnActor<APlayerBase>(FVector(0, 0, 200), FRotator::ZeroRotator);
-	APlayerController* PC = World->SpawnActor<APlayerController>();
+	UClass* ControllerBP = LoadClass<APlayerController>(nullptr, TEXT("/Game/Test_Jihong/PC_Test.PC_Test_C"));
+	TestNotNull(TEXT("Actual test controller BP loads"), ControllerBP);
+	APlayerController* PC = World->SpawnActor<APlayerController>(ControllerBP ? ControllerBP : APlayerController::StaticClass());
 	PC->Player = NewObject<ULocalPlayer>(GEngine);
 	PC->Possess(Player);
+	TestTrue(TEXT("Actual controller uses side-scrolling camera"), PC->PlayerCameraManager && PC->PlayerCameraManager->IsA<ASideScrollingCameraManager>());
+	PC->SetViewTarget(Player);
 	Player->GetCharacterMovement()->DisableMovement();
 	Player->GetCombatAttributes()->SetMaxHealth(100);
 	Player->GetCombatAttributes()->SetHealth(100);
@@ -78,13 +83,20 @@ bool FCombatFeedbackTest::RunTest(const FString& Parameters)
 		? Cast<UCombatCameraModifier>(PC->PlayerCameraManager->FindCameraModifierByClass(UCombatCameraModifier::StaticClass())) : nullptr;
 	if (TestNotNull(TEXT("Owner camera receives combat modifier"), Modifier))
 	{
-		FMinimalViewInfo POV;
-		Modifier->ModifyCamera(0.01f, POV);
-		TestFalse(TEXT("Impact actually offsets camera"), POV.Location.IsNearlyZero());
+		// Drive the actual camera manager, not ModifyCamera directly: the override must run modifiers.
+		FTViewTarget View;
+		View.Target = Player;
+		ASideScrollingCameraManager* SideCamera = CastChecked<ASideScrollingCameraManager>(PC->PlayerCameraManager);
+		const FVector BaseCamera = Player->GetActorLocation() + FVector(0, SideCamera->CurrentZoom, SideCamera->CameraZOffset);
+		SideCamera->UpdateViewTarget(View, 0.01f);
+		TestFalse(TEXT("Side-scrolling first frame applies impact offset"), View.POV.Rotation.Equals(FRotator(0, -90, 0), 0.001f));
+		SideCamera->UpdateViewTarget(View, 0.01f);
+		TestFalse(TEXT("Side-scrolling follow frames apply impact offset"), View.POV.Rotation.Equals(FRotator(0, -90, 0), 0.001f));
 		Advance(25);
-		FMinimalViewInfo RestoredPOV;
-		Modifier->ModifyCamera(0.01f, RestoredPOV);
-		TestTrue(TEXT("Camera returns without residual offset"), RestoredPOV.Location.IsNearlyZero() && RestoredPOV.Rotation.IsNearlyZero());
+		SideCamera->UpdateViewTarget(View, 0.01f);
+		TestTrue(TEXT("Side-scrolling rotation returns without residual shake"), View.POV.Rotation.Equals(FRotator(0, -90, 0), 0.001f));
+		TestTrue(TEXT("Shake does not contaminate camera follow position"), FMath::IsNearlyEqual(View.POV.Location.X, Player->GetActorLocation().X, 0.001f)
+			&& FMath::IsNearlyEqual(View.POV.Location.Y, BaseCamera.Y, 0.001f));
 	}
 	Advance(25);
 	Enemy->HandleDeath();

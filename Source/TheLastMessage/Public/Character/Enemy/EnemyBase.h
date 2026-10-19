@@ -15,6 +15,7 @@ class UGameplayAbility;
 class UGameplayEffect;
 class UAnimMontage;
 class UNiagaraSystem;
+class UMaterialInterface;
 class AEnemyBase;
 class AEnemyProjectile;
 
@@ -167,6 +168,10 @@ protected:
 	/** 피격 몽타주를 재생한다(조건을 만족할 때만). */
 	void PlayHitReaction();
 
+	/** 메시에 번쩍임 오버레이를 씌우고, HitFlashDuration 뒤에 제거한다. */
+	void StartHitFlash();
+	void EndHitFlash();
+
 	/** 공격 몽타주를 재생한다(지정돼 있을 때만). 공격 클래스가 공격을 시작할 때 호출한다. */
 	void PlayAttackMontage();
 
@@ -217,6 +222,17 @@ protected:
 	/** 켜면 공격 중에 맞아도 피격 몽타주가 재생되고 공격이 취소된다. 끄면 공격 중에는 피격 몽타주를 재생하지 않는다. */
 	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Animation")
 	bool bHitReactionInterruptsAttack = false;
+
+	/**
+	 * 피격 시 몬스터 메시 위에 잠깐 덧씌울 오버레이 머티리얼(번쩍임). 비워 두면 번쩍이지 않는다.
+	 * 몬스터마다 머티리얼을 고칠 필요 없이 하나를 공용으로 쓴다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Effects")
+	TObjectPtr<UMaterialInterface> HitFlashMaterial;
+
+	/** 번쩍임이 유지되는 시간(초) */
+	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Effects", meta = (ClampMin = "0.01"))
+	float HitFlashDuration = 0.08f;
 
 	/** 피해를 받을 때 재생할 이펙트 */
 	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Effects")
@@ -274,6 +290,8 @@ private:
 
 	/** 마지막으로 피격 몽타주를 재생한 시각 */
 	double LastHitReactionTime = -1000000.0;
+
+	FTimerHandle HitFlashTimerHandle;
 
 	/** 풀에 보관 중인지 */
 	bool bInPool = false;

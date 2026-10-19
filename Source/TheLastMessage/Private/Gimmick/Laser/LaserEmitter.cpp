@@ -72,7 +72,7 @@ void ALaserEmitter::BeginPlay()
 	}
 
 	// 자동 발사가 설정된 발신기는 시작부터 활성화
-	if (bStartActive)
+	if (bStartActive && bIsEnabled)
 	{
 		ApplyActiveState(true);
 	}
@@ -346,4 +346,18 @@ void ALaserEmitter::KillPlayerImmediately(ACharacter* Player)
 
 	// 무적이나 일반 피해 계산과 관계없이 사망 처리 요청
 	PlayerBase->HandleDeath();
+}
+
+void ALaserEmitter::ApplyActiveState(bool bNewActive)
+{
+	Super::ApplyActiveState(bNewActive && bIsEnabled);
+	SetActorTickEnabled(bIsEnabled && bIsActive);
+
+	if (!bIsActive)
+	{
+		LaserSegments.Reset();
+		CurrentReceivers.Reset();
+		UpdateReceiverContacts();
+		UpdateLaserVisuals();
+	}
 }

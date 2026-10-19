@@ -18,6 +18,9 @@ class UStaticMeshComponent;
 class ABossActivationCore;
 class UAnimInstance;
 class UAnimMontage;
+class ALaserEmitter;
+class ALaserReceiver;
+class ALaserReflector;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
     FOnBossPhaseChangedSignature, EBossPhase, NewPhase);
@@ -70,6 +73,8 @@ public:
 
     void StartShieldPuzzle(EBossPuzzleType PuzzleType);
 
+    void StopLaserPuzzle();
+
     UFUNCTION(BlueprintCallable, Category = "Boss|Puzzle")
     void CompleteShieldPuzzle();
 
@@ -115,10 +120,31 @@ public:
 protected:
     virtual void BeginPlay() override;
 
+    virtual void PostInitializeComponents() override;
+
+    bool CanStartLaserPuzzle() const;
+
+    bool StartLaserPuzzle();
+
+    void CheckLaserPuzzleCompletion();
+
+    UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Boss|Puzzle|Laser")
+    TArray<TObjectPtr<ALaserEmitter>> LaserEmitters;
+
+    UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Boss|Puzzle|Laser")
+    TArray<TObjectPtr<ALaserReceiver>> LaserReceivers;
+
+    UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Boss|Puzzle|Laser")
+    TArray<TObjectPtr<ALaserReflector>> LaserReflectors;
+
+    bool bLaserPuzzleActive = false;
+
     virtual void Tick(float DeltaSeconds) override;
+
     virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
     void UpdatePuzzlePresentation();
+
     void ResumeCombatAfterPuzzleBlend();
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Boss|Puzzle|Presentation")

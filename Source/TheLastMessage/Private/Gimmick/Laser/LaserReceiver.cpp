@@ -87,3 +87,18 @@ void ALaserReceiver::UpdateReceiverState()
 	// 발신기가 등록되어 있는 동안에만 소멸 여부 확인
 	SetActorTickEnabled(bHasLaserContact);
 }
+
+bool ALaserReceiver::HasLaserContactFrom(const ALaserEmitter* Emitter) const
+{
+	if (!bIsEnabled || !IsValid(Emitter)
+		|| !Emitter->IsGimmickEnabled() || !Emitter->IsGimmickActive())
+	{
+		return false;
+	}
+
+	return ActiveEmitters.ContainsByPredicate(
+		[Emitter](const TWeakObjectPtr<ALaserEmitter>& Entry)
+		{
+			return Entry.Get() == Emitter;
+		});
+}

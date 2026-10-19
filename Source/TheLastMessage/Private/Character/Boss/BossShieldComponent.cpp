@@ -97,6 +97,11 @@ void UBossShieldComponent::StopPuzzleTimer()
 
 void UBossShieldComponent::DeactivateShield()
 {
+    if (ABossMonster* Boss = Cast<ABossMonster>(GetOwner()))
+    {
+        Boss->StopLaserPuzzle();
+    }
+
     StopPuzzleTimer();
     bIsShieldActive = false;
     CurrentPuzzleType = EBossPuzzleType::None;

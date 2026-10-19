@@ -16,6 +16,11 @@
 #include "BehaviorTree/BlackboardComponent.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
+#include "Gimmick/GimmickBase.h"
+#include "Gimmick/Laser/LaserEmitter.h"
+#include "Gimmick/Laser/LaserReceiver.h"
+#include "Gimmick/Laser/LaserReflector.h"
+#include "Engine/World.h"
 
 ABossMonster::ABossMonster()
 {
@@ -475,6 +480,13 @@ void ABossMonster::StartShieldPuzzle(EBossPuzzleType PuzzleType)
         return;
     }
 
+    if (PuzzleType == EBossPuzzleType::LaserPuzzle && !CanStartLaserPuzzle())
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("Boss laser puzzle: check placed actors and emitter configs."));
+        return;
+    }
+
     ShieldComponent->ActivateShield(PuzzleType);
     if (!ShieldComponent->IsShieldActive())
     {
@@ -505,6 +517,12 @@ void ABossMonster::StartShieldPuzzle(EBossPuzzleType PuzzleType)
 
     if (PuzzleType == EBossPuzzleType::CorePuzzle
         && !CorePuzzleComponent->StartCorePuzzle(ActivationCores))
+    {
+        FailShieldPuzzle();
+        return;
+    }
+
+    if (PuzzleType == EBossPuzzleType::LaserPuzzle && !StartLaserPuzzle())
     {
         FailShieldPuzzle();
         return;
@@ -1093,6 +1111,8 @@ void ABossMonster::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
 
+    CheckLaserPuzzleCompletion();
+
     if (bPuzzlePresentationActive)
     {
         PuzzleShieldMesh->AddLocalRotation(
@@ -1134,6 +1154,8 @@ void ABossMonster::Tick(float DeltaSeconds)
 
 void ABossMonster::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+    StopLaserPuzzle();
+
     if (UAnimInstance* Anim = PuzzleAnimInstance.Get())
     {
         if (ActivePuzzleMontage)
@@ -1154,4 +1176,161 @@ int32 ABossMonster::GetRemainingCoreCount() const
 {
     return IsValid(CorePuzzleComponent.Get())
         ? CorePuzzleComponent->GetRemainingCoreCount() : 0;
+}
+
+void ABossMonster::PostInitializeComponents()
+{
+    Super::PostInitializeComponents();
+
+    if (GetWorld() && GetWorld()->IsGameWorld())
+    {
+        StopLaserPuzzle();
+    }
+}
+
+bool ABossMonster::CanStartLaserPuzzle() const
+{
+    if (!HasAuthority() || bLaserPuzzleActive
+        || LaserEmitters.IsEmpty() || LaserReceivers.IsEmpty())
+    {
+        return false;
+    }
+
+    TSet<const AGimmickBase*> Seen;
+    const auto ValidateActors = [&Seen](const auto& Actors)
+        {
+            for (const auto& Entry : Actors)
+            {
+                const AGimmickBase* Actor = Entry.Get();
+                if (!IsValid(Actor) || Seen.Contains(Actor))
+                {
+                    return false;
+                }
+                Seen.Add(Actor);
+            }
+            return true;
+        };
+
+    if (!ValidateActors(LaserEmitters)
+        || !ValidateActors(LaserReceivers)
+        || !ValidateActors(LaserReflectors))
+    {
+        return false;
+    }
+
+    for (ALaserEmitter* Emitter : LaserEmitters)
+    {
+        if (!Emitter->LoadLaserConfig())
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ABossMonster::StartLaserPuzzle()
+{
+    if (CurrentState != EBossState::ShieldPuzzle
+        || !IsValid(ShieldComponent.Get())
+        || !ShieldComponent->IsShieldActive()
+        || ShieldComponent->GetRemainingPuzzleTime() <= 0.f
+        || !CanStartLaserPuzzle())
+    {
+        return false;
+    }
+
+    StopLaserPuzzle();
+    bLaserPuzzleActive = true;
+    SetActorTickEnabled(true);
+
+    const auto EnableActor = [](AGimmickBase* Actor)
+        {
+            Actor->SetActorHiddenInGame(false);
+            Actor->SetActorEnableCollision(true);
+            Actor->SetGimmickEnabled(true);
+        };
+
+    for (ALaserReceiver* Receiver : LaserReceivers)
+    {
+        EnableActor(Receiver);
+    }
+    for (ALaserReflector* Reflector : LaserReflectors)
+    {
+        Reflector->ResetReflector();
+        EnableActor(Reflector);
+    }
+    for (ALaserEmitter* Emitter : LaserEmitters)
+    {
+        if (!bLaserPuzzleActive || CurrentState != EBossState::ShieldPuzzle)
+        {
+            return false;
+        }
+
+        // 접촉 목록 갱신이 끝난 뒤 보스가 성공 여부를 검사한다.
+        AddTickPrerequisiteActor(Emitter);
+        EnableActor(Emitter);
+        Emitter->ApplyActiveState(true);
+    }
+
+    return bLaserPuzzleActive && CurrentState == EBossState::ShieldPuzzle;
+}
+
+void ABossMonster::StopLaserPuzzle()
+{
+    bLaserPuzzleActive = false;
+
+    const auto DisableActor = [](AGimmickBase* Actor)
+        {
+            if (!IsValid(Actor))
+            {
+                return;
+            }
+
+            Actor->SetGimmickEnabled(false);
+            Actor->SetActorEnableCollision(false);
+            Actor->SetActorHiddenInGame(true);
+        };
+
+    // 발신기를 먼저 꺼서 빔과 수신기 접촉을 즉시 정리한다.
+    for (ALaserEmitter* Emitter : LaserEmitters)
+    {
+        DisableActor(Emitter);
+    }
+    for (ALaserReceiver* Receiver : LaserReceivers)
+    {
+        DisableActor(Receiver);
+    }
+    for (ALaserReflector* Reflector : LaserReflectors)
+    {
+        DisableActor(Reflector);
+    }
+}
+
+void ABossMonster::CheckLaserPuzzleCompletion()
+{
+    if (!HasAuthority() || !bLaserPuzzleActive
+        || CurrentState != EBossState::ShieldPuzzle
+        || !IsValid(ShieldComponent.Get())
+        || !ShieldComponent->IsShieldActive()
+        || ShieldComponent->GetRemainingPuzzleTime() <= 0.f)
+    {
+        return;
+    }
+
+    for (ALaserReceiver* Receiver : LaserReceivers)
+    {
+        if (!IsValid(Receiver))
+        {
+            continue;
+        }
+
+        for (ALaserEmitter* Emitter : LaserEmitters)
+        {
+            if (Receiver->HasLaserContactFrom(Emitter))
+            {
+                CompleteShieldPuzzle();
+                return;
+            }
+        }
+    }
 }

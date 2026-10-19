@@ -21,6 +21,8 @@ class THELASTMESSAGE_API ALaserEmitter : public AGimmickBase
 public:
 	ALaserEmitter();
 
+	virtual void ApplyActiveState(bool bNewActive) override;
+
 	// 데이터 테이블에서 레이저 설정 읽기
 	UFUNCTION(BlueprintCallable, Category = "Gimmick|Laser")
 	bool LoadLaserConfig();

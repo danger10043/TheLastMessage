@@ -40,19 +40,19 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Core|UI")
 	bool UpdateCoreChoice(int32 ChoiceIndex, UCoreDataAsset* CoreData);
 
-	/** 보상 쪽에서 확인한 대체 후보 유무에 따라 리롤 버튼을 활성화한다. */
+	/** 보상 쪽에서 확인한 카드별 리롤 가능 여부를 해당 버튼에 반영한다. */
 	UFUNCTION(BlueprintCallable, Category = "Core|UI")
-	void SetRerollEnabled(bool bEnabled);
+	void SetRerollEnabled(int32 ChoiceIndex, bool bEnabled);
 
 	/** 선택한 코어를 알린다. 호출한 쪽에서 지급 성공 여부를 확인한 뒤 화면을 닫는다. */
 	UPROPERTY(BlueprintAssignable, Category = "Core|UI")
 	FOnCoreChoiceSelected OnCoreSelected;
 
-	/** 선택 취소를 알린다. 호출한 쪽에서 임시 후보와 보상 선택 상태를 정리한다. */
+	/** 창 닫기 요청을 알린다. 실제 보상과 선택 기록의 보관은 호출한 쪽에서 처리한다. */
 	UPROPERTY(BlueprintAssignable, Category = "Core|UI")
 	FOnCoreChoiceCancelled OnChoiceCancelled;
 
-	/** 획득 완료·취소·외부 제거 등으로 화면이 닫혔음을 알린다. 보상 쪽에서 선택 상태를 정리한다. */
+	/** 획득 완료·취소·외부 제거 등으로 화면이 닫혔음을 알린다. 보상 쪽에서 기록을 보관하거나 정리한다. */
 	UPROPERTY(BlueprintAssignable, Category = "Core|UI")
 	FOnCoreChoiceClosed OnChoiceClosed;
 
@@ -113,8 +113,8 @@ protected:
 	TObjectPtr<UButton> ThirdRerollButton;
 
 private:
-	/** 표시할 후보마다 카드 WBP를 만들어 코어 데이터와 선택·마우스 이벤트를 연결한다. */
-	void PopulateCards();
+	/** 후보마다 카드와 입력 이벤트를 준비한다. 모든 카드 생성에 성공하면 true를 반환한다. */
+	bool PopulateCards();
 	/** 입력 대상과 카드별 강조 상태를 바꾸고 화면 상단의 선택 위치를 갱신한다. */
 	void SetActiveCardIndex(int32 Index);
 	/** 선택한 코어를 외부에 알린다. 지급 결과에 따라 외부에서 화면을 닫을 수 있다. */
@@ -132,6 +132,9 @@ private:
 
 	/** 유효한 카드 위치의 리롤 요청을 외부에 전달한다. */
 	void HandleReroll(int32 ChoiceIndex);
+
+	/** 카드 위치에 해당하는 WBP 리롤 버튼을 찾는다. */
+	UButton* GetRerollButton(int32 ChoiceIndex) const;
 
 	// 버튼의 OnClicked에는 카드 위치가 없으므로, 각 버튼에서 공통 함수로 위치를 전달한다.
 	UFUNCTION()
@@ -159,8 +162,6 @@ private:
 	bool bPreviousMouseCursorVisible = false;
 	/** 화면을 닫는 중인지 나타낸다. 종료 중 추가 선택·취소·리롤 요청을 막는다. */
 	bool bClosing = false;
-	/** 보상 쪽에서 재추첨을 허용했는지 나타낸다. 대체 후보가 없으면 요청을 보내지 않는다. */
-	bool bRerollEnabled = false;
 	/** 페이드 경과 시간과 시작 투명도. 현재 투명도에서 자연스럽게 사라지도록 계산한다. */
 	float CloseFadeElapsed = 0.0f;
 	float CloseStartOpacity = 1.0f;

@@ -41,9 +41,9 @@ UCoreChoiceWidget* UCoreChoiceWidget::OpenCoreChoiceUI(APlayerController* Player
 
 	// 전달받은 WBP 클래스로 화면을 만들어 디자이너에서 작성한 배치를 사용한다.
 	UCoreChoiceWidget* Screen = CreateWidget<UCoreChoiceWidget>(PlayerController, ScreenClass);
-	if (!Screen || !Screen->CardsBox || !Screen->CardWidgetClass) return nullptr;
+	if (!Screen) return nullptr;
 	for (UCoreDataAsset* Data : ValidChoices) Screen->DisplayedChoices.Add(Data);
-	Screen->PopulateCards();
+	if (!Screen->PopulateCards()) return nullptr;
 	// 카드 준비가 끝나면 화면을 표시하고 플레이어 입력을 이 화면으로 옮긴다.
 	Screen->AddToViewport(100);
 	Screen->CapturePlayerInput();
@@ -59,19 +59,26 @@ void UCoreChoiceWidget::NativeOnInitialized()
 	if (FirstRerollButton) FirstRerollButton->OnClicked.AddDynamic(this, &UCoreChoiceWidget::HandleFirstReroll);
 	if (SecondRerollButton) SecondRerollButton->OnClicked.AddDynamic(this, &UCoreChoiceWidget::HandleSecondReroll);
 	if (ThirdRerollButton) ThirdRerollButton->OnClicked.AddDynamic(this, &UCoreChoiceWidget::HandleThirdReroll);
-	SetRerollEnabled(false);
+	for (int32 Index = 0; Index < 3; ++Index) SetRerollEnabled(Index, false);
 }
 
-void UCoreChoiceWidget::PopulateCards()
+bool UCoreChoiceWidget::PopulateCards()
 {
-	if (!CardsBox || !CardWidgetClass) return;
+	if (!CardsBox || !CardWidgetClass || CardWidgetClass->HasAnyClassFlags(CLASS_Abstract)
+		|| DisplayedChoices.IsEmpty()) return false;
 	// WBP의 미리보기 카드 또는 이전에 생성한 카드를 비우고 현재 후보로 다시 구성한다.
 	CardsBox->ClearChildren();
 	Cards.Reset();
 	for (int32 Index = 0; Index < DisplayedChoices.Num(); ++Index)
 	{
 		UCoreChoiceCardWidget* Card = CreateWidget<UCoreChoiceCardWidget>(GetOwningPlayer(), CardWidgetClass);
-		if (!Card) continue;
+		if (!Card)
+		{
+			// 일부 카드만 남아 데이터와 화면 순서가 어긋나지 않도록 전체 준비를 취소한다.
+			CardsBox->ClearChildren();
+			Cards.Reset();
+			return false;
+		}
 		Card->SetCoreData(DisplayedChoices[Index], Index);
 		// 카드가 보낸 클릭·마우스 알림을 부모 화면의 처리 함수에 연결한다.
 		Card->OnCoreChosen.AddUObject(this, &UCoreChoiceWidget::HandleCardChosen);
@@ -90,6 +97,7 @@ void UCoreChoiceWidget::PopulateCards()
 		}
 	}
 	SetActiveCardIndex(0);
+	return true;
 }
 
 void UCoreChoiceWidget::SetActiveCardIndex(int32 Index)
@@ -121,7 +129,9 @@ void UCoreChoiceWidget::HandleCancel()
 
 void UCoreChoiceWidget::HandleReroll(int32 ChoiceIndex)
 {
-	if (bClosing || !bRerollEnabled || !DisplayedChoices.IsValidIndex(ChoiceIndex)) return;
+	UButton* RerollButton = GetRerollButton(ChoiceIndex);
+	if (bClosing || !DisplayedChoices.IsValidIndex(ChoiceIndex)
+		|| !RerollButton || !RerollButton->GetIsEnabled()) return;
 	SetKeyboardFocus();
 	// 여기서는 어떤 카드의 버튼인지 알린다. 후보 변경은 이 알림을 받은 쪽에서 처리한다.
 	OnRerollRequested.Broadcast(ChoiceIndex);
@@ -141,12 +151,23 @@ bool UCoreChoiceWidget::UpdateCoreChoice(int32 ChoiceIndex, UCoreDataAsset* Core
 	return true;
 }
 
-void UCoreChoiceWidget::SetRerollEnabled(bool bEnabled)
+UButton* UCoreChoiceWidget::GetRerollButton(int32 ChoiceIndex) const
 {
-	bRerollEnabled = bEnabled && !bClosing;
-	if (FirstRerollButton) FirstRerollButton->SetIsEnabled(bRerollEnabled && DisplayedChoices.IsValidIndex(0));
-	if (SecondRerollButton) SecondRerollButton->SetIsEnabled(bRerollEnabled && DisplayedChoices.IsValidIndex(1));
-	if (ThirdRerollButton) ThirdRerollButton->SetIsEnabled(bRerollEnabled && DisplayedChoices.IsValidIndex(2));
+	switch (ChoiceIndex)
+	{
+	case 0: return FirstRerollButton;
+	case 1: return SecondRerollButton;
+	case 2: return ThirdRerollButton;
+	default: return nullptr;
+	}
+}
+
+void UCoreChoiceWidget::SetRerollEnabled(int32 ChoiceIndex, bool bEnabled)
+{
+	if (UButton* Button = GetRerollButton(ChoiceIndex))
+	{
+		Button->SetIsEnabled(bEnabled && !bClosing && DisplayedChoices.IsValidIndex(ChoiceIndex));
+	}
 }
 
 void UCoreChoiceWidget::HandleFirstReroll()

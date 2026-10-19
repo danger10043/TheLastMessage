@@ -466,6 +466,15 @@ void ABossMonster::StartShieldPuzzle(EBossPuzzleType PuzzleType)
         return;
     }
 
+    if (PuzzleType == EBossPuzzleType::CorePuzzle
+        && (!IsValid(CorePuzzleComponent.Get())
+            || !CorePuzzleComponent->CanStartCorePuzzle(ActivationCores)))
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("Boss core puzzle: check placed cores and their animation settings."));
+        return;
+    }
+
     ShieldComponent->ActivateShield(PuzzleType);
     if (!ShieldComponent->IsShieldActive())
     {
@@ -491,6 +500,13 @@ void ABossMonster::StartShieldPuzzle(EBossPuzzleType PuzzleType)
             TEXT("BossMonster::StartShieldPuzzle - 타이머 시작에 실패했습니다."));
         ShieldComponent->DeactivateShield();
         SetBossState(EBossState::Combat);
+        return;
+    }
+
+    if (PuzzleType == EBossPuzzleType::CorePuzzle
+        && !CorePuzzleComponent->StartCorePuzzle(ActivationCores))
+    {
+        FailShieldPuzzle();
         return;
     }
 
@@ -1132,4 +1148,10 @@ void ABossMonster::EndPlay(const EEndPlayReason::Type EndPlayReason)
     ActivePuzzleMontage = nullptr;
     PuzzleAnimInstance.Reset();
     Super::EndPlay(EndPlayReason);
+}
+
+int32 ABossMonster::GetRemainingCoreCount() const
+{
+    return IsValid(CorePuzzleComponent.Get())
+        ? CorePuzzleComponent->GetRemainingCoreCount() : 0;
 }

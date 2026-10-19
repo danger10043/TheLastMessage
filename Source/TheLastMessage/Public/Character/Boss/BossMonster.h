@@ -15,6 +15,7 @@ class UBossCorePuzzleComponent;
 class UGameplayAbility;
 class UGameplayEffect;
 class UStaticMeshComponent;
+class ABossActivationCore;
 class UAnimInstance;
 class UAnimMontage;
 
@@ -169,6 +170,9 @@ protected:
 
     UPROPERTY(VisibleAnywhere)
     TObjectPtr<UBossCorePuzzleComponent> CorePuzzleComponent;
+
+    UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Boss|Puzzle|Cores")
+    TArray<TObjectPtr<ABossActivationCore>> ActivationCores;
 
     UPROPERTY(EditDefaultsOnly)
     TArray<TSubclassOf<UGameplayAbility>> DefaultAbilities;

@@ -78,6 +78,7 @@ protected:
 
 private:
 	void ExecuteAttack();
+	float GetImpactFeedbackStrength() const;
 	double ChargeStartTime = 0.0;
 	float ChargeDamageMultiplier = 1.0f;
 	bool bWaitingForRelease = false;

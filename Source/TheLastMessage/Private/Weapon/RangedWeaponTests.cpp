@@ -70,6 +70,7 @@ bool FRangedWeaponTest::RunTest(const FString& Parameters)
 	Enemy->GetCharacterMovement()->DisableMovement();
 	const UEnemyAttributeSet* EnemyStats = Enemy->GetAbilitySystemComponent()->GetSet<UEnemyAttributeSet>();
 	const float HealthBefore = EnemyStats->GetHealth();
+	const double ShotStartTime = World->GetTimeSeconds();
 	TestTrue(TEXT("Shot activates without a montage"), ASC->TryActivateAbilityByClass(UGA_AttackPrimary::StaticClass()));
 	TestEqual(TEXT("Shot costs primary energy once"), Energy->GetPrimaryEnergy(), 90.0f);
 	TestEqual(TEXT("Other slot unchanged"), Energy->GetSecondaryEnergy(), 100.0f);
@@ -78,7 +79,9 @@ bool FRangedWeaponTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Projectile hits through common damage GE exactly once"), EnemyStats->GetHealth(), HealthBefore - 10.0f);
 	TestEqual(TEXT("No recharge before delay"), Energy->GetPrimaryEnergy(), 90.0f);
 	Advance(0.3f);
-	TestTrue(TEXT("Recharge uses only time after delay"), FMath::IsNearlyEqual(Energy->GetPrimaryEnergy(), 94.0f, 1.1f));
+	// Hit stop intentionally delays gameplay clocks; recharge follows game time, not wall time.
+	const float ExpectedRecharge = 90.0f + FMath::Max(0.0, World->GetTimeSeconds() - ShotStartTime - Data->EnergyRechargeDelay) * Data->EnergyRechargeRate;
+	TestTrue(TEXT("Recharge uses only game time after delay"), FMath::IsNearlyEqual(Energy->GetPrimaryEnergy(), ExpectedRecharge, 1.1f));
 	Advance(0.4f);
 	TestEqual(TEXT("Recharge stops at maximum"), Energy->GetPrimaryEnergy(), 100.0f);
 	Energy->SetPrimaryEnergy(5);

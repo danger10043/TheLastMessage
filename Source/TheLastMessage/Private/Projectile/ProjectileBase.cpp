@@ -60,13 +60,14 @@ void AProjectileBase::BeginPlay()
 	}
 }
 
-bool AProjectileBase::InitializeProjectile(AActor* Source, TSubclassOf<UGameplayEffect> Effect, float InDamage, float Speed, float Range)
+bool AProjectileBase::InitializeProjectile(AActor* Source, TSubclassOf<UGameplayEffect> Effect, float InDamage, float Speed, float Range, float InFeedbackStrength)
 {
 	if (!HasAuthority() || !IsValid(Source) || !Effect || !FMath::IsFinite(InDamage) || InDamage <= 0.0f
 		|| !FMath::IsFinite(Speed) || Speed <= 0.0f || !FMath::IsFinite(Range) || Range <= 0.0f) return false;
 	SourceActor = Source;
 	DamageEffectClass = Effect;
 	Damage = InDamage;
+	FeedbackStrength = InFeedbackStrength;
 	ProjectileMovement->InitialSpeed = Speed;
 	ProjectileMovement->MaxSpeed = Speed;
 	MaxTravelTime = Range / Speed;
@@ -106,7 +107,7 @@ void AProjectileBase::HandleImpact(AActor* OtherActor, bool bBlocking)
 	if ((Enemy && !Enemy->IsDead()) || (Boss && Boss->GetBossState() != EBossState::Dead))
 	{
 		UCombatDamageLibrary::ApplyFinalDamageToTarget(SourceActor.Get(), OtherActor, DamageEffectClass,
-			Damage, WeaponGameplayTags::Damage_PlayerRanged);
+			Damage, WeaponGameplayTags::Damage_PlayerRanged, FeedbackStrength);
 	}
 	DestroyProjectile();
 }

@@ -78,6 +78,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Player|Death")
 	void HandleDeath(FName ReactionSection = NAME_None);
 
+	/** Server-only. Transform is the capsule center, not the feet. */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category="Player|Checkpoint")
+	bool SetCheckpoint(const FTransform& Transform);
+
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category="Player|Checkpoint")
+	bool RespawnAtCheckpoint();
+
+	virtual void FellOutOfWorld(const UDamageType& DamageType) override;
+
+	UPROPERTY(BlueprintAssignable, Category="Player|Events")
+	FOnPlayerDiedSignature OnPlayerRespawned;
+
 	// 체력이 실제로 감소했고 아직 살아 있을 때 AttributeSet에서 호출한다.
 	void HandleHitReaction(FName ReactionSection = NAME_None);
 	FName GetDamageReactionSection(const FGameplayEffectContextHandle& Context) const;
@@ -124,6 +136,11 @@ public:
 	UCoreComponent* GetCoreComponent() const;
 
 protected:
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Player|Checkpoint")
+	bool bAutoRespawn = true;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Player|Checkpoint", meta=(ClampMin="0.1", Units="s"))
+	float RespawnDelay = 2.0f;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Player|Grappling")
 	TObjectPtr<UGrapplingHookComponent> GrapplingHookComponent;
 
@@ -211,6 +228,15 @@ protected:
 	FTimerHandle EnergyRechargeTimerHandle;
 
 private:
+	FTransform CheckpointTransform;
+	FVector CheckpointGravity = FVector(0, 0, -1);
+	bool bHasCheckpoint = false;
+	bool bCheckpointGravityReversed = false;
+	FTimerHandle RespawnTimer;
+	void TryAutoRespawn();
+	void ResetRespawnPresentation();
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastRespawn();
 	int32 SavedGrappleJumpCount = 0;
 	int32 SavedGrappleJumpCountPreJump = 0;
 	bool bSavedGrappleDoubleJump = false;

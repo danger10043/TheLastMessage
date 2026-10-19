@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "Core/CoreChoiceState.h"
 #include "Core/CoreGrantRecord.h"
 #include "CoreComponent.generated.h"
 
@@ -43,14 +44,26 @@ public:
 	 */
 	TArray<UCoreDataAsset*> GenerateCoreChoices(const TArray<UCoreDataAsset*>& CandidatePool);
 
+	/** 창을 닫을 때 진행 중인 선택 기록을 보상 쪽으로 옮겨 보관한다. */
+	FCoreChoiceState SuspendCoreChoices();
+
+	/** 보상에 보관한 기록으로 선택을 이어 간다. 획득할 수 없게 된 코어는 제외한다. */
+	TArray<UCoreDataAsset*> ResumeCoreChoices(FCoreChoiceState& SavedState);
+
 	/**
 	 * 플레이어가 고른 코어를 획득하여 선택 보상을 완료한다.
 	 * 현재 선택지에 있는 코어만 획득할 수 있으며, 성공하면 선택 목록을 비우고 true를 반환한다.
 	 */
 	bool SelectCore(FName CoreId);
 
-	/** 현재 코어 선택지를 다시 뽑는다. 처음 전달받은 전체 후보에서 획득 가능한 코어를 다시 추첨한다. */
-	TArray<UCoreDataAsset*> RerollCoreChoices();
+	/** 진행 중인 보상의 후보·등장 기록·리롤 사용 횟수를 비운다. 보유 코어는 유지한다. */
+	void CancelCoreChoices();
+
+	/** 지정한 카드의 리롤을 아직 사용하지 않았고, 등장하지 않은 대체 코어가 있는지 확인한다. */
+	bool CanRerollCoreChoice(int32 ChoiceIndex) const;
+
+	/** 카드 하나를 이번 보상에서 나오지 않은 코어로 바꾼다. 카드별 1회 제한이며 실패하면 횟수를 사용하지 않는다. */
+	UCoreDataAsset* RerollCoreChoice(int32 ChoiceIndex);
 
 	/**
 	 * 플레이어의 보유 코어와 진행 중인 코어 선택 상태를 초기화한다.
@@ -63,6 +76,9 @@ public:
 	FOnCoreChangedSignature OnCoreChanged;
 
 private:
+	/** 카드별 사용 횟수를 확인하고, 보유 코어와 이미 나온 코어를 제외한 재추첨 후보를 모은다. */
+	TArray<UCoreDataAsset*> GetRerollCandidates(int32 ChoiceIndex) const;
+
 	/**
 	 * 해당 코어를 획득할 수 있는지 사전에 확인한다. 보상 후보를 거를 때도 같은 기준을 사용한다.
 	 * 데이터와 ASC, 보유 여부, GE/GA 설정을 검사하며 실제 획득 성공 여부는 AcquireCore에서 확인한다.
@@ -88,13 +104,9 @@ private:
 	UPROPERTY(Transient)
 	TArray<FCoreGrantRecord> AppliedCoreHandles;
 
-	/** 재추첨에 사용할 전체 후보 목록. 선택 보상을 열 때 전달받은 원본 후보를 보관한다. */
+	/** 현재 처리 중인 보상 하나의 선택 기록. 창을 닫으면 해당 픽업으로 옮겨 다음 선택까지 보관한다. */
 	UPROPERTY(Transient)
-	TArray<TObjectPtr<UCoreDataAsset>> CurrentCandidatePool;
-
-	/** 현재 제시한 선택지. 선택 요청이 실제로 제시된 코어인지 검사할 때 사용한다. */
-	UPROPERTY(Transient)
-	TArray<TObjectPtr<UCoreDataAsset>> CurrentChoices;
+	FCoreChoiceState CurrentChoiceState;
 
 	/** 코어 획득 또는 초기화가 진행 중인지 나타낸다. 처리 도중 같은 작업이 다시 시작되는 것을 막는다. */
 	bool bIsChangingCoreGrants = false;

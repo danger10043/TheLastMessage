@@ -84,3 +84,4 @@ AGENTS.md
 # Local PlayerBase automation tests
 /Source/TheLastMessage/Private/Tests/PlayerBaseTests.cpp
 /Source/TheLastMessage/Private/Tests/PlayerBaseTestObserver.h
+/Scripts

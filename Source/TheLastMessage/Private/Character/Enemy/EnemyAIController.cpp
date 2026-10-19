@@ -88,6 +88,26 @@ void AEnemyAIController::StartEnemyAI()
 	GetWorldTimerManager().SetTimer(BlackboardUpdateTimer, this, &AEnemyAIController::UpdateBlackboardTargetInfo, 0.1f, true);
 }
 
+void AEnemyAIController::RestartEnemyAI()
+{
+	StopEnemyAI();
+
+	if (UBlackboardComponent* BB = GetBlackboardComponent())
+	{
+		BB->ClearValue(EnemyBB::TargetActor);
+		BB->ClearValue(EnemyBB::LastKnownLocation);
+		BB->ClearValue(EnemyBB::PatrolLocation);
+	}
+
+	// 이전에 감지했던 대상을 잊어야 다시 발견 이벤트가 발생한다.
+	if (UAIPerceptionComponent* Perception = GetAIPerceptionComponent())
+	{
+		Perception->ForgetAll();
+	}
+
+	StartEnemyAI();
+}
+
 void AEnemyAIController::StopEnemyAI()
 {
 	GetWorldTimerManager().ClearTimer(BlackboardUpdateTimer);
@@ -101,7 +121,7 @@ void AEnemyAIController::StopEnemyAI()
 
 void AEnemyAIController::OnTargetPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus)
 {
-	if (!ControlledEnemy || ControlledEnemy->IsDead() || !Actor)
+	if (!ControlledEnemy || ControlledEnemy->IsDead() || ControlledEnemy->IsPooled() || !Actor)
 	{
 		return;
 	}

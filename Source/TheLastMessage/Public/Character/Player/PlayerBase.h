@@ -11,6 +11,7 @@
 
 class UAbilitySystemComponent;
 class UCombatAttributeSet;
+class UWeaponSlotAttributeSet;
 class UInteractionComponent;
 class UCoreComponent;
 class UGameplayAbility;
@@ -22,6 +23,15 @@ class UAnimMontage;
 class UGrapplingHookComponent;
 class APlayerBase;
 struct FGameplayEffectContextHandle;
+
+USTRUCT(BlueprintType)
+struct FPlayerWeaponChargeState
+{
+	GENERATED_BODY()
+	UPROPERTY(BlueprintReadOnly) EWeaponSlot Slot = EWeaponSlot::None;
+	UPROPERTY(BlueprintReadOnly) double ServerStartTime = 0.0;
+	UPROPERTY(BlueprintReadOnly) float Duration = 0.0f;
+};
 
 // 사망 여부와 섹션을 함께 복제하여 수신 순서와 관계없이 같은 사망 모션을 재생한다.
 USTRUCT()
@@ -35,6 +45,7 @@ struct FPlayerDeathPresentationState
 };
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnPlayerDiedSignature, APlayerBase*, Player);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnPlayerWeaponDataChanged);
 
 /** Player GAS foundation. Movement remains in ASideScrollingCharacter. */
 UCLASS()
@@ -51,6 +62,10 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Player|GAS")
 	UCombatAttributeSet* GetCombatAttributes() const { return CombatAttributes; }
+	UFUNCTION(BlueprintPure, Category="Player|GAS")
+	UWeaponSlotAttributeSet* GetWeaponSlotAttributes() const { return WeaponSlotAttributes; }
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category="Player|Weapon")
+	bool EquipWeapon(EWeaponSlot Slot, UWeaponDataAsset* Data);
 
 	UFUNCTION(BlueprintPure, Category = "Player|Weapon")
 	UWeaponBase* GetPrimaryWeapon() const { return PrimaryWeapon; }
@@ -61,6 +76,19 @@ public:
 	// None 슬롯은 nullptr을 반환한다. 두 슬롯은 동시에 장착된다.
 	UFUNCTION(BlueprintPure, Category = "Player|Weapon")
 	UWeaponBase* GetWeaponInSlot(EWeaponSlot Slot) const;
+	// On clients the replicated data is available without the server-owned weapon UObject.
+	UFUNCTION(BlueprintPure, Category="Player|Weapon")
+	UWeaponDataAsset* GetWeaponDataInSlot(EWeaponSlot Slot) const;
+	UPROPERTY(BlueprintAssignable, Category="Player|Weapon")
+	FOnPlayerWeaponDataChanged OnWeaponDataChanged;
+	UFUNCTION(BlueprintPure, Category="Player|Weapon|Charge")
+	bool IsChargingWeapon() const;
+	UFUNCTION(BlueprintPure, Category="Player|Weapon|Charge")
+	float GetWeaponChargeRatio() const;
+	UFUNCTION(BlueprintPure, Category="Player|Weapon|Charge")
+	EWeaponSlot GetChargingWeaponSlot() const { return WeaponChargeState.Slot; }
+	void BeginWeaponCharge(EWeaponSlot Slot, float Duration);
+	void ClearWeaponCharge(EWeaponSlot Slot);
 
 	// 실제 공격 활성화에 성공한 슬롯의 외형을 표시한다.
 	void ShowWeaponInSlot(EWeaponSlot Slot);
@@ -165,6 +193,8 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|GAS")
 	TObjectPtr<UCombatAttributeSet> CombatAttributes;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Player|GAS")
+	TObjectPtr<UWeaponSlotAttributeSet> WeaponSlotAttributes;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Animation")
 	TObjectPtr<UAnimMontage> HitReactMontage;
@@ -178,11 +208,11 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Animation", meta = (ClampMin = "0.01"))
 	float DeathPlayRate = 1.0f;
 
-	// 시작할 때 장착할 근접 무기의 설정 데이터.
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Weapon")
+	// 시작할 때 각 슬롯에 장착할 무기의 설정 데이터.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, ReplicatedUsing=OnRep_VisibleWeaponSlot, Category = "Player|Weapon")
 	TObjectPtr<UWeaponDataAsset> InitialPrimaryWeaponData;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Weapon")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, ReplicatedUsing=OnRep_VisibleWeaponSlot, Category = "Player|Weapon")
 	TObjectPtr<UWeaponDataAsset> InitialSecondaryWeaponData;
 
 	// GE_BP_CommonIncomingDamage: Instant, Modifier 없음, IncomingDamageExecution 하나.
@@ -228,6 +258,11 @@ protected:
 	FTimerHandle EnergyRechargeTimerHandle;
 
 private:
+	UPROPERTY(Replicated)
+	FPlayerWeaponChargeState WeaponChargeState;
+	double GetChargeClockTime() const;
+	void RechargeWeaponEnergy();
+	double LastEnergyRechargeTime = 0.0;
 	FTransform CheckpointTransform;
 	FVector CheckpointGravity = FVector(0, 0, -1);
 	bool bHasCheckpoint = false;

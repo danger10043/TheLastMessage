@@ -123,6 +123,7 @@ void UGA_WeaponAttackBase::ActivateAbility(const FGameplayAbilitySpecHandle Hand
 	bWaitingForRelease = false;
 	bAttackExecuted = false;
 	ChargeDamageMultiplier = 1.0f;
+	CriticalHitDamageMultiplier = 1.0f;
 	ChargeElapsedTime = 0.0f;
 	HitActorsThisAttack.Reset();
 	APlayerBase* Player = ActorInfo ? Cast<APlayerBase>(ActorInfo->AvatarActor.Get()) : nullptr;
@@ -178,6 +179,40 @@ void UGA_WeaponAttackBase::InputReleased(const FGameplayAbilitySpecHandle Handle
 	ExecuteAttack();
 }
 
+float UGA_WeaponAttackBase::GetHealthDamageMultiplier() const
+{
+	const APlayerBase* Player = Cast<APlayerBase>(GetAvatarActorFromActorInfo());
+	const UCombatAttributeSet* Attributes = Player ? Player->GetCombatAttributes() : nullptr;
+	if (!Attributes || Attributes->GetMaxHealth() <= 0.0f) return 1.0f;
+
+	const float HealthRatio = FMath::Clamp(Attributes->GetHealth() / Attributes->GetMaxHealth(), 0.0f, 1.0f);
+	float DamageMultiplier = 1.0f;
+
+	// 높은 체력 조건을 만족하면 안정 출력 회로의 피해 배율을 적용한다.
+	if (HealthRatio >= Attributes->GetHighHealthThresholdRatio())
+	{
+		DamageMultiplier *= FMath::Max(0.0f, Attributes->GetHighHealthDamageMultiplier());
+	}
+	// 낮은 체력 조건을 만족하면 비상 출력 회로의 피해 배율을 적용한다.
+	if (HealthRatio <= Attributes->GetLowHealthThresholdRatio())
+	{
+		DamageMultiplier *= FMath::Max(0.0f, Attributes->GetLowHealthDamageMultiplier());
+	}
+	return DamageMultiplier;
+}
+
+float UGA_WeaponAttackBase::RollCriticalDamageMultiplier() const
+{
+	const APlayerBase* Player = Cast<APlayerBase>(GetAvatarActorFromActorInfo());
+	const UCombatAttributeSet* Attributes = Player ? Player->GetCombatAttributes() : nullptr;
+	if (!Attributes) return 1.0f;
+
+	const float CriticalChance = FMath::Clamp(Attributes->GetCriticalChance(), 0.0f, 1.0f);
+	const bool bCriticalHit = CriticalChance >= 1.0f
+		|| (CriticalChance > 0.0f && FMath::FRand() < CriticalChance);
+	return bCriticalHit ? FMath::Max(1.0f, Attributes->GetCriticalDamageMultiplier()) : 1.0f;
+}
+
 void UGA_WeaponAttackBase::ExecuteAttack()
 {
 	if (!IsActive() || bFinishingAttack || bAttackExecuted) return;
@@ -188,6 +223,8 @@ void UGA_WeaponAttackBase::ExecuteAttack()
 		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
 		return;
 	}
+	// 공격마다 치명타를 한 번 판정하고 모든 명중에 같은 결과를 사용한다.
+	CriticalHitDamageMultiplier = RollCriticalDamageMultiplier();
 	const bool bRanged = Data->WeaponType == EWeaponType::LightRanged || Data->WeaponType == EWeaponType::HeavyRanged;
 	AProjectileBase* Projectile = nullptr;
 	FTransform SpawnTransform;
@@ -198,6 +235,8 @@ void UGA_WeaponAttackBase::ExecuteAttack()
 		ShotDirection = (Player->GetAimTargetLocation() - Player->GetActorLocation()).GetSafeNormal();
 		float FinalDamage = Data->AttackPower * ChargeDamageMultiplier;
 		FinalDamage *= FMath::Max(0.0f, Player->GetCombatAttributes()->GetDamageDealtMultiplier());
+		FinalDamage *= GetHealthDamageMultiplier();
+		FinalDamage *= CriticalHitDamageMultiplier;
 		if (ShotDirection.IsNearlyZero() || !FMath::IsFinite(FinalDamage) || FinalDamage <= 0.0f)
 		{
 			EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
@@ -276,6 +315,7 @@ void UGA_WeaponAttackBase::HandleMeleeHit(FGameplayEventData Payload)
 	const UWeaponDataAsset* Data = SourceWeapon ? SourceWeapon->WeaponData.Get() : nullptr;
 	if (!IsActive() || bFinishingAttack || !bAttackExecuted || !Player || !Player->HasAuthority() || Player->IsDead()
 		|| !Data || !DamageEffectClass || Payload.Instigator != Player || Payload.OptionalObject != Data->AttackMontage) return;
+	if (Data->WeaponType != EWeaponType::LightMelee && Data->WeaponType != EWeaponType::HeavyMelee) return;
 
 	const FVector Direction = FVector::VectorPlaneProject(Player->GetActorForwardVector(), FVector::YAxisVector).GetSafeNormal();
 	if (Direction.IsNearlyZero()) return;
@@ -306,6 +346,13 @@ void UGA_WeaponAttackBase::HandleMeleeHit(FGameplayEventData Payload)
 	{
 		FinalDamage *= FMath::Max(0.0f, SourceASC->GetNumericAttribute(UCombatAttributeSet::GetDamageDealtMultiplierAttribute()));
 	}
+	// 근접 공격의 피해량에 근접 전용 배율을 적용한다.
+	if (SourceASC->HasAttributeSetForAttribute(UCombatAttributeSet::GetMeleeDamageMultiplierAttribute()))
+	{
+		FinalDamage *= FMath::Max(0.0f, SourceASC->GetNumericAttribute(UCombatAttributeSet::GetMeleeDamageMultiplierAttribute()));
+	}
+	FinalDamage *= GetHealthDamageMultiplier();
+	FinalDamage *= CriticalHitDamageMultiplier;
 	if (!FMath::IsFinite(FinalDamage) || FinalDamage <= 0.0f) return;
 	for (const FHitResult& Hit : Hits)
 	{
@@ -360,6 +407,7 @@ void UGA_WeaponAttackBase::EndAbility(const FGameplayAbilitySpecHandle Handle,
 	bAttackExecuted = false;
 	ChargeStartTime = 0.0;
 	ChargeDamageMultiplier = 1.0f;
+	CriticalHitDamageMultiplier = 1.0f;
 	HitActorsThisAttack.Reset();
 	ChargeElapsedTime = 0.0f;
 	SourceWeapon = nullptr;

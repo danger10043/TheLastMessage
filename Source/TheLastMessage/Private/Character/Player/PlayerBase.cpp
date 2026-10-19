@@ -312,6 +312,14 @@ void APlayerBase::InitializePlayer()
 	AbilitySystemComponent->AddAttributeSetSubobject(CombatAttributes.Get());
 	AbilitySystemComponent->AddAttributeSetSubobject(WeaponSlotAttributes.Get());
 
+	if (!MoveSpeedChangedHandle.IsValid())
+	{
+		BaseWalkSpeed = GetCharacterMovement()->MaxWalkSpeed;
+		MoveSpeedChangedHandle = AbilitySystemComponent->GetGameplayAttributeValueChangeDelegate(
+			UCombatAttributeSet::GetMoveSpeedMultiplierAttribute()).AddUObject(this, &APlayerBase::HandleMoveSpeedChanged);
+	}
+	UpdateMoveSpeed();
+
 	if (!DoubleJumpTagChangedHandle.IsValid())
 	{
 		DoubleJumpTagChangedHandle = AbilitySystemComponent->RegisterGameplayTagEvent(TAG_PlayerDoubleJump)
@@ -951,6 +959,19 @@ void APlayerBase::UpdateJumpLimit()
 	JumpMaxCount = AbilitySystemComponent->HasMatchingGameplayTag(TAG_PlayerDoubleJump) ? 2 : 1;
 }
 
+void APlayerBase::HandleMoveSpeedChanged(const FOnAttributeChangeData& Data)
+{
+	UpdateMoveSpeed();
+}
+
+void APlayerBase::UpdateMoveSpeed()
+{
+	const float Multiplier = CombatAttributes->GetMoveSpeedMultiplier();
+	if (!FMath::IsFinite(Multiplier)) return;
+	// 항상 기본 속도에서 계산하여 배율 변경이나 재초기화 시 속도가 중복 증가하지 않게 한다.
+	GetCharacterMovement()->MaxWalkSpeed = BaseWalkSpeed * FMath::Max(0.0f, Multiplier);
+}
+
 void APlayerBase::DoMove(float Forward)
 {
 	if (IsDead() || IsHitReacting() || IsGrappling() || AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking))
@@ -1023,6 +1044,12 @@ void APlayerBase::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	{
 		AbilitySystemComponent->RegisterGameplayTagEvent(TAG_PlayerDoubleJump).Remove(DoubleJumpTagChangedHandle);
 		DoubleJumpTagChangedHandle.Reset();
+	}
+	if (MoveSpeedChangedHandle.IsValid())
+	{
+		AbilitySystemComponent->GetGameplayAttributeValueChangeDelegate(
+			UCombatAttributeSet::GetMoveSpeedMultiplierAttribute()).Remove(MoveSpeedChangedHandle);
+		MoveSpeedChangedHandle.Reset();
 	}
 	GetWorldTimerManager().ClearTimer(EnergyRechargeTimerHandle);
 	AbilitySystemComponent->CancelAllAbilities();

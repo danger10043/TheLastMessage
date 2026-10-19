@@ -76,7 +76,7 @@ public:
 	ATTRIBUTE_ACCESSORS_BASIC(UCombatAttributeSet, EnergyRechargeRateMultiplier);
 
 	/** 기본 이동속도에 적용할 배율. 1.0은 기존 이동속도를 유지한다. */
-	UPROPERTY(BlueprintReadOnly, Category = "Base Stat")
+	UPROPERTY(BlueprintReadOnly, Category = "Base Stat", ReplicatedUsing = OnRep_MoveSpeedMultiplier)
 	FGameplayAttributeData MoveSpeedMultiplier;
 	ATTRIBUTE_ACCESSORS_BASIC(UCombatAttributeSet, MoveSpeedMultiplier);
 
@@ -122,5 +122,8 @@ protected:
 
 	UFUNCTION()
 	void OnRep_MaxHealth(const FGameplayAttributeData& OldValue);
+
+	UFUNCTION()
+	void OnRep_MoveSpeedMultiplier(const FGameplayAttributeData& OldValue);
 
 };

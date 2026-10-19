@@ -3,10 +3,12 @@
 #include "Character/Player/PlayerBase.h"
 #include "CollisionQueryParams.h"
 #include "Components/SceneComponent.h"
-#include "DrawDebugHelpers.h"
 #include "Engine/World.h"
 #include "Gimmick/Laser/LaserReceiver.h"
 #include "Gimmick/Laser/LaserReflector.h"
+#include "NiagaraComponent.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
 
 ALaserEmitter::ALaserEmitter()
 {
@@ -87,11 +89,23 @@ void ALaserEmitter::Tick(float DeltaTime)
 
 void ALaserEmitter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	// 발신기가 사라지면 기존 수신기와 연결 해제
+	// 기존 수신기와 연결 해제
 	CurrentReceivers.Reset();
 	LaserSegments.Reset();
 
 	UpdateReceiverContacts();
+
+	// 생성한 Niagara 컴포넌트 정리
+	for (UNiagaraComponent* EffectComponent
+		: LaserEffectComponents)
+	{
+		if (IsValid(EffectComponent))
+		{
+			EffectComponent->DestroyComponent();
+		}
+	}
+
+	LaserEffectComponents.Reset();
 
 	Super::EndPlay(EndPlayReason);
 }
@@ -222,20 +236,83 @@ void ALaserEmitter::UpdateReceiverContacts()
 
 void ALaserEmitter::UpdateLaserVisuals()
 {
-#if ENABLE_DRAW_DEBUG
-	UWorld* World = GetWorld();
+	UNiagaraSystem* EffectTemplate = LaserConfig.LaserEffect.Get();
 
-	if (!World)
+	// 효과와 발사 기준점이 유효할 때 필요한 빔 개수
+	const int32 RequiredCount = IsValid(EffectTemplate) && IsValid(LaserOrigin) ? LaserSegments.Num() : 0;
+
+	// 구간이 늘어나면 컴포넌트를 보관할 공간 확보
+	if (LaserEffectComponents.Num() < RequiredCount)
 	{
-		return;
+		LaserEffectComponents.SetNum(RequiredCount);
 	}
 
-	// 경로 검증 단계에서는 빨간 디버그 선으로 표시
-	for (const FLaserSegment& Segment : LaserSegments)
+	// Niagara 에셋의 실제 파라미터 이름과 일치해야 함
+	static const FName BeamStartParameter(TEXT("User.Beam Start"));
+
+	static const FName BeamEndParameter(TEXT("User.Beam End"));
+
+	for (int32 Index = 0; Index < LaserEffectComponents.Num(); ++Index)
 	{
-		DrawDebugLine(World, Segment.StartPoint, Segment.EndPoint, FColor::Red, false, 0.0f, 0, 2.0f);
+		UNiagaraComponent* EffectComponent = LaserEffectComponents[Index].Get();
+
+		// 현재 경로에 필요 없는 빔은 끄고 다음 사용을 위해 보관
+		if (Index >= RequiredCount)
+		{
+			if (IsValid(EffectComponent) && EffectComponent->IsActive())
+			{
+				EffectComponent->DeactivateImmediate();
+			}
+
+			continue;
+		}
+
+		const FLaserSegment& Segment = LaserSegments[Index];
+
+		// 처음 필요한 구간에만 컴포넌트 생성
+		if (!IsValid(EffectComponent))
+		{
+			EffectComponent = UNiagaraFunctionLibrary::SpawnSystemAttached(
+					EffectTemplate,
+					LaserOrigin,
+					NAME_None,
+					FVector::ZeroVector,
+					FRotator::ZeroRotator,
+					EAttachLocation::KeepRelativeOffset,
+					false, // 종료되어도 자동 삭제하지 않음
+					false, // 위치를 전달한 뒤 직접 재생
+					ENCPoolMethod::None,
+					false  // 생성 전 컬링 검사 생략
+				);
+
+			LaserEffectComponents[Index] = EffectComponent;
+
+			if (!IsValid(EffectComponent))
+			{
+				continue;
+			}
+		}
+		else if (EffectComponent->GetAsset() != EffectTemplate)
+		{
+			// 설정을 다시 읽어 효과가 바뀐 경우 반영
+			EffectComponent->DeactivateImmediate();
+			EffectComponent->SetAsset(EffectTemplate);
+		}
+
+		// 컴포넌트의 기준 위치를 현재 구간 시작점에 맞춤
+		EffectComponent->SetWorldLocation(Segment.StartPoint);
+
+		// C++에서 계산한 월드 좌표 전달
+		EffectComponent->SetVariablePosition(BeamStartParameter, Segment.StartPoint);
+
+		EffectComponent->SetVariablePosition(BeamEndParameter, Segment.EndPoint);
+
+		// 새로 만들었거나 꺼져 있던 빔만 재생
+		if (!EffectComponent->IsActive())
+		{
+			EffectComponent->Activate(true);
+		}
 	}
-#endif
 }
 
 bool ALaserEmitter::TraceLaserSegment(const FVector& Start, const FVector& Direction, float Distance, FHitResult& OutHit) const

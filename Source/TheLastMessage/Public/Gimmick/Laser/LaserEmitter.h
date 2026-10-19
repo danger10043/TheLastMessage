@@ -10,6 +10,7 @@
 class ACharacter;
 class ALaserReceiver;
 class USceneComponent;
+class UNiagaraComponent;
 
 // 레이저 경로, 수신기 접촉, 시각 효과는 이후 구현한다.
 UCLASS(Blueprintable)
@@ -69,6 +70,10 @@ protected:
 	// 이번 프레임에 계산한 레이저 구간
 	UPROPERTY(Transient, VisibleInstanceOnly, BlueprintReadOnly, Category = "Gimmick|Laser")
 	TArray<FLaserSegment> LaserSegments;
+
+	// 레이저 구간별로 사용하는 Niagara 컴포넌트
+	UPROPERTY(Transient, VisibleInstanceOnly, BlueprintReadOnly, Category = "Gimmick|Laser")
+	TArray<TObjectPtr<UNiagaraComponent>> LaserEffectComponents;
 
 	// 이전 프레임에 레이저를 받던 수신기
 	UPROPERTY(Transient)

@@ -34,6 +34,17 @@ void ASentryEnemy::BeginPlay()
 	GetCharacterMovement()->GravityScale = 0.f;
 }
 
+void ASentryEnemy::ResetEnemy()
+{
+	Super::ResetEnemy();
+
+	// 풀에서 재사용할 때 조준을 처음으로 되돌리고, 다시 고정 상태로 만든다.
+	AimYaw = 0.f;
+	AimPitch = 0.f;
+	GetCharacterMovement()->SetMovementMode(MOVE_None);
+	GetCharacterMovement()->GravityScale = 0.f;
+}
+
 void ASentryEnemy::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);

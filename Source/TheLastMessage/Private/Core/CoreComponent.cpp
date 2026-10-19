@@ -137,28 +137,6 @@ bool UCoreComponent::AcquireCore(UCoreDataAsset* CoreData)
 	{
 		TGuardValue<bool> ChangingGrantsGuard(bIsChangingCoreGrants, true);
 
-		// 보유 효과를 코어별로 제거할 수 있도록, 적용 전에 Infinite와 Stacking Type None 설정을 확인한다.
-		for (const TSubclassOf<UGameplayEffect>& EffectClass : CoreData->GrantedEffects)
-		{
-			const UGameplayEffect* EffectDefinition = EffectClass.GetDefaultObject();
-			if (EffectClass->HasAnyClassFlags(CLASS_Abstract)
-				|| !IsValid(EffectDefinition)
-				|| EffectDefinition->DurationPolicy != EGameplayEffectDurationType::Infinite
-				|| EffectDefinition->GetStackingType() != EGameplayEffectStackingType::None)
-			{
-				return false;
-			}
-		}
-
-		for (const TSubclassOf<UGameplayAbility>& AbilityClass : CoreData->GrantedAbilities)
-		{
-			if (AbilityClass->HasAnyClassFlags(CLASS_Abstract))
-			{
-				return false;
-			}
-		}
-
-	
 		FCoreGrantRecord Record;
 		Record.CoreId = CoreData->CoreId;
 
@@ -187,7 +165,7 @@ bool UCoreComponent::AcquireCore(UCoreDataAsset* CoreData)
 			Record.EffectHandles.Add(EffectHandle);
 		}
 
-		// 
+		// 효과 적용이 끝나면 능력을 등록하고, 반환된 핸들을 기록한다.
 		for (const TSubclassOf<UGameplayAbility>& AbilityClass : CoreData->GrantedAbilities)
 		{
 			const FGameplayAbilitySpecHandle AbilityHandle = ASC->GiveAbility(
@@ -229,8 +207,7 @@ void UCoreComponent::ResetOwnedCores()
 		// 제거 알림 중에도 보유 조회가 초기화된 상태를 보도록, 기록을 먼저 별도 목록으로 옮긴다.
 		const TArray<FCoreGrantRecord> RecordsToRemove = MoveTemp(AppliedCoreHandles);
 		AppliedCoreHandles.Reset();
-		CurrentCandidatePool.Reset();
-		CurrentChoices.Reset();
+		CancelCoreChoices();
 
 		for (const FCoreGrantRecord& Record : RecordsToRemove)
 		{
@@ -248,16 +225,9 @@ void UCoreComponent::ResetOwnedCores()
 TArray<UCoreDataAsset*> UCoreComponent::GenerateCoreChoices(const TArray<UCoreDataAsset*>& CandidatePool)
 {
 	// 기존 보상의 선택지가 남아 있으면 다른 보상의 후보로 덮어쓰지 않는다.
-	if (bIsChangingCoreGrants || bIsSelectingCore || !CurrentChoices.IsEmpty())
+	if (bIsChangingCoreGrants || bIsSelectingCore || !CurrentChoiceState.Choices.IsEmpty())
 	{
 		return {};
-	}
-
-	// 원본 후보는 재추첨에 사용하고, 필터링과 추첨은 별도의 목록에서 진행한다.
-	CurrentCandidatePool.Reset(CandidatePool.Num());
-	for (UCoreDataAsset* CoreData : CandidatePool)
-	{
-		CurrentCandidatePool.Add(CoreData);
 	}
 
 	TArray<UCoreDataAsset*> EligibleCores;
@@ -276,6 +246,17 @@ TArray<UCoreDataAsset*> UCoreComponent::GenerateCoreChoices(const TArray<UCoreDa
 
 	constexpr int32 MaxChoices = 3;
 	const int32 NumChoices = FMath::Min(MaxChoices, EligibleCores.Num());
+	if (NumChoices == 0) return {};
+
+	// 새 보상의 후보와 카드별 리롤 기록을 준비한다.
+	CurrentChoiceState = FCoreChoiceState();
+	CurrentChoiceState.CandidatePool.Reserve(CandidatePool.Num());
+	for (UCoreDataAsset* CoreData : CandidatePool)
+	{
+		CurrentChoiceState.CandidatePool.Add(CoreData);
+	}
+	CurrentChoiceState.RerollCounts.Init(0, NumChoices);
+
 	TArray<UCoreDataAsset*> Choices;
 	Choices.Reserve(NumChoices);
 
@@ -285,10 +266,46 @@ TArray<UCoreDataAsset*> UCoreComponent::GenerateCoreChoices(const TArray<UCoreDa
 		const int32 RandomIndex = FMath::RandRange(0, EligibleCores.Num() - 1);
 		UCoreDataAsset* SelectedCore = EligibleCores[RandomIndex];
 		Choices.Add(SelectedCore);
-		CurrentChoices.Add(SelectedCore);
+		CurrentChoiceState.Choices.Add(SelectedCore);
+		CurrentChoiceState.ShownCoreIds.Add(SelectedCore->CoreId);
 		EligibleCores.RemoveAtSwap(RandomIndex, EAllowShrinking::No);
 	}
 
+	return Choices;
+}
+
+FCoreChoiceState UCoreComponent::SuspendCoreChoices()
+{
+	// 창을 닫으면 선택 기록을 해당 보상으로 옮겨 보관한다.
+	FCoreChoiceState SavedState = MoveTemp(CurrentChoiceState);
+	CurrentChoiceState = FCoreChoiceState();
+	return SavedState;
+}
+
+TArray<UCoreDataAsset*> UCoreComponent::ResumeCoreChoices(FCoreChoiceState& SavedState)
+{
+	if (bIsChangingCoreGrants || bIsSelectingCore || !CurrentChoiceState.Choices.IsEmpty()
+		|| SavedState.ShownCoreIds.IsEmpty()
+		|| SavedState.Choices.Num() != SavedState.RerollCounts.Num()) return {};
+
+	// 다른 보상에서 획득한 코어는 제외하되, 나머지 카드의 순서와 리롤 사용 횟수는 함께 유지한다.
+	for (int32 Index = SavedState.Choices.Num() - 1; Index >= 0; --Index)
+	{
+		if (!CanAcquireCore(SavedState.Choices[Index].Get()))
+		{
+			SavedState.Choices.RemoveAt(Index);
+			SavedState.RerollCounts.RemoveAt(Index);
+		}
+	}
+	if (SavedState.Choices.IsEmpty()) return {};
+
+	CurrentChoiceState = MoveTemp(SavedState);
+	SavedState = FCoreChoiceState();
+	TArray<UCoreDataAsset*> Choices;
+	for (const TObjectPtr<UCoreDataAsset>& CoreData : CurrentChoiceState.Choices)
+	{
+		Choices.Add(CoreData.Get());
+	}
 	return Choices;
 }
 
@@ -302,7 +319,7 @@ bool UCoreComponent::SelectCore(FName CoreId)
 
 	// 선택한 코어 ID와 일치하는 현재 선택지의 데이터를 찾는다.
 	UCoreDataAsset* SelectedCore = nullptr;
-	for (const TObjectPtr<UCoreDataAsset>& CoreData : CurrentChoices)
+	for (const TObjectPtr<UCoreDataAsset>& CoreData : CurrentChoiceState.Choices)
 	{
 		if (IsValid(CoreData.Get()) && CoreData->CoreId == CoreId)
 		{
@@ -324,26 +341,49 @@ bool UCoreComponent::SelectCore(FName CoreId)
 	}
 
 	// 획득 성공 후에만 선택 상태를 비운다. 실패한 경우에는 기존 선택지를 유지한다.
-	CurrentChoices.Reset();
-	CurrentCandidatePool.Reset();
+	CancelCoreChoices();
 	return true;
 }
 
-TArray<UCoreDataAsset*> UCoreComponent::RerollCoreChoices()
+void UCoreComponent::CancelCoreChoices()
 {
-	if (bIsChangingCoreGrants || bIsSelectingCore || CurrentChoices.IsEmpty())
-	{
-		return {};
-	}
+	CurrentChoiceState = FCoreChoiceState();
+}
 
-	// 원본 후보를 복사한 뒤 기존 선택지를 비우고, 생성 함수에서 보유 상태와 설정을 다시 검사한다.
-	TArray<UCoreDataAsset*> CandidatePool;
-	CandidatePool.Reserve(CurrentCandidatePool.Num());
-	for (const TObjectPtr<UCoreDataAsset>& CoreData : CurrentCandidatePool)
-	{
-		CandidatePool.Add(CoreData.Get());
-	}
+TArray<UCoreDataAsset*> UCoreComponent::GetRerollCandidates(int32 ChoiceIndex) const
+{
+	if (bIsChangingCoreGrants || bIsSelectingCore
+		|| !CurrentChoiceState.Choices.IsValidIndex(ChoiceIndex)
+		|| !CurrentChoiceState.RerollCounts.IsValidIndex(ChoiceIndex)
+		|| CurrentChoiceState.RerollCounts[ChoiceIndex] >= 1) return {};
 
-	CurrentChoices.Reset();
-	return GenerateCoreChoices(CandidatePool);
+	// 현재 카드뿐 아니라 리롤로 사라진 코어도 제외한다. 같은 ID의 후보도 한 번만 모은다.
+	TSet<FName> ExcludedIds = CurrentChoiceState.ShownCoreIds;
+
+	TArray<UCoreDataAsset*> Candidates;
+	for (const TObjectPtr<UCoreDataAsset>& Data : CurrentChoiceState.CandidatePool)
+	{
+		if (!CanAcquireCore(Data.Get()) || ExcludedIds.Contains(Data->CoreId)) continue;
+		ExcludedIds.Add(Data->CoreId);
+		Candidates.Add(Data.Get());
+	}
+	return Candidates;
+}
+
+bool UCoreComponent::CanRerollCoreChoice(int32 ChoiceIndex) const
+{
+	return !GetRerollCandidates(ChoiceIndex).IsEmpty();
+}
+
+UCoreDataAsset* UCoreComponent::RerollCoreChoice(int32 ChoiceIndex)
+{
+	const TArray<UCoreDataAsset*> Candidates = GetRerollCandidates(ChoiceIndex);
+	if (Candidates.IsEmpty()) return nullptr;
+
+	UCoreDataAsset* Replacement = Candidates[FMath::RandRange(0, Candidates.Num() - 1)];
+	// 나머지 선택지와 전체 후보 풀은 그대로 유지한다.
+	CurrentChoiceState.Choices[ChoiceIndex] = Replacement;
+	CurrentChoiceState.ShownCoreIds.Add(Replacement->CoreId);
+	++CurrentChoiceState.RerollCounts[ChoiceIndex];
+	return Replacement;
 }

@@ -91,6 +91,9 @@ void ABossAIController::StartBossAI()
     BlackboardComponent->SetValueAsFloat(TEXT("TargetDistance"), TNumericLimits<float>::Max());
     BlackboardComponent->SetValueAsBool(TEXT("bIsInCombatRange"), false);
     BlackboardComponent->SetValueAsBool(TEXT("bIsInAttackRange"), false);
+    BlackboardComponent->SetValueAsBool(TEXT("bCanUseCircularMissile"), false);
+    BlackboardComponent->SetValueAsBool(TEXT("bNeedsTurn180"), false);
+    BlackboardComponent->SetValueAsBool(TEXT("bIsTurning"), false);
     BlackboardComponent->SetValueAsEnum(TEXT("SelectedAttack"), static_cast<uint8>(EBossAttackType::None));
     BlackboardComponent->SetValueAsBool(TEXT("bIsShieldActive"), false);
     BlackboardComponent->SetValueAsBool(TEXT("bIsPuzzleActive"), false);

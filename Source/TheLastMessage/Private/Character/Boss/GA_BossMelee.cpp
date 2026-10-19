@@ -1,12 +1,11 @@
 #include "Character/Boss/GA_BossMelee.h"
 #include "Character/Boss/BossMonster.h"
+#include "Character/Player/PlayerBase.h"
 #include "AIController.h"
 #include "AbilitySystemComponent.h"
+#include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "Animation/AnimMontage.h"
 #include "GameFramework/CharacterMovementComponent.h"
-#include "GameFramework/Pawn.h"
-#include "Engine/World.h"
-#include "TimerManager.h"
 
 UGA_BossMelee::UGA_BossMelee()
 {
@@ -20,13 +19,37 @@ void UGA_BossMelee::ActivateAbility(
     const FGameplayEventData* TriggerEventData)
 {
     ABossMonster* Boss = GetBossOwner();
-    APawn* Target = IsValid(Boss) ? Cast<APawn>(Boss->GetCurrentTarget()) : nullptr;
+    APlayerBase* Target = IsValid(Boss)
+        ? Cast<APlayerBase>(Boss->GetCurrentTarget()) : nullptr;
+
+    UAnimInstance* AnimInstance = ActorInfo ? ActorInfo->GetAnimInstance() : nullptr;
+
+    FName StartSection = NAME_None;
+    if (IsValid(Boss))
+    {
+        switch (Boss->GetBossPhase())
+        {
+        case EBossPhase::Phase1:
+        case EBossPhase::Phase2:
+            StartSection = TEXT("Phase12");
+            break;
+
+        case EBossPhase::Phase3:
+            StartSection = TEXT("Phase3");
+            break;
+
+        default:
+            break;
+        }
+    }
+
     if (!IsValid(Boss) || !Boss->HasAuthority()
-        || !IsValid(Target) || !Target->IsPlayerControlled()
-        || !FMath::IsFinite(WindupTime) || WindupTime <= 0.f
-        || !FMath::IsFinite(RecoveryTime) || RecoveryTime <= 0.f
-        || !FMath::IsFinite(WindupTime + RecoveryTime)
+        || !IsValid(Target) || !Target->IsPlayerControlled() || Target->IsDead()
+        || !IsValid(AnimInstance) || !AttackMontage || HitNotifyName.IsNone()
+        || StartSection.IsNone()
+        || AttackMontage->GetSectionIndex(StartSection) == INDEX_NONE
         || !FMath::IsFinite(HitHalfAngle) || HitHalfAngle < 0.f || HitHalfAngle > 180.f
+        || !Boss->IsDistanceInAttackRange(AttackType, Boss->GetDistanceTo(Target))
         || !CommitAbility(Handle, ActorInfo, ActivationInfo))
     {
         EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
@@ -35,6 +58,7 @@ void UGA_BossMelee::ActivateAbility(
 
     LockedTarget = Target;
     bHitProcessed = false;
+    MontageInstanceID = INDEX_NONE;
     Boss->SetBossState(EBossState::Attacking);
     if (!IsActive())
     {
@@ -50,35 +74,51 @@ void UGA_BossMelee::ActivateAbility(
         Movement->StopMovementImmediately();
     }
 
-    FVector Facing = Target->GetActorLocation() - Boss->GetActorLocation();
-    Facing.Z = 0.f;
-    if (!Facing.IsNearlyZero())
+    BoundAnimInstance = AnimInstance;
+    AnimInstance->OnPlayMontageNotifyBegin.AddUniqueDynamic(
+        this, &UGA_BossMelee::HandleHitNotify);
+
+    MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, AttackMontage, 1.f, StartSection, true, 1.f, 0.f, true);
+    if (!IsValid(MontageTask.Get()))
     {
-        Boss->SetActorRotation(Facing.Rotation());
+        HandleMontageCancelled();
+        return;
     }
 
-    if (AttackMontage)
-    {
-        UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo();
-        if (!IsValid(ASC)
-            || ASC->PlayMontage(this, ActivationInfo, AttackMontage, 1.f) <= 0.f)
-        {
-            UE_LOG(LogTemp, Warning, TEXT("BossMelee: montage failed to play."));
-            EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
-            return;
-        }
-    }
+    MontageTask->OnCompleted.AddDynamic(this, &UGA_BossMelee::HandleMontageCompleted);
+    MontageTask->OnInterrupted.AddDynamic(this, &UGA_BossMelee::HandleMontageCancelled);
+    MontageTask->OnCancelled.AddDynamic(this, &UGA_BossMelee::HandleMontageCancelled);
+    MontageTask->ReadyForActivation();
 
     if (!IsActive())
     {
         return;
     }
-    GetWorld()->GetTimerManager().SetTimer(
-        HitTimer, this, &UGA_BossMelee::PerformHit, WindupTime, false);
-    GetWorld()->GetTimerManager().SetTimer(
-        FinishTimer, this, &UGA_BossMelee::FinishMelee,
-        WindupTime + RecoveryTime, false);
+    FAnimMontageInstance* Instance =
+        AnimInstance->GetActiveInstanceForMontage(AttackMontage);
+    if (!Instance)
+    {
+        HandleMontageCancelled();
+        return;
+    }
+    MontageInstanceID = Instance->GetInstanceID();
     UE_LOG(LogTemp, Log, TEXT("BossMelee: Start -> %s"), *GetNameSafe(Target));
+}
+
+void UGA_BossMelee::HandleHitNotify(
+    FName NotifyName, const FBranchingPointNotifyPayload& Payload)
+{
+    ABossMonster* Boss = GetBossOwner();
+    if (!IsActive() || bEnding || !IsValid(Boss) || !Boss->HasAuthority()
+        || NotifyName != HitNotifyName || MontageInstanceID == INDEX_NONE
+        || Payload.MontageInstanceID != MontageInstanceID
+        || Payload.SkelMeshComponent != Boss->GetMesh())
+    {
+        return;
+    }
+
+    UE_LOG(LogTemp, Log, TEXT("BossMelee: Notify -> %s"), *NotifyName.ToString());
+    PerformHit();
 }
 
 void UGA_BossMelee::PerformHit()
@@ -90,10 +130,10 @@ void UGA_BossMelee::PerformHit()
     bHitProcessed = true;
 
     ABossMonster* Boss = GetBossOwner();
-    APawn* Target = Cast<APawn>(LockedTarget.Get());
+    APlayerBase* Target = Cast<APlayerBase>(LockedTarget.Get());
     if (!IsValid(Boss) || !Boss->HasAuthority()
         || Boss->GetBossState() != EBossState::Attacking
-        || !IsValid(Target) || !Target->IsPlayerControlled()
+        || !IsValid(Target) || !Target->IsPlayerControlled() || Target->IsDead()
         || Boss->GetCurrentTarget() != Target)
     {
         EndAbility(GetCurrentAbilitySpecHandle(), GetCurrentActorInfo(),
@@ -119,10 +159,21 @@ void UGA_BossMelee::PerformHit()
     ApplyAttackDamage(Target);
 }
 
-void UGA_BossMelee::FinishMelee()
+void UGA_BossMelee::HandleMontageCompleted()
 {
+    if (!bHitProcessed)
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("BossMelee: completed without hit notify. Check Montage Notify settings."));
+    }
     EndAbility(GetCurrentAbilitySpecHandle(), GetCurrentActorInfo(),
         GetCurrentActivationInfo(), true, false);
+}
+
+void UGA_BossMelee::HandleMontageCancelled()
+{
+    EndAbility(GetCurrentAbilitySpecHandle(), GetCurrentActorInfo(),
+        GetCurrentActivationInfo(), true, true);
 }
 
 void UGA_BossMelee::EndAbility(
@@ -137,16 +188,27 @@ void UGA_BossMelee::EndAbility(
     }
     TGuardValue<bool> EndingGuard(bEnding, true);
 
-    if (UWorld* World = GetWorld())
+    if (UAnimInstance* AnimInstance = BoundAnimInstance.Get())
     {
-        World->GetTimerManager().ClearTimer(HitTimer);
-        World->GetTimerManager().ClearTimer(FinishTimer);
+        AnimInstance->OnPlayMontageNotifyBegin.RemoveDynamic(
+            this, &UGA_BossMelee::HandleHitNotify);
     }
+    BoundAnimInstance.Reset();
+    MontageInstanceID = INDEX_NONE;
+
+    if (IsValid(MontageTask.Get()))
+    {
+        MontageTask->OnCompleted.RemoveAll(this);
+        MontageTask->OnInterrupted.RemoveAll(this);
+        MontageTask->OnCancelled.RemoveAll(this);
+    }
+    MontageTask = nullptr;
 
     UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo();
     if (IsValid(ASC) && ASC->GetAnimatingAbility() == this)
     {
         ASC->CurrentMontageStop(0.1f);
+        ASC->ClearAnimatingAbility(this);
     }
     LockedTarget.Reset();
 

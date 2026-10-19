@@ -4,7 +4,8 @@
 #include "BossTypes.generated.h"
 
 class UGameplayAbility;
-class ABossMissile;
+class ABossCircularMissile;
+class ABossFallingMissile;
 
 UENUM(BlueprintType)
 enum class EBossPhase : uint8
@@ -88,6 +89,15 @@ struct THELASTMESSAGE_API FBossMissileConfig
     UPROPERTY(EditDefaultsOnly)
     float SpawnInterval = 0.f;
 
+    UPROPERTY(EditDefaultsOnly, meta = (ClampMin = "0.01"))
+    float LaunchTime = 1.f;
+
+    UPROPERTY(EditDefaultsOnly, meta = (ClampMin = "1.0"))
+    float DamageRadius = 150.f;
+
     UPROPERTY(EditDefaultsOnly)
-    TSubclassOf<ABossMissile> MissileClass;
+    TSubclassOf<ABossCircularMissile> CircularMissileClass;
+
+    UPROPERTY(EditDefaultsOnly)
+    TSubclassOf<ABossFallingMissile> FallingMissileClass;
 };

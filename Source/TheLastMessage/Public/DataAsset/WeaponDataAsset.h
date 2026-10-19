@@ -43,6 +43,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Animation")
 	TObjectPtr<UAnimMontage> AttackMontage = nullptr;
 
+	// 몽타주의 섹션 중 하나를 균등 추첨하고, 해당 섹션만 재생한다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Animation")
+	bool bRandomizeAttackSection = false;
+
 	// 무기 외형
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Mesh")
 	TObjectPtr<UStaticMesh> WeaponMesh;
@@ -66,11 +70,11 @@ public:
 	bool bSupportsChargeAttack = false;
 
 	// 최대 충전 시간
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon", meta = (ClampMin = "0.01", EditCondition = "bSupportsChargeAttack"))
 	float MaxChargeTime = 1.0f;
 
 	// 충전 공격 시 피해 배율
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon", meta = (ClampMin = "1.0", EditCondition = "bSupportsChargeAttack"))
 	float MaxChargeDamageMultiplier = 1.0f;
 
 	// ------------------------------근접------------------------------

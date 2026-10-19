@@ -6,7 +6,11 @@
 #include "AbilitySystemGlobals.h"
 #include "GameplayEffect.h"
 #include "Kismet/GameplayStatics.h"
+#include "Animation/AnimMontage.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
 #include "GameFramework/CharacterMovementComponent.h"
 
 AEnemyBase::AEnemyBase()
@@ -29,6 +33,8 @@ void AEnemyBase::BeginPlay()
 {
 	Super::BeginPlay();
 	InitializeEnemy();
+
+	OnEnemyDamaged.AddUniqueDynamic(this, &AEnemyBase::HandleDamagedEffect);
 }
 
 void AEnemyBase::InitializeEnemy()
@@ -210,7 +216,61 @@ void AEnemyBase::StartAttack()
 
 void AEnemyBase::CancelAttack()
 {
+	if (bIsAttacking && AttackMontage)
+	{
+		StopAnimMontage(AttackMontage);
+	}
+
 	bIsAttacking = false;
+}
+
+void AEnemyBase::SpawnEffectAtLocation(UNiagaraSystem* System, const FVector& Location, const FRotator& Rotation, const FVector& Scale)
+{
+	if (System && GetWorld())
+	{
+		UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(), System, Location, Rotation, Scale);
+	}
+}
+
+void AEnemyBase::SpawnEffectAtSocket(UNiagaraSystem* System, FName SocketName,
+	const FVector& FallbackLocalOffset, const FRotator& FallbackRotation)
+{
+	if (!System)
+	{
+		return;
+	}
+
+	if (!SocketName.IsNone() && GetMesh() && GetMesh()->DoesSocketExist(SocketName))
+	{
+		UNiagaraFunctionLibrary::SpawnSystemAttached(System, GetMesh(), SocketName, FVector::ZeroVector,
+			FRotator::ZeroRotator, EAttachLocation::SnapToTarget, true);
+		return;
+	}
+
+	SpawnEffectAtLocation(System, GetActorTransform().TransformPosition(FallbackLocalOffset), FallbackRotation);
+}
+
+FVector AEnemyBase::GetMuzzleLocation(FName SocketName, const FVector& LocalOffset) const
+{
+	if (!SocketName.IsNone() && GetMesh() && GetMesh()->DoesSocketExist(SocketName))
+	{
+		return GetMesh()->GetSocketLocation(SocketName);
+	}
+
+	return GetActorTransform().TransformPosition(LocalOffset);
+}
+
+void AEnemyBase::HandleDamagedEffect(float Damage)
+{
+	SpawnEffectAtLocation(HitEffect, GetActorLocation());
+}
+
+void AEnemyBase::PlayAttackMontage()
+{
+	if (AttackMontage)
+	{
+		PlayAnimMontage(AttackMontage);
+	}
 }
 
 void AEnemyBase::FinishAttack()
@@ -284,5 +344,29 @@ void AEnemyBase::HandleDeath()
 	GetCharacterMovement()->DisableMovement();
 	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
+	if (DeathMontage)
+	{
+		PlayAnimMontage(DeathMontage);
+	}
+
+	SpawnEffectAtLocation(DeathEffect, GetActorLocation());
+
 	OnEnemyDied.Broadcast(this);
+
+	// 사망 연출이 끝난 뒤 시체를 제거한다.
+	if (CorpseLifeSpan > 0.f)
+	{
+		SetLifeSpan(CorpseLifeSpan);
+	}
+}
+
+void AEnemyBase::Destroyed()
+{
+	// 몬스터가 제거될 때 AI 컨트롤러가 남지 않도록 함께 제거한다.
+	if (AController* OwnerController = GetController())
+	{
+		OwnerController->Destroy();
+	}
+
+	Super::Destroyed();
 }

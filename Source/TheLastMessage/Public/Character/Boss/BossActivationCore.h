@@ -8,7 +8,7 @@ class UStaticMeshComponent;
 class USphereComponent;
 class UPrimitiveComponent;
 class UBossCorePuzzleComponent;
-class ABossMissile;
+class AActor;
 
 UCLASS()
 class THELASTMESSAGE_API ABossActivationCore : public AActor
@@ -19,7 +19,7 @@ public:
     ABossActivationCore();
     void InitializeCore(
         int32 InCoreIndex, UBossCorePuzzleComponent* InPuzzleComponent);
-    void HandleMissileHit(ABossMissile* Missile);
+    void HandleMissileHit(AActor* Missile);
     void DeactivateCore();
     void ResetCore();
     bool IsCoreActive();

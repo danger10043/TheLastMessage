@@ -12,8 +12,6 @@
 #include "Engine/World.h"
 #include "Engine/OverlapResult.h"
 #include "Interface/SideScrollingInteractable.h"
-#include "Kismet/KismetMathLibrary.h"
-#include "TimerManager.h"
 
 ASideScrollingCharacter::ASideScrollingCharacter()
 {
@@ -79,14 +77,6 @@ void ASideScrollingCharacter::Tick(float DeltaSeconds)
 	RefreshSoftPlatformCollision();
 }
 
-void ASideScrollingCharacter::EndPlay(EEndPlayReason::Type EndPlayReason)
-{
-	Super::EndPlay(EndPlayReason);
-
-	// clear the wall jump timer
-	GetWorld()->GetTimerManager().ClearTimer(WallJumpTimer);
-}
-
 void ASideScrollingCharacter::SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent)
 {
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
@@ -139,6 +129,7 @@ void ASideScrollingCharacter::Landed(const FHitResult& Hit)
 {
 	// reset the double jump
 	bHasDoubleJumped = false;
+	Super::Landed(Hit);
 }
 
 void ASideScrollingCharacter::OnMovementModeChanged(EMovementMode PrevMovementMode, uint8 PreviousCustomMode /*= 0*/)
@@ -175,18 +166,9 @@ void ASideScrollingCharacter::DropReleased(const FInputActionValue& Value)
 
 void ASideScrollingCharacter::DoMove(float Forward)
 {
-	// is movement temporarily disabled after wall jumping?
-	if (!bHasWallJumped)
-	{
-		// save the movement values
-		ActionValueY = Forward;
-
-		// figure out the movement direction
-		const FVector MoveDir = FVector(1.0f, Forward > 0.0f ? 0.1f : -0.1f, 0.0f);
-
-		// apply the movement input
-		AddMovementInput(MoveDir, Forward);
-	}
+	ActionValueY = Forward;
+	const FVector MoveDir = FVector(1.0f, Forward > 0.0f ? 0.1f : -0.1f, 0.0f);
+	AddMovementInput(MoveDir, Forward);
 }
 
 void ASideScrollingCharacter::DoDrop(float Value)
@@ -254,69 +236,15 @@ void ASideScrollingCharacter::MultiJump()
 		return;
 	}
 
-	// if we have a horizontal input, try for wall jump first
-	if (!bHasWallJumped && !FMath::IsNearlyZero(ActionValueY))
+	if (GetWorld()->GetTimeSeconds() - LastFallTime < MaxCoyoteTime)
 	{
-		// trace ahead of the character for walls
-		FHitResult OutHit;
-
-		const FVector Start = GetActorLocation();
-		const FVector End = Start + (FVector(ActionValueY > 0.0f ? 1.0f : -1.0f, 0.0f, 0.0f) * WallJumpTraceDistance);
-
-		FCollisionQueryParams QueryParams;
-		QueryParams.AddIgnoredActor(this);
-
-		GetWorld()->LineTraceSingleByChannel(OutHit, Start, End, ECC_Visibility, QueryParams);
-
-		if (OutHit.bBlockingHit)
-		{
-			// rotate to the bounce direction
-			const FRotator BounceRot = UKismetMathLibrary::MakeRotFromX(OutHit.ImpactNormal);
-			SetActorRotation(FRotator(0.0f, BounceRot.Yaw, 0.0f));
-
-			// calculate the impulse vector
-			FVector WallJumpImpulse = OutHit.ImpactNormal * WallJumpHorizontalImpulse;
-			WallJumpImpulse.Z = GetCharacterMovement()->JumpZVelocity * WallJumpVerticalMultiplier;
-
-			// launch the character away from the wall
-			LaunchCharacter(WallJumpImpulse, true, true);
-
-			// enable wall jump lockout for a bit
-			bHasWallJumped = true;
-
-			// schedule wall jump lockout reset
-			GetWorld()->GetTimerManager().SetTimer(WallJumpTimer, this, &ASideScrollingCharacter::ResetWallJump, DelayBetweenWallJumps, false);
-
-			return;
-		}
+		Jump();
 	}
-
-
-
-	// test for double jump only if we haven't already tested for wall jump
-	if (!bHasWallJumped)
+	else if (!bHasDoubleJumped)
 	{
-		// are we still within coyote time frames?
-		if (GetWorld()->GetTimeSeconds() - LastFallTime < MaxCoyoteTime)
-		{
-			UE_LOG(LogTemp, Warning, TEXT("Coyote Jump"));
-
-			// use the built-in CMC functionality to do the jump
-			Jump();
-
-		// no coyote time jump
-		} else {
-		
-			// The movement component handles double jump but we still need to manage the flag for animation
-			if (!bHasDoubleJumped)
-			{
-				// raise the double jump flag
-				bHasDoubleJumped = true;
-
-				// let the CMC handle jump
-				Jump();
-			}
-		}
+		// CharacterMovement handles the jump count; keep the animation flag in sync.
+		bHasDoubleJumped = true;
+		Jump();
 	}
 }
 
@@ -337,12 +265,6 @@ void ASideScrollingCharacter::CheckForSoftCollision()
 	SetBase(static_cast<FMovementBaseInterfaceData*>(nullptr));
 	Movement->SetMovementMode(MOVE_Falling);
 	Movement->Velocity.Z = FMath::Min(Movement->Velocity.Z, -50.0);
-}
-
-void ASideScrollingCharacter::ResetWallJump()
-{
-	// reset the wall jump flag
-	bHasWallJumped = false;
 }
 
 void ASideScrollingCharacter::RefreshSoftPlatformCollision()
@@ -396,9 +318,4 @@ void ASideScrollingCharacter::RefreshSoftPlatformCollision()
 bool ASideScrollingCharacter::HasDoubleJumped() const
 {
 	return bHasDoubleJumped;
-}
-
-bool ASideScrollingCharacter::HasWallJumped() const
-{
-	return bHasWallJumped;
 }

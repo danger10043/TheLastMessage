@@ -12,6 +12,8 @@ class UAbilitySystemComponent;
 class UEnemyAttributeSet;
 class UGameplayAbility;
 class UGameplayEffect;
+class UAnimMontage;
+class UNiagaraSystem;
 class AEnemyBase;
 class AEnemyProjectile;
 
@@ -119,9 +121,31 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void Destroyed() override;
 
 	/** 공격 쿨다운(초). 서브클래스가 다른 값을 쓰려면 오버라이드한다. */
 	virtual float GetAttackCooldown() const { return GetStatConfig().AttackCooldown; }
+
+	/** 월드 위치에 나이아가라 이펙트를 한 번 재생한다. System이 비어 있으면 아무것도 하지 않는다. */
+	void SpawnEffectAtLocation(UNiagaraSystem* System, const FVector& Location,
+		const FRotator& Rotation = FRotator::ZeroRotator, const FVector& Scale = FVector::OneVector);
+
+	/**
+	 * 스켈레탈 메시 소켓에 나이아가라 이펙트를 붙여 한 번 재생한다(애니메이션을 따라 움직인다).
+	 * 소켓이 없으면 몬스터 기준 로컬 오프셋 위치에서 FallbackRotation으로 재생한다.
+	 */
+	void SpawnEffectAtSocket(UNiagaraSystem* System, FName SocketName,
+		const FVector& FallbackLocalOffset, const FRotator& FallbackRotation);
+
+	/** 총구 위치: 소켓(본)이 있으면 그 위치, 없으면 몬스터 기준 로컬 오프셋 */
+	FVector GetMuzzleLocation(FName SocketName, const FVector& LocalOffset) const;
+
+	/** 피해를 받았을 때 피격 이펙트를 재생한다. */
+	UFUNCTION()
+	void HandleDamagedEffect(float Damage);
+
+	/** 공격 몽타주를 재생한다(지정돼 있을 때만). 공격 클래스가 공격을 시작할 때 호출한다. */
+	void PlayAttackMontage();
 
 	/** 공격이 끝났을 때 호출: 공격 중 해제 + 쿨다운 시작 */
 	void FinishAttack();
@@ -150,6 +174,26 @@ protected:
 	/** 데이터 에셋이 없을 때 쓰는 기본 능력치 */
 	UPROPERTY(EditDefaultsOnly, Category = "Enemy")
 	FEnemyStatConfig StatConfig;
+
+	/** 공격 시작 시 재생할 몽타주 (애니메이션 블루프린트에 DefaultSlot이 있어야 한다) */
+	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Animation")
+	TObjectPtr<UAnimMontage> AttackMontage;
+
+	/** 사망 시 재생할 몽타주. 마지막 자세를 유지하려면 몽타주의 Enable Auto Blend Out을 끈다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Animation")
+	TObjectPtr<UAnimMontage> DeathMontage;
+
+	/** 피해를 받을 때 재생할 이펙트 */
+	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Effects")
+	TObjectPtr<UNiagaraSystem> HitEffect;
+
+	/** 사망 후 시체가 남아 있는 시간(초). 이 시간이 지나면 몬스터가 제거된다. 0 이하이면 계속 남긴다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Death", meta = (ClampMin = "0.0"))
+	float CorpseLifeSpan = 5.f;
+
+	/** 사망할 때 재생할 이펙트 */
+	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Effects")
+	TObjectPtr<UNiagaraSystem> DeathEffect;
 
 	/** 플레이어에게 피해를 줄 때 적용할 GameplayEffect (IncomingDamage를 올리는 GE) */
 	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Damage")

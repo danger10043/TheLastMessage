@@ -3,6 +3,9 @@
 #include "AbilitySystemBlueprintLibrary.h"
 #include "AbilitySystemComponent.h"
 #include "GameplayEffect.h"
+#include "Character/Player/CombatFeedbackComponent.h"
+#include "Character/Enemy/EnemyAttributeSet.h"
+#include "Character/Boss/BossAttributeSet.h"
 
 namespace
 {
@@ -39,7 +42,7 @@ bool UCombatDamageLibrary::TryGetDamageCategory(
 bool UCombatDamageLibrary::ApplyFinalDamageToTarget(
     AActor* SourceActor, AActor* Target,
     TSubclassOf<UGameplayEffect> DamageEffectClass,
-    float FinalDamage, FGameplayTag DamageCategory)
+    float FinalDamage, FGameplayTag DamageCategory, float FeedbackStrength)
 {
     if (!IsValid(SourceActor) || !IsValid(Target)
         || !SourceActor->HasAuthority() || !Target->HasAuthority()
@@ -88,7 +91,18 @@ bool UCombatDamageLibrary::ApplyFinalDamageToTarget(
 
     Spec.Data->SetSetByCallerMagnitude(DamageTag, FinalDamage);
     Spec.Data->AddDynamicAssetTag(DamageCategory);
+    const FGameplayAttribute HealthAttribute = TargetASC->GetSet<UBossAttributeSet>()
+        ? UBossAttributeSet::GetHealthAttribute() : UEnemyAttributeSet::GetHealthAttribute();
+    const bool bHasHealth = TargetASC->HasAttributeSetForAttribute(HealthAttribute);
+    const float HealthBefore = bHasHealth ? TargetASC->GetNumericAttribute(HealthAttribute) : 0.0f;
     const FActiveGameplayEffectHandle Applied =
         SourceASC->ApplyGameplayEffectSpecToTarget(*Spec.Data.Get(), TargetASC);
+    // An accepted GE can still deal zero damage (boss immunity, death or phase health floor).
+    if (bHasHealth && IsValid(TargetASC) && TargetASC->GetNumericAttribute(HealthAttribute) < HealthBefore
+        && DamageCategory.GetTagName() != FName(TEXT("Damage.Category.Gimmick")) && IsValid(SourceActor))
+    {
+        if (UCombatFeedbackComponent* Feedback = SourceActor->FindComponentByClass<UCombatFeedbackComponent>())
+            Feedback->NotifyDamageDealt(FeedbackStrength);
+    }
     return Applied.WasSuccessfullyApplied();
 }

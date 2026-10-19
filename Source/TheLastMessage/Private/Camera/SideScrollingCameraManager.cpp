@@ -11,6 +11,11 @@ void ASideScrollingCameraManager::UpdateViewTarget(FTViewTarget& OutVT, float De
 {
 	// ensure the view target is a pawn
 	APawn* TargetPawn = Cast<APawn>(OutVT.Target);
+	if (!IsValid(TargetPawn))
+	{
+		Super::UpdateViewTarget(OutVT, DeltaTime);
+		return;
+	}
 
 	// is our target valid?
 	if (IsValid(TargetPawn))
@@ -23,7 +28,7 @@ void ASideScrollingCameraManager::UpdateViewTarget(FTViewTarget& OutVT, float De
 		FVector CurrentActorLocation = OutVT.Target->GetActorLocation();
 
 		// copy the current camera location
-		FVector CurrentCameraLocation = GetCameraLocation();
+		FVector CurrentCameraLocation = UnmodifiedCameraLocation;
 
 		// calculate the "zoom distance" - in reality the distance we want to keep to the target
 		float CurrentY = CurrentZoom + CurrentActorLocation.Y;
@@ -41,6 +46,7 @@ void ASideScrollingCameraManager::UpdateViewTarget(FTViewTarget& OutVT, float De
 
 			// save the current camera height
 			CurrentZ = OutVT.POV.Location.Z;
+			FinalizeViewTarget(OutVT, DeltaTime);
 
 			// skip the rest of the calculations
 			return;
@@ -101,5 +107,15 @@ void ASideScrollingCameraManager::UpdateViewTarget(FTViewTarget& OutVT, float De
 		FVector TargetCameraLocation(CurrentX, CurrentY, CurrentZ);
 
 		OutVT.POV.Location = FMath::VInterpTo(CurrentCameraLocation, TargetCameraLocation, DeltaTime, 2.0f);
+		FinalizeViewTarget(OutVT, DeltaTime);
 	}
+}
+
+void ASideScrollingCameraManager::FinalizeViewTarget(FTViewTarget& OutVT, float DeltaTime)
+{
+	UnmodifiedCameraLocation = OutVT.POV.Location;
+	// This override bypasses the base implementation, so run its final modifier stage here.
+	ApplyCameraModifiers(DeltaTime, OutVT.POV);
+	SetActorLocationAndRotation(OutVT.POV.Location, OutVT.POV.Rotation, false);
+	UpdateCameraLensEffects(OutVT);
 }

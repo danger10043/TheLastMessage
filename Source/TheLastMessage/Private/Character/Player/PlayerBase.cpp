@@ -1,5 +1,6 @@
 #include "Character/Player/PlayerBase.h"
 #include "Character/Player/GrapplingHookComponent.h"
+#include "Character/Player/CombatFeedbackComponent.h"
 #include "AbilitySystemComponent.h"
 #include "Abilities/GameplayAbility.h"
 #include "GameplayEffect.h"
@@ -62,6 +63,8 @@ static TAutoConsoleVariable<int32> CVarDebugAim(
 
 APlayerBase::APlayerBase()
 {
+	GravityStateComponent = CreateDefaultSubobject<UGravityStateComponent>(TEXT("GravityStateComponent"));
+	CombatFeedbackComponent = CreateDefaultSubobject<UCombatFeedbackComponent>(TEXT("CombatFeedbackComponent"));
 	GrapplingHookComponent = CreateDefaultSubobject<UGrapplingHookComponent>(TEXT("GrapplingHookComponent"));
 	static ConstructorHelpers::FObjectFinder<UInputAction> GrappleAction(TEXT("/Game/Main/Inputs/Actions/IA_GrapplingHook.IA_GrapplingHook"));
 	GrapplingHookAction = GrappleAction.Object;

@@ -16,7 +16,7 @@ class THELASTMESSAGE_API AProjectileBase : public AActor
 
 public:
 	AProjectileBase();
-	bool InitializeProjectile(AActor* Source, TSubclassOf<UGameplayEffect> Effect, float InDamage, float Speed, float Range);
+	bool InitializeProjectile(AActor* Source, TSubclassOf<UGameplayEffect> Effect, float InDamage, float Speed, float Range, float InFeedbackStrength = 1.0f);
 
 	void LaunchProjectile(const FVector& Direction);
 	void DestroyProjectile();
@@ -51,6 +51,7 @@ private:
 	UPROPERTY(Transient)
 	TSubclassOf<UGameplayEffect> DamageEffectClass;
 	float MaxTravelTime = 0.0f;
+	float FeedbackStrength = 1.0f;
 	bool bLaunched = false;
 	bool bImpactHandled = false;
 };

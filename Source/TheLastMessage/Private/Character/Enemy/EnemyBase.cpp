@@ -9,6 +9,7 @@
 #include "GameplayEffect.h"
 #include "Kismet/GameplayStatics.h"
 #include "Animation/AnimMontage.h"
+#include "Materials/MaterialInterface.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "NiagaraFunctionLibrary.h"
@@ -268,7 +269,29 @@ FVector AEnemyBase::GetMuzzleLocation(FName SocketName, const FVector& LocalOffs
 void AEnemyBase::HandleDamagedEffect(float Damage)
 {
 	SpawnEffectAtLocation(HitEffect, GetActorLocation());
+	StartHitFlash();
 	PlayHitReaction();
+}
+
+void AEnemyBase::StartHitFlash()
+{
+	if (!HitFlashMaterial || !GetMesh() || !GetWorld() || bInPool)
+	{
+		return;
+	}
+
+	GetMesh()->SetOverlayMaterial(HitFlashMaterial);
+
+	// 연속 피격 때는 타이머를 다시 시작해 번쩍임을 이어 간다.
+	GetWorldTimerManager().SetTimer(HitFlashTimerHandle, this, &AEnemyBase::EndHitFlash, HitFlashDuration, false);
+}
+
+void AEnemyBase::EndHitFlash()
+{
+	if (GetMesh())
+	{
+		GetMesh()->SetOverlayMaterial(nullptr);
+	}
 }
 
 void AEnemyBase::PlayHitReaction()
@@ -434,6 +457,7 @@ void AEnemyBase::OnReturnedToPool()
 	bInPool = true;
 
 	GetWorldTimerManager().ClearAllTimersForObject(this);
+	EndHitFlash();
 	CancelAttack();
 
 	if (AEnemyAIController* AIC = Cast<AEnemyAIController>(GetController()))
@@ -463,6 +487,7 @@ void AEnemyBase::OnAcquiredFromPool()
 void AEnemyBase::ResetEnemy()
 {
 	GetWorldTimerManager().ClearAllTimersForObject(this);
+	EndHitFlash();
 	CancelAttack();
 	StopAnimMontage();
 

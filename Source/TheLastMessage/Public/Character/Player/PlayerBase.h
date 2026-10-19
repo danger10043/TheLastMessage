@@ -21,6 +21,8 @@ class UWeaponDataAsset;
 class UStaticMeshComponent;
 class UAnimMontage;
 class UGrapplingHookComponent;
+class UCombatFeedbackComponent;
+class UGravityStateComponent;
 class APlayerBase;
 struct FGameplayEffectContextHandle;
 
@@ -164,6 +166,12 @@ public:
 	UCoreComponent* GetCoreComponent() const;
 
 protected:
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Player|Gravity")
+	TObjectPtr<UGravityStateComponent> GravityStateComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Player|Combat Feedback")
+	TObjectPtr<UCombatFeedbackComponent> CombatFeedbackComponent;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Player|Checkpoint")
 	bool bAutoRespawn = true;
 

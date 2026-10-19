@@ -422,6 +422,28 @@ void APlayerBase::AbilityInputPressed(FGameplayTag InputTag)
 			if (Spec.GetDynamicSpecSourceTags().HasTagExact(InputTag)) Handles.Add(Spec.Handle);
 		}
 	}
+	const EWeaponSlot RequestedSlot = InputTag == WeaponGameplayTags::Input_Primary ? EWeaponSlot::Primary
+		: InputTag == WeaponGameplayTags::Input_Secondary ? EWeaponSlot::Secondary : EWeaponSlot::None;
+	if (IsChargingWeapon() && RequestedSlot != EWeaponSlot::None && RequestedSlot != GetChargingWeaponSlot()
+		&& IsValid(GetWeaponInSlot(RequestedSlot)) && !Handles.IsEmpty())
+	{
+		// 반대 슬롯 입력은 발사 전 차지만 취소한다. 비용과 쿨다운은 실제 공격 실행 때 적용된다.
+		const FGameplayTag ChargingInput = GetChargingWeaponSlot() == EWeaponSlot::Primary
+			? WeaponGameplayTags::Input_Primary : WeaponGameplayTags::Input_Secondary;
+		TArray<FGameplayAbilitySpecHandle> ChargingHandles;
+		{
+			FScopedAbilityListLock Lock(*AbilitySystemComponent);
+			for (const FGameplayAbilitySpec& Spec : AbilitySystemComponent->GetActivatableAbilities())
+			{
+				if (Spec.IsActive() && Spec.Ability && Spec.Ability->IsA<UGA_WeaponAttackBase>()
+					&& Spec.GetDynamicSpecSourceTags().HasTagExact(ChargingInput)) ChargingHandles.Add(Spec.Handle);
+			}
+		}
+		for (const FGameplayAbilitySpecHandle Handle : ChargingHandles)
+		{
+			AbilitySystemComponent->CancelAbilityHandle(Handle);
+		}
+	}
 	for (const FGameplayAbilitySpecHandle Handle : Handles)
 	{
 		FGameplayAbilitySpec* Spec = AbilitySystemComponent->FindAbilitySpecFromHandle(Handle);

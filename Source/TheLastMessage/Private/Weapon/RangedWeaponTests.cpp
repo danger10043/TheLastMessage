@@ -125,6 +125,58 @@ bool FRangedWeaponTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("Canceled charge hides HUD presentation"), Player->IsChargingWeapon());
 	TestEqual(TEXT("Canceled charge has no cost"), Energy->GetPrimaryEnergy(), BeforeCancel);
 	TestFalse(TEXT("Cancel clears attack state"), ASC->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking));
+	// Exercise the authoritative input route used by local input and the client RPC.
+	auto SendInput = [Player](FGameplayTag Tag, uint8 State)
+	{
+		struct FInputParameters
+		{
+			FGameplayTag InputTag;
+			uint8 InputState;
+			FVector_NetQuantize AimPoint;
+		};
+		FInputParameters Input{Tag, State, FVector(2000, 0, 200)};
+		Player->ProcessEvent(Player->FindFunctionChecked(TEXT("ServerAbilityInput")), &Input);
+	};
+	const float PrimaryBeforeSwitch = Energy->GetPrimaryEnergy();
+	const float SecondaryBeforeSwitch = Energy->GetSecondaryEnergy();
+	SendInput(WeaponGameplayTags::Input_Primary, 1);
+	TestEqual(TEXT("Primary input starts charging"), Player->GetChargingWeaponSlot(), EWeaponSlot::Primary);
+	Advance(0.1f);
+	SendInput(WeaponGameplayTags::Input_Secondary, 1);
+	TestEqual(TEXT("Opposite input switches charge to secondary"), Player->GetChargingWeaponSlot(), EWeaponSlot::Secondary);
+	TestFalse(TEXT("Old primary ability was canceled"), Spec->IsActive());
+	TestTrue(TEXT("New slot starts charge from zero"), FMath::IsNearlyZero(Player->GetWeaponChargeRatio()));
+	TestFalse(TEXT("Canceled primary charge has no cooldown"), ASC->HasMatchingGameplayTag(WeaponGameplayTags::Cooldown_Primary));
+	Advance(0.1f);
+	const float SecondaryCharge = Player->GetWeaponChargeRatio();
+	SendInput(WeaponGameplayTags::Input_Secondary, 1);
+	TestEqual(TEXT("Same slot input preserves charge"), Player->GetWeaponChargeRatio(), SecondaryCharge);
+	SendInput(WeaponGameplayTags::Input_Primary, 0);
+	TestEqual(TEXT("Releasing old primary key preserves secondary charge"), Player->GetChargingWeaponSlot(), EWeaponSlot::Secondary);
+	SendInput(WeaponGameplayTags::Input_Primary, 1);
+	TestEqual(TEXT("Charge also switches back to primary"), Player->GetChargingWeaponSlot(), EWeaponSlot::Primary);
+	TestFalse(TEXT("Canceled secondary charge has no cooldown"), ASC->HasMatchingGameplayTag(WeaponGameplayTags::Cooldown_Secondary));
+	SendInput(WeaponGameplayTags::Input_Secondary, 0);
+	TestEqual(TEXT("Releasing old secondary key preserves primary charge"), Player->GetChargingWeaponSlot(), EWeaponSlot::Primary);
+	TestEqual(TEXT("Switches preserve primary energy"), Energy->GetPrimaryEnergy(), PrimaryBeforeSwitch);
+	TestEqual(TEXT("Switches preserve secondary energy"), Energy->GetSecondaryEnergy(), SecondaryBeforeSwitch);
+	SendInput(WeaponGameplayTags::Input_Primary, 0);
+	TestFalse(TEXT("New charge releases normally"), Player->IsChargingWeapon());
+	TestEqual(TEXT("Only released primary attack consumes primary energy"), Energy->GetPrimaryEnergy(), PrimaryBeforeSwitch - Data->EnergyPerShot);
+	TestEqual(TEXT("Canceled secondary never consumes energy"), Energy->GetSecondaryEnergy(), SecondaryBeforeSwitch);
+	Advance(0.4f);
+	UWeaponDataAsset* SecondaryData = DuplicateObject<UWeaponDataAsset>(Data, Player);
+	SecondaryData->bSupportsChargeAttack = false;
+	TestTrue(TEXT("Equip uncharged secondary"), Player->EquipWeapon(EWeaponSlot::Secondary, SecondaryData));
+	SendInput(WeaponGameplayTags::Input_Primary, 1);
+	const float BeforeImmediateSwitch = Energy->GetPrimaryEnergy();
+	SendInput(WeaponGameplayTags::Input_Secondary, 1);
+	TestFalse(TEXT("Switch to uncharged attack clears charge UI"), Player->IsChargingWeapon());
+	TestEqual(TEXT("Immediate switch preserves canceled slot energy"), Energy->GetPrimaryEnergy(), BeforeImmediateSwitch);
+	TestEqual(TEXT("Uncharged secondary fires on switch"), Energy->GetSecondaryEnergy(), SecondaryData->MaxEnergy - SecondaryData->EnergyPerShot);
+	TestTrue(TEXT("Uncharged switched attack applies its cooldown"), ASC->HasMatchingGameplayTag(WeaponGameplayTags::Cooldown_Secondary));
+	SendInput(WeaponGameplayTags::Input_Primary, 0);
+	SendInput(WeaponGameplayTags::Input_Secondary, 0);
 	Data->bSupportsChargeAttack = false;
 	Enemy->SetActorLocation(FVector(1500, 0, 200));
 	const float BeforeRangeTest = EnemyStats->GetHealth();

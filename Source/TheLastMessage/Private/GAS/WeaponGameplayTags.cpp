@@ -13,4 +13,6 @@ namespace WeaponGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(Event_MeleeHit, "Event.Weapon.MeleeHit");
 	UE_DEFINE_GAMEPLAY_TAG(Data_Damage, "Data.Damage");
 	UE_DEFINE_GAMEPLAY_TAG(Damage_PlayerMelee, "Damage.Category.Player.Melee");
+	UE_DEFINE_GAMEPLAY_TAG(Damage_PlayerRanged, "Damage.Category.Player.Ranged");
+	UE_DEFINE_GAMEPLAY_TAG(Data_EnergyCost, "Data.Weapon.EnergyCost");
 }

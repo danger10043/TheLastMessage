@@ -65,11 +65,6 @@ public:
 	FGameplayAttributeData ChargeTimeMultiplier;
 	ATTRIBUTE_ACCESSORS_BASIC(UCombatAttributeSet, ChargeTimeMultiplier);
 
-	/** 원거리 공격의 에너지 소모 배율. 1.0은 기본 소모량, 0.8은 20% 감소이다. */
-	UPROPERTY(BlueprintReadOnly, Category = "Base Stat")
-	FGameplayAttributeData RangedEnergyCostMultiplier;
-	ATTRIBUTE_ACCESSORS_BASIC(UCombatAttributeSet, RangedEnergyCostMultiplier);
-
 	/** 무기의 초당 에너지 충전량 배율. 1.0은 기본 충전량, 1.25는 25% 증가이다. */
 	UPROPERTY(BlueprintReadOnly, Category = "Base Stat")
 	FGameplayAttributeData EnergyRechargeRateMultiplier;

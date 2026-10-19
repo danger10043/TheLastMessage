@@ -14,7 +14,6 @@ UCombatAttributeSet::UCombatAttributeSet()
 	InitDamageDealtMultiplier(1.0f);
 	InitMeleeDamageMultiplier(1.0f);
 	InitChargeTimeMultiplier(1.0f);
-	InitRangedEnergyCostMultiplier(1.0f);
 	InitEnergyRechargeRateMultiplier(1.0f);
 	InitMoveSpeedMultiplier(1.0f);
 	InitHighHealthDamageMultiplier(1.0f);

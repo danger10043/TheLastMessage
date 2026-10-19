@@ -605,14 +605,17 @@ void APlayerBase::RechargeWeaponEnergy()
 	const double Previous = LastEnergyRechargeTime;
 	LastEnergyRechargeTime = Now;
 	if (!HasAuthority() || IsDead()) return;
+	const float RechargeMultiplier = CombatAttributes->GetEnergyRechargeRateMultiplier();
+	if (!FMath::IsFinite(RechargeMultiplier) || RechargeMultiplier <= 0.0f) return;
 	for (EWeaponSlot Slot : {EWeaponSlot::Primary, EWeaponSlot::Secondary})
 	{
 		const URangedWeaponBase* Weapon = Cast<URangedWeaponBase>(GetWeaponInSlot(Slot));
 		const UWeaponDataAsset* Data = Weapon ? Weapon->WeaponData.Get() : nullptr;
 		if (!Data || !FMath::IsFinite(Data->EnergyRechargeRate) || Data->EnergyRechargeRate <= 0.0f) continue;
 		const double Start = FMath::Max(Previous, Weapon->LastSuccessfulFireTime + FMath::Max(0.0f, Data->EnergyRechargeDelay));
-		const float Amount = float(FMath::Max(0.0, Now - Start)) * Data->EnergyRechargeRate;
-		if (Amount <= 0.0f) continue;
+		// 무기 기본 충전량에 코어 배율을 적용해 이번 시간 간격의 회복량을 계산한다.
+		const float Amount = float(FMath::Max(0.0, Now - Start)) * Data->EnergyRechargeRate * RechargeMultiplier;
+		if (!FMath::IsFinite(Amount) || Amount <= 0.0f) continue;
 		const FGameplayAttribute Energy = UWeaponSlotAttributeSet::EnergyAttribute(Slot);
 		const float Current = AbilitySystemComponent->GetNumericAttribute(Energy);
 		const float Maximum = AbilitySystemComponent->GetNumericAttribute(UWeaponSlotAttributeSet::MaxEnergyAttribute(Slot));

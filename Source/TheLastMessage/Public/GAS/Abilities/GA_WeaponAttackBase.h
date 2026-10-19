@@ -84,6 +84,8 @@ private:
 	float RollCriticalDamageMultiplier() const;
 	float GetImpactFeedbackStrength() const;
 	double ChargeStartTime = 0.0;
+	// 배율을 반영한 이번 공격의 최대 차지 시간. 차지 시작 시 확정한다.
+	float ChargeDuration = 0.0f;
 	float ChargeDamageMultiplier = 1.0f;
 	// 이번 공격에 적용할 치명타 피해 배율. 일반 공격은 1이다.
 	float CriticalHitDamageMultiplier = 1.0f;

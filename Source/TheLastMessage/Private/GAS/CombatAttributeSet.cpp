@@ -4,6 +4,7 @@
 #include "GAS/CombatAttributeSet.h"
 #include "Net/UnrealNetwork.h"
 #include "Character/Player/PlayerBase.h"
+#include "Character/Player/CombatFeedbackComponent.h"
 
 UCombatAttributeSet::UCombatAttributeSet()
 {
@@ -75,6 +76,12 @@ void UCombatAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCall
 		bReceivedDamage = Data.EvaluatedData.ModifierOp == EGameplayModOp::Additive && Data.EvaluatedData.Magnitude < 0.0f;
 	}
 
+	// Direct Health modifiers have already changed the attribute before this callback.
+	if (bReceivedDamage && Player && !Player->IsDead())
+	{
+		if (UCombatFeedbackComponent* Feedback = Player->FindComponentByClass<UCombatFeedbackComponent>())
+			Feedback->NotifyDamageReceived();
+	}
 	if (bCheckDeath && GetHealth() <= 0.0f && Player)
 	{
 		Player->HandleDeath(Player->GetDamageReactionSection(Data.EffectSpec.GetContext()));

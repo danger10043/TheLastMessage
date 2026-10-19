@@ -206,7 +206,7 @@ void UGA_WeaponAttackBase::ExecuteAttack()
 		SpawnTransform = FTransform(ShotDirection.Rotation(), Player->GetActorLocation());
 		Projectile = GetWorld()->SpawnActorDeferred<AProjectileBase>(Data->ProjectileClass, SpawnTransform,
 			Player, Player, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
-		if (!Projectile || !Projectile->InitializeProjectile(Player, DamageEffectClass, FinalDamage, Data->ProjectileSpeed, Data->Range))
+		if (!Projectile || !Projectile->InitializeProjectile(Player, DamageEffectClass, FinalDamage, Data->ProjectileSpeed, Data->Range, GetImpactFeedbackStrength()))
 		{
 			if (Projectile) Projectile->Destroy();
 			EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
@@ -323,12 +323,20 @@ void UGA_WeaponAttackBase::HandleMeleeHit(FGameplayEventData Payload)
 		// 피해 이벤트가 재진입할 수 있으므로 호출 전에 이번 공격의 명중을 기록한다.
 		HitActorsThisAttack.Add(TargetKey);
 		const bool bApplied = UCombatDamageLibrary::ApplyFinalDamageToTarget(
-			Player, Target, DamageEffectClass, FinalDamage, WeaponGameplayTags::Damage_PlayerMelee);
+			Player, Target, DamageEffectClass, FinalDamage, WeaponGameplayTags::Damage_PlayerMelee, GetImpactFeedbackStrength());
 		// true는 GE 승인 여부이며, 면역으로 실제 체력이 줄지 않아도 이 공격에서는 다시 적용하지 않는다.
 		if (!bApplied && IsActive() && !bFinishingAttack) HitActorsThisAttack.Remove(TargetKey);
 		// 피해 이벤트가 플레이어 사망·공격 취소를 유발했을 수도 있다.
 		if (!IsActive() || bFinishingAttack || Player->IsDead()) break;
 	}
+}
+
+float UGA_WeaponAttackBase::GetImpactFeedbackStrength() const
+{
+	const UWeaponDataAsset* Data = SourceWeapon ? SourceWeapon->WeaponData.Get() : nullptr;
+	if (!Data) return 1.0f;
+	const bool bHeavy = Data->WeaponType == EWeaponType::HeavyMelee || Data->WeaponType == EWeaponType::HeavyRanged;
+	return (bHeavy ? 1.5f : 1.0f) * FMath::Lerp(1.0f, 1.35f, GetChargeRatio());
 }
 
 void UGA_WeaponAttackBase::HandleMontageCompleted()

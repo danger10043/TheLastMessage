@@ -19,7 +19,7 @@ public:
     static bool ApplyFinalDamageToTarget(
         AActor* SourceActor, AActor* Target,
         TSubclassOf<UGameplayEffect> DamageEffectClass,
-        float FinalDamage, FGameplayTag DamageCategory);
+        float FinalDamage, FGameplayTag DamageCategory, float FeedbackStrength = 1.0f);
 
     // Rejects missing or ambiguous damage categories.
     static bool TryGetDamageCategory(const FGameplayEffectSpec& Spec, FGameplayTag& OutCategory);

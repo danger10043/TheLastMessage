@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Interface/PoolableInterface.h"
 #include "EnemyProjectile.generated.h"
 
 class USphereComponent;
@@ -13,7 +14,7 @@ class UNiagaraComponent;
 
 /** 몬스터 공통 투사체 (Cinder, Sentry, Rattler, Juggernaut, Junker가 사용) */
 UCLASS()
-class THELASTMESSAGE_API AEnemyProjectile : public AActor
+class THELASTMESSAGE_API AEnemyProjectile : public AActor, public IPoolableInterface
 {
 	GENERATED_BODY()
 
@@ -23,8 +24,15 @@ public:
 	void InitializeProjectile(AEnemyBase* InSource, float InDamage);
 	void LaunchProjectile(FVector Direction);
 	void SetProjectileSpeed(float InSpeed);
+
+	/** 이 시간(초)이 지나면 투사체가 풀로 돌아간다. */
+	void SetProjectileLifetime(float Lifetime);
 	void HandleProjectileImpact(AActor* HitActor);
 	void DestroyProjectile();
+
+	// --- 오브젝트 풀 ---
+	virtual void OnAcquiredFromPool() override;
+	virtual void OnReturnedToPool() override;
 
 protected:
 	virtual void BeginPlay() override;
@@ -61,8 +69,15 @@ protected:
 	TObjectPtr<AEnemyBase> SourceEnemy;
 
 private:
+	/** 풀로 돌려보낸다(풀이 없으면 제거한다). */
+	void ReturnToPool();
+
 	/** LaunchProjectile이 호출된 뒤에만 충돌을 처리한다. */
 	bool bLaunched = false;
+
+	bool bInPool = false;
+
+	FTimerHandle LifetimeTimerHandle;
 
 	bool bImpactHandled = false;
 };

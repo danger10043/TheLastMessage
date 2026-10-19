@@ -11,6 +11,7 @@
 
 class UAbilitySystemComponent;
 class UCombatAttributeSet;
+class UWeaponSlotAttributeSet;
 class UInteractionComponent;
 class UCoreComponent;
 class UGameplayAbility;
@@ -51,6 +52,10 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Player|GAS")
 	UCombatAttributeSet* GetCombatAttributes() const { return CombatAttributes; }
+	UFUNCTION(BlueprintPure, Category="Player|GAS")
+	UWeaponSlotAttributeSet* GetWeaponSlotAttributes() const { return WeaponSlotAttributes; }
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category="Player|Weapon")
+	bool EquipWeapon(EWeaponSlot Slot, UWeaponDataAsset* Data);
 
 	UFUNCTION(BlueprintPure, Category = "Player|Weapon")
 	UWeaponBase* GetPrimaryWeapon() const { return PrimaryWeapon; }
@@ -165,6 +170,8 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|GAS")
 	TObjectPtr<UCombatAttributeSet> CombatAttributes;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Player|GAS")
+	TObjectPtr<UWeaponSlotAttributeSet> WeaponSlotAttributes;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Animation")
 	TObjectPtr<UAnimMontage> HitReactMontage;
@@ -178,11 +185,11 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Animation", meta = (ClampMin = "0.01"))
 	float DeathPlayRate = 1.0f;
 
-	// 시작할 때 장착할 근접 무기의 설정 데이터.
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Weapon")
+	// 시작할 때 각 슬롯에 장착할 무기의 설정 데이터.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, ReplicatedUsing=OnRep_VisibleWeaponSlot, Category = "Player|Weapon")
 	TObjectPtr<UWeaponDataAsset> InitialPrimaryWeaponData;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Weapon")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, ReplicatedUsing=OnRep_VisibleWeaponSlot, Category = "Player|Weapon")
 	TObjectPtr<UWeaponDataAsset> InitialSecondaryWeaponData;
 
 	// GE_BP_CommonIncomingDamage: Instant, Modifier 없음, IncomingDamageExecution 하나.
@@ -228,6 +235,8 @@ protected:
 	FTimerHandle EnergyRechargeTimerHandle;
 
 private:
+	void RechargeWeaponEnergy();
+	double LastEnergyRechargeTime = 0.0;
 	FTransform CheckpointTransform;
 	FVector CheckpointGravity = FVector(0, 0, -1);
 	bool bHasCheckpoint = false;

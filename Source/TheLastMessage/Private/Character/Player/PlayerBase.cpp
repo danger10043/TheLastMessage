@@ -4,6 +4,7 @@
 #include "Abilities/GameplayAbility.h"
 #include "GameplayEffect.h"
 #include "GAS/CombatAttributeSet.h"
+#include "GAS/WeaponSlotAttributeSet.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Gimmick/Component/InteractionComponent.h"
 #include "Gimmick/Component/GravityStateComponent.h"
@@ -13,6 +14,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "DataAsset/WeaponDataAsset.h"
 #include "Weapon/MeleeWeaponBase.h"
+#include "Weapon/RangedWeaponBase.h"
 #include "NativeGameplayTags.h"
 #include "TimerManager.h"
 #include "EnhancedInputComponent.h"
@@ -66,6 +68,7 @@ APlayerBase::APlayerBase()
 	AbilitySystemComponent->SetIsReplicated(true);
 	AbilitySystemComponent->SetReplicationMode(EGameplayEffectReplicationMode::Mixed);
 	CombatAttributes = CreateDefaultSubobject<UCombatAttributeSet>(TEXT("CombatAttributes"));
+	WeaponSlotAttributes = CreateDefaultSubobject<UWeaponSlotAttributeSet>(TEXT("WeaponSlotAttributes"));
 
 	InteractionComponent = CreateDefaultSubobject<UInteractionComponent>(TEXT("InteractionComponent"));
 
@@ -106,6 +109,8 @@ void APlayerBase::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifet
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(APlayerBase, VisibleWeaponSlot);
+	DOREPLIFETIME(APlayerBase, InitialPrimaryWeaponData);
+	DOREPLIFETIME(APlayerBase, InitialSecondaryWeaponData);
 	DOREPLIFETIME(APlayerBase, DeathState);
 	DOREPLIFETIME_CONDITION(APlayerBase, AimDirection, COND_SkipOwner);
 	DOREPLIFETIME_CONDITION(APlayerBase, AimTargetLocation, COND_SkipOwner);
@@ -300,6 +305,7 @@ void APlayerBase::InitializePlayer()
 	AbilitySystemComponent->InitAbilityActorInfo(this, this);
 	// Explicitly register before applying initial stats; repeated calls do not duplicate the set.
 	AbilitySystemComponent->AddAttributeSetSubobject(CombatAttributes.Get());
+	AbilitySystemComponent->AddAttributeSetSubobject(WeaponSlotAttributes.Get());
 
 	if (!DoubleJumpTagChangedHandle.IsValid())
 	{
@@ -322,36 +328,10 @@ void APlayerBase::InitializePlayer()
 		const FGameplayEffectSpecHandle Spec = AbilitySystemComponent->MakeOutgoingSpec(InitialCombatStatsEffect, 1.0f, Context);
 		if (Spec.IsValid()) AbilitySystemComponent->ApplyGameplayEffectSpecToSelf(*Spec.Data.Get());
 	}
-	// 무기 객체는 플레이어가 소유하며, 공격 수치는 DataAsset을 참조한다.
-	if (!PrimaryWeapon && IsValid(InitialPrimaryWeaponData))
-	{
-		if (InitialPrimaryWeaponData->WeaponType == EWeaponType::LightMelee ||
-			InitialPrimaryWeaponData->WeaponType == EWeaponType::HeavyMelee)
-		{
-			UMeleeWeaponBase* Weapon = NewObject<UMeleeWeaponBase>(this);
-			if (Weapon->Initialize(InitialPrimaryWeaponData))
-			{
-				PrimaryWeapon = Weapon;
-			}
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("%s: InitialPrimaryWeaponData requires a melee weapon; ranged equipment is not implemented yet."), *GetName());
-		}
-	}
-	if (!SecondaryWeapon && IsValid(InitialSecondaryWeaponData))
-	{
-		if (InitialSecondaryWeaponData->WeaponType == EWeaponType::LightMelee ||
-			InitialSecondaryWeaponData->WeaponType == EWeaponType::HeavyMelee)
-		{
-			UMeleeWeaponBase* Weapon = NewObject<UMeleeWeaponBase>(this);
-			if (Weapon->Initialize(InitialSecondaryWeaponData)) SecondaryWeapon = Weapon;
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("%s: InitialSecondaryWeaponData requires a melee weapon; ranged equipment is not implemented yet."), *GetName());
-		}
-	}
+	if (!PrimaryWeapon && IsValid(InitialPrimaryWeaponData)) EquipWeapon(EWeaponSlot::Primary, InitialPrimaryWeaponData);
+	if (!SecondaryWeapon && IsValid(InitialSecondaryWeaponData)) EquipWeapon(EWeaponSlot::Secondary, InitialSecondaryWeaponData);
+	LastEnergyRechargeTime = GetWorld()->GetTimeSeconds();
+	GetWorldTimerManager().SetTimer(EnergyRechargeTimerHandle, this, &APlayerBase::RechargeWeaponEnergy, 0.05f, true);
 	RefreshPrimaryWeaponVisual();
 	CoreComponent->Initialize(AbilitySystemComponent);
 	TArray<TSubclassOf<UGameplayAbility>> AbilitiesToGrant = StartupAbilities;
@@ -518,6 +498,48 @@ UWeaponBase* APlayerBase::GetWeaponInSlot(EWeaponSlot Slot) const
 	if (Slot == EWeaponSlot::Primary) return PrimaryWeapon;
 	if (Slot == EWeaponSlot::Secondary) return SecondaryWeapon;
 	return nullptr;
+}
+
+bool APlayerBase::EquipWeapon(EWeaponSlot Slot, UWeaponDataAsset* Data)
+{
+	if (!HasAuthority() || IsDead() || !IsValid(Data) || Slot == EWeaponSlot::None) return false;
+	// Equipment changes during a charge/swing must not replace its captured weapon.
+	if (AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking)) return false;
+	const bool bRanged = Data->WeaponType == EWeaponType::LightRanged || Data->WeaponType == EWeaponType::HeavyRanged;
+	UWeaponBase* Weapon = bRanged ? static_cast<UWeaponBase*>(NewObject<URangedWeaponBase>(this))
+		: static_cast<UWeaponBase*>(NewObject<UMeleeWeaponBase>(this));
+	if (!Weapon->Initialize(Data)) return false;
+	if (Slot == EWeaponSlot::Primary) { PrimaryWeapon = Weapon; InitialPrimaryWeaponData = Data; }
+	else if (Slot == EWeaponSlot::Secondary) { SecondaryWeapon = Weapon; InitialSecondaryWeaponData = Data; }
+	else return false;
+	// Set base maximum so existing GAS modifiers still participate in the effective maximum.
+	AbilitySystemComponent->SetNumericAttributeBase(UWeaponSlotAttributeSet::MaxEnergyAttribute(Slot),
+		bRanged ? FMath::Max(0.0f, Data->MaxEnergy) : 0.0f);
+	AbilitySystemComponent->SetNumericAttributeBase(UWeaponSlotAttributeSet::EnergyAttribute(Slot),
+		AbilitySystemComponent->GetNumericAttribute(UWeaponSlotAttributeSet::MaxEnergyAttribute(Slot)));
+	RefreshPrimaryWeaponVisual();
+	return true;
+}
+
+void APlayerBase::RechargeWeaponEnergy()
+{
+	const double Now = GetWorld()->GetTimeSeconds();
+	const double Previous = LastEnergyRechargeTime;
+	LastEnergyRechargeTime = Now;
+	if (!HasAuthority() || IsDead()) return;
+	for (EWeaponSlot Slot : {EWeaponSlot::Primary, EWeaponSlot::Secondary})
+	{
+		const URangedWeaponBase* Weapon = Cast<URangedWeaponBase>(GetWeaponInSlot(Slot));
+		const UWeaponDataAsset* Data = Weapon ? Weapon->WeaponData.Get() : nullptr;
+		if (!Data || !FMath::IsFinite(Data->EnergyRechargeRate) || Data->EnergyRechargeRate <= 0.0f) continue;
+		const double Start = FMath::Max(Previous, Weapon->LastSuccessfulFireTime + FMath::Max(0.0f, Data->EnergyRechargeDelay));
+		const float Amount = float(FMath::Max(0.0, Now - Start)) * Data->EnergyRechargeRate;
+		if (Amount <= 0.0f) continue;
+		const FGameplayAttribute Energy = UWeaponSlotAttributeSet::EnergyAttribute(Slot);
+		const float Current = AbilitySystemComponent->GetNumericAttribute(Energy);
+		const float Maximum = AbilitySystemComponent->GetNumericAttribute(UWeaponSlotAttributeSet::MaxEnergyAttribute(Slot));
+		if (Current < Maximum) AbilitySystemComponent->ApplyModToAttribute(Energy, EGameplayModOp::Additive, FMath::Min(Amount, Maximum - Current));
+	}
 }
 
 void APlayerBase::AbilityInputCanceled(FGameplayTag InputTag)
@@ -791,6 +813,8 @@ bool APlayerBase::RespawnAtCheckpoint()
 	CombatAttributes->SetIncomingDamage(0.0f);
 	CombatAttributes->SetHealth(CombatAttributes->GetMaxHealth());
 	DeathState.Section = NAME_None;
+	LastEnergyRechargeTime = GetWorld()->GetTimeSeconds();
+	GetWorldTimerManager().SetTimer(EnergyRechargeTimerHandle, this, &APlayerBase::RechargeWeaponEnergy, 0.05f, true);
 	MulticastRespawn();
 	ForceNetUpdate();
 	OnPlayerRespawned.Broadcast(this);

@@ -2,10 +2,12 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "TimerManager.h"
 #include "BossCorePuzzleComponent.generated.h"
 
 class ABossActivationCore;
-class ATargetPoint;
+class ABossCircularMissile;
+class APlayerBase;
 
 UCLASS()
 class THELASTMESSAGE_API UBossCorePuzzleComponent : public UActorComponent
@@ -13,31 +15,63 @@ class THELASTMESSAGE_API UBossCorePuzzleComponent : public UActorComponent
     GENERATED_BODY()
 
 public:
-    void StartCorePuzzle();
-    void SpawnActivationCores();
+    bool CanStartCorePuzzle(
+        const TArray<TObjectPtr<ABossActivationCore>>& Cores) const;
+    bool StartCorePuzzle(
+        const TArray<TObjectPtr<ABossActivationCore>>& Cores);
+
     void ResetCorePuzzle();
     void EndCorePuzzle();
     void HandleCoreDeactivated(ABossActivationCore* Core);
-    bool CheckPuzzleCompletion();
-    int32 GetRemainingCoreCount();
+
+    bool CanAcceptHit(const ABossActivationCore* Core) const;
+    bool CheckPuzzleCompletion() const;
+    int32 GetRemainingCoreCount() const;
+
+protected:
+    virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
-    UPROPERTY(EditDefaultsOnly)
-    TSubclassOf<ABossActivationCore> CoreClass;
+    void StopCorePuzzle(bool bImmediate);
 
-    // 명세에서 미정. 0은 설정 전 임시값이다.
-    UPROPERTY(EditDefaultsOnly)
-    int32 CoreCount = 0;
+    void SpawnNextPuzzleMissile();
+    void ScheduleNextPuzzleMissile();
+    void StopPuzzleMissiles();
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CorePuzzle|Missile")
+    TSubclassOf<ABossCircularMissile> PuzzleMissileClass;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CorePuzzle|Missile",
+        meta = (ClampMin = "0.01"))
+    float PuzzleMissileLaunchTime = 2.f;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CorePuzzle|Missile",
+        meta = (ClampMin = "0.0"))
+    float PuzzleMissileDamage = 10.f;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CorePuzzle|Missile",
+        meta = (ClampMin = "1.0"))
+    float PuzzleMissileDamageRadius = 200.f;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CorePuzzle|Missile")
+    FVector PuzzleMissileSpawnOffset = FVector(0.f, 0.f, 150.f);
+
+    FTimerHandle PuzzleMissileTimer;
+    TArray<TWeakObjectPtr<ABossCircularMissile>> PuzzleMissiles;
+    TWeakObjectPtr<APlayerBase> PuzzleMissileTarget;
+
+    FVector FirstMissileTarget = FVector::ZeroVector;
+    FVector SecondMissileTarget = FVector::ZeroVector;
+    float InitialPuzzleTime = 0.f;
+    int32 PuzzleMissileStep = 0;
+    uint32 PuzzleMissileGeneration = 0;
 
     UPROPERTY()
-    TArray<TObjectPtr<ABossActivationCore>> ActiveCores;
+    TArray<TObjectPtr<ABossActivationCore>> PuzzleCores;
 
     UPROPERTY()
-    int32 RemainingCoreCount = 0;
+    TSet<TObjectPtr<ABossActivationCore>> BrokenCores;
 
-    UPROPERTY(EditInstanceOnly)
-    TArray<TObjectPtr<ATargetPoint>> CoreSpawnPoints;
-
-    UPROPERTY()
     bool bIsPuzzleActive = false;
+    int32 RemainingCoreCount = 0;
 };

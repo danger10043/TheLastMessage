@@ -41,6 +41,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Gimmick|State")
 	virtual void ApplyActiveState(bool bNewActive);
 
+	UFUNCTION(BlueprintCallable, Category = "Gimmick|State")
+	virtual void SetGimmickEnabled(bool bNewEnabled);
+
+	UFUNCTION(BlueprintPure, Category = "Gimmick|State")
+	bool IsGimmickEnabled() const { return bIsEnabled; }
+
+	UFUNCTION(BlueprintPure, Category = "Gimmick|State")
+	bool IsGimmickActive() const { return bIsActive; }
+
 	// BPI SetInteractionHighlight에서 호출
 	UFUNCTION(BlueprintCallable, Category = "Gimmick|Interaction")
 	virtual void UpdateInteractionHighlight(bool bVisible);

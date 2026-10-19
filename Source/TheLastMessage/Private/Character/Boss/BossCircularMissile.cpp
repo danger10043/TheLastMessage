@@ -1,5 +1,6 @@
 #include "Character/Boss/BossCircularMissile.h"
 #include "Character/Boss/BossMonster.h"
+#include "Character/Boss/BossActivationCore.h"
 #include "Character/Player/PlayerBase.h"
 #include "Components/StaticMeshComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -200,6 +201,28 @@ void ABossCircularMissile::Explode()
     if (HasAuthority())
     {
         ApplyExplosionDamage();
+
+        TArray<TEnumAsByte<EObjectTypeQuery>> ObjectTypes;
+        ObjectTypes.Add(
+            UEngineTypes::ConvertToObjectType(ECC_WorldDynamic));
+
+        TArray<AActor*> ActorsToIgnore;
+        ActorsToIgnore.Add(this);
+
+        TArray<AActor*> HitCores;
+        UKismetSystemLibrary::SphereOverlapActors(
+            this, ImpactLocation, DamageRadius, ObjectTypes,
+            ABossActivationCore::StaticClass(),
+            ActorsToIgnore, HitCores);
+
+        for (AActor* Actor : HitCores)
+        {
+            if (ABossActivationCore* Core =
+                Cast<ABossActivationCore>(Actor))
+            {
+                Core->HandleMissileHit(this);
+            }
+        }
     }
     Destroy();
 }

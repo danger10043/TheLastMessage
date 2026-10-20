@@ -26,7 +26,7 @@ UGravityStateComponent::UGravityStateComponent()
 
 	ReversedGravityTag = TAG_StateGravityReversed;
 	static ConstructorHelpers::FClassFinder<UGameplayEffect> GravityEffect(
-		TEXT("/Game/Test_Jiho/Gimmick/GE_GravityReversed"));
+		TEXT("/Game/Test_Jiho/Gimmick/GE_BP_GravityReversed"));
 	GravityEffectClass = GravityEffect.Class;
 }
 

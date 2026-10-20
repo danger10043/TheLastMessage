@@ -7,6 +7,7 @@
 #include "GameFramework/Pawn.h"
 #include "Net/UnrealNetwork.h"
 #include "AbilitySystemComponent.h"
+#include "NativeGameplayTags.h"
 #include "Components/CapsuleComponent.h"
 #include "GAS/WeaponGameplayTags.h"
 #include "Animation/AnimInstance.h"
@@ -15,6 +16,8 @@
 #include "UObject/ConstructorHelpers.h"
 #include "CableComponent.h"
 #include "Materials/MaterialInterface.h"
+
+UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_GrapplingHookUnlock, "Unlock.GrapplingHook");
 
 UGrapplingHookComponent::UGrapplingHookComponent()
 {
@@ -67,13 +70,16 @@ void UGrapplingHookComponent::GetLifetimeReplicatedProps(TArray<FLifetimePropert
 
 void UGrapplingHookComponent::RequestGrapple(FVector WorldAimPoint)
 {
-	if (!GetOwner()) return;
+	const APlayerBase* Player = Cast<APlayerBase>(GetOwner());
+	const UAbilitySystemComponent* ASC = Player ? Player->GetAbilitySystemComponent() : nullptr;
+	// 그래플링 훅 코어의 GE가 부여한 사용 권한이 있어야 훅을 요청할 수 있다.
+	if (!IsValid(ASC) || !ASC->HasMatchingGameplayTag(TAG_GrapplingHookUnlock)) return;
 	bPullRequested = true;
-	if (GetOwner()->HasAuthority())
+	if (Player->HasAuthority())
 	{
 		ProbeForAnchor(WorldAimPoint);
 	}
-	else if (const APawn* Pawn = Cast<APawn>(GetOwner()); Pawn && Pawn->IsLocallyControlled())
+	else if (Player->IsLocallyControlled())
 	{
 		ServerRequestGrapple(WorldAimPoint);
 	}
@@ -153,7 +159,8 @@ void UGrapplingHookComponent::OnRep_ProbeState()
 
 void UGrapplingHookComponent::ServerRequestGrapple_Implementation(FVector_NetQuantize WorldAimPoint)
 {
-	ProbeForAnchor(WorldAimPoint);
+	// 서버에서도 같은 요청 함수를 거쳐 사용 권한을 확인한다.
+	RequestGrapple(WorldAimPoint);
 }
 
 void UGrapplingHookComponent::ClearAnchor()

@@ -312,6 +312,14 @@ void APlayerBase::InitializePlayer()
 	AbilitySystemComponent->AddAttributeSetSubobject(CombatAttributes.Get());
 	AbilitySystemComponent->AddAttributeSetSubobject(WeaponSlotAttributes.Get());
 
+	if (!MoveSpeedChangedHandle.IsValid())
+	{
+		BaseWalkSpeed = GetCharacterMovement()->MaxWalkSpeed;
+		MoveSpeedChangedHandle = AbilitySystemComponent->GetGameplayAttributeValueChangeDelegate(
+			UCombatAttributeSet::GetMoveSpeedMultiplierAttribute()).AddUObject(this, &APlayerBase::HandleMoveSpeedChanged);
+	}
+	UpdateMoveSpeed();
+
 	if (!DoubleJumpTagChangedHandle.IsValid())
 	{
 		DoubleJumpTagChangedHandle = AbilitySystemComponent->RegisterGameplayTagEvent(TAG_PlayerDoubleJump)
@@ -597,14 +605,17 @@ void APlayerBase::RechargeWeaponEnergy()
 	const double Previous = LastEnergyRechargeTime;
 	LastEnergyRechargeTime = Now;
 	if (!HasAuthority() || IsDead()) return;
+	const float RechargeMultiplier = CombatAttributes->GetEnergyRechargeRateMultiplier();
+	if (!FMath::IsFinite(RechargeMultiplier) || RechargeMultiplier <= 0.0f) return;
 	for (EWeaponSlot Slot : {EWeaponSlot::Primary, EWeaponSlot::Secondary})
 	{
 		const URangedWeaponBase* Weapon = Cast<URangedWeaponBase>(GetWeaponInSlot(Slot));
 		const UWeaponDataAsset* Data = Weapon ? Weapon->WeaponData.Get() : nullptr;
 		if (!Data || !FMath::IsFinite(Data->EnergyRechargeRate) || Data->EnergyRechargeRate <= 0.0f) continue;
 		const double Start = FMath::Max(Previous, Weapon->LastSuccessfulFireTime + FMath::Max(0.0f, Data->EnergyRechargeDelay));
-		const float Amount = float(FMath::Max(0.0, Now - Start)) * Data->EnergyRechargeRate;
-		if (Amount <= 0.0f) continue;
+		// 무기 기본 충전량에 코어 배율을 적용해 이번 시간 간격의 회복량을 계산한다.
+		const float Amount = float(FMath::Max(0.0, Now - Start)) * Data->EnergyRechargeRate * RechargeMultiplier;
+		if (!FMath::IsFinite(Amount) || Amount <= 0.0f) continue;
 		const FGameplayAttribute Energy = UWeaponSlotAttributeSet::EnergyAttribute(Slot);
 		const float Current = AbilitySystemComponent->GetNumericAttribute(Energy);
 		const float Maximum = AbilitySystemComponent->GetNumericAttribute(UWeaponSlotAttributeSet::MaxEnergyAttribute(Slot));
@@ -953,6 +964,19 @@ void APlayerBase::UpdateJumpLimit()
 	JumpMaxCount = AbilitySystemComponent->HasMatchingGameplayTag(TAG_PlayerDoubleJump) ? 2 : 1;
 }
 
+void APlayerBase::HandleMoveSpeedChanged(const FOnAttributeChangeData& Data)
+{
+	UpdateMoveSpeed();
+}
+
+void APlayerBase::UpdateMoveSpeed()
+{
+	const float Multiplier = CombatAttributes->GetMoveSpeedMultiplier();
+	if (!FMath::IsFinite(Multiplier)) return;
+	// 항상 기본 속도에서 계산하여 배율 변경이나 재초기화 시 속도가 중복 증가하지 않게 한다.
+	GetCharacterMovement()->MaxWalkSpeed = BaseWalkSpeed * FMath::Max(0.0f, Multiplier);
+}
+
 void APlayerBase::DoMove(float Forward)
 {
 	if (IsDead() || IsHitReacting() || IsGrappling() || AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking))
@@ -1025,6 +1049,12 @@ void APlayerBase::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	{
 		AbilitySystemComponent->RegisterGameplayTagEvent(TAG_PlayerDoubleJump).Remove(DoubleJumpTagChangedHandle);
 		DoubleJumpTagChangedHandle.Reset();
+	}
+	if (MoveSpeedChangedHandle.IsValid())
+	{
+		AbilitySystemComponent->GetGameplayAttributeValueChangeDelegate(
+			UCombatAttributeSet::GetMoveSpeedMultiplierAttribute()).Remove(MoveSpeedChangedHandle);
+		MoveSpeedChangedHandle.Reset();
 	}
 	GetWorldTimerManager().ClearTimer(EnergyRechargeTimerHandle);
 	AbilitySystemComponent->CancelAllAbilities();

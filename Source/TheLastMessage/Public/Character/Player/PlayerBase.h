@@ -13,6 +13,7 @@ class UAbilitySystemComponent;
 class UCombatAttributeSet;
 class UWeaponSlotAttributeSet;
 class UInteractionComponent;
+class UCarryComponent;
 class UCoreComponent;
 class UGameplayAbility;
 class UGameplayEffect;
@@ -286,6 +287,10 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|Interaction")
 	TObjectPtr<UInteractionComponent> InteractionComponent;
+
+	// 플레이어의 물체 운반 처리
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|Carry")
+	TObjectPtr<UCarryComponent> CarryComponent;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|Core")
 	TObjectPtr<UCoreComponent> CoreComponent;

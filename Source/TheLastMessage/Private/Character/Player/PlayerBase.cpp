@@ -8,6 +8,7 @@
 #include "GAS/WeaponSlotAttributeSet.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Gimmick/Component/InteractionComponent.h"
+#include "Gimmick/Component/CarryComponent.h"
 #include "Gimmick/Component/GravityStateComponent.h"
 #include "Core/CoreComponent.h"
 #include "Components/CapsuleComponent.h"
@@ -78,6 +79,7 @@ APlayerBase::APlayerBase()
 	WeaponSlotAttributes = CreateDefaultSubobject<UWeaponSlotAttributeSet>(TEXT("WeaponSlotAttributes"));
 
 	InteractionComponent = CreateDefaultSubobject<UInteractionComponent>(TEXT("InteractionComponent"));
+	CarryComponent = CreateDefaultSubobject<UCarryComponent>(TEXT("CarryComponent"));
 
 	CoreComponent = CreateDefaultSubobject<UCoreComponent>(TEXT("CoreComponent"));
 
@@ -1076,20 +1078,30 @@ void APlayerBase::FellOutOfWorld(const UDamageType& DamageType)
 
 void APlayerBase::CleanupPlayerActions()
 {
+	// 사망 이벤트가 전달되기 전에 운반 물체와 효과 정리
+	if (IsValid(CarryComponent))
+	{
+		CarryComponent->ClearCarryState();
+	}
+
 	WeaponChargeState = FPlayerWeaponChargeState();
 	bGrappleCancelJumpAvailable = false;
+
 	GrapplingHookComponent->ClearAnchor();
+
 	FinishHitReaction();
 	HitReactionImmunityEndTime = 0.0;
+
 	AbilitySystemComponent->CancelAllAbilities();
+
 	GetWorldTimerManager().ClearTimer(EnergyRechargeTimerHandle);
+
 	ActionValueY = 0;
 	DropValue = 0;
+
 	StopJumping();
 	GetCharacterMovement()->StopMovementImmediately();
-	ConsumeMovementInputVector();
-	GetCharacterMovement()->ClearAccumulatedForces();
-	GetCharacterMovement()->SetMovementMode(MOVE_Falling);
+	GetCharacterMovement()->DisableMovement();
 }
 
 void APlayerBase::HandleDoubleJumpTagChanged(const FGameplayTag Tag, int32 NewCount)

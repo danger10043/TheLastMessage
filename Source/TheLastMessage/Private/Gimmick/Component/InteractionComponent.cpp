@@ -10,7 +10,7 @@
 #include "CollisionQueryParams.h"
 #include "Engine/OverlapResult.h"
 #include "Engine/World.h"
-#include "Gimmick/GAS/GameplayAbility_InteractGimmick.h"
+#include "Gimmick/GAS/GA_InteractGimmick.h"
 #include "NativeGameplayTags.h"
 
 UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_EventGimmickInteract, "Event.Gimmick.Interact");

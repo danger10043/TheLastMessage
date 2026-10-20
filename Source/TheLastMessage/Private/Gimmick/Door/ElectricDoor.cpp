@@ -109,15 +109,23 @@ void AElectricDoor::CloseDoor()
 
 void AElectricDoor::ApplyActiveState(bool bNewActive)
 {
-    if (!bIsEnabled || bIsActive == bNewActive)
+    // 사용 불가 상태에서는 문을 여는 요청 차단
+    // 문을 닫는 요청은 허용
+    if (!bIsEnabled && bNewActive)
     {
         return;
     }
 
-    // 활성 상태 기록, 변경 이벤트와 연결 장치 알림
+    // 같은 상태의 반복 처리 방지
+    if (bIsActive == bNewActive)
+    {
+        return;
+    }
+
+    // 활성 상태 기록 및 연결 장치 알림
     Super::ApplyActiveState(bNewActive);
 
-    // 초기화 전 신호는 상태만 기록하고 BeginPlay에서 반영
+    // 초기화 전 신호는 상태만 기록
     if (!bTimelineConfigured)
     {
         return;

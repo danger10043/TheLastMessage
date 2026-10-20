@@ -86,3 +86,4 @@ AGENTS.md
 /Source/TheLastMessage/Private/Tests/PlayerBaseTestObserver.h
 /Scripts
 *.zip
+/SourceAssets

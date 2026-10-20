@@ -59,7 +59,7 @@ protected:
 
 	// 레이저가 충돌을 검사할 트레이스 채널
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Laser")
-	TEnumAsByte<ECollisionChannel> LaserTraceChannel = ECC_Visibility;
+	TEnumAsByte<ECollisionChannel> LaserTraceChannel = ECC_GameTraceChannel3;
 
 	// 사용할 데이터 테이블과 행
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Laser")

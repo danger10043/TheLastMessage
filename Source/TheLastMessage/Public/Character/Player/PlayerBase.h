@@ -25,6 +25,7 @@ class UCombatFeedbackComponent;
 class UGravityStateComponent;
 class APlayerBase;
 struct FGameplayEffectContextHandle;
+struct FOnAttributeChangeData;
 
 USTRUCT(BlueprintType)
 struct FPlayerWeaponChargeState
@@ -319,6 +320,12 @@ private:
 	void HandleDoubleJumpTagChanged(const FGameplayTag Tag, int32 NewCount);
 	void UpdateJumpLimit();
 	FDelegateHandle DoubleJumpTagChangedHandle;
+	void HandleMoveSpeedChanged(const FOnAttributeChangeData& Data);
+	/** 기본 걷기 속도에 현재 이동속도 배율을 적용한다. */
+	void UpdateMoveSpeed();
+	FDelegateHandle MoveSpeedChangedHandle;
+	// 초기화 시 캐릭터에 설정된 걷기 속도를 보관한다.
+	float BaseWalkSpeed = 0.0f;
 	bool bStartupGranted = false;
 	/** Reentrancy guard for cleanup/event delivery; gameplay state lives on ASC. */
 	UPROPERTY(ReplicatedUsing = OnRep_DeathHandled)

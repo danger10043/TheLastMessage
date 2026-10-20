@@ -88,6 +88,11 @@ void AProjectileBase::ConfigureVisuals(UWeaponDataAsset* Data)
 	OnRep_VisualData();
 }
 
+float AProjectileBase::GetProjectileCollisionRadius() const
+{
+	return CollisionComponent->GetScaledSphereRadius();
+}
+
 void AProjectileBase::OnRep_VisualData()
 {
 	if (!bUseWeaponVisualSettings || !VisualData || !ProjectileMesh) return;

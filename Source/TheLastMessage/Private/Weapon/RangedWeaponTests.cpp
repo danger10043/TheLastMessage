@@ -8,9 +8,15 @@
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/SkeletalMesh.h"
+#include "Engine/StaticMesh.h"
+#include "Engine/StaticMeshSocket.h"
+#include "GameFramework/ProjectileMovementComponent.h"
 #include "Character/Enemy/EnemyBase.h"
 #include "Character/Enemy/EnemyAttributeSet.h"
 #include "DataAsset/WeaponDataAsset.h"
+#include "DataAsset/RangedFireFeedbackData.h"
+#include "Weapon/EnergyMuzzleFlash.h"
+#include "Components/AudioComponent.h"
 #include "GAS/Abilities/GA_AttackPrimary.h"
 #include "GAS/Abilities/GA_AttackSecondary.h"
 #include "GAS/WeaponSlotAttributeSet.h"
@@ -26,6 +32,15 @@
 #include "GameFramework/PlayerController.h"
 #include "Components/BoxComponent.h"
 #include "UObject/UnrealType.h"
+#include "Engine/SceneCapture2D.h"
+#include "Engine/TextureRenderTarget2D.h"
+#include "Components/SceneCaptureComponent2D.h"
+#include "ImageUtils.h"
+#include "Serialization/BufferArchive.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "HAL/FileManager.h"
+#include "Materials/MaterialInterface.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRangedWeaponTest, "TheLastMessage.Weapon.RangedLifecycle",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -74,6 +89,27 @@ bool FRangedWeaponTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Secondary ranged equipment"), Player->EquipWeapon(EWeaponSlot::Secondary, Data));
 	UAbilitySystemComponent* ASC = Player->GetAbilitySystemComponent();
 	UWeaponSlotAttributeSet* Energy = Player->GetWeaponSlotAttributes();
+	URangedFireFeedbackData* PlasmaFeedback = Player->GetRangedFireFeedback(Data);
+	TestNotNull(TEXT("Default plasma fire feedback is configured"), PlasmaFeedback);
+	if (PlasmaFeedback)
+	{
+		TestTrue(TEXT("Plasma defaults to energy rather than gunpowder flash"), PlasmaFeedback->bUseEnergyFlash);
+		TestNotNull(TEXT("Plasma muzzle flash is configured"), PlasmaFeedback->MuzzleFlash.Get());
+		TestNotNull(TEXT("Plasma fire sound is configured"), PlasmaFeedback->FireSound.Get());
+		TestTrue(TEXT("Muzzle flash has a short bounded duration"), PlasmaFeedback->FlashDuration > 0.0f && PlasmaFeedback->FlashDuration < 0.3f);
+	}
+	UWeaponDataAsset* HeavyFeedbackData = DuplicateObject<UWeaponDataAsset>(Data, Player);
+	HeavyFeedbackData->WeaponType = EWeaponType::HeavyRanged;
+	URangedFireFeedbackData* RailFeedback = Player->GetRangedFireFeedback(HeavyFeedbackData);
+	TestNotNull(TEXT("Default railgun fire feedback is configured"), RailFeedback);
+	if (RailFeedback)
+	{
+		TestNotNull(TEXT("Railgun charge sound is configured"), RailFeedback->ChargeSound.Get());
+		TestTrue(TEXT("Local charge audio avoids camera-distance attenuation"), RailFeedback->bLocalChargeSound2D);
+		TestTrue(TEXT("Local charge volume is boosted"), RailFeedback->LocalChargeVolumeMultiplier > 1.0f);
+	}
+	HeavyFeedbackData->RangedFireFeedback = PlasmaFeedback;
+	TestEqual(TEXT("Weapon-specific feedback overrides the default"), Player->GetRangedFireFeedback(HeavyFeedbackData), PlasmaFeedback);
 	TestEqual(TEXT("Initial energy"), Energy->GetSharedEnergy(), 100.0f);
 	AEnemyBase* Enemy = World->SpawnActor<AEnemyBase>(FVector(300, 0, 200), FRotator::ZeroRotator);
 	Enemy->GetCharacterMovement()->DisableMovement();
@@ -133,8 +169,14 @@ bool FRangedWeaponTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Charged shot applies multiplier"), EnemyStats->GetHealth(), BeforeWallShot - 20.0f);
 	Spec->InputPressed = true;
 	TestTrue(TEXT("Another charge starts"), ASC->TryActivateAbility(Spec->Handle));
+	// Audio playback is disabled in this world; inject a tracked component to verify cancellation cleanup.
+	UAudioComponent* TrackedChargeAudio = NewObject<UAudioComponent>(Player);
+	TrackedChargeAudio->RegisterComponent();
+	FObjectPropertyBase* ChargeAudioProperty = FindFProperty<FObjectPropertyBase>(APlayerBase::StaticClass(), TEXT("WeaponChargeAudio"));
+	ChargeAudioProperty->SetObjectPropertyValue_InContainer(Player, TrackedChargeAudio);
 	const float BeforeCancel = Energy->GetSharedEnergy();
 	ASC->CancelAbilityHandle(Spec->Handle);
+	TestNull(TEXT("Canceled attack clears the charge audio component"), ChargeAudioProperty->GetObjectPropertyValue_InContainer(Player));
 	TestFalse(TEXT("Canceled charge hides HUD presentation"), Player->IsChargingWeapon());
 	TestEqual(TEXT("Canceled charge has no cost"), Energy->GetSharedEnergy(), BeforeCancel);
 	TestFalse(TEXT("Cancel clears attack state"), ASC->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking));
@@ -282,6 +324,147 @@ bool FRangedWeaponTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("BP travel range replaces weapon data range"), FMath::IsNearlyEqual(RangeOverrideProjectile->GetLifeSpan(), 0.075f));
 	Advance(0.1f);
 	TestFalse(TEXT("Projectile expires at BP travel range"), IsValid(RangeOverrideProjectile));
+	// Use a transient mesh so the test never modifies the user's weapon assets.
+	UStaticMesh* SocketMesh = DuplicateObject<UStaticMesh>(LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere")), Player);
+	UStaticMeshSocket* Muzzle = NewObject<UStaticMeshSocket>(SocketMesh);
+	Muzzle->SocketName = TEXT("Muzzle");
+	Muzzle->RelativeLocation = FVector(100, 0, 0);
+	SocketMesh->AddSocket(Muzzle);
+	Data->WeaponMesh = SocketMesh;
+	Data->AttachSocketName = TEXT("spine_03");
+	Data->bSupportsChargeAttack = false;
+	Data->AttackMontage = nullptr;
+	Data->EnergyPerShot = 0;
+	Player->EquipWeapon(EWeaponSlot::Primary, Data);
+	Player->EquipWeapon(EWeaponSlot::Secondary, Data);
+	Player->SetActorRotation(FRotator::ZeroRotator);
+	Player->UpdateAimFromWorldRay(FVector(2000, 500, 200), -FVector::YAxisVector);
+	for (TActorIterator<AProjectileBase> It(World); It; ++It) It->Destroy();
+	TestTrue(TEXT("Shot from muzzle activates"), ASC->TryActivateAbilityByClass(UGA_AttackPrimary::StaticClass()));
+	const FVector MuzzleLocation = Player->GetWeaponMuzzleLocation(EWeaponSlot::Primary);
+	TestFalse(TEXT("Muzzle is distinct from capsule center"), MuzzleLocation.Equals(Player->GetActorLocation(), 1.0f));
+	int32 MuzzleShotCount = 0;
+	for (TActorIterator<AProjectileBase> It(World); It; ++It)
+	{
+		++MuzzleShotCount;
+		TestTrue(TEXT("Projectile starts exactly at muzzle socket"), It->GetActorLocation().Equals(MuzzleLocation, 0.01f));
+		TestTrue(TEXT("Projectile aims from muzzle toward cursor"), It->FindComponentByClass<UProjectileMovementComponent>()->Velocity.GetSafeNormal().Equals(
+			(Player->GetAimTargetLocation() - MuzzleLocation).GetSafeNormal(), 0.001f));
+		It->Destroy();
+	}
+	TestEqual(TEXT("Muzzle shot creates one projectile"), MuzzleShotCount, 1);
+	int32 EnergyFlashCount = 0;
+	for (TActorIterator<AEnergyMuzzleFlash> It(World); It; ++It)
+	{
+		++EnergyFlashCount;
+		TestTrue(TEXT("Energy flash starts at the actual muzzle"), It->GetActorLocation().Equals(MuzzleLocation, 0.01f));
+		TestEqual(TEXT("Energy flash is attached to the Muzzle socket"), It->GetRootComponent()->GetAttachSocketName(), FName(TEXT("Muzzle")));
+	}
+	TestEqual(TEXT("A successful shot creates one energy flash"), EnergyFlashCount, 1);
+	auto CaptureEnergyPulse = [this, World](const FVector& Location, const TCHAR* Name)
+	{
+		if (!FParse::Param(FCommandLine::Get(), TEXT("CaptureEnergyFlash"))) return;
+		for (TActorIterator<AEnergyMuzzleFlash> It(World); It; ++It)
+		{
+			TArray<UStaticMeshComponent*> Parts;
+			It->GetComponents(Parts);
+			for (UStaticMeshComponent* Part : Parts)
+			{
+				if (Part->GetMaterial(0)) Part->GetMaterial(0)->EnsureIsComplete();
+				Part->MarkRenderStateDirty();
+				AddInfo(FString::Printf(TEXT("Energy preview %s: visible=%d hiddenActor=%d registered=%d position=%s scale=%s material=%s"),
+					*Part->GetName(), Part->IsVisible(), It->IsHidden(), Part->IsRegistered(), *Part->GetComponentLocation().ToString(),
+					*Part->GetComponentScale().ToString(), *GetNameSafe(Part->GetMaterial(0))));
+			}
+		}
+		World->SendAllEndOfFrameUpdates();
+		ASceneCapture2D* Camera = World->SpawnActor<ASceneCapture2D>(Location + FVector(0, 200, 0), FRotator(0, -90, 0));
+		USceneCaptureComponent2D* Capture = Camera->GetCaptureComponent2D();
+		UTextureRenderTarget2D* Target = NewObject<UTextureRenderTarget2D>(Camera);
+		Target->InitCustomFormat(768, 512, PF_B8G8R8A8, false);
+		Capture->TextureTarget = Target;
+		Capture->ProjectionType = ECameraProjectionMode::Orthographic;
+		Capture->OrthoWidth = 120.0f;
+		Capture->CaptureSource = SCS_FinalColorLDR;
+		Capture->PostProcessSettings.bOverride_AutoExposureMethod = true;
+		Capture->PostProcessSettings.AutoExposureMethod = AEM_Manual;
+		Capture->bCaptureEveryFrame = false;
+		Capture->CaptureScene();
+		const FString Folder = FPaths::ProjectSavedDir() / TEXT("EnergyFlashPreview");
+		IFileManager::Get().MakeDirectory(*Folder, true);
+		FBufferArchive PNG;
+		const bool bSaved = FImageUtils::ExportRenderTarget2DAsPNG(Target, PNG)
+			&& FFileHelper::SaveArrayToFile(PNG, *(Folder / FString(Name).Append(TEXT(".png"))));
+		TestTrue(FString::Printf(TEXT("%s energy pulse preview saved"), Name), bSaved);
+		Camera->Destroy();
+	};
+	TestTrue(TEXT("Secondary muzzle shot activates"), ASC->TryActivateAbilityByClass(UGA_AttackSecondary::StaticClass()));
+	MuzzleShotCount = 0;
+	for (TActorIterator<AProjectileBase> It(World); It; ++It)
+	{
+		++MuzzleShotCount;
+		TestTrue(TEXT("Secondary uses its own muzzle socket"), It->GetActorLocation().Equals(Player->GetWeaponMuzzleLocation(EWeaponSlot::Secondary), 0.01f));
+		It->Destroy();
+	}
+	TestEqual(TEXT("Secondary muzzle creates one projectile"), MuzzleShotCount, 1);
+	Advance(0.2f);
+	int32 LingeringFlashes = 0;
+	for (TActorIterator<AEnergyMuzzleFlash> It(World); It; ++It) ++LingeringFlashes;
+	TestEqual(TEXT("Energy flashes expire after their short pulse"), LingeringFlashes, 0);
+	if (FParse::Param(FCommandLine::Get(), TEXT("CaptureEnergyFlash")) && RailFeedback)
+	{
+		AEnergyMuzzleFlash* LightPreview = World->SpawnActor<AEnergyMuzzleFlash>(Player->GetWeaponMuzzleLocation(EWeaponSlot::Secondary), FRotator::ZeroRotator);
+		LightPreview->Initialize(PlasmaFeedback, false);
+		CaptureEnergyPulse(LightPreview->GetActorLocation(), TEXT("Plasma"));
+		LightPreview->Destroy();
+		AEnergyMuzzleFlash* HeavyPreview = World->SpawnActor<AEnergyMuzzleFlash>(Player->GetWeaponMuzzleLocation(EWeaponSlot::Secondary), FRotator::ZeroRotator);
+		HeavyPreview->Initialize(RailFeedback, true);
+		CaptureEnergyPulse(HeavyPreview->GetActorLocation(), TEXT("Railgun"));
+		HeavyPreview->Destroy();
+	}
+	Player->ShowWeaponInSlot(EWeaponSlot::Primary);
+	const FVector ClearMuzzle = Player->GetWeaponMuzzleLocation(EWeaponSlot::Primary);
+	AActor* MuzzleWall = World->SpawnActor<AActor>();
+	UBoxComponent* MuzzleWallBox = NewObject<UBoxComponent>(MuzzleWall);
+	MuzzleWall->SetRootComponent(MuzzleWallBox); MuzzleWall->AddInstanceComponent(MuzzleWallBox);
+	MuzzleWallBox->SetBoxExtent(FVector(10));
+	MuzzleWallBox->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	MuzzleWallBox->SetCollisionResponseToAllChannels(ECR_Block);
+	MuzzleWallBox->RegisterComponent();
+	MuzzleWall->SetActorLocation((Player->GetActorLocation() + ClearMuzzle) * 0.5f);
+	TestTrue(TEXT("Obstructed muzzle shot activates"), ASC->TryActivateAbilityByClass(UGA_AttackPrimary::StaticClass()));
+	for (TActorIterator<AProjectileBase> It(World); It; ++It)
+	{
+		TestTrue(TEXT("Projectile cannot spawn beyond wall at muzzle"), FVector::Dist(It->GetActorLocation(), Player->GetActorLocation()) < FVector::Dist(ClearMuzzle, Player->GetActorLocation()));
+		It->Destroy();
+	}
+	MuzzleWall->Destroy();
+	Advance(0.3f);
+	UWeaponDataAsset* RailAsset = LoadObject<UWeaponDataAsset>(nullptr, TEXT("/Game/Test_Jihong/DataAsset/DA_Weapon_Railgun.DA_Weapon_Railgun"));
+	TestNotNull(TEXT("Actual railgun asset exists"), RailAsset);
+	if (RailAsset)
+	{
+		UWeaponDataAsset* Rail = DuplicateObject<UWeaponDataAsset>(RailAsset, Player);
+		Rail->EnergyPerShot = 0;
+		Rail->bSupportsChargeAttack = false;
+		Rail->AttackMontage = nullptr;
+		TestTrue(TEXT("Actual railgun equips"), Player->EquipWeapon(EWeaponSlot::Secondary, Rail));
+		TestTrue(TEXT("Actual railgun fires"), ASC->TryActivateAbilityByClass(UGA_AttackSecondary::StaticClass()));
+		int32 RailFlashes = 0;
+		for (TActorIterator<AEnergyMuzzleFlash> It(World); It; ++It)
+		{
+			++RailFlashes;
+			TestTrue(TEXT("Actual railgun pulse starts at its muzzle"), It->GetActorLocation().Equals(Player->GetWeaponMuzzleLocation(EWeaponSlot::Secondary), 0.01f));
+			CaptureEnergyPulse(It->GetActorLocation(), TEXT("RailgunActual"));
+			It->Tick(0.25f);
+			TestFalse(TEXT("Railgun pulse survives its first slow frame"), It->IsActorBeingDestroyed());
+		}
+		TestEqual(TEXT("Actual railgun creates one pulse"), RailFlashes, 1);
+		Advance(0.3f);
+		int32 Remaining = 0;
+		for (TActorIterator<AEnergyMuzzleFlash> It(World); It; ++It) ++Remaining;
+		TestEqual(TEXT("Railgun pulse still expires"), Remaining, 0);
+	}
 	// Maximum changes clamp the single shared resource.
 	Energy->SetSharedMaxEnergy(15);
 	TestTrue(TEXT("Maximum reduction clamps energy"), Energy->GetSharedEnergy() <= 15.0f);

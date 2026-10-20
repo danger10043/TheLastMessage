@@ -33,6 +33,8 @@ public:
 
     float GetRemainingPuzzleTime();
 
+    float GetPuzzleTimeLimit() const { return PuzzleTimeLimit; }
+
 protected:
     virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 

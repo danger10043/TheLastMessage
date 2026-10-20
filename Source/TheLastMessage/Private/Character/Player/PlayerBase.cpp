@@ -8,6 +8,7 @@
 #include "GAS/WeaponSlotAttributeSet.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Gimmick/Component/InteractionComponent.h"
+#include "Gimmick/Component/CarryComponent.h"
 #include "Gimmick/Component/GravityStateComponent.h"
 #include "Core/CoreComponent.h"
 #include "Components/CapsuleComponent.h"
@@ -63,6 +64,9 @@ static TAutoConsoleVariable<int32> CVarDebugAim(
 
 APlayerBase::APlayerBase()
 {
+	WeaponChoices.SetNum(4);
+	OwnedWeaponChoices.SetNumZeroed(4);
+	WeaponSelectionActions.SetNum(4);
 	GravityStateComponent = CreateDefaultSubobject<UGravityStateComponent>(TEXT("GravityStateComponent"));
 	CombatFeedbackComponent = CreateDefaultSubobject<UCombatFeedbackComponent>(TEXT("CombatFeedbackComponent"));
 	GrapplingHookComponent = CreateDefaultSubobject<UGrapplingHookComponent>(TEXT("GrapplingHookComponent"));
@@ -75,6 +79,7 @@ APlayerBase::APlayerBase()
 	WeaponSlotAttributes = CreateDefaultSubobject<UWeaponSlotAttributeSet>(TEXT("WeaponSlotAttributes"));
 
 	InteractionComponent = CreateDefaultSubobject<UInteractionComponent>(TEXT("InteractionComponent"));
+	CarryComponent = CreateDefaultSubobject<UCarryComponent>(TEXT("CarryComponent"));
 
 	CoreComponent = CreateDefaultSubobject<UCoreComponent>(TEXT("CoreComponent"));
 
@@ -116,6 +121,8 @@ void APlayerBase::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifet
 	DOREPLIFETIME_CONDITION(APlayerBase, WeaponChargeState, COND_OwnerOnly);
 	DOREPLIFETIME(APlayerBase, InitialPrimaryWeaponData);
 	DOREPLIFETIME(APlayerBase, InitialSecondaryWeaponData);
+	DOREPLIFETIME(APlayerBase, WeaponChoices);
+	DOREPLIFETIME(APlayerBase, OwnedWeaponChoices);
 	DOREPLIFETIME(APlayerBase, DeathState);
 	DOREPLIFETIME_CONDITION(APlayerBase, AimDirection, COND_SkipOwner);
 	DOREPLIFETIME_CONDITION(APlayerBase, AimTargetLocation, COND_SkipOwner);
@@ -333,6 +340,8 @@ void APlayerBase::InitializePlayer()
 		return;
 	}
 	bStartupGranted = true;
+	AbilitySystemComponent->SetNumericAttributeBase(UWeaponSlotAttributeSet::GetSharedMaxEnergyAttribute(), FMath::Max(0.0f, InitialSharedMaxEnergy));
+	AbilitySystemComponent->SetNumericAttributeBase(UWeaponSlotAttributeSet::GetSharedEnergyAttribute(), WeaponSlotAttributes->GetSharedMaxEnergy());
 
 	if (InitialCombatStatsEffect)
 	{
@@ -381,6 +390,13 @@ void APlayerBase::SetupPlayerInputComponent(UInputComponent* PlayerInputComponen
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
 	UEnhancedInputComponent* EnhancedInput = Cast<UEnhancedInputComponent>(PlayerInputComponent);
 	if (!EnhancedInput) return;
+	for (int32 Index = 0; Index < FMath::Min(4, WeaponSelectionActions.Num()); ++Index)
+	{
+		if (!WeaponSelectionActions[Index]) continue;
+		EnhancedInput->BindAction(WeaponSelectionActions[Index], ETriggerEvent::Started, this, &APlayerBase::SetWeaponChoiceHeld, Index, true);
+		EnhancedInput->BindAction(WeaponSelectionActions[Index], ETriggerEvent::Completed, this, &APlayerBase::SetWeaponChoiceHeld, Index, false);
+		EnhancedInput->BindAction(WeaponSelectionActions[Index], ETriggerEvent::Canceled, this, &APlayerBase::SetWeaponChoiceHeld, Index, false);
+	}
 	if (GrapplingHookAction)
 	{
 		EnhancedInput->BindAction(GrapplingHookAction, ETriggerEvent::Started, this, &APlayerBase::RequestGrapplingHook);
@@ -418,6 +434,17 @@ void APlayerBase::SetupPlayerInputComponent(UInputComponent* PlayerInputComponen
 
 void APlayerBase::AbilityInputPressed(FGameplayTag InputTag)
 {
+	const EWeaponSlot AssignmentSlot = InputTag == WeaponGameplayTags::Input_Primary ? EWeaponSlot::Primary
+		: InputTag == WeaponGameplayTags::Input_Secondary ? EWeaponSlot::Secondary : EWeaponSlot::None;
+	const int32 Choice = GetHeldWeaponChoice();
+	if (AssignmentSlot != EWeaponSlot::None && Choice != INDEX_NONE)
+	{
+		// A binding click never starts an attack, even if assignment is currently blocked.
+		AssignmentClickInputs.AddTag(InputTag);
+		if (HasAuthority()) AssignWeaponChoice(Choice, AssignmentSlot);
+		else ServerAssignWeaponChoice(Choice, AssignmentSlot);
+		return;
+	}
 	UpdateMouseAim();
 	if (!HasAuthority())
 	{
@@ -476,6 +503,11 @@ void APlayerBase::AbilityInputPressed(FGameplayTag InputTag)
 
 void APlayerBase::AbilityInputReleased(FGameplayTag InputTag)
 {
+	if (AssignmentClickInputs.HasTagExact(InputTag))
+	{
+		AssignmentClickInputs.RemoveTag(InputTag);
+		return;
+	}
 	UpdateMouseAim();
 	if (!HasAuthority())
 	{
@@ -527,6 +559,103 @@ void APlayerBase::OnRep_VisibleWeaponSlot()
 {
 	RefreshPrimaryWeaponVisual();
 	OnWeaponDataChanged.Broadcast();
+}
+
+UWeaponDataAsset* APlayerBase::GetWeaponChoice(int32 Index) const
+{
+	return Index >= 0 && Index < 4 && WeaponChoices.IsValidIndex(Index) ? WeaponChoices[Index].Get() : nullptr;
+}
+
+bool APlayerBase::HasWeaponChoice(int32 Index) const
+{
+	const UWeaponDataAsset* Data = GetWeaponChoice(Index);
+	return Data && ((OwnedWeaponChoices.IsValidIndex(Index) && OwnedWeaponChoices[Index])
+		|| GetWeaponDataInSlot(EWeaponSlot::Primary) == Data || GetWeaponDataInSlot(EWeaponSlot::Secondary) == Data);
+}
+
+bool APlayerBase::AcquireWeaponChoice(int32 Index)
+{
+	if (!HasAuthority() || !IsValid(GetWeaponChoice(Index))) return false;
+	OwnedWeaponChoices.SetNum(4);
+	OwnedWeaponChoices[Index] = true;
+	OnWeaponDataChanged.Broadcast();
+	ForceNetUpdate();
+	return true;
+}
+
+EWeaponSlot APlayerBase::GetWeaponChoiceAssignment(int32 Index) const
+{
+	const UWeaponDataAsset* Data = GetWeaponChoice(Index);
+	if (!Data) return EWeaponSlot::None;
+	if (GetWeaponDataInSlot(EWeaponSlot::Primary) == Data) return EWeaponSlot::Primary;
+	if (GetWeaponDataInSlot(EWeaponSlot::Secondary) == Data) return EWeaponSlot::Secondary;
+	return EWeaponSlot::None;
+}
+
+int32 APlayerBase::GetHeldWeaponChoice() const
+{
+	if (IsDead()) return INDEX_NONE;
+	// Multiple held keys select the lowest number; releasing all keys clears selection.
+	for (int32 Index = 0; Index < 4; ++Index)
+	{
+		if (HeldWeaponChoices.Contains(Index)) return Index;
+	}
+	return INDEX_NONE;
+}
+
+void APlayerBase::SetWeaponChoiceHeld(int32 Index, bool bHeld)
+{
+	if (Index < 0 || Index >= 4) return;
+	if (bHeld && !IsDead()) HeldWeaponChoices.Add(Index);
+	else HeldWeaponChoices.Remove(Index);
+}
+
+void APlayerBase::ServerAssignWeaponChoice_Implementation(int32 Index, EWeaponSlot Slot)
+{
+	AssignWeaponChoice(Index, Slot);
+}
+
+bool APlayerBase::AssignWeaponChoice(int32 Index, EWeaponSlot Slot)
+{
+	UWeaponDataAsset* Data = GetWeaponChoice(Index);
+	if (!HasAuthority() || IsDead() || IsHitReacting() || !IsValid(Data) || !HasWeaponChoice(Index)
+		|| (Slot != EWeaponSlot::Primary && Slot != EWeaponSlot::Secondary)) return false;
+	// Keep a running swing/charge bound to its captured weapon until it finishes.
+	if (AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking)) return false;
+	if (GetWeaponDataInSlot(Slot) == Data) return true;
+
+	auto Remember = [this](UWeaponBase* Weapon)
+	{
+		if (!Weapon) return;
+		CachedChoiceWeapons.AddUnique(Weapon);
+	};
+	Remember(PrimaryWeapon);
+	Remember(SecondaryWeapon);
+	UWeaponBase* Selected = nullptr;
+	for (UWeaponBase* Weapon : CachedChoiceWeapons)
+	{
+		if (Weapon && Weapon->WeaponData == Data) { Selected = Weapon; break; }
+	}
+	if (!Selected)
+	{
+		const bool bRanged = Data->WeaponType == EWeaponType::LightRanged || Data->WeaponType == EWeaponType::HeavyRanged;
+		Selected = bRanged ? static_cast<UWeaponBase*>(NewObject<URangedWeaponBase>(this))
+			: static_cast<UWeaponBase*>(NewObject<UMeleeWeaponBase>(this));
+		if (!Selected->Initialize(Data)) return false;
+		CachedChoiceWeapons.Add(Selected);
+	}
+	UWeaponBase* Previous = GetWeaponInSlot(Slot);
+	const EWeaponSlot OtherSlot = Slot == EWeaponSlot::Primary ? EWeaponSlot::Secondary : EWeaponSlot::Primary;
+	UWeaponBase* Other = GetWeaponInSlot(OtherSlot);
+	if (Other && Other->WeaponData == Data) { Selected = Other; Other = Previous; }
+	PrimaryWeapon = Slot == EWeaponSlot::Primary ? Selected : Other;
+	SecondaryWeapon = Slot == EWeaponSlot::Secondary ? Selected : Other;
+	InitialPrimaryWeaponData = PrimaryWeapon ? PrimaryWeapon->WeaponData.Get() : nullptr;
+	InitialSecondaryWeaponData = SecondaryWeapon ? SecondaryWeapon->WeaponData.Get() : nullptr;
+	RefreshPrimaryWeaponVisual();
+	OnWeaponDataChanged.Broadcast();
+	ForceNetUpdate();
+	return true;
 }
 
 UWeaponBase* APlayerBase::GetWeaponInSlot(EWeaponSlot Slot) const
@@ -586,17 +715,25 @@ bool APlayerBase::EquipWeapon(EWeaponSlot Slot, UWeaponDataAsset* Data)
 	UWeaponBase* Weapon = bRanged ? static_cast<UWeaponBase*>(NewObject<URangedWeaponBase>(this))
 		: static_cast<UWeaponBase*>(NewObject<UMeleeWeaponBase>(this));
 	if (!Weapon->Initialize(Data)) return false;
+	for (int32 Index = 0; Index < 4; ++Index)
+	{
+		if (GetWeaponChoice(Index) == Data)
+		{
+			OwnedWeaponChoices.SetNum(4);
+			OwnedWeaponChoices[Index] = true;
+		}
+	}
 	if (Slot == EWeaponSlot::Primary) { PrimaryWeapon = Weapon; InitialPrimaryWeaponData = Data; }
 	else if (Slot == EWeaponSlot::Secondary) { SecondaryWeapon = Weapon; InitialSecondaryWeaponData = Data; }
 	else return false;
-	// Set base maximum so existing GAS modifiers still participate in the effective maximum.
-	AbilitySystemComponent->SetNumericAttributeBase(UWeaponSlotAttributeSet::MaxEnergyAttribute(Slot),
-		bRanged ? FMath::Max(0.0f, Data->MaxEnergy) : 0.0f);
-	AbilitySystemComponent->SetNumericAttributeBase(UWeaponSlotAttributeSet::EnergyAttribute(Slot),
-		AbilitySystemComponent->GetNumericAttribute(UWeaponSlotAttributeSet::MaxEnergyAttribute(Slot)));
 	RefreshPrimaryWeaponVisual();
 	OnWeaponDataChanged.Broadcast();
 	return true;
+}
+
+void APlayerBase::NotifyWeaponEnergySpent()
+{
+	if (HasAuthority()) LastSharedEnergyUseTime = GetWorld()->GetTimeSeconds();
 }
 
 void APlayerBase::RechargeWeaponEnergy()
@@ -607,24 +744,21 @@ void APlayerBase::RechargeWeaponEnergy()
 	if (!HasAuthority() || IsDead()) return;
 	const float RechargeMultiplier = CombatAttributes->GetEnergyRechargeRateMultiplier();
 	if (!FMath::IsFinite(RechargeMultiplier) || RechargeMultiplier <= 0.0f) return;
-	for (EWeaponSlot Slot : {EWeaponSlot::Primary, EWeaponSlot::Secondary})
-	{
-		const URangedWeaponBase* Weapon = Cast<URangedWeaponBase>(GetWeaponInSlot(Slot));
-		const UWeaponDataAsset* Data = Weapon ? Weapon->WeaponData.Get() : nullptr;
-		if (!Data || !FMath::IsFinite(Data->EnergyRechargeRate) || Data->EnergyRechargeRate <= 0.0f) continue;
-		const double Start = FMath::Max(Previous, Weapon->LastSuccessfulFireTime + FMath::Max(0.0f, Data->EnergyRechargeDelay));
-		// 무기 기본 충전량에 코어 배율을 적용해 이번 시간 간격의 회복량을 계산한다.
-		const float Amount = float(FMath::Max(0.0, Now - Start)) * Data->EnergyRechargeRate * RechargeMultiplier;
-		if (!FMath::IsFinite(Amount) || Amount <= 0.0f) continue;
-		const FGameplayAttribute Energy = UWeaponSlotAttributeSet::EnergyAttribute(Slot);
-		const float Current = AbilitySystemComponent->GetNumericAttribute(Energy);
-		const float Maximum = AbilitySystemComponent->GetNumericAttribute(UWeaponSlotAttributeSet::MaxEnergyAttribute(Slot));
-		if (Current < Maximum) AbilitySystemComponent->ApplyModToAttribute(Energy, EGameplayModOp::Additive, FMath::Min(Amount, Maximum - Current));
-	}
+	const double Start = FMath::Max(Previous, LastSharedEnergyUseTime + FMath::Max(0.0f, SharedEnergyRechargeDelay));
+	const float Amount = float(FMath::Max(0.0, Now - Start)) * SharedEnergyRechargeRate * RechargeMultiplier;
+	if (!FMath::IsFinite(Amount) || Amount <= 0.0f) return;
+	const float Current = WeaponSlotAttributes->GetSharedEnergy();
+	const float Maximum = WeaponSlotAttributes->GetSharedMaxEnergy();
+	if (Current < Maximum) AbilitySystemComponent->ApplyModToAttribute(UWeaponSlotAttributeSet::GetSharedEnergyAttribute(), EGameplayModOp::Additive, FMath::Min(Amount, Maximum - Current));
 }
 
 void APlayerBase::AbilityInputCanceled(FGameplayTag InputTag)
 {
+	if (AssignmentClickInputs.HasTagExact(InputTag))
+	{
+		AssignmentClickInputs.RemoveTag(InputTag);
+		return;
+	}
 	if (!HasAuthority())
 	{
 		ServerAbilityInput(InputTag, 2, GetAimTargetLocation());
@@ -819,7 +953,10 @@ void APlayerBase::PlayDeathPresentation(FName ReactionSection)
 	bDeathPresentationStarted = true;
 	StopJumping();
 	GetCharacterMovement()->StopMovementImmediately();
-	GetCharacterMovement()->DisableMovement();
+	// Keep gravity active so an airborne death can settle on the ground.
+	ConsumeMovementInputVector();
+	GetCharacterMovement()->ClearAccumulatedForces();
+	GetCharacterMovement()->SetMovementMode(MOVE_Falling);
 	UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance();
 	if (!AnimInstance) return;
 	AnimInstance->StopAllMontages(0.1f);
@@ -883,7 +1020,7 @@ bool APlayerBase::RespawnAtCheckpoint()
 	// Keep equipment, core grants and permanent effects on the existing ASC.
 	const bool bGravityReversed = AbilitySystemComponent->HasMatchingGameplayTag(
 		FGameplayTag::RequestGameplayTag(TEXT("State.Gravity.Reversed")));
-	// ToggleGravityState requires a living player; movement stays disabled until reset.
+	// ToggleGravityState requires a living player; reset movement after restoring gravity.
 	DeathState.bDead = false;
 	AbilitySystemComponent->RemoveLooseGameplayTag(WeaponGameplayTags::State_Dead, 1, EGameplayTagReplicationState::TagAndCountToAll);
 	if (bGravityReversed != bCheckpointGravityReversed)
@@ -910,6 +1047,7 @@ void APlayerBase::MulticastRespawn_Implementation()
 
 void APlayerBase::ResetRespawnPresentation()
 {
+	HeldWeaponChoices.Reset();
 	bDeathPresentationStarted = false;
 	if (UAnimInstance* Anim = GetMesh()->GetAnimInstance()) Anim->StopAllMontages(0.0f);
 	ActionValueY = DropValue = 0.0f;
@@ -940,15 +1078,27 @@ void APlayerBase::FellOutOfWorld(const UDamageType& DamageType)
 
 void APlayerBase::CleanupPlayerActions()
 {
+	// 사망 이벤트가 전달되기 전에 운반 물체와 효과 정리
+	if (IsValid(CarryComponent))
+	{
+		CarryComponent->ClearCarryState();
+	}
+
 	WeaponChargeState = FPlayerWeaponChargeState();
 	bGrappleCancelJumpAvailable = false;
+
 	GrapplingHookComponent->ClearAnchor();
+
 	FinishHitReaction();
 	HitReactionImmunityEndTime = 0.0;
+
 	AbilitySystemComponent->CancelAllAbilities();
+
 	GetWorldTimerManager().ClearTimer(EnergyRechargeTimerHandle);
+
 	ActionValueY = 0;
 	DropValue = 0;
+
 	StopJumping();
 	GetCharacterMovement()->StopMovementImmediately();
 	GetCharacterMovement()->DisableMovement();

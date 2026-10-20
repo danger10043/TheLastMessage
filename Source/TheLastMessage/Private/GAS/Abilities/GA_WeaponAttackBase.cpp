@@ -52,6 +52,7 @@ bool UGA_WeaponAttackBase::CanActivateAbility(const FGameplayAbilitySpecHandle H
 	const UWeaponBase* Weapon = Player ? Player->GetWeaponInSlot(WeaponSlot) : nullptr;
 	const UWeaponDataAsset* Data = IsValid(Weapon) ? Weapon->WeaponData.Get() : nullptr;
 	if (!Player || Player->IsDead() || !IsValid(Data) || !FMath::IsFinite(Data->AttackPower) || Data->AttackPower <= 0.0f) return false;
+	if (Weapon->NextAttackAllowedTime > GetWorld()->GetTimeSeconds()) return false;
 	if (Data->AttackMontage && !Player->GetMesh()->GetAnimInstance()) return false;
 	if (Data->WeaponType == EWeaponType::LightRanged || Data->WeaponType == EWeaponType::HeavyRanged)
 	{
@@ -73,7 +74,8 @@ bool UGA_WeaponAttackBase::CheckCost(const FGameplayAbilitySpecHandle Handle, co
 	const UWeaponBase* Weapon = Player ? Player->GetWeaponInSlot(WeaponSlot) : nullptr;
 	const UWeaponDataAsset* Data = Weapon ? Weapon->WeaponData.Get() : nullptr;
 	if (!Data) return false;
-	if (Data->WeaponType != EWeaponType::LightRanged && Data->WeaponType != EWeaponType::HeavyRanged) return true;
+	if (!FMath::IsFinite(Data->EnergyPerShot) || Data->EnergyPerShot < 0.0f) return false;
+	if (Data->EnergyPerShot == 0.0f) return true;
 	return CostEffectClass && FMath::IsFinite(Data->EnergyPerShot) && Data->EnergyPerShot >= 0.0f
 		&& Player->GetAbilitySystemComponent()->GetNumericAttribute(UWeaponSlotAttributeSet::EnergyAttribute(WeaponSlot)) >= Data->EnergyPerShot;
 }
@@ -83,13 +85,17 @@ void UGA_WeaponAttackBase::ApplyCost(const FGameplayAbilitySpecHandle Handle, co
 {
 	Super::ApplyCost(Handle, ActorInfo, ActivationInfo);
 	const UWeaponDataAsset* Data = SourceWeapon ? SourceWeapon->WeaponData.Get() : nullptr;
-	if (!Data || (Data->WeaponType != EWeaponType::LightRanged && Data->WeaponType != EWeaponType::HeavyRanged)) return;
+	if (!Data || Data->EnergyPerShot <= 0.0f) return;
 	FGameplayEffectSpecHandle Spec = MakeOutgoingGameplayEffectSpec(Handle, ActorInfo, ActivationInfo,
 		CostEffectClass, GetAbilityLevel(Handle, ActorInfo));
 	if (Spec.IsValid())
 	{
 		Spec.Data->SetSetByCallerMagnitude(WeaponGameplayTags::Data_EnergyCost, -Data->EnergyPerShot);
 		ApplyGameplayEffectSpecToOwner(Handle, ActorInfo, ActivationInfo, Spec);
+		if (APlayerBase* Player = ActorInfo ? Cast<APlayerBase>(ActorInfo->AvatarActor.Get()) : nullptr)
+		{
+			if (Data->EnergyPerShot > 0.0f) Player->NotifyWeaponEnergySpent();
+		}
 	}
 }
 
@@ -112,6 +118,7 @@ void UGA_WeaponAttackBase::ApplyCooldown(const FGameplayAbilitySpecHandle Handle
 	{
 		Spec.Data->SetDuration(Duration, true);
 		ApplyGameplayEffectSpecToOwner(Handle, ActorInfo, ActivationInfo, Spec);
+		SourceWeapon->NextAttackAllowedTime = GetWorld()->GetTimeSeconds() + Duration;
 	}
 }
 

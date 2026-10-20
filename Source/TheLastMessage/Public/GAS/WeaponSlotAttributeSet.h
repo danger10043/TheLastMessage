@@ -12,6 +12,13 @@ class THELASTMESSAGE_API UWeaponSlotAttributeSet : public UAttributeSet
 {
 	GENERATED_BODY()
 public:
+	UWeaponSlotAttributeSet();
+	UPROPERTY(BlueprintReadOnly, ReplicatedUsing=OnRep_SharedEnergy, Category="Weapon|Energy")
+	FGameplayAttributeData SharedEnergy;
+	ATTRIBUTE_ACCESSORS_BASIC(UWeaponSlotAttributeSet, SharedEnergy);
+	UPROPERTY(BlueprintReadOnly, ReplicatedUsing=OnRep_SharedMaxEnergy, Category="Weapon|Energy")
+	FGameplayAttributeData SharedMaxEnergy;
+	ATTRIBUTE_ACCESSORS_BASIC(UWeaponSlotAttributeSet, SharedMaxEnergy);
 	virtual void PreAttributeChange(const FGameplayAttribute& Attribute, float& NewValue) override;
 	virtual void PostAttributeChange(const FGameplayAttribute& Attribute, float OldValue, float NewValue) override;
 	virtual void PostGameplayEffectExecute(const FGameplayEffectModCallbackData& Data) override;
@@ -32,6 +39,8 @@ public:
 	FGameplayAttributeData SecondaryMaxEnergy;
 	ATTRIBUTE_ACCESSORS_BASIC(UWeaponSlotAttributeSet, SecondaryMaxEnergy);
 private:
+	UFUNCTION() void OnRep_SharedEnergy(const FGameplayAttributeData& OldValue);
+	UFUNCTION() void OnRep_SharedMaxEnergy(const FGameplayAttributeData& OldValue);
 	UFUNCTION() void OnRep_PrimaryEnergy(const FGameplayAttributeData& OldValue);
 	UFUNCTION() void OnRep_PrimaryMaxEnergy(const FGameplayAttributeData& OldValue);
 	UFUNCTION() void OnRep_SecondaryEnergy(const FGameplayAttributeData& OldValue);

@@ -31,6 +31,9 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapon")
 	double LastSuccessfulFireTime = 0.0;
 
+	/** Preserved across mouse-slot changes to prevent bypassing attack cadence. */
+	double NextAttackAllowedTime = 0.0;
+
 	// 장착 해제 시 보존할 에너지
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Weapon")
 	float StoredEnergyOnUnequip = 0.0f;

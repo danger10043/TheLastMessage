@@ -3,6 +3,10 @@
 #include "UI/PlayerStatusWidget.h"
 #include "UI/WeaponChargeWidget.h"
 #include "UI/PlayerHUD.h"
+#include "UI/PlayerResourceBarWidget.h"
+#include "UI/PlayerWeaponSlotWidget.h"
+#include "Components/Image.h"
+#include "Engine/Texture2D.h"
 #include "Character/Player/PlayerBase.h"
 #include "DataAsset/WeaponDataAsset.h"
 #include "GAS/CombatAttributeSet.h"
@@ -19,7 +23,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlayerUITest, "TheLastMessage.UI.StatusBinding
 
 bool FPlayerUITest::RunTest(const FString& Parameters)
 {
-	UClass* StatusClass = LoadClass<UPlayerStatusWidget>(nullptr, TEXT("/Game/Test_Jihong/UI/WBP_PlayerStatus.WBP_PlayerStatus_C"));
+	UClass* StatusClass = LoadClass<UPlayerStatusWidget>(nullptr, TEXT("/Game/Test_Jihong/UI/WBP_PlayerUI.WBP_PlayerUI_C"));
 	UClass* ChargeClass = LoadClass<UWeaponChargeWidget>(nullptr, TEXT("/Game/Test_Jihong/UI/WBP_WeaponCharge.WBP_WeaponCharge_C"));
 	UClass* HUDClass = LoadClass<APlayerHUD>(nullptr, TEXT("/Game/Test_Jihong/UI/BP_PlayerHUD.BP_PlayerHUD_C"));
 	if (!TestNotNull(TEXT("Status BP exists"), StatusClass) || !TestNotNull(TEXT("Charge BP exists"), ChargeClass)
@@ -47,26 +51,36 @@ bool FPlayerUITest::RunTest(const FString& Parameters)
 	Player->GetCombatAttributes()->SetMaxHealth(100);
 	Player->GetCombatAttributes()->SetHealth(63);
 	TestEqual(TEXT("HP listens to GAS changes"), Status->Health, 63.0f);
-	UProgressBar* HealthBar = Cast<UProgressBar>(Status->GetWidgetFromName(TEXT("HealthBar")));
+	UPlayerResourceBarWidget* HealthResource = Cast<UPlayerResourceBarWidget>(Status->GetWidgetFromName(TEXT("HealthResource")));
+	UProgressBar* HealthBar = HealthResource ? Cast<UProgressBar>(HealthResource->GetWidgetFromName(TEXT("ValueBar"))) : nullptr;
 	if (TestNotNull(TEXT("Designer HP bar binds to native property"), HealthBar)) TestEqual(TEXT("HP fraction"), HealthBar->GetPercent(), 0.63f);
 	UWeaponDataAsset* Melee = NewObject<UWeaponDataAsset>(Player);
 	Melee->WeaponType = EWeaponType::LightMelee;
 	Melee->WeaponId = TEXT("Pipe");
+	Melee->WeaponIcon = LoadObject<UTexture2D>(nullptr, TEXT("/Game/Test_Jihong/Blueprints/Weapon/Icon/T_UI_Weapon_Pipe_v1.T_UI_Weapon_Pipe_v1"));
 	UWeaponDataAsset* Ranged = NewObject<UWeaponDataAsset>(Player);
 	Ranged->WeaponType = EWeaponType::HeavyRanged;
 	Ranged->WeaponId = TEXT("Railgun");
 	Ranged->MaxEnergy = 100;
+	Player->WeaponChoices[0] = Melee;
+	Player->WeaponChoices[1] = DuplicateObject<UWeaponDataAsset>(Melee, Player);
+	Player->WeaponChoices[2] = Ranged;
 	TestTrue(TEXT("Equip primary melee"), Player->EquipWeapon(EWeaponSlot::Primary, Melee));
 	TestTrue(TEXT("Equip secondary ranged"), Player->EquipWeapon(EWeaponSlot::Secondary, Ranged));
-	TestFalse(TEXT("Melee hides energy"), Status->bPrimaryRanged);
-	TestTrue(TEXT("Ranged shows energy"), Status->bSecondaryRanged);
-	UWidget* PrimaryRow = Status->GetWidgetFromName(TEXT("PrimaryEnergyRow"));
-	UWidget* SecondaryRow = Status->GetWidgetFromName(TEXT("SecondaryEnergyRow"));
-	if (TestNotNull(TEXT("Primary energy row"), PrimaryRow)) TestEqual(TEXT("Melee energy row collapsed"), PrimaryRow->GetVisibility(), ESlateVisibility::Collapsed);
-	if (TestNotNull(TEXT("Secondary energy row"), SecondaryRow)) TestEqual(TEXT("Ranged energy row visible"), SecondaryRow->GetVisibility(), ESlateVisibility::HitTestInvisible);
-	Player->GetWeaponSlotAttributes()->SetSecondaryEnergy(37);
-	TestEqual(TEXT("Energy listens to GAS changes"), Status->SecondaryEnergy, 37.0f);
-	UProgressBar* EnergyBar = Cast<UProgressBar>(Status->GetWidgetFromName(TEXT("SecondaryEnergyBar")));
+	UPlayerWeaponSlotWidget* Card = Cast<UPlayerWeaponSlotWidget>(Status->GetWidgetFromName(TEXT("WeaponSlot1")));
+	UImage* Icon = Card ? Cast<UImage>(Card->GetWidgetFromName(TEXT("WeaponIcon"))) : nullptr;
+	if (TestNotNull(TEXT("Editable weapon card exists"), Icon)) TestEqual(TEXT("Owned weapon icon is visible"), Icon->GetVisibility(), ESlateVisibility::HitTestInvisible);
+	UPlayerWeaponSlotWidget* EmptyCard = Cast<UPlayerWeaponSlotWidget>(Status->GetWidgetFromName(TEXT("WeaponSlot2")));
+	UImage* EmptyIcon = EmptyCard ? Cast<UImage>(EmptyCard->GetWidgetFromName(TEXT("WeaponIcon"))) : nullptr;
+	if (TestNotNull(TEXT("Unowned card exists"), EmptyIcon)) TestEqual(TEXT("Unowned weapon stays blank"), EmptyIcon->GetVisibility(), ESlateVisibility::Hidden);
+	UImage* MouseIcon = Card ? Cast<UImage>(Card->GetWidgetFromName(TEXT("LeftMouseIcon"))) : nullptr;
+	if (TestNotNull(TEXT("Replaceable mouse badge exists"), MouseIcon)) TestEqual(TEXT("Left assignment badge is maintained"), MouseIcon->GetVisibility(), ESlateVisibility::HitTestInvisible);
+	UTextBlock* HPText = HealthResource ? Cast<UTextBlock>(HealthResource->GetWidgetFromName(TEXT("ValueText"))) : nullptr;
+	if (TestNotNull(TEXT("Editable left-aligned resource text exists"), HPText)) TestEqual(TEXT("Resource count formatting"), HPText->GetText().ToString(), FString(TEXT("63 / 100")));
+	Player->GetWeaponSlotAttributes()->SetSharedEnergy(37);
+	TestEqual(TEXT("Shared energy listens to GAS changes"), Status->DisplayEnergy, 37.0f);
+	UPlayerResourceBarWidget* EnergyResource = Cast<UPlayerResourceBarWidget>(Status->GetWidgetFromName(TEXT("EnergyResource")));
+	UProgressBar* EnergyBar = EnergyResource ? Cast<UProgressBar>(EnergyResource->GetWidgetFromName(TEXT("ValueBar"))) : nullptr;
 	if (TestNotNull(TEXT("Designer energy bar"), EnergyBar)) TestEqual(TEXT("Energy fraction"), EnergyBar->GetPercent(), 0.37f);
 	Player->BeginWeaponCharge(EWeaponSlot::Secondary, 1.0f);
 	TestTrue(TEXT("Charge state begins"), Player->IsChargingWeapon());

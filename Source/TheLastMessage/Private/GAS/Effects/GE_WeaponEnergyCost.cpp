@@ -19,11 +19,11 @@ FGameplayModifierInfo EnergyCost(const FGameplayAttribute& Attribute)
 UGE_WeaponPrimaryEnergyCost::UGE_WeaponPrimaryEnergyCost()
 {
 	DurationPolicy = EGameplayEffectDurationType::Instant;
-	Modifiers.Add(EnergyCost(UWeaponSlotAttributeSet::GetPrimaryEnergyAttribute()));
+	Modifiers.Add(EnergyCost(UWeaponSlotAttributeSet::GetSharedEnergyAttribute()));
 }
 
 UGE_WeaponSecondaryEnergyCost::UGE_WeaponSecondaryEnergyCost()
 {
 	DurationPolicy = EGameplayEffectDurationType::Instant;
-	Modifiers.Add(EnergyCost(UWeaponSlotAttributeSet::GetSecondaryEnergyAttribute()));
+	Modifiers.Add(EnergyCost(UWeaponSlotAttributeSet::GetSharedEnergyAttribute()));
 }

@@ -97,6 +97,7 @@ public:
 	FName CableStartSocket = TEXT("SK_Weapon");
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Player|Grappling|Cable", meta=(ClampMin="0.1", Units="cm"))
 	float CableWidth = 5.0f;
+	/** Assign in the owning character Blueprint; no asset path is loaded by code. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Player|Grappling|Cable")
 	TObjectPtr<UMaterialInterface> CableMaterial;
 
@@ -111,7 +112,7 @@ public:
 	float MaxPullDuration = 3.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Player|Grappling", meta=(ClampMin="1.0", Units="cm"))
-	float MaxGrappleDistance = 1500.0f;
+	float MaxGrappleDistance = 2000.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Player|Grappling")
 	float ReleaseVelocityValue = 0.75f;

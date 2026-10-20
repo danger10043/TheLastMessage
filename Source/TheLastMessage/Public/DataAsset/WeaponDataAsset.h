@@ -10,6 +10,9 @@
 
 class UAnimMontage;
 class UNiagaraSystem;
+class UMaterialInterface;
+class UAnimSequence;
+class URangedFireFeedbackData;
 /**
  * 
  */
@@ -20,6 +23,19 @@ class THELASTMESSAGE_API UWeaponDataAsset : public UDataAsset
 
 public:
 	UWeaponDataAsset();
+	// Optional weapon-specific presentation; empty uses the player's pistol/rifle defaults.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect")
+	TObjectPtr<URangedFireFeedbackData> RangedFireFeedback;
+	// Optional weapon-specific ready/idle loop; otherwise the player uses pistol/rifle defaults.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Animation")
+	TObjectPtr<UAnimSequence> RangedIdleAnimation;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Projectile Visual")
+	TObjectPtr<UMaterialInterface> ProjectileMaterial;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Projectile Visual")
+	FLinearColor ProjectileColor = FLinearColor(0.1f, 0.8f, 1.0f);
+	// Visual dimensions only; the hit sphere remains unchanged.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Projectile Visual")
+	FVector ProjectileVisualScale = FVector(0.45f, 0.12f, 0.12f);
 
 public:
 	// ------------------------------공통------------------------------
@@ -78,19 +94,11 @@ public:
 	float MaxChargeDamageMultiplier = 1.0f;
 
 	// ------------------------------근접------------------------------
-	// 근접 공격 간격(초)
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
-	float AttackInterval = 0.5f;
-
 	// 근접 공격 사거리
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
 	float AttackRange;
 
 	// ------------------------------원거리-----------------------------
-	// 분당 발사 횟수
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
-	float RPM;
-
 	// 원거리 사거리
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
 	float Range;
@@ -102,14 +110,6 @@ public:
 	// 일반 공격 소모량
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
 	float EnergyPerShot;
-
-	// 충전 대기 시간
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
-	float EnergyRechargeDelay;
-
-	// 초당 충전량
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
-	float EnergyRechargeRate;
 
 	// 탄환 클래스
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")

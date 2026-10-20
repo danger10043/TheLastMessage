@@ -17,7 +17,6 @@
 #include "GAS/WeaponSlotAttributeSet.h"
 #include "GAS/Effects/GE_WeaponEnergyCost.h"
 #include "Projectile/ProjectileBase.h"
-#include "GAS/Effects/GE_WeaponPrimaryCooldown.h"
 #include "GAS/WeaponGameplayTags.h"
 #include "Kismet/GameplayStatics.h"
 #include "NiagaraFunctionLibrary.h"
@@ -38,9 +37,7 @@ UGA_WeaponAttackBase::UGA_WeaponAttackBase()
 	ActivationBlockedTags.AddTag(WeaponGameplayTags::State_Dead);
 	ActivationBlockedTags.AddTag(WeaponGameplayTags::State_HitReacting);
 	ActivationBlockedTags.AddTag(WeaponGameplayTags::State_Grappling);
-	CooldownEffectClass = UGE_WeaponPrimaryCooldown::StaticClass();
 	CostEffectClass = UGE_WeaponPrimaryEnergyCost::StaticClass();
-	AttackCooldownTags.AddTag(WeaponGameplayTags::Cooldown_Primary);
 }
 
 bool UGA_WeaponAttackBase::CanActivateAbility(const FGameplayAbilitySpecHandle Handle,
@@ -52,12 +49,12 @@ bool UGA_WeaponAttackBase::CanActivateAbility(const FGameplayAbilitySpecHandle H
 	const UWeaponBase* Weapon = Player ? Player->GetWeaponInSlot(WeaponSlot) : nullptr;
 	const UWeaponDataAsset* Data = IsValid(Weapon) ? Weapon->WeaponData.Get() : nullptr;
 	if (!Player || Player->IsDead() || !IsValid(Data) || !FMath::IsFinite(Data->AttackPower) || Data->AttackPower <= 0.0f) return false;
-	if (Weapon->NextAttackAllowedTime > GetWorld()->GetTimeSeconds()) return false;
+	if (!Data->AttackMontage && Weapon->NextAttackAllowedTime > GetWorld()->GetTimeSeconds()) return false;
 	if (Data->AttackMontage && !Player->GetMesh()->GetAnimInstance()) return false;
 	if (Data->WeaponType == EWeaponType::LightRanged || Data->WeaponType == EWeaponType::HeavyRanged)
 	{
-		return Data->ProjectileClass && !Data->ProjectileClass->HasAnyClassFlags(CLASS_Abstract)
-			&& FMath::IsFinite(Data->RPM) && Data->RPM > 0.0f
+		const TSubclassOf<AProjectileBase> ProjectileClass = Player->GetAttackProjectileClass(Data);
+		return ProjectileClass && !ProjectileClass->HasAnyClassFlags(CLASS_Abstract)
 			&& FMath::IsFinite(Data->ProjectileSpeed) && Data->ProjectileSpeed > 0.0f
 			&& FMath::IsFinite(Data->Range) && Data->Range > 0.0f
 			&& FMath::IsFinite(Data->EnergyPerShot) && Data->EnergyPerShot >= 0.0f;
@@ -101,27 +98,18 @@ void UGA_WeaponAttackBase::ApplyCost(const FGameplayAbilitySpecHandle Handle, co
 
 const FGameplayTagContainer* UGA_WeaponAttackBase::GetCooldownTags() const
 {
-	return &AttackCooldownTags;
+	return nullptr;
 }
 
 void UGA_WeaponAttackBase::ApplyCooldown(const FGameplayAbilitySpecHandle Handle,
-	const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo) const
+ const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo) const
 {
-	if (!SourceWeapon || !SourceWeapon->WeaponData || !CooldownEffectClass) return;
-	const UWeaponDataAsset* Data = SourceWeapon->WeaponData;
-	const bool bRanged = Data->WeaponType == EWeaponType::LightRanged || Data->WeaponType == EWeaponType::HeavyRanged;
-	const float Duration = bRanged ? 60.0f / Data->RPM : FMath::Max(0.0f, Data->AttackInterval);
-	if (Duration <= 0.0f) return;
-	FGameplayEffectSpecHandle Spec = MakeOutgoingGameplayEffectSpec(Handle, ActorInfo, ActivationInfo,
-		CooldownEffectClass, GetAbilityLevel(Handle, ActorInfo));
-	if (Spec.IsValid())
-	{
-		Spec.Data->SetDuration(Duration, true);
-		ApplyGameplayEffectSpecToOwner(Handle, ActorInfo, ActivationInfo, Spec);
-		SourceWeapon->NextAttackAllowedTime = GetWorld()->GetTimeSeconds() + Duration;
-	}
+ if (SourceWeapon && SourceWeapon->WeaponData && !SourceWeapon->WeaponData->AttackMontage)
+ {
+  // Only animationless weapons need a safety interval; preserve it across swaps.
+  SourceWeapon->NextAttackAllowedTime = GetWorld()->GetTimeSeconds() + 0.1;
+ }
 }
-
 void UGA_WeaponAttackBase::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
 	const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo,
 	const FGameplayEventData* TriggerEventData)
@@ -242,8 +230,29 @@ void UGA_WeaponAttackBase::ExecuteAttack()
 	FVector ShotDirection = FVector::ZeroVector;
 	if (bRanged)
 	{
-		// Fire from the aim plane at capsule center; no offset may skip a nearby wall.
-		ShotDirection = (Player->GetAimTargetLocation() - Player->GetActorLocation()).GetSafeNormal();
+		FVector SpawnLocation = Player->GetWeaponMuzzleLocation(WeaponSlot);
+		const TSubclassOf<AProjectileBase> ProjectileClass = Player->GetAttackProjectileClass(Data);
+		if (!ProjectileClass || ProjectileClass->HasAnyClassFlags(CLASS_Abstract))
+		{
+			EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
+			return;
+		}
+		const float Radius = ProjectileClass->GetDefaultObject<AProjectileBase>()->GetProjectileCollisionRadius();
+		// Sweep the whole projectile from the body to the muzzle so a barrel cannot fire through a wall.
+		FCollisionQueryParams WallParams(SCENE_QUERY_STAT(MuzzleObstruction), false, Player);
+		FHitResult Obstruction;
+		if (!SpawnLocation.Equals(Player->GetActorLocation()) && GetWorld()->SweepSingleByChannel(Obstruction,
+			Player->GetActorLocation(), SpawnLocation, FQuat::Identity, ECC_Visibility,
+			FCollisionShape::MakeSphere(Radius), WallParams))
+		{
+			if (Obstruction.bStartPenetrating)
+			{
+				EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
+				return;
+			}
+			SpawnLocation = Obstruction.Location - (SpawnLocation - Player->GetActorLocation()).GetSafeNormal();
+		}
+		ShotDirection = (Player->GetAimTargetLocation() - SpawnLocation).GetSafeNormal();
 		float FinalDamage = Data->AttackPower * ChargeDamageMultiplier;
 		FinalDamage *= FMath::Max(0.0f, Player->GetCombatAttributes()->GetDamageDealtMultiplier());
 		FinalDamage *= GetHealthDamageMultiplier();
@@ -253,8 +262,8 @@ void UGA_WeaponAttackBase::ExecuteAttack()
 			EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
 			return;
 		}
-		SpawnTransform = FTransform(ShotDirection.Rotation(), Player->GetActorLocation());
-		Projectile = GetWorld()->SpawnActorDeferred<AProjectileBase>(Data->ProjectileClass, SpawnTransform,
+		SpawnTransform = FTransform(ShotDirection.Rotation(), SpawnLocation);
+		Projectile = GetWorld()->SpawnActorDeferred<AProjectileBase>(ProjectileClass, SpawnTransform,
 			Player, Player, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
 		if (!Projectile || !Projectile->InitializeProjectile(Player, DamageEffectClass, FinalDamage, Data->ProjectileSpeed, Data->Range, GetImpactFeedbackStrength()))
 		{
@@ -273,7 +282,9 @@ void UGA_WeaponAttackBase::ExecuteAttack()
 	if (Projectile)
 	{
 		SourceWeapon->LastSuccessfulFireTime = GetWorld()->GetTimeSeconds();
+		Projectile->ConfigureVisuals(SourceWeapon->WeaponData);
 		Projectile->FinishSpawning(SpawnTransform);
+		Player->PlayRangedShotFeedback(WeaponSlot, Data, SpawnTransform);
 		Projectile->LaunchProjectile(ShotDirection);
 		if (!IsActive() || bFinishingAttack) return;
 	}
@@ -308,12 +319,12 @@ void UGA_WeaponAttackBase::ExecuteAttack()
 		}
 	}
 
-	if (Data->AttackEffect)
+	if (!bRanged && Data->AttackEffect)
 	{
 		UNiagaraFunctionLibrary::SpawnSystemAtLocation(Player, Data->AttackEffect,
 			Player->GetActorLocation(), Player->GetActorRotation());
 	}
-	if (Data->AttackSound)
+	if (!bRanged && Data->AttackSound)
 	{
 		UGameplayStatics::PlaySoundAtLocation(Player, Data->AttackSound, Player->GetActorLocation());
 	}
@@ -413,6 +424,10 @@ void UGA_WeaponAttackBase::EndAbility(const FGameplayAbilitySpecHandle Handle,
 {
 	if (bFinishingAttack || !IsEndAbilityValid(Handle, ActorInfo)) return;
 	bFinishingAttack = true;
+	if (bWasCancelled)
+	{
+		if (APlayerBase* Player = ActorInfo ? Cast<APlayerBase>(ActorInfo->AvatarActor.Get()) : nullptr) Player->ClearPendingAttack();
+	}
 	if (APlayerBase* Player = ActorInfo ? Cast<APlayerBase>(ActorInfo->AvatarActor.Get()) : nullptr) Player->ClearWeaponCharge(WeaponSlot);
 	bWaitingForRelease = false;
 	bAttackExecuted = false;

@@ -35,7 +35,15 @@
 #include "InputAction.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Engine/World.h"
+#include "Projectile/ProjectileBase.h"
 #include "GameFramework/GameStateBase.h"
+#include "DataAsset/RangedFireFeedbackData.h"
+#include "Components/AudioComponent.h"
+#include "Sound/SoundBase.h"
+#include "Kismet/GameplayStatics.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraComponent.h"
+#include "Weapon/EnergyMuzzleFlash.h"
 
 namespace PlayerReaction
 {
@@ -64,6 +72,11 @@ static TAutoConsoleVariable<int32> CVarDebugAim(
 
 APlayerBase::APlayerBase()
 {
+	DefaultLightRangedFeedback = FSoftObjectPath(TEXT("/Game/Test_Jihong/Blueprints/Weapon/Effects/DA_FireFeedback_Plasma.DA_FireFeedback_Plasma"));
+	DefaultHeavyRangedFeedback = FSoftObjectPath(TEXT("/Game/Test_Jihong/Blueprints/Weapon/Effects/DA_FireFeedback_Railgun.DA_FireFeedback_Railgun"));
+	RangedAimPostProcessClass = FSoftObjectPath(TEXT("/Game/Test_Jihong/Animations/ABP_PlayerRangedReady.ABP_PlayerRangedReady_C"));
+	DefaultLightRangedProjectileClass = FSoftObjectPath(TEXT("/Game/Test_Jihong/Blueprints/Projectile/BP_Projectile_Plasma.BP_Projectile_Plasma_C"));
+	DefaultHeavyRangedProjectileClass = FSoftObjectPath(TEXT("/Game/Test_Jihong/Blueprints/Projectile/BP_Projectile_Railgun.BP_Projectile_Railgun_C"));
 	WeaponChoices.SetNum(4);
 	OwnedWeaponChoices.SetNumZeroed(4);
 	WeaponSelectionActions.SetNum(4);
@@ -141,6 +154,14 @@ FVector APlayerBase::GetAimTargetLocation() const
 	return bHasAimTarget ? AimTargetLocation : GetActorLocation() + AimDirection * 1000.0f;
 }
 
+FVector APlayerBase::GetWeaponMuzzleLocation(EWeaponSlot Slot) const
+{
+	const UStaticMeshComponent* WeaponMesh = Slot == EWeaponSlot::Primary ? PrimaryWeaponMesh.Get()
+		: Slot == EWeaponSlot::Secondary ? SecondaryWeaponMesh.Get() : nullptr;
+	return WeaponMesh && WeaponMesh->DoesSocketExist(TEXT("Muzzle"))
+		? WeaponMesh->GetSocketLocation(TEXT("Muzzle")) : GetActorLocation();
+}
+
 bool APlayerBase::SetAimTarget(FVector WorldPoint)
 {
 	if (WorldPoint.ContainsNaN() || IsDead()) return false;
@@ -176,15 +197,62 @@ void APlayerBase::UpdateMouseAim()
 	}
 }
 
+TSubclassOf<AProjectileBase> APlayerBase::GetAttackProjectileClass(const UWeaponDataAsset* Data) const
+{
+	if (!Data) return nullptr;
+	// Explicit weapon-specific Blueprint classes always win over the player defaults.
+	if (Data->ProjectileClass != AProjectileBase::StaticClass()) return Data->ProjectileClass;
+	const TSoftClassPtr<AProjectileBase>& Default = Data->WeaponType == EWeaponType::HeavyRanged
+		? DefaultHeavyRangedProjectileClass : DefaultLightRangedProjectileClass;
+	if (UClass* Class = Default.LoadSynchronous()) return Class;
+	return Data->ProjectileClass;
+}
+
+bool APlayerBase::IsRangedAiming() const
+{
+	const UWeaponDataAsset* Data = GetWeaponDataInSlot(VisibleWeaponSlot);
+	return Data && !IsDead() && !IsHitReacting() && AbilitySystemComponent
+		&& AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking)
+		&& (Data->WeaponType == EWeaponType::LightRanged || Data->WeaponType == EWeaponType::HeavyRanged);
+}
+
+void APlayerBase::UpdateRangedFacing()
+{
+	UCharacterMovementComponent* Movement = GetCharacterMovement();
+	if (IsRangedAiming())
+	{
+		if (!bRangedFacingOverride) bRestoreOrientToMovement = Movement->bOrientRotationToMovement;
+		bRangedFacingOverride = true;
+		Movement->bOrientRotationToMovement = false;
+		const FVector Aim = GetAimTargetLocation() - GetActorLocation();
+		if (FMath::Abs(Aim.X) > 5.0f) SetActorRotation(FRotator(0.0f, Aim.X > 0.0f ? 0.0f : 180.0f, 0.0f));
+	}
+	else if (bRangedFacingOverride)
+	{
+		Movement->bOrientRotationToMovement = bRestoreOrientToMovement;
+		bRangedFacingOverride = false;
+	}
+}
+
 void APlayerBase::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	if (HasAuthority() && PendingAttackInput.IsValid()
+		&& !AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking))
+	{
+		const FGameplayTag Input = PendingAttackInput;
+		const EWeaponSlot Slot = Input == WeaponGameplayTags::Input_Primary ? EWeaponSlot::Primary : EWeaponSlot::Secondary;
+		const bool bSameWeapon = PendingAttackWeapon.IsValid() && PendingAttackWeapon.Get() == GetWeaponInSlot(Slot);
+		ClearPendingAttack();
+		if (bSameWeapon && !IsDead() && !IsHitReacting()) AbilityInputPressed(Input);
+	}
 	UpdateMouseAim();
 	if (HasAuthority() && !IsLocallyControlled() && bHasAimTarget)
 	{
 		// 클라이언트의 다음 갱신 전에도 이동한 캐릭터 위치를 기준으로 방향을 계산한다.
 		SetAimTarget(AimTargetLocation);
 	}
+	UpdateRangedFacing();
 	if (IsLocallyControlled() && !HasAuthority() && bHasAimTarget && !IsDead())
 	{
 		AimSendElapsed += DeltaSeconds;
@@ -296,6 +364,12 @@ bool APlayerBase::IsGrappling() const
 void APlayerBase::BeginPlay()
 {
 	Super::BeginPlay();
+	// Authority must evaluate hand bones even without a rendered viewport to resolve muzzle sockets.
+	if (HasAuthority()) GetMesh()->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+	if (UClass* AimClass = RangedAimPostProcessClass.LoadSynchronous())
+	{
+		GetMesh()->SetOverridePostProcessAnimBP(AimClass);
+	}
 	InitializePlayer();
 	if (HasAuthority() && !bHasCheckpoint) SetCheckpoint(GetActorTransform());
 }
@@ -482,6 +556,12 @@ void APlayerBase::AbilityInputPressed(FGameplayTag InputTag)
 			AbilitySystemComponent->CancelAbilityHandle(Handle);
 		}
 	}
+	if (RequestedSlot != EWeaponSlot::None && !IsChargingWeapon()
+		&& AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking))
+	{
+		PendingAttackInput = InputTag;
+		PendingAttackWeapon = GetWeaponInSlot(RequestedSlot);
+	}
 	for (const FGameplayAbilitySpecHandle Handle : Handles)
 	{
 		FGameplayAbilitySpec* Spec = AbilitySystemComponent->FindAbilitySpecFromHandle(Handle);
@@ -503,6 +583,7 @@ void APlayerBase::AbilityInputPressed(FGameplayTag InputTag)
 
 void APlayerBase::AbilityInputReleased(FGameplayTag InputTag)
 {
+	if (PendingAttackInput == InputTag) ClearPendingAttack();
 	if (AssignmentClickInputs.HasTagExact(InputTag))
 	{
 		AssignmentClickInputs.RemoveTag(InputTag);
@@ -551,6 +632,7 @@ void APlayerBase::ShowWeaponInSlot(EWeaponSlot Slot)
 {
 	if (!HasAuthority() || !IsValid(GetWeaponInSlot(Slot))) return;
 	VisibleWeaponSlot = Slot;
+	UpdateRangedFacing();
 	RefreshPrimaryWeaponVisual();
 	ForceNetUpdate();
 }
@@ -696,6 +778,7 @@ void APlayerBase::BeginWeaponCharge(EWeaponSlot Slot, float Duration)
 	WeaponChargeState.Slot = Slot;
 	WeaponChargeState.Duration = Duration;
 	WeaponChargeState.ServerStartTime = GetChargeClockTime();
+	MulticastWeaponChargeSound(GetRangedFireFeedback(GetWeaponDataInSlot(Slot)), Slot, Duration);
 	ForceNetUpdate();
 }
 
@@ -703,7 +786,93 @@ void APlayerBase::ClearWeaponCharge(EWeaponSlot Slot)
 {
 	if (!HasAuthority() || WeaponChargeState.Slot != Slot) return;
 	WeaponChargeState = FPlayerWeaponChargeState();
+	MulticastWeaponChargeSound(nullptr, EWeaponSlot::None, 0.0f);
 	ForceNetUpdate();
+}
+
+URangedFireFeedbackData* APlayerBase::GetRangedFireFeedback(const UWeaponDataAsset* Data) const
+{
+	if (!Data || (Data->WeaponType != EWeaponType::LightRanged && Data->WeaponType != EWeaponType::HeavyRanged)) return nullptr;
+	if (Data->RangedFireFeedback) return Data->RangedFireFeedback;
+	return (Data->WeaponType == EWeaponType::HeavyRanged ? DefaultHeavyRangedFeedback : DefaultLightRangedFeedback).LoadSynchronous();
+}
+
+void APlayerBase::PlayRangedShotFeedback(EWeaponSlot Slot, const UWeaponDataAsset* Data, const FTransform& ShotTransform)
+{
+	if (!HasAuthority() || !Data) return;
+	URangedFireFeedbackData* Feedback = GetRangedFireFeedback(Data);
+	MulticastRangedShotFeedback(Slot, Data->WeaponType == EWeaponType::HeavyRanged, Feedback, Data->AttackEffect ? Data->AttackEffect.Get() : Feedback ? Feedback->MuzzleFlash.Get() : nullptr,
+		Data->AttackSound ? Data->AttackSound.Get() : Feedback ? Feedback->FireSound.Get() : nullptr, ShotTransform);
+}
+
+void APlayerBase::MulticastRangedShotFeedback_Implementation(EWeaponSlot Slot, bool bHeavy, URangedFireFeedbackData* Feedback, UNiagaraSystem* Effect, USoundBase* Sound, FTransform ShotTransform)
+{
+	if (GetNetMode() == NM_DedicatedServer) return;
+	UStaticMeshComponent* Attachment = Slot == EWeaponSlot::Secondary ? SecondaryWeaponMesh.Get() : PrimaryWeaponMesh.Get();
+	const bool bHasSocket = Attachment && Attachment->DoesSocketExist(TEXT("Muzzle"));
+	const FName Socket = bHasSocket ? FName(TEXT("Muzzle")) : NAME_None;
+	const FTransform MuzzleTransform = bHasSocket ? Attachment->GetSocketTransform(Socket) : ShotTransform;
+	const FTransform Offset = Feedback ? Feedback->MuzzleFlashOffset : FTransform::Identity;
+	if (Feedback && Feedback->bUseEnergyFlash)
+	{
+		AEnergyMuzzleFlash* Flash = GetWorld()->SpawnActor<AEnergyMuzzleFlash>(MuzzleTransform.GetLocation(), MuzzleTransform.Rotator());
+		if (Flash)
+		{
+			if (bHasSocket)
+			{
+				Flash->AttachToComponent(Attachment, FAttachmentTransformRules::SnapToTargetNotIncludingScale, Socket);
+				Flash->SetActorRelativeLocation(Offset.GetLocation());
+				Flash->SetActorRelativeRotation(Offset.GetRotation());
+			}
+			else Flash->SetActorTransform(FTransform(Offset.GetRotation(), Offset.GetLocation()) * MuzzleTransform);
+			// Niagara's old tiny scale is not an energy pulse radius; use Energy Size instead.
+			Flash->SetActorScale3D(FVector::OneVector);
+			Flash->Initialize(Feedback, bHeavy);
+		}
+	}
+	else if (Effect)
+	{
+		const FTransform EffectTransform = Offset * MuzzleTransform;
+		UNiagaraComponent* Flash = bHasSocket
+			? UNiagaraFunctionLibrary::SpawnSystemAttached(Effect, Attachment, Socket, Offset.GetLocation(), Offset.Rotator(), Offset.GetScale3D(), EAttachLocation::KeepRelativeOffset, true, ENCPoolMethod::None)
+			: UNiagaraFunctionLibrary::SpawnSystemAtLocation(this, Effect, EffectTransform.GetLocation(), EffectTransform.Rotator(), EffectTransform.GetScale3D());
+		if (Flash && Feedback && Feedback->FlashDuration > 0.0f)
+		{
+			FTimerHandle FlashTimer;
+			GetWorldTimerManager().SetTimer(FlashTimer, FTimerDelegate::CreateWeakLambda(Flash, [Flash]() { Flash->DestroyComponent(); }), Feedback->FlashDuration, false);
+		}
+	}
+	if (Sound) UGameplayStatics::PlaySoundAtLocation(this, Sound, MuzzleTransform.GetLocation(), Feedback ? Feedback->FireVolume : 1.0f,
+		Feedback ? Feedback->FirePitch : 1.0f, 0.0f, Feedback ? Feedback->SoundAttenuation.Get() : nullptr);
+}
+
+void APlayerBase::StopWeaponChargeSound()
+{
+	if (IsValid(WeaponChargeAudio)) WeaponChargeAudio->Stop();
+	WeaponChargeAudio = nullptr;
+}
+
+void APlayerBase::MulticastWeaponChargeSound_Implementation(URangedFireFeedbackData* Feedback, EWeaponSlot Slot, float Duration)
+{
+	StopWeaponChargeSound();
+	if (GetNetMode() == NM_DedicatedServer || !Feedback || !Feedback->ChargeSound || Duration <= 0.0f) return;
+	USceneComponent* Attachment = Slot == EWeaponSlot::Secondary ? SecondaryWeaponMesh.Get() : PrimaryWeaponMesh.Get();
+	const FName Socket = Attachment->DoesSocketExist(TEXT("Muzzle")) ? FName(TEXT("Muzzle")) : NAME_None;
+	float Pitch = FMath::Max(0.1f, Feedback->ChargePitch);
+	const float SoundDuration = Feedback->ChargeSound->GetDuration();
+	if (Feedback->bFitChargeSoundToDuration && FMath::IsFinite(SoundDuration) && SoundDuration > 0.0f && SoundDuration < 60.0f)
+		Pitch *= FMath::Clamp(SoundDuration / Duration, 0.25f, 4.0f);
+	if (IsLocallyControlled() && Feedback->bLocalChargeSound2D)
+	{
+		WeaponChargeAudio = UGameplayStatics::SpawnSound2D(this, Feedback->ChargeSound,
+			Feedback->ChargeVolume * Feedback->LocalChargeVolumeMultiplier, Pitch);
+	}
+	else
+	{
+		WeaponChargeAudio = UGameplayStatics::SpawnSoundAttached(Feedback->ChargeSound, Attachment, Socket,
+			FVector::ZeroVector, FRotator::ZeroRotator, EAttachLocation::KeepRelativeOffset, true,
+			Feedback->ChargeVolume, Pitch, 0.0f, Feedback->SoundAttenuation);
+	}
 }
 
 bool APlayerBase::EquipWeapon(EWeaponSlot Slot, UWeaponDataAsset* Data)
@@ -715,6 +884,14 @@ bool APlayerBase::EquipWeapon(EWeaponSlot Slot, UWeaponDataAsset* Data)
 	UWeaponBase* Weapon = bRanged ? static_cast<UWeaponBase*>(NewObject<URangedWeaponBase>(this))
 		: static_cast<UWeaponBase*>(NewObject<UMeleeWeaponBase>(this));
 	if (!Weapon->Initialize(Data)) return false;
+	if (bRanged)
+	{
+		// Warm the shared flash material while equipping/charging, not on its first 0.14-second pulse.
+		if (URangedFireFeedbackData* Feedback = GetRangedFireFeedback(Data))
+		{
+			if (Feedback->bUseEnergyFlash) Feedback->EnergyMaterial.LoadSynchronous();
+		}
+	}
 	for (int32 Index = 0; Index < 4; ++Index)
 	{
 		if (GetWeaponChoice(Index) == Data)
@@ -754,6 +931,7 @@ void APlayerBase::RechargeWeaponEnergy()
 
 void APlayerBase::AbilityInputCanceled(FGameplayTag InputTag)
 {
+	if (PendingAttackInput == InputTag) ClearPendingAttack();
 	if (AssignmentClickInputs.HasTagExact(InputTag))
 	{
 		AssignmentClickInputs.RemoveTag(InputTag);
@@ -1078,6 +1256,7 @@ void APlayerBase::FellOutOfWorld(const UDamageType& DamageType)
 
 void APlayerBase::CleanupPlayerActions()
 {
+	MulticastWeaponChargeSound(nullptr, EWeaponSlot::None, 0.0f);
 	// 사망 이벤트가 전달되기 전에 운반 물체와 효과 정리
 	if (IsValid(CarryComponent))
 	{
@@ -1193,6 +1372,7 @@ UCoreComponent* APlayerBase::GetCoreComponent() const
 
 void APlayerBase::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	StopWeaponChargeSound();
 	GetWorldTimerManager().ClearTimer(RespawnTimer);
 	GetWorldTimerManager().ClearTimer(HitReactionTimer);
 	if (DoubleJumpTagChangedHandle.IsValid())

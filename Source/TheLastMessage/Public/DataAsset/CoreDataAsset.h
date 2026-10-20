@@ -79,7 +79,7 @@ public:
 	TObjectPtr<UTexture2D> CoreIcon = nullptr;
 
 	/** 어떤 보상 풀에 포함할지 직접 지정한다. 흡혈처럼 수치로 강화할 효과도 스탯형으로 설정할 수 있다. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Core|Reward")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Core")
 	ECoreCategory CoreCategory = ECoreCategory::Stat;
 
 	/** 강화 횟수의 제한 방식. 효과의 수치 상한과는 별개이며, 수치 계산은 GE에서 설정한다. */

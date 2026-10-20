@@ -5,6 +5,7 @@
 #include "Character/Player/PlayerBase.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
+#include "Framework/ActorPoolSubsystem.h"
 
 bool UBossCorePuzzleComponent::CanStartCorePuzzle(
     const TArray<TObjectPtr<ABossActivationCore>>& Cores) const
@@ -260,14 +261,43 @@ void UBossCorePuzzleComponent::SpawnNextPuzzleMissile()
         + Boss->GetActorRotation().RotateVector(PuzzleMissileSpawnOffset);
     const FTransform SpawnTransform(FRotator::ZeroRotator, SpawnLocation);
 
-    ABossCircularMissile* Missile =
-        GetWorld()->SpawnActorDeferred<ABossCircularMissile>(
-            PuzzleMissileClass, SpawnTransform, Boss, Boss,
-            ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+    UActorPoolSubsystem* Pool =
+        GetWorld()->GetSubsystem<UActorPoolSubsystem>();
+    if (!Pool)
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("Boss core puzzle: actor pool is unavailable."));
+        Boss->FailShieldPuzzle();
+        return;
+    }
+
+    ABossCircularMissile* Missile = Cast<ABossCircularMissile>(
+        Pool->AcquireActor(
+            PuzzleMissileClass, SpawnTransform, Boss, Boss));
+
+    // 새 액터의 BeginPlay 중 퍼즐 상태가 변경될 수 있다.
+    if (Generation != PuzzleMissileGeneration)
+    {
+        if (IsValid(Missile))
+        {
+            Missile->ReturnToPool();
+        }
+        return;
+    }
+    if (!IsValid(Boss) || !bIsPuzzleActive
+        || Boss->GetBossState() != EBossState::ShieldPuzzle)
+    {
+        if (IsValid(Missile))
+        {
+            Missile->ReturnToPool();
+        }
+        StopPuzzleMissiles();
+        return;
+    }
     if (!IsValid(Missile))
     {
         UE_LOG(LogTemp, Error,
-            TEXT("Boss core puzzle: failed to spawn a missile."));
+            TEXT("Boss core puzzle: failed to acquire a missile."));
         Boss->FailShieldPuzzle();
         return;
     }
@@ -277,33 +307,27 @@ void UBossCorePuzzleComponent::SpawnNextPuzzleMissile()
         {
             return !Entry.IsValid();
         });
-    PuzzleMissiles.Add(Missile);
+
+    const TWeakObjectPtr<ABossCircularMissile> WeakMissile(Missile);
+    Missile->OnMissileReturned.BindWeakLambda(this, [this, WeakMissile]()
+        {
+            PuzzleMissiles.Remove(WeakMissile);
+        });
+    PuzzleMissiles.Add(WeakMissile);
 
     Missile->LaunchTime = PuzzleMissileLaunchTime;
     Missile->Damage = PuzzleMissileDamage;
     Missile->DamageRadius = PuzzleMissileDamageRadius;
     Missile->MissileLaunchDelta = 300.f;
     Missile->FireLocation = FireLocation;
-    Missile->FinishSpawning(SpawnTransform);
-    if (IsValid(Missile))
-    {
-        Missile->StartMissile();
-    }
+    Missile->StartMissile();
 
-    // BeginPlay 콜백 중 퍼즐이 종료되거나 새로 시작된 경우를 구분한다.
     if (Generation != PuzzleMissileGeneration)
     {
         if (IsValid(Missile))
         {
-            Missile->Destroy();
+            Missile->ReturnToPool();
         }
-        return;
-    }
-    if (!IsValid(Missile))
-    {
-        UE_LOG(LogTemp, Error,
-            TEXT("Boss core puzzle: missile initialization failed."));
-        Boss->FailShieldPuzzle();
         return;
     }
     if (!IsValid(Boss) || !bIsPuzzleActive
@@ -312,6 +336,18 @@ void UBossCorePuzzleComponent::SpawnNextPuzzleMissile()
         StopPuzzleMissiles();
         return;
     }
+    if (!IsValid(Missile) || !Missile->IsMissileActive())
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("Boss core puzzle: missile initialization failed."));
+        Boss->FailShieldPuzzle();
+        return;
+    }
+
+    UE_LOG(LogTemp, Log,
+        TEXT("Boss core puzzle: step=%d, missile=%s, target=%s"),
+        PuzzleMissileStep + 1, *Missile->GetName(),
+        *FireLocation.ToString());
 
     if (PuzzleMissileStep == 0)
     {
@@ -348,7 +384,7 @@ void UBossCorePuzzleComponent::StopPuzzleMissiles()
     {
         if (ABossCircularMissile* Missile = Entry.Get())
         {
-            Missile->Destroy();
+            Missile->ReturnToPool();
         }
     }
 }

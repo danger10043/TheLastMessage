@@ -175,8 +175,10 @@ void UGA_BossCircularMissile::SpawnNextMissile()
     }
 
     ++SpawnedCount;
-    UE_LOG(LogTemp, Log, TEXT("BossCircularMissile: shot %d/%d, target=%s"),
-        SpawnedCount, ActiveConfig.MissileCount, *FireLocation.ToString());
+    UE_LOG(LogTemp, Log,
+        TEXT("BossCircularMissile: shot %d/%d, missile=%s, target=%s"),
+        SpawnedCount, ActiveConfig.MissileCount,
+        *Missile->GetName(), *FireLocation.ToString());
 
     if (SpawnedCount >= ActiveConfig.MissileCount)
     {

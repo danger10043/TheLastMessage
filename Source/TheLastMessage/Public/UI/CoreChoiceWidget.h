@@ -115,6 +115,8 @@ protected:
 private:
 	/** 후보마다 카드와 입력 이벤트를 준비한다. 모든 카드 생성에 성공하면 true를 반환한다. */
 	bool PopulateCards();
+	/** 표시 대상 코어의 현재 보유 단계를 조회한다. 최초 표시와 리롤에 같은 기준을 사용한다. */
+	int32 GetCurrentCoreLevel(const UCoreDataAsset* CoreData) const;
 	/** 입력 대상과 카드별 강조 상태를 바꾸고 화면 상단의 선택 위치를 갱신한다. */
 	void SetActiveCardIndex(int32 Index);
 	/** 선택한 코어를 외부에 알린다. 지급 결과에 따라 외부에서 화면을 닫을 수 있다. */

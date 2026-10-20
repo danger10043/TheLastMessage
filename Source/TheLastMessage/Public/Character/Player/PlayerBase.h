@@ -13,6 +13,7 @@ class UAbilitySystemComponent;
 class UCombatAttributeSet;
 class UWeaponSlotAttributeSet;
 class UInteractionComponent;
+class UCarryComponent;
 class UCoreComponent;
 class UGameplayAbility;
 class UGameplayEffect;
@@ -70,6 +71,31 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category="Player|Weapon")
 	bool EquipWeapon(EWeaponSlot Slot, UWeaponDataAsset* Data);
 
+	/** Entries 0..3 correspond to held keys 1..4. Assign assets in the character Blueprint. */
+	UPROPERTY(EditDefaultsOnly, EditFixedSize, BlueprintReadOnly, Replicated, Category="Player|Weapon|Assignment")
+	TArray<TObjectPtr<UWeaponDataAsset>> WeaponChoices;
+	/** Starting ownership; initial equipped weapons are also acquired automatically. */
+	UPROPERTY(EditDefaultsOnly, EditFixedSize, BlueprintReadOnly, ReplicatedUsing=OnRep_VisibleWeaponSlot, Category="Player|Weapon|Assignment")
+	TArray<bool> OwnedWeaponChoices;
+	UFUNCTION(BlueprintPure, Category="Player|Weapon|Assignment")
+	bool HasWeaponChoice(int32 Index) const;
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category="Player|Weapon|Assignment")
+	bool AcquireWeaponChoice(int32 Index);
+	UPROPERTY(EditDefaultsOnly, EditFixedSize, BlueprintReadOnly, Category="Player|Input")
+	TArray<TObjectPtr<UInputAction>> WeaponSelectionActions;
+	/** Called on Started / Completed / Canceled by the four Enhanced Input actions. */
+	UFUNCTION(BlueprintCallable, Category="Player|Weapon|Assignment")
+	void SetWeaponChoiceHeld(int32 Index, bool bHeld);
+	UFUNCTION(BlueprintPure, Category="Player|Weapon|Assignment")
+	UWeaponDataAsset* GetWeaponChoice(int32 Index) const;
+	UFUNCTION(BlueprintPure, Category="Player|Weapon|Assignment")
+	EWeaponSlot GetWeaponChoiceAssignment(int32 Index) const;
+	UFUNCTION(BlueprintPure, Category="Player|Weapon|Assignment")
+	int32 GetHeldWeaponChoice() const;
+	/** Authority-only assignment. The opposite mouse binding is swapped if necessary. */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category="Player|Weapon|Assignment")
+	bool AssignWeaponChoice(int32 Index, EWeaponSlot Slot);
+
 	UFUNCTION(BlueprintPure, Category = "Player|Weapon")
 	UWeaponBase* GetPrimaryWeapon() const { return PrimaryWeapon; }
 
@@ -92,6 +118,7 @@ public:
 	EWeaponSlot GetChargingWeaponSlot() const { return WeaponChargeState.Slot; }
 	void BeginWeaponCharge(EWeaponSlot Slot, float Duration);
 	void ClearWeaponCharge(EWeaponSlot Slot);
+	void NotifyWeaponEnergySpent();
 
 	// 실제 공격 활성화에 성공한 슬롯의 외형을 표시한다.
 	void ShowWeaponInSlot(EWeaponSlot Slot);
@@ -167,6 +194,12 @@ public:
 	UCoreComponent* GetCoreComponent() const;
 
 protected:
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Player|Energy", meta=(ClampMin="0"))
+	float InitialSharedMaxEnergy = 100.0f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Player|Energy", meta=(ClampMin="0", Units="s"))
+	float SharedEnergyRechargeDelay = 1.0f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Player|Energy", meta=(ClampMin="0"))
+	float SharedEnergyRechargeRate = 20.0f;
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Player|Gravity")
 	TObjectPtr<UGravityStateComponent> GravityStateComponent;
 
@@ -255,6 +288,10 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|Interaction")
 	TObjectPtr<UInteractionComponent> InteractionComponent;
 
+	// 플레이어의 물체 운반 처리
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|Carry")
+	TObjectPtr<UCarryComponent> CarryComponent;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|Core")
 	TObjectPtr<UCoreComponent> CoreComponent;
 
@@ -271,11 +308,18 @@ protected:
 	FTimerHandle EnergyRechargeTimerHandle;
 
 private:
+	UFUNCTION(Server, Reliable)
+	void ServerAssignWeaponChoice(int32 Index, EWeaponSlot Slot);
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UWeaponBase>> CachedChoiceWeapons;
+	FGameplayTagContainer AssignmentClickInputs;
+	TSet<int32> HeldWeaponChoices;
 	UPROPERTY(Replicated)
 	FPlayerWeaponChargeState WeaponChargeState;
 	double GetChargeClockTime() const;
 	void RechargeWeaponEnergy();
 	double LastEnergyRechargeTime = 0.0;
+	double LastSharedEnergyUseTime = 0.0;
 	FTransform CheckpointTransform;
 	FVector CheckpointGravity = FVector(0, 0, -1);
 	bool bHasCheckpoint = false;

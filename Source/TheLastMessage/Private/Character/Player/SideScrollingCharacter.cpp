@@ -31,14 +31,14 @@ ASideScrollingCharacter::ASideScrollingCharacter()
 	bUseControllerRotationYaw = false;
 
 	// configure the character movement component
-	GetCharacterMovement()->GravityScale = 1.75f;
+	GetCharacterMovement()->GravityScale = 2.625f;
 	GetCharacterMovement()->MaxAcceleration = 1500.0f;
 	GetCharacterMovement()->BrakingFrictionFactor = 1.0f;
 	GetCharacterMovement()->bUseSeparateBrakingFriction = true;
 	GetCharacterMovement()->Mass = 500.0f;
 
 	GetCharacterMovement()->SetWalkableFloorAngle(75.0f);
-	GetCharacterMovement()->MaxWalkSpeed = 500.0f;
+	GetCharacterMovement()->MaxWalkSpeed = 700.0f;
 	GetCharacterMovement()->MinAnalogWalkSpeed = 20.0f;
 	GetCharacterMovement()->BrakingDecelerationWalking = 2000.0f;
 	GetCharacterMovement()->bIgnoreBaseRotation = true;
@@ -46,7 +46,7 @@ ASideScrollingCharacter::ASideScrollingCharacter()
 	GetCharacterMovement()->PerchRadiusThreshold = 15.0f;
 	GetCharacterMovement()->LedgeCheckThreshold = 6.0f;
 
-	GetCharacterMovement()->JumpZVelocity = 750.0f;
+	GetCharacterMovement()->JumpZVelocity = 1087.5f;
 	GetCharacterMovement()->AirControl = 1.0f;
 
 	GetCharacterMovement()->RotationRate = FRotator(0.0f, 750.0f, 0.0f);

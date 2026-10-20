@@ -3,38 +3,8 @@
 #include "AbilitySystemComponent.h"
 #include "GAS/CombatAttributeSet.h"
 #include "GAS/WeaponSlotAttributeSet.h"
-#include "DataAsset/WeaponDataAsset.h"
-#include "Components/ProgressBar.h"
-#include "Components/TextBlock.h"
-#include "Components/Image.h"
-
-namespace
-{
-float Fraction(float Current, float Maximum)
-{
-	return Maximum > 0 && FMath::IsFinite(Current) && FMath::IsFinite(Maximum)
-		? FMath::Clamp(Current / Maximum, 0.0f, 1.0f) : 0.0f;
-}
-FText ResourceText(float Current, float Maximum)
-{
-	return FText::Format(NSLOCTEXT("PlayerUI", "ResourceCount", "{0} / {1}"),
-		FText::AsNumber(FMath::CeilToInt(FMath::Max(0.0f, Current))),
-		FText::AsNumber(FMath::CeilToInt(FMath::Max(0.0f, Maximum))));
-}
-bool Ranged(const UWeaponDataAsset* Data)
-{
-	return Data && (Data->WeaponType == EWeaponType::LightRanged || Data->WeaponType == EWeaponType::HeavyRanged);
-}
-void WeaponVisual(const UWeaponDataAsset* Data, UTextBlock* Label, UImage* Icon)
-{
-	if (Label) Label->SetText(Data ? FText::FromName(Data->WeaponId) : NSLOCTEXT("PlayerUI", "EmptyWeapon", "--"));
-	if (Icon)
-	{
-		Icon->SetBrushFromTexture(Data ? Data->WeaponIcon.Get() : nullptr);
-		Icon->SetVisibility(Data && Data->WeaponIcon ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
-	}
-}
-}
+#include "UI/PlayerResourceBarWidget.h"
+#include "UI/PlayerWeaponSlotWidget.h"
 
 void UPlayerStatusWidget::SetObservedPlayer(APlayerBase* Player)
 {
@@ -47,8 +17,7 @@ void UPlayerStatusWidget::SetObservedPlayer(APlayerBase* Player)
 	{
 		const FGameplayAttribute Attributes[] = {
 			UCombatAttributeSet::GetHealthAttribute(), UCombatAttributeSet::GetMaxHealthAttribute(),
-			UWeaponSlotAttributeSet::GetPrimaryEnergyAttribute(), UWeaponSlotAttributeSet::GetPrimaryMaxEnergyAttribute(),
-			UWeaponSlotAttributeSet::GetSecondaryEnergyAttribute(), UWeaponSlotAttributeSet::GetSecondaryMaxEnergyAttribute()};
+			UWeaponSlotAttributeSet::GetSharedEnergyAttribute(), UWeaponSlotAttributeSet::GetSharedMaxEnergyAttribute()};
 		for (const FGameplayAttribute& Attribute : Attributes)
 		{
 			const FDelegateHandle Handle = ASC->GetGameplayAttributeValueChangeDelegate(Attribute)
@@ -89,30 +58,42 @@ void UPlayerStatusWidget::HandleAttributeChanged(const FOnAttributeChangeData& D
 	RefreshStatus();
 }
 
+void UPlayerStatusWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
+{
+	Super::NativeTick(MyGeometry, InDeltaTime);
+	RefreshLoadout();
+	RefreshEnergyDisplay();
+}
+
+void UPlayerStatusWidget::RefreshLoadout()
+{
+	APlayerBase* Player = ObservedPlayer.Get();
+	UPlayerWeaponSlotWidget* Cards[] = { WeaponSlot1, WeaponSlot2, WeaponSlot3, WeaponSlot4 };
+	for (int32 Index = 0; Index < 4; ++Index)
+	{
+		if (Cards[Index]) Cards[Index]->SetWeaponPresentation(Player ? Player->GetWeaponChoice(Index) : nullptr, Index + 1,
+			Player && Player->HasWeaponChoice(Index), Player ? Player->GetWeaponChoiceAssignment(Index) : EWeaponSlot::None,
+			Player && Player->GetHeldWeaponChoice() == Index);
+	}
+}
+
+void UPlayerStatusWidget::RefreshEnergyDisplay()
+{
+	APlayerBase* Player = ObservedPlayer.Get();
+	const UWeaponSlotAttributeSet* Energy = Player ? Player->GetWeaponSlotAttributes() : nullptr;
+	DisplayEnergy = Energy ? Energy->GetSharedEnergy() : 0;
+	DisplayMaxEnergy = Energy ? Energy->GetSharedMaxEnergy() : 0;
+	if (EnergyResource) EnergyResource->SetResourceValues(DisplayEnergy, DisplayMaxEnergy);
+}
+
 void UPlayerStatusWidget::RefreshStatus()
 {
 	APlayerBase* Player = ObservedPlayer.Get();
 	const UCombatAttributeSet* Combat = Player ? Player->GetCombatAttributes() : nullptr;
-	const UWeaponSlotAttributeSet* Energy = Player ? Player->GetWeaponSlotAttributes() : nullptr;
-	const UWeaponDataAsset* Primary = Player ? Player->GetWeaponDataInSlot(EWeaponSlot::Primary) : nullptr;
-	const UWeaponDataAsset* Secondary = Player ? Player->GetWeaponDataInSlot(EWeaponSlot::Secondary) : nullptr;
 	Health = Combat ? Combat->GetHealth() : 0;
 	MaxHealth = Combat ? Combat->GetMaxHealth() : 0;
-	PrimaryEnergy = Energy ? Energy->GetPrimaryEnergy() : 0;
-	PrimaryMaxEnergy = Energy ? Energy->GetPrimaryMaxEnergy() : 0;
-	SecondaryEnergy = Energy ? Energy->GetSecondaryEnergy() : 0;
-	SecondaryMaxEnergy = Energy ? Energy->GetSecondaryMaxEnergy() : 0;
-	bPrimaryRanged = Ranged(Primary);
-	bSecondaryRanged = Ranged(Secondary);
-	if (HealthBar) HealthBar->SetPercent(Fraction(Health, MaxHealth));
-	if (HealthText) HealthText->SetText(ResourceText(Health, MaxHealth));
-	WeaponVisual(Primary, PrimaryWeaponText, PrimaryWeaponIcon);
-	WeaponVisual(Secondary, SecondaryWeaponText, SecondaryWeaponIcon);
-	if (PrimaryEnergyRow) PrimaryEnergyRow->SetVisibility(bPrimaryRanged ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
-	if (SecondaryEnergyRow) SecondaryEnergyRow->SetVisibility(bSecondaryRanged ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
-	if (PrimaryEnergyBar) PrimaryEnergyBar->SetPercent(Fraction(PrimaryEnergy, PrimaryMaxEnergy));
-	if (SecondaryEnergyBar) SecondaryEnergyBar->SetPercent(Fraction(SecondaryEnergy, SecondaryMaxEnergy));
-	if (PrimaryEnergyText) PrimaryEnergyText->SetText(ResourceText(PrimaryEnergy, PrimaryMaxEnergy));
-	if (SecondaryEnergyText) SecondaryEnergyText->SetText(ResourceText(SecondaryEnergy, SecondaryMaxEnergy));
+	if (HealthResource) HealthResource->SetResourceValues(Health, MaxHealth);
+	RefreshLoadout();
+	RefreshEnergyDisplay();
 	OnStatusUpdated();
 }

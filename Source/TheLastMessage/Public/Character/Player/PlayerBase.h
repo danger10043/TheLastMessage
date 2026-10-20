@@ -213,6 +213,10 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Animation", meta = (ClampMin = "0.01"))
 	float HitReactPlayRate = 1.0f;
 
+	/** Immunity to hit reaction only, measured from the end of the previous reaction. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Animation", meta = (ClampMin = "0.0", Units = "s"))
+	float HitReactionImmunityDuration = 0.5f;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Animation", meta = (ClampMin = "0.01"))
 	float DeathPlayRate = 1.0f;
 
@@ -295,6 +299,7 @@ private:
 	UFUNCTION()
 	void OnRep_DeathHandled();
 	FTimerHandle HitReactionTimer;
+	double HitReactionImmunityEndTime = 0.0;
 	bool bDeathPresentationStarted = false;
 	// ServerOnly 공격 능력은 눌림/해제를 동일한 서버 경로로 전달한다.
 	UFUNCTION(Server, Reliable)

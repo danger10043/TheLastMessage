@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Abilities/GameplayAbility.h"
-#include "GameplayAbility_InteractGimmick.generated.h"
+#include "GA_InteractGimmick.generated.h"
 
 class AActor;
 /**

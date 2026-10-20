@@ -24,6 +24,7 @@ class ALaserReceiver;
 class ALaserReflector;
 class UMaterialInterface;
 struct FOnAttributeChangeData;
+class UNiagaraSystem;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
     FOnBossPhaseChangedSignature, EBossPhase, NewPhase);
@@ -212,8 +213,13 @@ protected:
 
 private:
     void HandleBossHealthChanged(const FOnAttributeChangeData& Data);
+
     void StartHitFlash();
+
     void EndHitFlash();
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|HitEffect")
+    TObjectPtr<UNiagaraSystem> HitEffect;
 
     UPROPERTY(EditDefaultsOnly, Category = "Boss|HitFlash")
     TObjectPtr<UMaterialInterface> HitFlashMaterial;

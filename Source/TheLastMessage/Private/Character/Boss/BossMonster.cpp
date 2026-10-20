@@ -25,6 +25,8 @@
 #include "GameFramework/Pawn.h"
 #include "TimerManager.h"
 #include "Materials/MaterialInterface.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
 
 ABossMonster::ABossMonster()
 {
@@ -1455,12 +1457,24 @@ void ABossMonster::HandleBossHealthChanged(
     if (CurrentState == EBossState::Dead
         || !FMath::IsFinite(Data.OldValue)
         || !FMath::IsFinite(Data.NewValue)
-        || Data.NewValue >= Data.OldValue || Data.NewValue <= 0.f)
+        || Data.NewValue >= Data.OldValue)
     {
         return;
     }
 
-    StartHitFlash();
+    if (IsValid(HitEffect.Get()) && GetWorld())
+    {
+        UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+            this,
+            HitEffect.Get(),
+            GetActorLocation(),
+            GetActorRotation());
+    }
+
+    if (Data.NewValue > 0.f)
+    {
+        StartHitFlash();
+    }
 }
 
 void ABossMonster::StartHitFlash()

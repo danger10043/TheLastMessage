@@ -198,10 +198,10 @@ FAutoConsoleCommandWithWorldAndArgs GiveCommand(TEXT("tlm.CoreGive"), TEXT("Acqu
 		// 기존 테스트 안내의 11번도 통합된 9번을 지급한다. 서로 다른 보유 기록을 만들지는 않는다.
 		if (Number == 11) Number = 9;
 		const TCHAR* Names[] = {TEXT("ImpactDispersionArmor"), TEXT("OverloadOutput"), TEXT("MeleeAmplifier"), TEXT("StableOutputCircuit"), TEXT("EmergencyOutputCircuit"), TEXT("PrecisionAimingCircuit"), TEXT("HighSpeedDrive"), TEXT("ChargeAccelerationCircuit"), TEXT("EfficientDischargeCircuit")};
-		UCoreDataAsset* Data = LoadObject<UCoreDataAsset>(nullptr, *FString::Printf(TEXT("/Game/Test_Jihun/Core/DataAsset/DA_Core_%s.DA_Core_%s"), Names[Number - 2], Names[Number - 2]));
+		UCoreDataAsset* Data = LoadObject<UCoreDataAsset>(nullptr, *FString::Printf(TEXT("/Game/Test_Jihun/Core/Stat/DataAsset/DA_Core_%s.DA_Core_%s"), Names[Number - 2], Names[Number - 2]));
 		Enable(World);
 		const bool bAcquired = Data && Player->GetCoreComponent()->AcquireCore(Data);
-		Message(FString::Printf(TEXT("%d %s: %s"), Number, Data ? *Data->CoreName.ToString() : TEXT("missing DA"), bAcquired ? TEXT("ACQUIRED") : TEXT("FAILED (already owned or invalid)")));
+		Message(FString::Printf(TEXT("%d %s: %s (Lv.%d)"), Number, Data ? *Data->CoreName.ToString() : TEXT("missing DA"), bAcquired ? TEXT("ACQUIRED / UPGRADED") : TEXT("FAILED (limit reached or invalid)"), Data ? Player->GetCoreComponent()->GetCoreLevel(Data->CoreId) : 0));
 	}), ECVF_Cheat);
 
 FAutoConsoleCommandWithWorldAndArgs ResetCommand(TEXT("tlm.CoreReset"), TEXT("Remove ALL acquired cores in this play session. Does not edit assets."),

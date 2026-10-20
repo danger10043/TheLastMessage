@@ -32,7 +32,7 @@ bool FCoreUpgradeTest::RunTest(const FString& Parameters)
 	Core->RegisterComponent();
 	Core->Initialize(ASC);
 
-	// 테스트가 사용하는 GE와 커브는 메모리에서만 구성하고, 종료 시 기본 GE 설정을 복구한다.
+	// 테스트 설정은 메모리에서만 변경하고 종료 시 기본값을 복구한다.
 	UGameplayEffect* Effect = GetMutableDefault<UGameplayEffect>();
 	TGuardValue<EGameplayEffectDurationType> DurationGuard(Effect->DurationPolicy, EGameplayEffectDurationType::Infinite);
 	TGuardValue<TArray<FGameplayModifierInfo>> ModifiersGuard(Effect->Modifiers, {});
@@ -117,6 +117,42 @@ bool FCoreUpgradeTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Infinite keeps one effect instead of stacking"), ASC->GetActiveEffects(FGameplayEffectQuery()).Num(), 1);
 	TestEqual(TEXT("Infinite remains eligible for future rewards"), Core->GenerateCoreChoices(Pool, ECoreCategory::Stat).Num(), 1);
 	Core->ResetOwnedCores();
+
+	// 치명타는 커브의 추가 확률을 적용한다. 최대 단계 이후에는 더 획득할 수 없다.
+	Attributes->InitCriticalChance(0.2f);
+	const FName CriticalRow(TEXT("CriticalBonus"));
+	FRichCurve& CriticalCurve = Curves->AddRichCurve(CriticalRow);
+	CriticalCurve.AddKey(1.0f, 0.05f);
+	CriticalCurve.AddKey(2.0f, 0.10f);
+	CriticalCurve.AddKey(3.0f, 0.15f);
+	CriticalCurve.AddKey(4.0f, 0.20f);
+	CriticalCurve.AddKey(5.0f, 0.25f);
+	FScalableFloat CriticalMagnitude;
+	CriticalMagnitude.SetScalingValue(1.0f, CriticalRow, Curves);
+	FGameplayModifierInfo CriticalModifier;
+	CriticalModifier.Attribute = UCombatAttributeSet::GetCriticalChanceAttribute();
+	CriticalModifier.ModifierOp = EGameplayModOp::Additive;
+	CriticalModifier.ModifierMagnitude = FGameplayEffectModifierMagnitude(CriticalMagnitude);
+	Effect->Modifiers = { CriticalModifier };
+	Data->UpgradeLimitType = ECoreUpgradeLimitType::Custom;
+	Data->MaxLevel = 5;
+	TestTrue(TEXT("Critical core is acquired"), Core->AcquireCore(Data));
+	TestEqual(TEXT("Critical first level adds five percentage points"), Attributes->GetCriticalChance(), 0.25f, 0.0001f);
+	TestTrue(TEXT("Critical core upgrades"), Core->AcquireCore(Data));
+	TestEqual(TEXT("Critical second level adds ten percentage points"), Attributes->GetCriticalChance(), 0.30f, 0.0001f);
+	for (int32 Level = 3; Level <= 5; ++Level)
+	{
+		TestTrue(TEXT("Critical upgrade within the limit succeeds"), Core->AcquireCore(Data));
+	}
+	TestEqual(TEXT("Critical final level adds twenty-five percentage points"), Attributes->GetCriticalChance(), 0.45f, 0.0001f);
+	TestFalse(TEXT("Critical sixth acquisition is rejected"), Core->AcquireCore(Data));
+	TestEqual(TEXT("Rejected critical upgrade preserves level five"), Core->GetCoreLevel(Data->CoreId), 5);
+	Handles = ASC->GetActiveEffects(FGameplayEffectQuery());
+	TestEqual(TEXT("Critical upgrades retain a single effect"), Handles.Num(), 1);
+	ASC->SetNumericAttributeBase(UCombatAttributeSet::GetCriticalChanceAttribute(), 0.4f);
+	TestEqual(TEXT("Critical bonus remains additive when the base changes"), Attributes->GetCriticalChance(), 0.65f, 0.0001f);
+	Core->ResetOwnedCores();
+	TestTrue(TEXT("Removing critical core preserves the external base value"), FMath::IsNearlyEqual(Attributes->GetCriticalChance(), 0.4f));
 
 	UCoreDataAsset* SingleLevel = NewObject<UCoreDataAsset>();
 	SingleLevel->CoreId = TEXT("Test_SingleLevel");

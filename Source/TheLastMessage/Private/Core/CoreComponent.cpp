@@ -116,7 +116,7 @@ bool UCoreComponent::UpgradeCore(FCoreGrantRecord& Record)
 	const int32 NextLevel = Record.Level + 1;
 	for (const FActiveGameplayEffectHandle& EffectHandle : Record.EffectHandles)
 	{
-		// 효과를 새로 쌓지 않고 레벨만 갱신한다. Modifier의 커브가 이 레벨에 해당하는 수치를 계산한다.
+		// 효과를 새로 쌓지 않고 레벨만 갱신한다. GE의 수치 계산이 새 강화 단계로 다시 실행된다.
 		ASC->SetActiveGameplayEffectLevel(EffectHandle, NextLevel);
 	}
 	for (const FGameplayAbilitySpecHandle& AbilityHandle : Record.AbilityHandles)

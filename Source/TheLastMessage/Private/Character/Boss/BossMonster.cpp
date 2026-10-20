@@ -654,6 +654,8 @@ void ABossMonster::HandleBossDeath()
     // 정리 후에 알린다. Actor를 자동으로 Destroy하지 않는다.
     OnBossStateChanged.Broadcast(EBossState::Dead);
     OnBossDied.Broadcast();
+
+    PlayDeathMontage();
 }
 
 void ABossMonster::CompleteShieldPuzzle()
@@ -1514,4 +1516,57 @@ void ABossMonster::EndHitFlash()
 
     PreviousHitOverlay = nullptr;
     bHitFlashActive = false;
+}
+
+void ABossMonster::PlayDeathMontage()
+{
+    if (CurrentState != EBossState::Dead || IsActorBeingDestroyed())
+    {
+        return;
+    }
+
+    USkeletalMeshComponent* BossMesh = GetMesh();
+    UAnimInstance* Anim = IsValid(BossMesh) ? BossMesh->GetAnimInstance() : nullptr;
+    if (!IsValid(Anim) || !IsValid(DeathMontage.Get()))
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("%s: DeathMontage or AnimInstance is missing."), *GetName());
+        return;
+    }
+
+    BossMesh->bPauseAnims = false;
+    BossMesh->SetComponentTickEnabled(true);
+    BossMesh->VisibilityBasedAnimTickOption =
+        EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+
+    Anim->StopAllMontages(0.f);
+    if (Anim->Montage_Play(DeathMontage.Get(), 1.f) <= 0.f)
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("%s: failed to play DeathMontage."), *GetName());
+        return;
+    }
+
+    FAnimMontageInstance* Instance =
+        Anim->GetActiveInstanceForMontage(DeathMontage.Get());
+    if (!Instance)
+    {
+        Anim->Montage_Stop(0.f, DeathMontage.Get());
+        UE_LOG(LogTemp, Warning,
+            TEXT("%s: DeathMontage instance is missing."), *GetName());
+        return;
+    }
+
+    // 재생 종료 위치에서 블렌드 아웃하지 않고 마지막 자세를 유지한다.
+    Instance->bEnableAutoBlendOut = false;
+
+    // 섹션이 여러 개여도 순서대로 한 번만 재생하고 마지막 섹션에서 멈춘다.
+    const int32 SectionCount = DeathMontage->CompositeSections.Num();
+    for (int32 Index = 0; Index < SectionCount; ++Index)
+    {
+        const FName NextSection = Index + 1 < SectionCount
+            ? DeathMontage->GetSectionName(Index + 1) : NAME_None;
+        Anim->Montage_SetNextSection(
+            DeathMontage->GetSectionName(Index), NextSection, DeathMontage.Get());
+    }
 }

@@ -122,6 +122,9 @@ public:
     FOnBossDiedSignature OnBossDied;
 
 protected:
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|Death")
+    TObjectPtr<UAnimMontage> DeathMontage;
+
     virtual void BeginPlay() override;
 
     virtual void PostInitializeComponents() override;
@@ -212,6 +215,8 @@ protected:
     TSubclassOf<UGameplayEffect> InitialStatsEffect;
 
 private:
+    void PlayDeathMontage();
+
     void HandleBossHealthChanged(const FOnAttributeChangeData& Data);
 
     void StartHitFlash();

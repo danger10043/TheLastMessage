@@ -10,6 +10,8 @@
 
 class UAnimMontage;
 class UNiagaraSystem;
+class UMaterialInterface;
+class UAnimSequence;
 /**
  * 
  */
@@ -20,6 +22,16 @@ class THELASTMESSAGE_API UWeaponDataAsset : public UDataAsset
 
 public:
 	UWeaponDataAsset();
+	// Optional weapon-specific ready/idle loop; otherwise the player uses pistol/rifle defaults.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Animation")
+	TObjectPtr<UAnimSequence> RangedIdleAnimation;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Projectile Visual")
+	TObjectPtr<UMaterialInterface> ProjectileMaterial;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Projectile Visual")
+	FLinearColor ProjectileColor = FLinearColor(0.1f, 0.8f, 1.0f);
+	// Visual dimensions only; the hit sphere remains unchanged.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Projectile Visual")
+	FVector ProjectileVisualScale = FVector(0.45f, 0.12f, 0.12f);
 
 public:
 	// ------------------------------공통------------------------------
@@ -78,8 +90,8 @@ public:
 	float MaxChargeDamageMultiplier = 1.0f;
 
 	// ------------------------------근접------------------------------
-	// 근접 공격 간격(초)
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
+	// Legacy serialized value; attacks now wait for their animation to complete.
+	UPROPERTY()
 	float AttackInterval = 0.5f;
 
 	// 근접 공격 사거리
@@ -87,8 +99,8 @@ public:
 	float AttackRange;
 
 	// ------------------------------원거리-----------------------------
-	// 분당 발사 횟수
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
+	// Legacy serialized value; no longer used to gate attacks.
+	UPROPERTY()
 	float RPM;
 
 	// 원거리 사거리

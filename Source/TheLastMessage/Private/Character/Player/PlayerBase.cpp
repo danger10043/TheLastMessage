@@ -35,6 +35,7 @@
 #include "InputAction.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Engine/World.h"
+#include "Projectile/ProjectileBase.h"
 #include "GameFramework/GameStateBase.h"
 
 namespace PlayerReaction
@@ -64,6 +65,9 @@ static TAutoConsoleVariable<int32> CVarDebugAim(
 
 APlayerBase::APlayerBase()
 {
+	RangedAimPostProcessClass = FSoftObjectPath(TEXT("/Game/Test_Jihong/Animations/ABP_PlayerRangedReady.ABP_PlayerRangedReady_C"));
+	DefaultLightRangedProjectileClass = FSoftObjectPath(TEXT("/Game/Test_Jihong/Blueprints/Projectile/BP_Projectile_Plasma.BP_Projectile_Plasma_C"));
+	DefaultHeavyRangedProjectileClass = FSoftObjectPath(TEXT("/Game/Test_Jihong/Blueprints/Projectile/BP_Projectile_Railgun.BP_Projectile_Railgun_C"));
 	WeaponChoices.SetNum(4);
 	OwnedWeaponChoices.SetNumZeroed(4);
 	WeaponSelectionActions.SetNum(4);
@@ -176,15 +180,62 @@ void APlayerBase::UpdateMouseAim()
 	}
 }
 
+TSubclassOf<AProjectileBase> APlayerBase::GetAttackProjectileClass(const UWeaponDataAsset* Data) const
+{
+	if (!Data) return nullptr;
+	// Explicit weapon-specific Blueprint classes always win over the player defaults.
+	if (Data->ProjectileClass != AProjectileBase::StaticClass()) return Data->ProjectileClass;
+	const TSoftClassPtr<AProjectileBase>& Default = Data->WeaponType == EWeaponType::HeavyRanged
+		? DefaultHeavyRangedProjectileClass : DefaultLightRangedProjectileClass;
+	if (UClass* Class = Default.LoadSynchronous()) return Class;
+	return Data->ProjectileClass;
+}
+
+bool APlayerBase::IsRangedAiming() const
+{
+	const UWeaponDataAsset* Data = GetWeaponDataInSlot(VisibleWeaponSlot);
+	return Data && !IsDead() && !IsHitReacting() && AbilitySystemComponent
+		&& AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking)
+		&& (Data->WeaponType == EWeaponType::LightRanged || Data->WeaponType == EWeaponType::HeavyRanged);
+}
+
+void APlayerBase::UpdateRangedFacing()
+{
+	UCharacterMovementComponent* Movement = GetCharacterMovement();
+	if (IsRangedAiming())
+	{
+		if (!bRangedFacingOverride) bRestoreOrientToMovement = Movement->bOrientRotationToMovement;
+		bRangedFacingOverride = true;
+		Movement->bOrientRotationToMovement = false;
+		const FVector Aim = GetAimTargetLocation() - GetActorLocation();
+		if (FMath::Abs(Aim.X) > 5.0f) SetActorRotation(FRotator(0.0f, Aim.X > 0.0f ? 0.0f : 180.0f, 0.0f));
+	}
+	else if (bRangedFacingOverride)
+	{
+		Movement->bOrientRotationToMovement = bRestoreOrientToMovement;
+		bRangedFacingOverride = false;
+	}
+}
+
 void APlayerBase::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	if (HasAuthority() && PendingAttackInput.IsValid()
+		&& !AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking))
+	{
+		const FGameplayTag Input = PendingAttackInput;
+		const EWeaponSlot Slot = Input == WeaponGameplayTags::Input_Primary ? EWeaponSlot::Primary : EWeaponSlot::Secondary;
+		const bool bSameWeapon = PendingAttackWeapon.IsValid() && PendingAttackWeapon.Get() == GetWeaponInSlot(Slot);
+		ClearPendingAttack();
+		if (bSameWeapon && !IsDead() && !IsHitReacting()) AbilityInputPressed(Input);
+	}
 	UpdateMouseAim();
 	if (HasAuthority() && !IsLocallyControlled() && bHasAimTarget)
 	{
 		// 클라이언트의 다음 갱신 전에도 이동한 캐릭터 위치를 기준으로 방향을 계산한다.
 		SetAimTarget(AimTargetLocation);
 	}
+	UpdateRangedFacing();
 	if (IsLocallyControlled() && !HasAuthority() && bHasAimTarget && !IsDead())
 	{
 		AimSendElapsed += DeltaSeconds;
@@ -296,6 +347,10 @@ bool APlayerBase::IsGrappling() const
 void APlayerBase::BeginPlay()
 {
 	Super::BeginPlay();
+	if (UClass* AimClass = RangedAimPostProcessClass.LoadSynchronous())
+	{
+		GetMesh()->SetOverridePostProcessAnimBP(AimClass);
+	}
 	InitializePlayer();
 	if (HasAuthority() && !bHasCheckpoint) SetCheckpoint(GetActorTransform());
 }
@@ -482,6 +537,12 @@ void APlayerBase::AbilityInputPressed(FGameplayTag InputTag)
 			AbilitySystemComponent->CancelAbilityHandle(Handle);
 		}
 	}
+	if (RequestedSlot != EWeaponSlot::None && !IsChargingWeapon()
+		&& AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking))
+	{
+		PendingAttackInput = InputTag;
+		PendingAttackWeapon = GetWeaponInSlot(RequestedSlot);
+	}
 	for (const FGameplayAbilitySpecHandle Handle : Handles)
 	{
 		FGameplayAbilitySpec* Spec = AbilitySystemComponent->FindAbilitySpecFromHandle(Handle);
@@ -503,6 +564,7 @@ void APlayerBase::AbilityInputPressed(FGameplayTag InputTag)
 
 void APlayerBase::AbilityInputReleased(FGameplayTag InputTag)
 {
+	if (PendingAttackInput == InputTag) ClearPendingAttack();
 	if (AssignmentClickInputs.HasTagExact(InputTag))
 	{
 		AssignmentClickInputs.RemoveTag(InputTag);
@@ -551,6 +613,7 @@ void APlayerBase::ShowWeaponInSlot(EWeaponSlot Slot)
 {
 	if (!HasAuthority() || !IsValid(GetWeaponInSlot(Slot))) return;
 	VisibleWeaponSlot = Slot;
+	UpdateRangedFacing();
 	RefreshPrimaryWeaponVisual();
 	ForceNetUpdate();
 }
@@ -754,6 +817,7 @@ void APlayerBase::RechargeWeaponEnergy()
 
 void APlayerBase::AbilityInputCanceled(FGameplayTag InputTag)
 {
+	if (PendingAttackInput == InputTag) ClearPendingAttack();
 	if (AssignmentClickInputs.HasTagExact(InputTag))
 	{
 		AssignmentClickInputs.RemoveTag(InputTag);

@@ -16,6 +16,8 @@ class UGameplayEffect;
 class UAnimMontage;
 class UNiagaraSystem;
 class UMaterialInterface;
+class UWidgetComponent;
+class UEnemyHealthBarWidget;
 class AEnemyBase;
 class AEnemyProjectile;
 
@@ -165,6 +167,15 @@ protected:
 	UFUNCTION()
 	void HandleDamagedEffect(float Damage);
 
+	/** 머리 위 체력바를 갱신한다. bInstant가 true면 지연 바도 즉시 맞춘다. */
+	void UpdateHealthBar(bool bInstant);
+
+	/** 체력바를 보여 준다. 항상 표시 모드가 아니면 HealthBarVisibleTime 뒤에 다시 숨긴다. */
+	void ShowHealthBar();
+	void HideHealthBar();
+
+	UEnemyHealthBarWidget* GetHealthBarWidget() const;
+
 	/** 피격 몽타주를 재생한다(조건을 만족할 때만). */
 	void PlayHitReaction();
 
@@ -214,6 +225,18 @@ protected:
 	/** 피해를 받을 때 재생할 피격 몽타주(비워 두면 재생하지 않음). 몽타주는 DefaultSlot을 사용한다. */
 	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Animation")
 	TObjectPtr<UAnimMontage> HitMontage;
+
+	/** 머리 위 체력바. 블루프린트에서 Widget Class에 WBP_EnemyHealthBar를 지정하고 위치를 조정한다. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Enemy|UI")
+	TObjectPtr<UWidgetComponent> HealthBarComponent;
+
+	/** 켜면 체력바를 항상 표시하고, 끄면 맞은 뒤 HealthBarVisibleTime 동안만 표시한다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Enemy|UI")
+	bool bAlwaysShowHealthBar = false;
+
+	/** 맞은 뒤 체력바가 유지되는 시간(초) */
+	UPROPERTY(EditDefaultsOnly, Category = "Enemy|UI", meta = (ClampMin = "0.1", EditCondition = "!bAlwaysShowHealthBar"))
+	float HealthBarVisibleTime = 3.f;
 
 	/** 피격 몽타주를 다시 재생할 수 있기까지의 최소 간격(초). 연속 피격 때 계속 끊기는 것을 막는다. */
 	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Animation", meta = (ClampMin = "0.0"))
@@ -292,6 +315,8 @@ private:
 	double LastHitReactionTime = -1000000.0;
 
 	FTimerHandle HitFlashTimerHandle;
+
+	FTimerHandle HealthBarTimerHandle;
 
 	/** 풀에 보관 중인지 */
 	bool bInPool = false;

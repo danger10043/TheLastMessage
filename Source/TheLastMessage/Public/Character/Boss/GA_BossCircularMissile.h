@@ -3,10 +3,13 @@
 #include "CoreMinimal.h"
 #include "Character/Boss/GA_BossAttackBase.h"
 #include "TimerManager.h"
+#include "Animation/AnimInstance.h"
 #include "GA_BossCircularMissile.generated.h"
 
 class APlayerBase;
 class ABossCircularMissile;
+class UAnimMontage;
+class UAbilityTask_PlayMontageAndWait;
 
 UCLASS()
 class THELASTMESSAGE_API UGA_BossCircularMissile : public UGA_BossAttackBase
@@ -29,10 +32,34 @@ public:
         bool bReplicateEndAbility, bool bWasCancelled) override;
 
 protected:
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CircularMissile|Animation")
+    TObjectPtr<UAnimMontage> AttackMontage;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CircularMissile|Animation")
+    FName LaunchNotifyName = TEXT("LaunchStart");
+
     UPROPERTY(EditDefaultsOnly, Category = "Boss|CircularMissile")
     FVector MissileSpawnOffset = FVector(0.f, 0.f, 150.f);
 
 private:
+    UFUNCTION()
+    void HandleLaunchNotify(FName NotifyName,
+        const FBranchingPointNotifyPayload& Payload);
+
+    UFUNCTION()
+    void HandleMontageCompleted();
+
+    UFUNCTION()
+    void HandleMontageCancelled();
+
+    UPROPERTY(Transient)
+    TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;
+
+    TWeakObjectPtr<UAnimInstance> BoundAnimInstance;
+    int32 MontageInstanceID = INDEX_NONE;
+    bool bLaunchStarted = false;
+    bool bMontageFinished = false;
+
     void SpawnNextMissile();
     void CheckMissilesFinished();
 

@@ -15,6 +15,8 @@
 #include "Kismet/KismetSystemLibrary.h"
 #include "Engine/World.h"
 #include "Curves/CurveFloat.h"
+#include "Framework/ActorPoolSubsystem.h"
+#include "TimerManager.h"
 
 ABossCircularMissile::ABossCircularMissile()
 {
@@ -41,6 +43,20 @@ void ABossCircularMissile::BeginPlay()
 {
     Super::BeginPlay();
 
+    bExploded = true;
+    SetLifeSpan(0.f);
+    SetActorTickEnabled(false);
+    WarningSphere->SetVisibility(false);
+    TrailVFX->DeactivateImmediate();
+}
+
+void ABossCircularMissile::StartMissile()
+{
+    if (bInPool || IsActorBeingDestroyed())
+    {
+        return;
+    }
+
     SourceBoss = Cast<ABossMonster>(GetOwner());
     if (!IsValid(SourceBoss.Get())
         || !FMath::IsFinite(LaunchTime) || LaunchTime < 0.01f
@@ -53,7 +69,7 @@ void ABossCircularMissile::BeginPlay()
     {
         UE_LOG(LogTemp, Error,
             TEXT("%s: invalid missile settings or Owner."), *GetName());
-        Destroy();
+        ReturnToPool();
         return;
     }
 
@@ -79,7 +95,7 @@ void ABossCircularMissile::BeginPlay()
     {
         UE_LOG(LogTemp, Error,
             TEXT("%s: WarningSphere mesh is not configured."), *GetName());
-        Destroy();
+        ReturnToPool();
         return;
     }
 
@@ -88,7 +104,7 @@ void ABossCircularMissile::BeginPlay()
     {
         UE_LOG(LogTemp, Error,
             TEXT("%s: WarningSphere mesh bounds are invalid."), *GetName());
-        Destroy();
+        ReturnToPool();
         return;
     }
 
@@ -101,11 +117,84 @@ void ABossCircularMissile::BeginPlay()
     {
         UE_LOG(LogTemp, Error,
             TEXT("%s: Failed to create warning material."), *GetName());
-        Destroy();
+        ReturnToPool();
         return;
     }
 
     WarningMID->SetScalarParameterValue(TEXT("Progress"), 0.f);
+    bExploded = false;
+    WarningSphere->SetVisibility(true);
+    TrailVFX->Activate(true);
+    SetActorTickEnabled(true);
+}
+
+void ABossCircularMissile::OnAcquiredFromPool()
+{
+    bUsesPool = true;
+    bInPool = false;
+    bExploded = true;
+    bResolvingExplosion = false;
+    SourceBoss = nullptr;
+    OnMissileReturned.Unbind();
+
+    const ABossCircularMissile* Defaults =
+        GetClass()->GetDefaultObject<ABossCircularMissile>();
+    LaunchTime = Defaults->LaunchTime;
+    Damage = Defaults->Damage;
+    DamageRadius = Defaults->DamageRadius;
+    MissileLaunchDelta = Defaults->MissileLaunchDelta;
+    FireLocation = FVector::ZeroVector;
+
+    StartLocation = FVector::ZeroVector;
+    MidLocation = FVector::ZeroVector;
+    ImpactLocation = FVector::ZeroVector;
+    LaunchRotation = FQuat::Identity;
+    ImpactRotation = FQuat::Identity;
+    SpawnTime = 0.0;
+    FlightDuration = 0.f;
+
+    SetLifeSpan(0.f);
+    SetActorTickEnabled(false);
+    SetActorEnableCollision(false);
+    WarningSphere->SetVisibility(false);
+    TrailVFX->DeactivateImmediate();
+}
+
+void ABossCircularMissile::OnReturnedToPool()
+{
+    bInPool = true;
+    bExploded = true;
+    SourceBoss = nullptr;
+    SetLifeSpan(0.f);
+    GetWorldTimerManager().ClearAllTimersForObject(this);
+    SetActorTickEnabled(false);
+    WarningSphere->SetVisibility(false);
+    TrailVFX->DeactivateImmediate();
+
+    FSimpleDelegate ReturnedCallback = MoveTemp(OnMissileReturned);
+    OnMissileReturned.Unbind();
+    ReturnedCallback.ExecuteIfBound();
+}
+
+void ABossCircularMissile::ReturnToPool()
+{
+    if (bInPool || bResolvingExplosion || IsActorBeingDestroyed())
+    {
+        return;
+    }
+
+    if (bUsesPool)
+    {
+        if (UActorPoolSubsystem* Pool =
+            GetWorld()->GetSubsystem<UActorPoolSubsystem>())
+        {
+            Pool->ReleaseActor(this);
+            return;
+        }
+    }
+
+    OnReturnedToPool();
+    Destroy();
 }
 
 void ABossCircularMissile::Tick(float DeltaSeconds)
@@ -186,6 +275,7 @@ void ABossCircularMissile::Explode()
         return;
     }
     bExploded = true;
+    bResolvingExplosion = true;
     SetActorTickEnabled(false);
     SetActorLocation(ImpactLocation, false);
 
@@ -224,7 +314,8 @@ void ABossCircularMissile::Explode()
             }
         }
     }
-    Destroy();
+    bResolvingExplosion = false;
+    ReturnToPool();
 }
 
 void ABossCircularMissile::ApplyExplosionDamage()

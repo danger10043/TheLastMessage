@@ -21,6 +21,12 @@
 #include "Gimmick/Laser/LaserReceiver.h"
 #include "Gimmick/Laser/LaserReflector.h"
 #include "Engine/World.h"
+#include "GameFramework/PlayerController.h"
+#include "GameFramework/Pawn.h"
+#include "TimerManager.h"
+#include "Materials/MaterialInterface.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
 
 ABossMonster::ABossMonster()
 {
@@ -82,6 +88,15 @@ void ABossMonster::BeginPlay()
     Super::BeginPlay();
     UpdateEquipmentForPhase(GetBossPhase());
     InitializeBoss();
+
+    if (IsValid(AbilitySystemComponent.Get())
+        && CurrentState != EBossState::Dead)
+    {
+        HealthChangedDelegateHandle = AbilitySystemComponent
+            ->GetGameplayAttributeValueChangeDelegate(
+                UBossAttributeSet::GetHealthAttribute())
+            .AddUObject(this, &ABossMonster::HandleBossHealthChanged);
+    }
 }
 
 UAbilitySystemComponent* ABossMonster::GetAbilitySystemComponent() const
@@ -548,8 +563,10 @@ void ABossMonster::HandleBossDeath()
 
     // 취소·체력 알림·이벤트 콜백보다 먼저 사망 상태를 확정한다.
     CurrentState = EBossState::Dead;
+    EndHitFlash();
     UpdatePuzzlePresentation();
     CurrentTarget = nullptr;
+    RemoveBossUI();
     bIsRangedImmune = false;
 
     if (IsValid(AbilitySystemComponent.Get()))
@@ -637,6 +654,8 @@ void ABossMonster::HandleBossDeath()
     // 정리 후에 알린다. Actor를 자동으로 Destroy하지 않는다.
     OnBossStateChanged.Broadcast(EBossState::Dead);
     OnBossDied.Broadcast();
+
+    PlayDeathMontage();
 }
 
 void ABossMonster::CompleteShieldPuzzle()
@@ -971,6 +990,7 @@ void ABossMonster::SetCurrentTarget(AActor* NewTarget)
     }
 
     CurrentTarget = CurrentState != EBossState::Dead && IsValid(NewTarget) ? NewTarget : nullptr;
+    UpdateBossUI();
 }
 
 void ABossMonster::UpdatePuzzlePresentation()
@@ -1112,6 +1132,7 @@ void ABossMonster::Tick(float DeltaSeconds)
     Super::Tick(DeltaSeconds);
 
     CheckLaserPuzzleCompletion();
+    UpdateBossUI();
 
     if (bPuzzlePresentationActive)
     {
@@ -1154,6 +1175,17 @@ void ABossMonster::Tick(float DeltaSeconds)
 
 void ABossMonster::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+    if (IsValid(AbilitySystemComponent.Get())
+        && HealthChangedDelegateHandle.IsValid())
+    {
+        AbilitySystemComponent->GetGameplayAttributeValueChangeDelegate(
+            UBossAttributeSet::GetHealthAttribute())
+            .Remove(HealthChangedDelegateHandle);
+    }
+    HealthChangedDelegateHandle.Reset();
+    EndHitFlash();
+
+    RemoveBossUI();
     StopLaserPuzzle();
 
     if (UAnimInstance* Anim = PuzzleAnimInstance.Get())
@@ -1332,5 +1364,209 @@ void ABossMonster::CheckLaserPuzzleCompletion()
                 return;
             }
         }
+    }
+}
+
+void ABossMonster::RemoveBossUI()
+{
+    if (IsValid(BossUIWidget.Get()))
+    {
+        BossUIWidget->SetVisibility(ESlateVisibility::Collapsed);
+        BossUIWidget->RemoveFromParent();
+    }
+    BossUIWidget = nullptr;
+}
+
+void ABossMonster::UpdateBossUI()
+{
+    APawn* TargetPawn = Cast<APawn>(GetCurrentTarget());
+    APlayerController* PC = IsValid(TargetPawn)
+        ? Cast<APlayerController>(TargetPawn->GetController()) : nullptr;
+
+    if (CurrentState == EBossState::Dead
+        || !IsValid(TargetPawn) || !IsValid(PC)
+        || !PC->IsLocalController() || !PC->GetLocalPlayer()
+        || PC->GetPawn() != TargetPawn || !BossUIWidgetClass)
+    {
+        RemoveBossUI();
+        return;
+    }
+
+    if (IsValid(BossUIWidget.Get())
+        && BossUIWidget->GetOwningPlayer() != PC)
+    {
+        RemoveBossUI();
+    }
+
+    if (!IsValid(BossUIWidget.Get()))
+    {
+        BossUIWidget = CreateWidget<UBossUIWidget>(PC, BossUIWidgetClass);
+        if (!IsValid(BossUIWidget.Get()))
+        {
+            return;
+        }
+    }
+
+    if (!BossUIWidget->IsInViewport())
+    {
+        if (!BossUIWidget->AddToPlayerScreen(30))
+        {
+            RemoveBossUI();
+            return;
+        }
+    }
+
+    // Widget 초기화 콜백에서 타깃이나 보스 상태가 변경된 경우도 처리한다.
+    if (!IsValid(BossUIWidget.Get())
+        || CurrentState == EBossState::Dead
+        || GetCurrentTarget() != TargetPawn)
+    {
+        RemoveBossUI();
+        return;
+    }
+
+    const float Health = IsValid(AttributeSet.Get())
+        ? AttributeSet->GetHealth() : 0.f;
+    const float MaxHealth = IsValid(AttributeSet.Get())
+        ? AttributeSet->GetMaxHealth() : 0.f;
+    const float HealthRatio = FMath::IsFinite(Health)
+        && FMath::IsFinite(MaxHealth) && MaxHealth > 0.f
+        ? FMath::Clamp(Health / MaxHealth, 0.f, 1.f) : 0.f;
+
+    bool bShowPuzzle = false;
+    float PuzzleRatio = 0.f;
+    if (CurrentState == EBossState::ShieldPuzzle
+        && IsValid(ShieldComponent.Get())
+        && ShieldComponent->IsShieldActive())
+    {
+        const float TimeLimit = ShieldComponent->GetPuzzleTimeLimit();
+        const float Remaining = ShieldComponent->GetRemainingPuzzleTime();
+        bShowPuzzle = FMath::IsFinite(TimeLimit) && TimeLimit > 0.f
+            && FMath::IsFinite(Remaining) && Remaining > 0.f;
+        if (bShowPuzzle)
+        {
+            PuzzleRatio = FMath::Clamp(Remaining / TimeLimit, 0.f, 1.f);
+        }
+    }
+
+    BossUIWidget->SetBossStatus(HealthRatio, bShowPuzzle, PuzzleRatio);
+    BossUIWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
+}
+
+void ABossMonster::HandleBossHealthChanged(
+    const FOnAttributeChangeData& Data)
+{
+    if (CurrentState == EBossState::Dead
+        || !FMath::IsFinite(Data.OldValue)
+        || !FMath::IsFinite(Data.NewValue)
+        || Data.NewValue >= Data.OldValue)
+    {
+        return;
+    }
+
+    if (IsValid(HitEffect.Get()) && GetWorld())
+    {
+        UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+            this,
+            HitEffect.Get(),
+            GetActorLocation(),
+            GetActorRotation());
+    }
+
+    if (Data.NewValue > 0.f)
+    {
+        StartHitFlash();
+    }
+}
+
+void ABossMonster::StartHitFlash()
+{
+    if (CurrentState == EBossState::Dead
+        || !IsValid(HitFlashMaterial.Get()) || !IsValid(GetMesh())
+        || !GetWorld() || !FMath::IsFinite(HitFlashDuration)
+        || HitFlashDuration <= 0.f)
+    {
+        return;
+    }
+
+    if (!bHitFlashActive)
+    {
+        PreviousHitOverlay = GetMesh()->GetOverlayMaterial();
+        bHitFlashActive = true;
+    }
+
+    GetMesh()->SetOverlayMaterial(HitFlashMaterial.Get());
+    GetWorldTimerManager().SetTimer(
+        HitFlashTimerHandle, this, &ABossMonster::EndHitFlash,
+        HitFlashDuration, false);
+}
+
+void ABossMonster::EndHitFlash()
+{
+    if (GetWorld())
+    {
+        GetWorldTimerManager().ClearTimer(HitFlashTimerHandle);
+    }
+
+    if (bHitFlashActive && IsValid(GetMesh())
+        && GetMesh()->GetOverlayMaterial() == HitFlashMaterial.Get())
+    {
+        GetMesh()->SetOverlayMaterial(PreviousHitOverlay.Get());
+    }
+
+    PreviousHitOverlay = nullptr;
+    bHitFlashActive = false;
+}
+
+void ABossMonster::PlayDeathMontage()
+{
+    if (CurrentState != EBossState::Dead || IsActorBeingDestroyed())
+    {
+        return;
+    }
+
+    USkeletalMeshComponent* BossMesh = GetMesh();
+    UAnimInstance* Anim = IsValid(BossMesh) ? BossMesh->GetAnimInstance() : nullptr;
+    if (!IsValid(Anim) || !IsValid(DeathMontage.Get()))
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("%s: DeathMontage or AnimInstance is missing."), *GetName());
+        return;
+    }
+
+    BossMesh->bPauseAnims = false;
+    BossMesh->SetComponentTickEnabled(true);
+    BossMesh->VisibilityBasedAnimTickOption =
+        EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+
+    Anim->StopAllMontages(0.f);
+    if (Anim->Montage_Play(DeathMontage.Get(), 1.f) <= 0.f)
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("%s: failed to play DeathMontage."), *GetName());
+        return;
+    }
+
+    FAnimMontageInstance* Instance =
+        Anim->GetActiveInstanceForMontage(DeathMontage.Get());
+    if (!Instance)
+    {
+        Anim->Montage_Stop(0.f, DeathMontage.Get());
+        UE_LOG(LogTemp, Warning,
+            TEXT("%s: DeathMontage instance is missing."), *GetName());
+        return;
+    }
+
+    // 재생 종료 위치에서 블렌드 아웃하지 않고 마지막 자세를 유지한다.
+    Instance->bEnableAutoBlendOut = false;
+
+    // 섹션이 여러 개여도 순서대로 한 번만 재생하고 마지막 섹션에서 멈춘다.
+    const int32 SectionCount = DeathMontage->CompositeSections.Num();
+    for (int32 Index = 0; Index < SectionCount; ++Index)
+    {
+        const FName NextSection = Index + 1 < SectionCount
+            ? DeathMontage->GetSectionName(Index + 1) : NAME_None;
+        Anim->Montage_SetNextSection(
+            DeathMontage->GetSectionName(Index), NextSection, DeathMontage.Get());
     }
 }

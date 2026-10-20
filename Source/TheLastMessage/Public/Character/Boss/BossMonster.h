@@ -22,6 +22,8 @@ class UAnimMontage;
 class ALaserEmitter;
 class ALaserReceiver;
 class ALaserReflector;
+class UMaterialInterface;
+struct FOnAttributeChangeData;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
     FOnBossPhaseChangedSignature, EBossPhase, NewPhase);
@@ -209,6 +211,24 @@ protected:
     TSubclassOf<UGameplayEffect> InitialStatsEffect;
 
 private:
+    void HandleBossHealthChanged(const FOnAttributeChangeData& Data);
+    void StartHitFlash();
+    void EndHitFlash();
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|HitFlash")
+    TObjectPtr<UMaterialInterface> HitFlashMaterial;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|HitFlash",
+        meta = (ClampMin = "0.01"))
+    float HitFlashDuration = 0.08f;
+
+    UPROPERTY(Transient)
+    TObjectPtr<UMaterialInterface> PreviousHitOverlay;
+
+    FDelegateHandle HealthChangedDelegateHandle;
+    FTimerHandle HitFlashTimerHandle;
+    bool bHitFlashActive = false;
+
     void UpdateBossUI();
     void RemoveBossUI();
 

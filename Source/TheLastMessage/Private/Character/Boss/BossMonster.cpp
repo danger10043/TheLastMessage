@@ -23,6 +23,8 @@
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/Pawn.h"
+#include "TimerManager.h"
+#include "Materials/MaterialInterface.h"
 
 ABossMonster::ABossMonster()
 {
@@ -84,6 +86,15 @@ void ABossMonster::BeginPlay()
     Super::BeginPlay();
     UpdateEquipmentForPhase(GetBossPhase());
     InitializeBoss();
+
+    if (IsValid(AbilitySystemComponent.Get())
+        && CurrentState != EBossState::Dead)
+    {
+        HealthChangedDelegateHandle = AbilitySystemComponent
+            ->GetGameplayAttributeValueChangeDelegate(
+                UBossAttributeSet::GetHealthAttribute())
+            .AddUObject(this, &ABossMonster::HandleBossHealthChanged);
+    }
 }
 
 UAbilitySystemComponent* ABossMonster::GetAbilitySystemComponent() const
@@ -550,6 +561,7 @@ void ABossMonster::HandleBossDeath()
 
     // 취소·체력 알림·이벤트 콜백보다 먼저 사망 상태를 확정한다.
     CurrentState = EBossState::Dead;
+    EndHitFlash();
     UpdatePuzzlePresentation();
     CurrentTarget = nullptr;
     RemoveBossUI();
@@ -1159,6 +1171,16 @@ void ABossMonster::Tick(float DeltaSeconds)
 
 void ABossMonster::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+    if (IsValid(AbilitySystemComponent.Get())
+        && HealthChangedDelegateHandle.IsValid())
+    {
+        AbilitySystemComponent->GetGameplayAttributeValueChangeDelegate(
+            UBossAttributeSet::GetHealthAttribute())
+            .Remove(HealthChangedDelegateHandle);
+    }
+    HealthChangedDelegateHandle.Reset();
+    EndHitFlash();
+
     RemoveBossUI();
     StopLaserPuzzle();
 
@@ -1425,4 +1447,57 @@ void ABossMonster::UpdateBossUI()
 
     BossUIWidget->SetBossStatus(HealthRatio, bShowPuzzle, PuzzleRatio);
     BossUIWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
+}
+
+void ABossMonster::HandleBossHealthChanged(
+    const FOnAttributeChangeData& Data)
+{
+    if (CurrentState == EBossState::Dead
+        || !FMath::IsFinite(Data.OldValue)
+        || !FMath::IsFinite(Data.NewValue)
+        || Data.NewValue >= Data.OldValue || Data.NewValue <= 0.f)
+    {
+        return;
+    }
+
+    StartHitFlash();
+}
+
+void ABossMonster::StartHitFlash()
+{
+    if (CurrentState == EBossState::Dead
+        || !IsValid(HitFlashMaterial.Get()) || !IsValid(GetMesh())
+        || !GetWorld() || !FMath::IsFinite(HitFlashDuration)
+        || HitFlashDuration <= 0.f)
+    {
+        return;
+    }
+
+    if (!bHitFlashActive)
+    {
+        PreviousHitOverlay = GetMesh()->GetOverlayMaterial();
+        bHitFlashActive = true;
+    }
+
+    GetMesh()->SetOverlayMaterial(HitFlashMaterial.Get());
+    GetWorldTimerManager().SetTimer(
+        HitFlashTimerHandle, this, &ABossMonster::EndHitFlash,
+        HitFlashDuration, false);
+}
+
+void ABossMonster::EndHitFlash()
+{
+    if (GetWorld())
+    {
+        GetWorldTimerManager().ClearTimer(HitFlashTimerHandle);
+    }
+
+    if (bHitFlashActive && IsValid(GetMesh())
+        && GetMesh()->GetOverlayMaterial() == HitFlashMaterial.Get())
+    {
+        GetMesh()->SetOverlayMaterial(PreviousHitOverlay.Get());
+    }
+
+    PreviousHitOverlay = nullptr;
+    bHitFlashActive = false;
 }

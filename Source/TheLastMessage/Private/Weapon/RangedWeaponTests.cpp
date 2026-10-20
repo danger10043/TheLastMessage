@@ -1,6 +1,13 @@
 #if WITH_DEV_AUTOMATION_TESTS
 #include "Misc/AutomationTest.h"
 #include "Character/Player/PlayerBase.h"
+#include "Character/Player/PlayerAimAnimInstance.h"
+#include "Animation/AnimSequence.h"
+#include "Animation/AnimMontage.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Components/SphereComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/SkeletalMesh.h"
 #include "Character/Enemy/EnemyBase.h"
 #include "Character/Enemy/EnemyAttributeSet.h"
 #include "DataAsset/WeaponDataAsset.h"
@@ -218,6 +225,63 @@ bool FRangedWeaponTest::RunTest(const FString& Parameters)
 	ASC->RemoveLooseGameplayTag(WeaponGameplayTags::State_Attacking);
 	Advance(0.02f);
 	TestFalse(TEXT("Interrupted attack discards queued input"), Player->IsChargingWeapon());
+	USkeletalMesh* PlayerMesh = LoadObject<USkeletalMesh>(nullptr, TEXT("/Game/Test_Jihong/Blueprints/Player/Robbie_01.Robbie_01"));
+	TestNotNull(TEXT("Player mesh for ranged aim exists"), PlayerMesh);
+	if (PlayerMesh)
+	{
+		Player->GetMesh()->SetSkeletalMeshAsset(PlayerMesh);
+		Player->GetMesh()->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+		Player->GetMesh()->SetAnimInstanceClass(LoadClass<UAnimInstance>(nullptr,
+			TEXT("/Game/Test_Jihong/Animations/Robbie_01_AnimBP.Robbie_01_AnimBP_C")));
+		Advance(0.1f);
+		UPlayerAimAnimInstance* AimAnim = Cast<UPlayerAimAnimInstance>(Player->GetMesh()->GetPostProcessInstance());
+		TestNotNull(TEXT("Ranged aim post-process is installed"), AimAnim);
+		if (AimAnim)
+		{
+			Advance(0.2f);
+			TestTrue(TEXT("Gun-ready idle is active before any shot"), AimAnim->RangedReadyAlpha > 0.9f);
+			TestNotNull(TEXT("Dedicated ranged idle sequence is selected"), AimAnim->RangedReadySequence.Get());
+			const FQuat NeutralSpine = Player->GetMesh()->GetSocketQuaternion(TEXT("spine_01"));
+			SendInput(WeaponGameplayTags::Input_Primary, 1);
+			Player->UpdateAimFromWorldRay(FVector(-1000, 500, 1200), -FVector::YAxisVector);
+			Advance(0.3f);
+			TestTrue(TEXT("Charging faces left toward cursor"), Player->GetActorForwardVector().X < -0.9f);
+			TestTrue(TEXT("Ranged aim is enabled during charge"), AimAnim->RangedAimAlpha > 0.9f);
+			TestTrue(TEXT("Upward aim produces upper-body rotation"), AimAnim->RangedAimRotation.GetManhattanDistance(FRotator::ZeroRotator) > 20.0f);
+			TestTrue(TEXT("Post-process actually modifies the spine pose"), NeutralSpine.AngularDistance(Player->GetMesh()->GetSocketQuaternion(TEXT("spine_01"))) > 0.15f);
+			ASC->CancelAbilityHandle(Spec->Handle);
+			Advance(0.4f);
+			TestTrue(TEXT("Canceled charge restores neutral upper-body blend"), AimAnim->RangedAimAlpha < 0.05f);
+			TestTrue(TEXT("After charge cancellation gun stays raised in idle"), AimAnim->RangedReadyAlpha > 0.9f);
+			TestTrue(TEXT("Movement-facing behavior is restored"), Player->GetCharacterMovement()->bOrientRotationToMovement);
+			Data->AttackMontage = LoadObject<UAnimMontage>(nullptr, TEXT("/Game/Test_Jihong/Animations/LightRange/AM_PlayerAttack_LightRange"));
+			TestTrue(TEXT("Firing montage can start from ready idle"), Player->GetMesh()->GetAnimInstance()->Montage_Play(Data->AttackMontage) > 0.0f);
+			Advance(0.3f);
+			TestTrue(TEXT("Firing animation takes priority over ready idle"), AimAnim->RangedReadyAlpha < 0.4f);
+			Advance(0.8f);
+			TestTrue(TEXT("Gun-ready idle returns after firing"), AimAnim->RangedReadyAlpha > 0.9f);
+			Data->AttackMontage = nullptr;
+		}
+	}
+	AProjectileBase* VisualProjectile = World->SpawnActor<AProjectileBase>(FVector(0, 0, 200), FRotator::ZeroRotator);
+	Data->ProjectileVisualScale = FVector(0.6f, 0.15f, 0.15f);
+	VisualProjectile->ConfigureVisuals(Data);
+	TestEqual(TEXT("Projectile visual scale follows weapon data"), VisualProjectile->FindComponentByClass<UStaticMeshComponent>()->GetRelativeScale3D(), Data->ProjectileVisualScale);
+	TestEqual(TEXT("Larger projectile visual preserves collision radius"), VisualProjectile->FindComponentByClass<USphereComponent>()->GetUnscaledSphereRadius(), 5.0f);
+	VisualProjectile->Destroy();
+	UClass* PlasmaBP = LoadClass<AProjectileBase>(nullptr, TEXT("/Game/Test_Jihong/Blueprints/Projectile/BP_Projectile_Plasma.BP_Projectile_Plasma_C"));
+	UClass* RailgunBP = LoadClass<AProjectileBase>(nullptr, TEXT("/Game/Test_Jihong/Blueprints/Projectile/BP_Projectile_Railgun.BP_Projectile_Railgun_C"));
+	TestNotNull(TEXT("Plasma projectile Blueprint exists"), PlasmaBP);
+	TestNotNull(TEXT("Railgun projectile Blueprint exists"), RailgunBP);
+	TestEqual(TEXT("Default light ranged weapon resolves editable projectile BP"), Player->GetAttackProjectileClass(Data).Get(), PlasmaBP);
+	AProjectileBase* RangeOverrideProjectile = World->SpawnActor<AProjectileBase>(FVector(0, 0, 200), FRotator::ZeroRotator);
+	FindFProperty<FBoolProperty>(AProjectileBase::StaticClass(), TEXT("bOverrideWeaponRange"))->SetPropertyValue_InContainer(RangeOverrideProjectile, true);
+	FindFProperty<FFloatProperty>(AProjectileBase::StaticClass(), TEXT("TravelRange"))->SetPropertyValue_InContainer(RangeOverrideProjectile, 75.0f);
+	TestTrue(TEXT("BP travel range override initializes"), RangeOverrideProjectile->InitializeProjectile(Player, DamageEffect, 10, 1000, 1000));
+	RangeOverrideProjectile->LaunchProjectile(FVector::ForwardVector);
+	TestTrue(TEXT("BP travel range replaces weapon data range"), FMath::IsNearlyEqual(RangeOverrideProjectile->GetLifeSpan(), 0.075f));
+	Advance(0.1f);
+	TestFalse(TEXT("Projectile expires at BP travel range"), IsValid(RangeOverrideProjectile));
 	// Maximum changes clamp the single shared resource.
 	Energy->SetSharedMaxEnergy(15);
 	TestTrue(TEXT("Maximum reduction clamps energy"), Energy->GetSharedEnergy() <= 15.0f);

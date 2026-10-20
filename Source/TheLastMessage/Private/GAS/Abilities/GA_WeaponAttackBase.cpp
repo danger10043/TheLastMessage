@@ -56,7 +56,8 @@ bool UGA_WeaponAttackBase::CanActivateAbility(const FGameplayAbilitySpecHandle H
 	if (Data->AttackMontage && !Player->GetMesh()->GetAnimInstance()) return false;
 	if (Data->WeaponType == EWeaponType::LightRanged || Data->WeaponType == EWeaponType::HeavyRanged)
 	{
-		return Data->ProjectileClass && !Data->ProjectileClass->HasAnyClassFlags(CLASS_Abstract)
+		const TSubclassOf<AProjectileBase> ProjectileClass = Player->GetAttackProjectileClass(Data);
+		return ProjectileClass && !ProjectileClass->HasAnyClassFlags(CLASS_Abstract)
 			&& FMath::IsFinite(Data->ProjectileSpeed) && Data->ProjectileSpeed > 0.0f
 			&& FMath::IsFinite(Data->Range) && Data->Range > 0.0f
 			&& FMath::IsFinite(Data->EnergyPerShot) && Data->EnergyPerShot >= 0.0f;
@@ -244,7 +245,7 @@ void UGA_WeaponAttackBase::ExecuteAttack()
 			return;
 		}
 		SpawnTransform = FTransform(ShotDirection.Rotation(), Player->GetActorLocation());
-		Projectile = GetWorld()->SpawnActorDeferred<AProjectileBase>(Data->ProjectileClass, SpawnTransform,
+		Projectile = GetWorld()->SpawnActorDeferred<AProjectileBase>(Player->GetAttackProjectileClass(Data), SpawnTransform,
 			Player, Player, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
 		if (!Projectile || !Projectile->InitializeProjectile(Player, DamageEffectClass, FinalDamage, Data->ProjectileSpeed, Data->Range, GetImpactFeedbackStrength()))
 		{
@@ -263,6 +264,7 @@ void UGA_WeaponAttackBase::ExecuteAttack()
 	if (Projectile)
 	{
 		SourceWeapon->LastSuccessfulFireTime = GetWorld()->GetTimeSeconds();
+		Projectile->ConfigureVisuals(SourceWeapon->WeaponData);
 		Projectile->FinishSpawning(SpawnTransform);
 		Projectile->LaunchProjectile(ShotDirection);
 		if (!IsActive() || bFinishingAttack) return;

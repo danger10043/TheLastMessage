@@ -21,10 +21,12 @@ class UWeaponBase;
 class UWeaponDataAsset;
 class UStaticMeshComponent;
 class UAnimMontage;
+class UAnimInstance;
 class UGrapplingHookComponent;
 class UCombatFeedbackComponent;
 class UGravityStateComponent;
 class APlayerBase;
+class AProjectileBase;
 struct FGameplayEffectContextHandle;
 struct FOnAttributeChangeData;
 
@@ -168,6 +170,15 @@ public:
 	// 커서 광선과 캐릭터의 이동 평면이 만나는 지점. 무기/훅 발사 위치에서도 사용한다.
 	UFUNCTION(BlueprintPure, Category="Player|Aim")
 	FVector GetAimTargetLocation() const;
+	UFUNCTION(BlueprintPure, Category="Player|Aim")
+	bool IsRangedAiming() const;
+	TSubclassOf<AProjectileBase> GetAttackProjectileClass(const UWeaponDataAsset* Data) const;
+	UPROPERTY(EditDefaultsOnly, Category="Player|Aim")
+	TSoftClassPtr<UAnimInstance> RangedAimPostProcessClass;
+	UPROPERTY(EditDefaultsOnly, Category="Player|Weapon|Projectile")
+	TSoftClassPtr<AProjectileBase> DefaultLightRangedProjectileClass;
+	UPROPERTY(EditDefaultsOnly, Category="Player|Weapon|Projectile")
+	TSoftClassPtr<AProjectileBase> DefaultHeavyRangedProjectileClass;
 
 	// 커스텀 카메라/입력에서도 같은 조준 계산을 사용할 수 있다. 실패 시 이전 조준 유지.
 	UFUNCTION(BlueprintCallable, Category="Player|Aim")
@@ -362,6 +373,9 @@ private:
 	float AimSendElapsed = 0.0f;
 	void AbilityInputPressed(FGameplayTag InputTag);
 	FGameplayTag PendingAttackInput;
+	void UpdateRangedFacing();
+	bool bRangedFacingOverride = false;
+	bool bRestoreOrientToMovement = true;
 	TWeakObjectPtr<UWeaponBase> PendingAttackWeapon;
 	void AbilityInputReleased(FGameplayTag InputTag);
 	void AbilityInputCanceled(FGameplayTag InputTag);

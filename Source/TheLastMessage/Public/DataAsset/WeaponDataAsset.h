@@ -10,6 +10,8 @@
 
 class UAnimMontage;
 class UNiagaraSystem;
+class UMaterialInterface;
+class UAnimSequence;
 /**
  * 
  */
@@ -20,6 +22,16 @@ class THELASTMESSAGE_API UWeaponDataAsset : public UDataAsset
 
 public:
 	UWeaponDataAsset();
+	// Optional weapon-specific ready/idle loop; otherwise the player uses pistol/rifle defaults.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Animation")
+	TObjectPtr<UAnimSequence> RangedIdleAnimation;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Projectile Visual")
+	TObjectPtr<UMaterialInterface> ProjectileMaterial;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Projectile Visual")
+	FLinearColor ProjectileColor = FLinearColor(0.1f, 0.8f, 1.0f);
+	// Visual dimensions only; the hit sphere remains unchanged.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Projectile Visual")
+	FVector ProjectileVisualScale = FVector(0.45f, 0.12f, 0.12f);
 
 public:
 	// ------------------------------공통------------------------------

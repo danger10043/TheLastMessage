@@ -9,6 +9,12 @@
 #include "GAS/WeaponGameplayTags.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Engine/StaticMesh.h"
+#include "DataAsset/WeaponDataAsset.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Net/UnrealNetwork.h"
+#include "NiagaraComponent.h"
+#include "NiagaraFunctionLibrary.h"
+#include "Kismet/GameplayStatics.h"
 
 AProjectileBase::AProjectileBase()
 {
@@ -32,7 +38,10 @@ AProjectileBase::AProjectileBase()
 	ProjectileMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> Sphere(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
 	ProjectileMesh->SetStaticMesh(Sphere.Object);
-	ProjectileMesh->SetRelativeScale3D(FVector(0.1f));
+	ProjectileMesh->SetRelativeScale3D(FVector(0.45f, 0.12f, 0.12f));
+	ProjectileMesh->SetCastShadow(false);
+	FlightEffect = CreateDefaultSubobject<UNiagaraComponent>(TEXT("FlightEffect"));
+	FlightEffect->SetupAttachment(RootComponent);
 
 	ProjectileMovement = CreateDefaultSubobject<UProjectileMovementComponent>(TEXT("ProjectileMovement"));
 	ProjectileMovement->UpdatedComponent = CollisionComponent;
@@ -46,6 +55,12 @@ AProjectileBase::AProjectileBase()
 void AProjectileBase::BeginPlay()
 {
 	Super::BeginPlay();
+	OnRep_VisualData();
+	if (!bUseWeaponVisualSettings)
+	{
+		if (UMaterialInstanceDynamic* Material = ProjectileMesh->CreateDynamicMaterialInstance(0))
+			Material->SetVectorParameterValue(TEXT("ProjectileColor"), ProjectileTint);
+	}
 	if (!HasAuthority())
 	{
 		CollisionComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -60,6 +75,32 @@ void AProjectileBase::BeginPlay()
 	}
 }
 
+void AProjectileBase::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	DOREPLIFETIME(AProjectileBase, VisualData);
+}
+
+void AProjectileBase::ConfigureVisuals(UWeaponDataAsset* Data)
+{
+	if (!HasAuthority()) return;
+	VisualData = Data;
+	OnRep_VisualData();
+}
+
+void AProjectileBase::OnRep_VisualData()
+{
+	if (!bUseWeaponVisualSettings || !VisualData || !ProjectileMesh) return;
+	const FVector Scale = VisualData->ProjectileVisualScale;
+	if (!Scale.ContainsNaN() && Scale.GetMin() > 0.0f) ProjectileMesh->SetRelativeScale3D(Scale);
+	if (VisualData->ProjectileMaterial)
+	{
+		UMaterialInstanceDynamic* Material = UMaterialInstanceDynamic::Create(VisualData->ProjectileMaterial, this);
+		Material->SetVectorParameterValue(TEXT("ProjectileColor"), VisualData->ProjectileColor);
+		ProjectileMesh->SetMaterial(0, Material);
+	}
+}
+
 bool AProjectileBase::InitializeProjectile(AActor* Source, TSubclassOf<UGameplayEffect> Effect, float InDamage, float Speed, float Range, float InFeedbackStrength)
 {
 	if (!HasAuthority() || !IsValid(Source) || !Effect || !FMath::IsFinite(InDamage) || InDamage <= 0.0f
@@ -70,7 +111,9 @@ bool AProjectileBase::InitializeProjectile(AActor* Source, TSubclassOf<UGameplay
 	FeedbackStrength = InFeedbackStrength;
 	ProjectileMovement->InitialSpeed = Speed;
 	ProjectileMovement->MaxSpeed = Speed;
-	MaxTravelTime = Range / Speed;
+	const float EffectiveRange = bOverrideWeaponRange ? TravelRange : Range;
+	if (!FMath::IsFinite(EffectiveRange) || EffectiveRange <= 0.0f) return false;
+	MaxTravelTime = EffectiveRange / Speed;
 	CollisionComponent->IgnoreActorWhenMoving(Source, true);
 	return true;
 }
@@ -102,6 +145,7 @@ void AProjectileBase::HandleImpact(AActor* OtherActor, bool bBlocking)
 	ABossMonster* Boss = Cast<ABossMonster>(OtherActor);
 	if (!Enemy && !Boss && !bBlocking) return;
 	bImpactHandled = true;
+	MulticastImpact(GetActorLocation());
 	CollisionComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	ProjectileMovement->StopMovementImmediately();
 	if ((Enemy && !Enemy->IsDead()) || (Boss && Boss->GetBossState() != EBossState::Dead))
@@ -115,6 +159,13 @@ void AProjectileBase::HandleImpact(AActor* OtherActor, bool bBlocking)
 void AProjectileBase::DestroyProjectile()
 {
 	Destroy();
+}
+
+void AProjectileBase::MulticastImpact_Implementation(FVector_NetQuantize Location)
+{
+	if (GetNetMode() == NM_DedicatedServer) return;
+	if (ImpactEffect) UNiagaraFunctionLibrary::SpawnSystemAtLocation(this, ImpactEffect, Location, GetActorRotation());
+	if (ImpactSound) UGameplayStatics::PlaySoundAtLocation(this, ImpactSound, Location);
 }
 
 void AProjectileBase::OnCollisionBeginOverlap(UPrimitiveComponent* OverlappedComp, AActor* OtherActor, UPrimitiveComponent* OtherComp,

@@ -9,33 +9,71 @@
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "GAS/CombatAttributeSet.h"
+#include "Misc/DataValidation.h"
 #include "Templates/UnrealTemplate.h"
+
+namespace
+{
+	/** 코어 테스트 공용 환경: 게임 월드, ASC를 가진 Actor, 초기화된 CoreComponent. 소멸 시 부여 내용을 정리하고 월드를 닫는다. */
+	struct FCoreTestFixture
+	{
+		UWorld* World = nullptr;
+		AActor* Owner = nullptr;
+		UAbilitySystemComponent* ASC = nullptr;
+		UCombatAttributeSet* Attributes = nullptr;
+		UCoreComponent* Core = nullptr;
+
+		explicit FCoreTestFixture(bool bWithCombatAttributes)
+		{
+			UWorld::InitializationValues Values;
+			Values.AllowAudioPlayback(false).CreatePhysicsScene(false).CreateNavigation(false).CreateAISystem(false);
+			World = UWorld::CreateWorld(EWorldType::Game, false, NAME_None, nullptr, true, ERHIFeatureLevel::Num, &Values);
+			GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World);
+			Owner = World->SpawnActor<AActor>();
+			ASC = NewObject<UAbilitySystemComponent>(Owner);
+			Owner->AddInstanceComponent(ASC);
+			ASC->RegisterComponent();
+			ASC->InitAbilityActorInfo(Owner, Owner);
+			if (bWithCombatAttributes)
+			{
+				Attributes = NewObject<UCombatAttributeSet>(Owner);
+				ASC->AddAttributeSetSubobject(Attributes);
+			}
+			Core = NewObject<UCoreComponent>(Owner);
+			Owner->AddInstanceComponent(Core);
+			Core->RegisterComponent();
+			Core->Initialize(ASC);
+		}
+
+		~FCoreTestFixture()
+		{
+			if (Core) Core->ResetOwnedCores();
+			if (World)
+			{
+				World->DestroyWorld(false);
+				GEngine->DestroyWorldContext(World);
+			}
+		}
+
+		UE_NONCOPYABLE(FCoreTestFixture);
+	};
+}
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCoreUpgradeTest, "TheLastMessage.Core.Upgrade",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FCoreUpgradeTest::RunTest(const FString& Parameters)
 {
-	UWorld::InitializationValues Values;
-	Values.AllowAudioPlayback(false).CreatePhysicsScene(false).CreateNavigation(false).CreateAISystem(false);
-	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false, NAME_None, nullptr, true, ERHIFeatureLevel::Num, &Values);
-	GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World);
-	AActor* Owner = World->SpawnActor<AActor>();
-	UAbilitySystemComponent* ASC = NewObject<UAbilitySystemComponent>(Owner);
-	Owner->AddInstanceComponent(ASC);
-	ASC->RegisterComponent();
-	ASC->InitAbilityActorInfo(Owner, Owner);
-	UCombatAttributeSet* Attributes = NewObject<UCombatAttributeSet>(Owner);
-	ASC->AddAttributeSetSubobject(Attributes);
-	UCoreComponent* Core = NewObject<UCoreComponent>(Owner);
-	Owner->AddInstanceComponent(Core);
-	Core->RegisterComponent();
-	Core->Initialize(ASC);
-
 	// 테스트 설정은 메모리에서만 변경하고 종료 시 기본값을 복구한다.
+	// 픽스처보다 먼저 선언해, 픽스처가 GE를 제거할 때까지 변경한 Modifier가 유지되도록 한다.
 	UGameplayEffect* Effect = GetMutableDefault<UGameplayEffect>();
 	TGuardValue<EGameplayEffectDurationType> DurationGuard(Effect->DurationPolicy, EGameplayEffectDurationType::Infinite);
 	TGuardValue<TArray<FGameplayModifierInfo>> ModifiersGuard(Effect->Modifiers, {});
+	FCoreTestFixture Fixture(true);
+	UAbilitySystemComponent* ASC = Fixture.ASC;
+	UCombatAttributeSet* Attributes = Fixture.Attributes;
+	UCoreComponent* Core = Fixture.Core;
+
 	UCurveTable* Curves = NewObject<UCurveTable>();
 	const FName CurveRow(TEXT("DamageMultiplier"));
 	FRichCurve& Curve = Curves->AddRichCurve(CurveRow);
@@ -58,7 +96,7 @@ bool FCoreUpgradeTest::RunTest(const FString& Parameters)
 	const TArray<UCoreDataAsset*> Pool = { Data, Data };
 	TestEqual(TEXT("Unowned core is level zero"), Core->GetCoreLevel(Data->CoreId), 0);
 	TestFalse(TEXT("Empty ID is not owned"), Core->HasCore(NAME_None));
-	TestTrue(TEXT("First acquisition succeeds"), Core->AcquireCore(Data));
+	TestTrue(TEXT("First acquisition succeeds"), Core->AcquireCore(Data) == ECoreAcquireResult::Acquired);
 	TestEqual(TEXT("First acquisition is level one"), Core->GetCoreLevel(Data->CoreId), 1);
 	TestTrue(TEXT("Level-one curve is applied"), FMath::IsNearlyEqual(Attributes->GetDamageDealtMultiplier(), 1.15f));
 	TArray<FActiveGameplayEffectHandle> Handles = ASC->GetActiveEffects(FGameplayEffectQuery());
@@ -70,7 +108,7 @@ bool FCoreUpgradeTest::RunTest(const FString& Parameters)
 	// 보유 중인 강화 후보는 유지하되, 같은 ID를 선택지에 두 번 넣지는 않는다.
 	TestEqual(TEXT("Owned upgradeable core remains a unique candidate"), Core->GenerateCoreChoices(Pool, ECoreCategory::Stat).Num(), 1);
 	FCoreChoiceState Saved = Core->SuspendCoreChoices();
-	TestTrue(TEXT("Reacquisition upgrades"), Core->AcquireCore(Data));
+	TestTrue(TEXT("Reacquisition upgrades"), Core->AcquireCore(Data) == ECoreAcquireResult::Upgraded);
 	TestEqual(TEXT("Reacquisition is level two"), Core->GetCoreLevel(Data->CoreId), 2);
 	TestTrue(TEXT("Curve replaces the old magnitude instead of stacking"), FMath::IsNearlyEqual(Attributes->GetDamageDealtMultiplier(), 1.30f));
 	Handles = ASC->GetActiveEffects(FGameplayEffectQuery());
@@ -81,10 +119,10 @@ bool FCoreUpgradeTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Suspended choice remains while upgradeable"), Core->ResumeCoreChoices(Saved).Num(), 1);
 	Saved = Core->SuspendCoreChoices();
 
-	TestTrue(TEXT("Final upgrade succeeds"), Core->AcquireCore(Data));
+	TestTrue(TEXT("Final upgrade succeeds"), Core->AcquireCore(Data) == ECoreAcquireResult::Upgraded);
 	TestEqual(TEXT("Final level is capped"), Core->GetCoreLevel(Data->CoreId), 3);
 	TestTrue(TEXT("Final curve value is applied"), FMath::IsNearlyEqual(Attributes->GetDamageDealtMultiplier(), 1.45f));
-	TestFalse(TEXT("Acquisition past the maximum is rejected"), Core->AcquireCore(Data));
+	TestTrue(TEXT("Acquisition past the maximum is rejected"), Core->AcquireCore(Data) == ECoreAcquireResult::MaxLevel);
 	TestEqual(TEXT("Rejected acquisition preserves level"), Core->GetCoreLevel(Data->CoreId), 3);
 	TestTrue(TEXT("Maxed core is removed when resuming"), Core->ResumeCoreChoices(Saved).IsEmpty());
 	TestTrue(TEXT("Maxed core is excluded from new choices"), Core->GenerateCoreChoices(Pool, ECoreCategory::Stat).IsEmpty());
@@ -97,12 +135,12 @@ bool FCoreUpgradeTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Reset removes upgraded abilities"), ASC->GetActivatableAbilities().IsEmpty());
 
 	// 부여 내용이 외부에서 제거된 경우, 존재하지 않는 효과를 강화한 것으로 기록하지 않는다.
-	TestTrue(TEXT("Core can be reacquired after reset"), Core->AcquireCore(Data));
+	TestTrue(TEXT("Core can be reacquired after reset"), Core->AcquireCore(Data) == ECoreAcquireResult::Acquired);
 	for (const FActiveGameplayEffectHandle& Handle : ASC->GetActiveEffects(FGameplayEffectQuery()))
 	{
 		ASC->RemoveActiveGameplayEffect(Handle);
 	}
-	TestFalse(TEXT("Missing effect rejects upgrade"), Core->AcquireCore(Data));
+	TestTrue(TEXT("Missing effect rejects upgrade"), Core->AcquireCore(Data) == ECoreAcquireResult::GrantFailed);
 	TestEqual(TEXT("Failed upgrade preserves the old level"), Core->GetCoreLevel(Data->CoreId), 1);
 	Core->ResetOwnedCores();
 
@@ -111,7 +149,7 @@ bool FCoreUpgradeTest::RunTest(const FString& Parameters)
 	Data->MaxLevel = 1;
 	for (int32 Level = 1; Level <= 10; ++Level)
 	{
-		TestTrue(TEXT("Infinite ignores the custom maximum"), Core->AcquireCore(Data));
+		TestTrue(TEXT("Infinite ignores the custom maximum"), IsCoreAcquireSuccess(Core->AcquireCore(Data)));
 	}
 	TestEqual(TEXT("Infinite records the actual upgrade level"), Core->GetCoreLevel(Data->CoreId), 10);
 	TestEqual(TEXT("Infinite keeps one effect instead of stacking"), ASC->GetActiveEffects(FGameplayEffectQuery()).Num(), 1);
@@ -136,16 +174,16 @@ bool FCoreUpgradeTest::RunTest(const FString& Parameters)
 	Effect->Modifiers = { CriticalModifier };
 	Data->UpgradeLimitType = ECoreUpgradeLimitType::Custom;
 	Data->MaxLevel = 5;
-	TestTrue(TEXT("Critical core is acquired"), Core->AcquireCore(Data));
+	TestTrue(TEXT("Critical core is acquired"), Core->AcquireCore(Data) == ECoreAcquireResult::Acquired);
 	TestEqual(TEXT("Critical first level adds five percentage points"), Attributes->GetCriticalChance(), 0.25f, 0.0001f);
-	TestTrue(TEXT("Critical core upgrades"), Core->AcquireCore(Data));
+	TestTrue(TEXT("Critical core upgrades"), Core->AcquireCore(Data) == ECoreAcquireResult::Upgraded);
 	TestEqual(TEXT("Critical second level adds ten percentage points"), Attributes->GetCriticalChance(), 0.30f, 0.0001f);
 	for (int32 Level = 3; Level <= 5; ++Level)
 	{
-		TestTrue(TEXT("Critical upgrade within the limit succeeds"), Core->AcquireCore(Data));
+		TestTrue(TEXT("Critical upgrade within the limit succeeds"), Core->AcquireCore(Data) == ECoreAcquireResult::Upgraded);
 	}
 	TestEqual(TEXT("Critical final level adds twenty-five percentage points"), Attributes->GetCriticalChance(), 0.45f, 0.0001f);
-	TestFalse(TEXT("Critical sixth acquisition is rejected"), Core->AcquireCore(Data));
+	TestTrue(TEXT("Critical sixth acquisition is rejected"), Core->AcquireCore(Data) == ECoreAcquireResult::MaxLevel);
 	TestEqual(TEXT("Rejected critical upgrade preserves level five"), Core->GetCoreLevel(Data->CoreId), 5);
 	Handles = ASC->GetActiveEffects(FGameplayEffectQuery());
 	TestEqual(TEXT("Critical upgrades retain a single effect"), Handles.Num(), 1);
@@ -158,15 +196,12 @@ bool FCoreUpgradeTest::RunTest(const FString& Parameters)
 	SingleLevel->CoreId = TEXT("Test_SingleLevel");
 	TestTrue(TEXT("Existing assets default to Custom"), SingleLevel->UpgradeLimitType == ECoreUpgradeLimitType::Custom);
 	TestEqual(TEXT("Existing assets default to one level"), SingleLevel->MaxLevel, 1);
-	TestTrue(TEXT("Single-level core can be acquired"), Core->AcquireCore(SingleLevel));
-	TestFalse(TEXT("Single-level core cannot be acquired twice"), Core->AcquireCore(SingleLevel));
+	TestTrue(TEXT("Single-level core can be acquired"), Core->AcquireCore(SingleLevel) == ECoreAcquireResult::Acquired);
+	TestTrue(TEXT("Single-level core cannot be acquired twice"), Core->AcquireCore(SingleLevel) == ECoreAcquireResult::MaxLevel);
 	UCoreDataAsset* Invalid = NewObject<UCoreDataAsset>();
 	Invalid->CoreId = TEXT("Test_InvalidMaximum");
 	Invalid->MaxLevel = 0;
-	TestFalse(TEXT("Invalid maximum is rejected at runtime"), Core->AcquireCore(Invalid));
-	Core->ResetOwnedCores();
-	World->DestroyWorld(false);
-	GEngine->DestroyWorldContext(World);
+	TestTrue(TEXT("Invalid maximum is rejected at runtime"), Core->AcquireCore(Invalid) == ECoreAcquireResult::InvalidData);
 	return true;
 }
 
@@ -175,19 +210,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCoreRewardPoolTest, "TheLastMessage.Core.Rewar
 
 bool FCoreRewardPoolTest::RunTest(const FString& Parameters)
 {
-	UWorld::InitializationValues Values;
-	Values.AllowAudioPlayback(false).CreatePhysicsScene(false).CreateNavigation(false).CreateAISystem(false);
-	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false, NAME_None, nullptr, true, ERHIFeatureLevel::Num, &Values);
-	GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World);
-	AActor* Owner = World->SpawnActor<AActor>();
-	UAbilitySystemComponent* ASC = NewObject<UAbilitySystemComponent>(Owner);
-	Owner->AddInstanceComponent(ASC);
-	ASC->RegisterComponent();
-	ASC->InitAbilityActorInfo(Owner, Owner);
-	UCoreComponent* Core = NewObject<UCoreComponent>(Owner);
-	Owner->AddInstanceComponent(Core);
-	Core->RegisterComponent();
-	Core->Initialize(ASC);
+	FCoreTestFixture Fixture(false);
+	UCoreComponent* Core = Fixture.Core;
 
 	TArray<UCoreDataAsset*> Pool;
 	for (int32 Index = 0; Index < 8; ++Index)
@@ -198,7 +222,7 @@ bool FCoreRewardPoolTest::RunTest(const FString& Parameters)
 		Pool.Add(Data);
 	}
 	UCoreDataAsset* Maxed = Pool[4];
-	TestTrue(TEXT("Prepare a maxed stat core"), Core->AcquireCore(Maxed));
+	TestTrue(TEXT("Prepare a maxed stat core"), Core->AcquireCore(Maxed) == ECoreAcquireResult::Acquired);
 	UCoreDataAsset* FixedOnly = NewObject<UCoreDataAsset>();
 	FixedOnly->CoreId = TEXT("Test_FixedOnly");
 	FixedOnly->CoreCategory = ECoreCategory::Ability;
@@ -243,11 +267,113 @@ bool FCoreRewardPoolTest::RunTest(const FString& Parameters)
 	Core->CancelCoreChoices();
 	TestTrue(TEXT("A pool containing only fixed rewards produces no choices"),
 		Core->GenerateCoreChoices({ FixedOnly }, ECoreCategory::Ability).IsEmpty());
-	TestTrue(TEXT("Random pool exclusions do not prevent fixed acquisition"), Core->AcquireCore(FixedOnly));
-	Core->ResetOwnedCores();
-	World->DestroyWorld(false);
-	GEngine->DestroyWorldContext(World);
+	TestTrue(TEXT("Random pool exclusions do not prevent fixed acquisition"), Core->AcquireCore(FixedOnly) == ECoreAcquireResult::Acquired);
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCoreSelectResultTest, "TheLastMessage.Core.SelectResults",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCoreSelectResultTest::RunTest(const FString& Parameters)
+{
+	FCoreTestFixture Fixture(false);
+	UCoreComponent* Core = Fixture.Core;
+
+	TArray<UCoreDataAsset*> Pool;
+	for (int32 Index = 0; Index < 4; ++Index)
+	{
+		UCoreDataAsset* Data = NewObject<UCoreDataAsset>();
+		Data->CoreId = FName(*FString::Printf(TEXT("Test_Select_%d"), Index));
+		Pool.Add(Data);
+	}
+	TestTrue(TEXT("Selecting without choices is rejected"), Core->SelectCore(Pool[0]->CoreId) == ECoreAcquireResult::NotOffered);
+	TestTrue(TEXT("Selecting an empty ID is invalid"), Core->SelectCore(NAME_None) == ECoreAcquireResult::InvalidData);
+
+	const TArray<UCoreDataAsset*> Choices = Core->GenerateCoreChoices(Pool, ECoreCategory::Stat);
+	TestEqual(TEXT("Three choices are offered"), Choices.Num(), 3);
+	FName NotOfferedId;
+	for (const UCoreDataAsset* Data : Pool)
+	{
+		if (!Choices.Contains(Data)) NotOfferedId = Data->CoreId;
+	}
+	TestTrue(TEXT("A core outside the shown cards is rejected"), Core->SelectCore(NotOfferedId) == ECoreAcquireResult::NotOffered);
+	if (Choices.Num() > 0)
+	{
+		TestTrue(TEXT("Selecting a shown card acquires it"), Core->SelectCore(Choices[0]->CoreId) == ECoreAcquireResult::Acquired);
+		TestTrue(TEXT("Successful selection closes the choices"), Core->SelectCore(Choices[0]->CoreId) == ECoreAcquireResult::NotOffered);
+	}
+
+	TestTrue(TEXT("Null data is invalid"), Core->AcquireCore(nullptr) == ECoreAcquireResult::InvalidData);
+	return true;
+}
+
+#if WITH_EDITOR
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCoreDataValidationTest, "TheLastMessage.Core.DataValidation",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCoreDataValidationTest::RunTest(const FString& Parameters)
+{
+	UGameplayEffect* Effect = GetMutableDefault<UGameplayEffect>();
+	TGuardValue<EGameplayEffectDurationType> DurationGuard(Effect->DurationPolicy, EGameplayEffectDurationType::Infinite);
+	TGuardValue<TArray<FGameplayModifierInfo>> ModifiersGuard(Effect->Modifiers, {});
+	UCurveTable* Curves = NewObject<UCurveTable>();
+	const FName CurveRow(TEXT("DamageMultiplier"));
+	FRichCurve& Curve = Curves->AddRichCurve(CurveRow);
+	Curve.AddKey(1.0f, 1.10f);
+	Curve.AddKey(2.0f, 1.20f);
+	Curve.AddKey(3.0f, 1.30f);
+	FScalableFloat Magnitude;
+	Magnitude.SetScalingValue(1.0f, CurveRow, Curves);
+	FGameplayModifierInfo Modifier;
+	Modifier.Attribute = UCombatAttributeSet::GetDamageDealtMultiplierAttribute();
+	Modifier.ModifierOp = EGameplayModOp::MultiplyAdditive;
+	Modifier.ModifierMagnitude = FGameplayEffectModifierMagnitude(Magnitude);
+	Effect->Modifiers.Add(Modifier);
+
+	UCoreDataAsset* Data = NewObject<UCoreDataAsset>();
+	Data->CoreId = TEXT("Test_Validation");
+	Data->CoreName = FText::FromString(TEXT("Validation"));
+	Data->GrantedEffects.Add(UGameplayEffect::StaticClass());
+	Data->CoreDescription = FText::FromString(TEXT("피해 {Damage}% 증가"));
+	FCoreDescriptionValueBinding Binding;
+	Binding.Token = TEXT("Damage");
+	Binding.Attribute = UCombatAttributeSet::GetDamageDealtMultiplierAttribute();
+	Binding.Format = ECoreDescriptionValueFormat::IncreasePercent;
+	Data->DescriptionValues.Add(Binding);
+
+	auto Validate = [Data](int32& OutErrors, int32& OutWarnings)
+	{
+		FDataValidationContext Context;
+		const EDataValidationResult Result = Data->IsDataValid(Context);
+		OutErrors = static_cast<int32>(Context.GetNumErrors());
+		OutWarnings = static_cast<int32>(Context.GetNumWarnings());
+		return Result;
+	};
+	int32 Errors = 0;
+	int32 Warnings = 0;
+
+	Data->MaxLevel = 3;
+	TestTrue(TEXT("Curve keys matching MaxLevel are valid"), Validate(Errors, Warnings) == EDataValidationResult::Valid);
+	TestEqual(TEXT("Matching setup has no errors"), Errors, 0);
+	TestEqual(TEXT("Matching setup has no warnings"), Warnings, 0);
+	float Value = 0.0f;
+	TestTrue(TEXT("Auto-searched binding reads level two"), Data->TryGetDescriptionValue(Binding, 2, Value) && FMath::IsNearlyEqual(Value, 1.20f));
+
+	Data->MaxLevel = 4;
+	TestTrue(TEXT("Curve shorter than MaxLevel is invalid"), Validate(Errors, Warnings) == EDataValidationResult::Invalid);
+
+	Data->MaxLevel = 2;
+	TestTrue(TEXT("Curve longer than MaxLevel only warns"), Validate(Errors, Warnings) == EDataValidationResult::Valid && Warnings > 0);
+
+	Data->MaxLevel = 3;
+	Data->CoreDescription = FText::FromString(TEXT("피해 {Damage}% 증가, 사거리 {Range}"));
+	TestTrue(TEXT("Unbound description token is invalid"), Validate(Errors, Warnings) == EDataValidationResult::Invalid);
+
+	Data->CoreDescription = FText::FromString(TEXT("피해 {Damage}% 증가"));
+	Effect->DurationPolicy = EGameplayEffectDurationType::Instant;
+	TestTrue(TEXT("Non-infinite effect is invalid"), Validate(Errors, Warnings) == EDataValidationResult::Invalid);
+	return true;
+}
+#endif
 
 #endif

@@ -40,55 +40,50 @@ int32 UCoreComponent::GetCoreLevel(FName CoreId) const
 }
 
 
-bool UCoreComponent::CanAcquireCore(const UCoreDataAsset* CoreData) const
+ECoreAcquireResult UCoreComponent::CheckAcquire(const UCoreDataAsset* CoreData) const
 {
-	// 유효한 데이터에서만 코어 ID와 부여할 클래스 목록을 읽는다.
-	if (!IsValid(CoreData))
+	// 유효한 데이터와 보유 기록에 사용할 ID가 필요하다.
+	if (!IsValid(CoreData) || CoreData->CoreId.IsNone())
 	{
-		return false;
+		return ECoreAcquireResult::InvalidData;
 	}
 
-	// 보유 기록에 사용할 ID와 능력/효과를 부여할 ASC가 필요하다.
-	if (CoreData->CoreId.IsNone() || !AbilitySystemComponent.IsValid())
+	// 능력과 효과를 부여할 ASC가 연결되어 있어야 한다.
+	if (!AbilitySystemComponent.IsValid())
 	{
-		return false;
+		return ECoreAcquireResult::NoAbilitySystem;
 	}
 
 	// Custom에서만 최대 단계를 검사한다. Infinite는 MaxLevel 값과 관계없이 계속 강화할 수 있다.
 	const int32 CurrentLevel = GetCoreLevel(CoreData->CoreId);
-	if (CurrentLevel == MAX_int32
-		|| (CoreData->UpgradeLimitType == ECoreUpgradeLimitType::Custom
-			&& (CoreData->MaxLevel < 1 || CurrentLevel >= CoreData->MaxLevel)))
+	if (CurrentLevel == MAX_int32)
 	{
-		return false;
+		return ECoreAcquireResult::MaxLevel;
 	}
-
-	// GA 및 GE 클래스 참조가 유효하고, 추상 클래스가 아니며, GE는 Infinite Duration과 Stacking Type None 설정을 만족해야 한다.
-	for (const TSubclassOf<UGameplayEffect>& EffectClass : CoreData->GrantedEffects)
+	if (CoreData->UpgradeLimitType == ECoreUpgradeLimitType::Custom)
 	{
-		if (!IsValid(EffectClass.Get()) || EffectClass->HasAnyClassFlags(CLASS_Abstract))
+		if (CoreData->MaxLevel < 1)
 		{
-			return false;
+			return ECoreAcquireResult::InvalidData;
 		}
-
-		const UGameplayEffect* EffectDefinition = EffectClass.GetDefaultObject();
-		if (!IsValid(EffectDefinition)
-			|| EffectDefinition->DurationPolicy != EGameplayEffectDurationType::Infinite
-			|| EffectDefinition->GetStackingType() != EGameplayEffectStackingType::None)
+		if (CurrentLevel >= CoreData->MaxLevel)
 		{
-			return false;
+			return ECoreAcquireResult::MaxLevel;
 		}
 	}
 
-	for (const TSubclassOf<UGameplayAbility>& AbilityClass : CoreData->GrantedAbilities)
+	// GE는 Infinite Duration·Stacking None, GE/GA 클래스는 유효해야 한다. 에디터 데이터 검증과 같은 기준을 쓴다.
+	if (!CoreData->HasValidGrantSetup())
 	{
-		if (!IsValid(AbilityClass.Get()) || AbilityClass->HasAnyClassFlags(CLASS_Abstract))
-		{
-			return false;
-		}
+		return ECoreAcquireResult::InvalidData;
 	}
 
-	return true;
+	return CurrentLevel > 0 ? ECoreAcquireResult::Upgraded : ECoreAcquireResult::Acquired;
+}
+
+bool UCoreComponent::CanAcquireCore(const UCoreDataAsset* CoreData) const
+{
+	return IsCoreAcquireSuccess(CheckAcquire(CoreData));
 }
 
 bool UCoreComponent::UpgradeCore(FCoreGrantRecord& Record)
@@ -162,12 +157,18 @@ void UCoreComponent::RemoveCoreGrants(const FCoreGrantRecord& Record)
 }
 
 
-bool UCoreComponent::AcquireCore(UCoreDataAsset* CoreData)
+ECoreAcquireResult UCoreComponent::AcquireCore(UCoreDataAsset* CoreData)
 {
 	// 코어 획득 중에 다른 획득이나 초기화가 다시 시작되는 것을 막는다.
-	if (bIsChangingCoreGrants || !CanAcquireCore(CoreData))
+	if (bIsChangingCoreGrants)
 	{
-		return false;
+		return ECoreAcquireResult::Busy;
+	}
+
+	const ECoreAcquireResult ExpectedResult = CheckAcquire(CoreData);
+	if (!IsCoreAcquireSuccess(ExpectedResult))
+	{
+		return ExpectedResult;
 	}
 
 	// ASC가 유효하고 권한이 있는 경우에만 능력과 효과를 부여한다.
@@ -177,8 +178,10 @@ bool UCoreComponent::AcquireCore(UCoreDataAsset* CoreData)
 		|| !ASC->AbilityActorInfo->OwnerActor.IsValid()
 		|| !ASC->AbilityActorInfo->AvatarActor.IsValid())
 	{
-		return false;
+		return ECoreAcquireResult::NoAbilitySystem;
 	}
+
+	const int32 OldLevel = GetCoreLevel(CoreData->CoreId);
 
 	{
 		TGuardValue<bool> ChangingGrantsGuard(bIsChangingCoreGrants, true);
@@ -189,7 +192,7 @@ bool UCoreComponent::AcquireCore(UCoreDataAsset* CoreData)
 		{
 			if (!UpgradeCore(*ExistingRecord))
 			{
-				return false;
+				return ECoreAcquireResult::GrantFailed;
 			}
 		}
 		else
@@ -209,14 +212,14 @@ bool UCoreComponent::AcquireCore(UCoreDataAsset* CoreData)
 				if (!SpecHandle.IsValid())
 				{
 					RemoveCoreGrants(Record);
-					return false;
+					return ECoreAcquireResult::GrantFailed;
 				}
 
 				const FActiveGameplayEffectHandle EffectHandle = ASC->ApplyGameplayEffectSpecToSelf(*SpecHandle.Data.Get());
 				if (!EffectHandle.WasSuccessfullyApplied() || !EffectHandle.IsValid())
 				{
 					RemoveCoreGrants(Record);
-					return false;
+					return ECoreAcquireResult::GrantFailed;
 				}
 
 				Record.EffectHandles.Add(EffectHandle);
@@ -230,7 +233,7 @@ bool UCoreComponent::AcquireCore(UCoreDataAsset* CoreData)
 				if (!AbilityHandle.IsValid())
 				{
 					RemoveCoreGrants(Record);
-					return false;
+					return ECoreAcquireResult::GrantFailed;
 				}
 
 				Record.AbilityHandles.Add(AbilityHandle);
@@ -241,8 +244,8 @@ bool UCoreComponent::AcquireCore(UCoreDataAsset* CoreData)
 		}
 	}
 
-	OnCoreChanged.Broadcast();
-	return true;
+	OnCoreChanged.Broadcast(CoreData->CoreId, OldLevel, GetCoreLevel(CoreData->CoreId));
+	return ExpectedResult;
 }
 
 void UCoreComponent::ResetOwnedCores()
@@ -258,24 +261,25 @@ void UCoreComponent::ResetOwnedCores()
 		return;
 	}
 
-	const bool bHadOwnedCores = !AppliedCoreHandles.IsEmpty();
+	// 제거 알림 중에도 보유 조회가 초기화된 상태를 보도록, 기록을 먼저 별도 목록으로 옮긴다.
+	TArray<FCoreGrantRecord> RemovedRecords;
 	{
 		TGuardValue<bool> ChangingGrantsGuard(bIsChangingCoreGrants, true);
 
-		// 제거 알림 중에도 보유 조회가 초기화된 상태를 보도록, 기록을 먼저 별도 목록으로 옮긴다.
-		const TArray<FCoreGrantRecord> RecordsToRemove = MoveTemp(AppliedCoreHandles);
+		RemovedRecords = MoveTemp(AppliedCoreHandles);
 		AppliedCoreHandles.Reset();
 		CancelCoreChoices();
 
-		for (const FCoreGrantRecord& Record : RecordsToRemove)
+		for (const FCoreGrantRecord& Record : RemovedRecords)
 		{
 			RemoveCoreGrants(Record);
 		}
 	}
 
-	if (bHadOwnedCores)
+	// 제거가 모두 끝난 뒤 코어마다 단계가 0이 되었음을 알린다.
+	for (const FCoreGrantRecord& Record : RemovedRecords)
 	{
-		OnCoreChanged.Broadcast();
+		OnCoreChanged.Broadcast(Record.CoreId, Record.Level, 0);
 	}
 }
 
@@ -370,11 +374,15 @@ TArray<UCoreDataAsset*> UCoreComponent::ResumeCoreChoices(FCoreChoiceState& Save
 }
 
 
-bool UCoreComponent::SelectCore(FName CoreId)
+ECoreAcquireResult UCoreComponent::SelectCore(FName CoreId)
 {
-	if (bIsChangingCoreGrants || bIsSelectingCore || CoreId.IsNone())
+	if (bIsChangingCoreGrants || bIsSelectingCore)
 	{
-		return false;
+		return ECoreAcquireResult::Busy;
+	}
+	if (CoreId.IsNone())
+	{
+		return ECoreAcquireResult::InvalidData;
 	}
 
 	// 선택한 코어 ID와 일치하는 현재 선택지의 데이터를 찾는다.
@@ -390,19 +398,20 @@ bool UCoreComponent::SelectCore(FName CoreId)
 
 	if (!SelectedCore)
 	{
-		return false;
+		return ECoreAcquireResult::NotOffered;
 	}
 
 	// 획득 성공 알림이 발생하는 동안에도 한 보상에서 두 코어를 선택할 수 없게 한다.
 	TGuardValue<bool> SelectingCoreGuard(bIsSelectingCore, true);
-	if (!AcquireCore(SelectedCore))
+	const ECoreAcquireResult Result = AcquireCore(SelectedCore);
+	if (!IsCoreAcquireSuccess(Result))
 	{
-		return false;
+		return Result;
 	}
 
 	// 획득 성공 후에만 선택 상태를 비운다. 실패한 경우에는 기존 선택지를 유지한다.
 	CancelCoreChoices();
-	return true;
+	return Result;
 }
 
 void UCoreComponent::CancelCoreChoices()

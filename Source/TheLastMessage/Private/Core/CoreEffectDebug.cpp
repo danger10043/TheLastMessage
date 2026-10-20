@@ -198,8 +198,8 @@ FAutoConsoleCommandWithWorldAndArgs GiveCommand(TEXT("tlm.CoreGive"), TEXT("Acqu
 		const TCHAR* Names[] = {TEXT("ImpactDispersionArmor"), TEXT("OverloadOutput"), TEXT("MeleeAmplifier"), TEXT("StableOutputCircuit"), TEXT("EmergencyOutputCircuit"), TEXT("PrecisionAimingCircuit"), TEXT("HighSpeedDrive"), TEXT("ChargeAccelerationCircuit"), TEXT("EfficientDischargeCircuit"), TEXT("FastRechargeCircuit")};
 		UCoreDataAsset* Data = LoadObject<UCoreDataAsset>(nullptr, *FString::Printf(TEXT("/Game/Test_Jihun/Core/Stat/DataAsset/DA_Core_%s.DA_Core_%s"), Names[Number - 2], Names[Number - 2]));
 		Enable(World);
-		const bool bAcquired = Data && Player->GetCoreComponent()->AcquireCore(Data);
-		Message(FString::Printf(TEXT("%d %s: %s (Lv.%d)"), Number, Data ? *Data->CoreName.ToString() : TEXT("missing DA"), bAcquired ? TEXT("ACQUIRED / UPGRADED") : TEXT("FAILED (limit reached or invalid)"), Data ? Player->GetCoreComponent()->GetCoreLevel(Data->CoreId) : 0));
+		const ECoreAcquireResult Result = Data ? Player->GetCoreComponent()->AcquireCore(Data) : ECoreAcquireResult::InvalidData;
+		Message(FString::Printf(TEXT("%d %s: %s (Lv.%d)"), Number, Data ? *Data->CoreName.ToString() : TEXT("missing DA"), *UEnum::GetValueAsString(Result), Data ? Player->GetCoreComponent()->GetCoreLevel(Data->CoreId) : 0));
 	}), ECVF_Cheat);
 
 FAutoConsoleCommandWithWorldAndArgs ResetCommand(TEXT("tlm.CoreReset"), TEXT("Remove ALL acquired cores in this play session. Does not edit assets."),

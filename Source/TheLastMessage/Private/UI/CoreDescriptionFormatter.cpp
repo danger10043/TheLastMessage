@@ -4,6 +4,8 @@
 
 #define LOCTEXT_NAMESPACE "CoreDescription"
 
+DEFINE_LOG_CATEGORY_STATIC(LogCoreDescription, Log, All);
+
 namespace
 {
 	int32 GetPreviewLevel(const UCoreDataAsset& Data, int32 CurrentLevel)
@@ -13,20 +15,24 @@ namespace
 			? FMath::Min(Next, FMath::Max(1, Data.MaxLevel)) : Next;
 	}
 
+	/** 값을 찾는 규칙은 DA가 담당하고, 여기서는 실패를 화면 대신 로그로 알린다. 같은 실패는 한 번만 기록한다. */
 	bool ReadValue(const UCoreDataAsset& Data, const FCoreDescriptionValueBinding& Binding, int32 Level, float& OutValue)
 	{
-		if (!Binding.Effect || !Binding.Attribute.IsValid() || !Data.GrantedEffects.Contains(Binding.Effect)) return false;
-		const UGameplayEffect* Effect = Binding.Effect.GetDefaultObject();
-		if (!Effect) return false;
-		const FGameplayModifierInfo* Match = nullptr;
-		for (const FGameplayModifierInfo& Modifier : Effect->Modifiers)
+		FText Reason;
+		if (Data.TryGetDescriptionValue(Binding, Level, OutValue, &Reason))
 		{
-			if (Modifier.Attribute != Binding.Attribute) continue;
-			// 동일 Attribute의 Modifier가 여러 개면 어느 값을 표시할지 모호하므로 추측하지 않는다.
-			if (Match) return false;
-			Match = &Modifier;
+			return true;
 		}
-		return Match && Match->ModifierMagnitude.GetStaticMagnitudeIfPossible(Level, OutValue) && FMath::IsFinite(OutValue);
+
+		static TSet<FString> ReportedFailures;
+		const FString Key = FString::Printf(TEXT("%s:%s"), *Data.GetPathName(), *Binding.Token.ToString());
+		if (!ReportedFailures.Contains(Key))
+		{
+			ReportedFailures.Add(Key);
+			UE_LOG(LogCoreDescription, Warning, TEXT("%s의 설명 토큰 {%s} 값을 읽지 못해 '—'로 표시합니다: %s"),
+				*Data.GetName(), *Binding.Token.ToString(), *Reason.ToString());
+		}
+		return false;
 	}
 
 	FText FormatValue(float Value, ECoreDescriptionValueFormat Format)

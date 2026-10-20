@@ -3,14 +3,15 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "Core/CoreChoiceState.h"
+#include "Core/GameCoreTypes.h"
 #include "Core/CoreGrantRecord.h"
 #include "CoreComponent.generated.h"
 
 class UAbilitySystemComponent;
 class UCoreDataAsset;
-enum class ECoreCategory : uint8;
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnCoreChangedSignature);
+/** 코어 단계 변화 알림. 신규 획득은 OldLevel 0, 초기화로 제거되면 NewLevel 0이다. */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnCoreChangedSignature, FName, CoreId, int32, OldLevel, int32, NewLevel);
 
 /**
  * 플레이어의 코어 획득과 보유 상태, 선택 보상을 관리하는 컴포넌트다.
@@ -25,15 +26,18 @@ class THELASTMESSAGE_API UCoreComponent : public UActorComponent
 public:
 	UCoreComponent();
 
-	/** 코어의 능력과 효과를 받을 플레이어 ASC를 연결한다. 플레이어의 GAS 초기화가 끝난 뒤 호출한다. */
-	UFUNCTION(BlueprintCallable, Category = "Core")
+	/**
+	 * 코어의 능력과 효과를 받을 플레이어 ASC를 연결한다. 플레이어의 GAS 초기화가 끝난 뒤 호출한다.
+	 * 부여 기록이 이 ASC의 핸들에 묶이므로 Blueprint에서 바꿔 끼우지 않도록 C++에서만 호출한다.
+	 */
 	void Initialize(UAbilitySystemComponent* InASC);
 
 	/**
 	 * 미보유 코어는 1단계로 획득한다. 재획득은 Custom의 최대 단계 또는 Infinite 설정에 따라 한 단계 강화한다.
-	 * 최초 획득은 GE/GA를 부여하며, 강화는 기존 GE/GA의 레벨을 갱신한다. 성공하면 true를 반환한다.
+	 * 최초 획득은 GE/GA를 부여하며, 강화는 기존 GE/GA의 레벨을 갱신한다.
+	 * 성공하면 Acquired 또는 Upgraded를, 실패하면 원인을 반환한다. IsCoreAcquireSuccess로 성공 여부를 확인한다.
 	 */
-	bool AcquireCore(UCoreDataAsset* CoreData);
+	ECoreAcquireResult AcquireCore(UCoreDataAsset* CoreData);
 
 	/** 해당 CoreId의 코어를 보유하고 있는지 확인한다. 강화 가능 여부와는 별개다. */
 	UFUNCTION(BlueprintPure, Category = "Core")
@@ -57,9 +61,10 @@ public:
 
 	/**
 	 * 플레이어가 고른 코어를 획득하여 선택 보상을 완료한다.
-	 * 현재 선택지에 있는 코어만 획득할 수 있으며, 성공하면 선택 목록을 비우고 true를 반환한다.
+	 * 현재 선택지에 있는 코어만 획득할 수 있으며, 성공하면 선택 목록을 비운다.
+	 * 선택지에 없는 코어는 NotOffered, 그 외 실패는 AcquireCore의 결과를 그대로 반환한다.
 	 */
-	bool SelectCore(FName CoreId);
+	ECoreAcquireResult SelectCore(FName CoreId);
 
 	/** 진행 중인 보상의 후보·등장 기록·리롤 사용 횟수를 비운다. 보유 코어는 유지한다. */
 	void CancelCoreChoices();
@@ -76,7 +81,7 @@ public:
 	 */
 	void ResetOwnedCores();
 
-	/** 코어 보유 상태가 바뀌었음을 알린다. UI 등에서 변경된 보유 상태를 반영할 때 사용한다. */
+	/** 코어의 단계가 바뀌었음을 알린다. 획득·강화 연출이나 보유 목록 UI 갱신에 사용한다. */
 	UPROPERTY(BlueprintAssignable, Category = "Core")
 	FOnCoreChangedSignature OnCoreChanged;
 
@@ -85,9 +90,12 @@ private:
 	TArray<UCoreDataAsset*> GetRerollCandidates(int32 ChoiceIndex) const;
 
 	/**
-	 * 해당 코어를 획득할 수 있는지 사전에 확인한다. 보상 후보를 거를 때도 같은 기준을 사용한다.
-	 * 데이터와 ASC, 최대 강화 단계, GE/GA 설정을 검사하며 실제 획득 성공 여부는 AcquireCore에서 확인한다.
+	 * 해당 코어를 지금 획득할 수 있는지 확인하고, 가능하면 예상 결과(Acquired/Upgraded)를 반환한다.
+	 * 데이터와 ASC, 최대 강화 단계, GE/GA 설정을 검사하며 실제 부여 성공 여부는 AcquireCore에서 확인한다.
 	 */
+	ECoreAcquireResult CheckAcquire(const UCoreDataAsset* CoreData) const;
+
+	/** CheckAcquire가 성공을 예상하는지 확인한다. 보상 후보를 거를 때 획득과 같은 기준을 사용한다. */
 	bool CanAcquireCore(const UCoreDataAsset* CoreData) const;
 
 	/** 기존 GE/GA가 남아 있는지 확인한 뒤 레벨을 올린다. 재부여하지 않으므로 효과와 능력이 중복되지 않는다. */

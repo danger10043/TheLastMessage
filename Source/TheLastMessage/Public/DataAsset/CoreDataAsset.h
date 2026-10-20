@@ -2,21 +2,13 @@
 
 #include "CoreMinimal.h"
 #include "Abilities/GameplayAbility.h"
+#include "Core/GameCoreTypes.h"
 #include "Engine/DataAsset.h"
 #include "GameplayEffect.h"
 #include "CoreDataAsset.generated.h"
 
+class FDataValidationContext;
 class UTexture2D;
-
-/** GE의 원래 수치를 설명에 사용할 숫자로 바꾼다. 효과 자체의 계산에는 관여하지 않는다. */
-UENUM(BlueprintType)
-enum class ECoreDescriptionValueFormat : uint8
-{
-	Number UMETA(DisplayName = "Number (그대로)"),
-	Percent UMETA(DisplayName = "Percent (0.05 → 5)"),
-	IncreasePercent UMETA(DisplayName = "Increase Percent (1.15 → 15)"),
-	ReductionPercent UMETA(DisplayName = "Reduction Percent (0.9 → 10)")
-};
 
 /** 설명의 {Token}에 넣을 값을 어느 GE의 어떤 Modifier에서 읽을지 지정한다. */
 USTRUCT(BlueprintType)
@@ -27,7 +19,10 @@ struct FCoreDescriptionValueBinding
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Description")
 	FName Token;
 
-	/** GrantedEffects에 등록된 GE 중 하나를 지정한다. */
+	/**
+	 * 값을 읽을 GE. 비워 두면 GrantedEffects에서 Attribute를 수정하는 GE를 자동으로 찾는다.
+	 * 여러 GE가 같은 Attribute를 수정해 어느 값인지 모호할 때만 지정한다.
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Description")
 	TSubclassOf<UGameplayEffect> Effect;
 
@@ -36,22 +31,6 @@ struct FCoreDescriptionValueBinding
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Description")
 	ECoreDescriptionValueFormat Format = ECoreDescriptionValueFormat::Number;
-};
-
-/** 보상 풀을 나누기 위한 기획 분류다. GE/GA 구현 방식이나 시각 효과 유무와는 별개다. */
-UENUM(BlueprintType)
-enum class ECoreCategory : uint8
-{
-	Stat UMETA(DisplayName = "스탯형"),
-	Ability UMETA(DisplayName = "능력형")
-};
-
-/** 강화 횟수 제한을 명시적으로 선택한다. Infinite는 제한 없이, Custom은 지정한 최대 단계까지 획득한다. */
-UENUM(BlueprintType)
-enum class ECoreUpgradeLimitType : uint8
-{
-	Custom UMETA(DisplayName = "Custom (사용자 지정)"),
-	Infinite UMETA(DisplayName = "Infinite (무한)")
 };
 
 /** 코어의 정의 데이터. Asset Manager에 등록되며, 실제 보유 상태와 부여 기록은 UCoreComponent에서 관리한다. */
@@ -86,7 +65,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Core|Upgrade")
 	ECoreUpgradeLimitType UpgradeLimitType = ECoreUpgradeLimitType::Custom;
 
-	/** Custom에서만 사용하는 최대 단계. 1이면 최초 한 번만 획득한다. Infinite에서는 무시한다. */
+	/**
+	 * Custom에서만 사용하는 최대 단계. 1이면 최초 한 번만 획득한다. Infinite에서는 무시한다.
+	 * GE 커브의 키도 이 단계까지 입력해야 하며, 맞지 않으면 데이터 검증에서 알린다.
+	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Core|Upgrade",
 		meta = (ClampMin = "1", UIMin = "1", EditCondition = "UpgradeLimitType == ECoreUpgradeLimitType::Custom", EditConditionHides))
 	int32 MaxLevel = 1;
@@ -100,4 +82,27 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Core|Grants")
 	TArray<TSubclassOf<UGameplayAbility>> GrantedAbilities;
+
+	/**
+	 * GrantedEffects·GrantedAbilities가 코어 부여 규칙을 지키는지 확인한다.
+	 * GE는 Infinite Duration·Stacking None이어야 하며, 클래스는 유효하고 추상이 아니어야 한다.
+	 * 획득 판정과 에디터 데이터 검증이 같은 기준을 쓰도록 한 곳에 둔다.
+	 */
+	bool HasValidGrantSetup(FText* OutReason = nullptr) const;
+
+	/**
+	 * 설명 바인딩이 가리키는 Modifier를 찾는다. Effect를 비우면 GrantedEffects에서 Attribute로 찾는다.
+	 * 찾지 못하거나 후보가 여러 개라 모호하면 false와 함께 이유를 반환한다.
+	 */
+	bool FindDescriptionModifier(const FCoreDescriptionValueBinding& Binding,
+		const FGameplayModifierInfo*& OutModifier, FText* OutReason = nullptr) const;
+
+	/** 설명 바인딩의 Modifier 값을 지정한 단계에서 읽는다. Scalable Float 수치만 읽을 수 있다. */
+	bool TryGetDescriptionValue(const FCoreDescriptionValueBinding& Binding, int32 Level,
+		float& OutValue, FText* OutReason = nullptr) const;
+
+#if WITH_EDITOR
+	/** 저장·데이터 검증 시 GE 설정, 커브 키와 MaxLevel, 설명 바인딩을 검사한다. */
+	virtual EDataValidationResult IsDataValid(FDataValidationContext& Context) const override;
+#endif
 };

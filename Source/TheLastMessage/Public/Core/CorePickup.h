@@ -3,23 +3,16 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "Core/CoreChoiceState.h"
-#include "DataAsset/CoreDataAsset.h"
+#include "Core/GameCoreTypes.h"
 #include "CorePickup.generated.h"
 
 class APlayerBase;
 class UCoreChoiceWidget;
 class UCoreComponent;
+class UCoreDataAsset;
 class UPrimitiveComponent;
 class USphereComponent;
 class UStaticMeshComponent;
-
-/** 코어 보상을 지정된 코어로 지급할지, 선택지로 제공할지 구분한다. */
-UENUM(BlueprintType)
-enum class ECoreRewardMode : uint8
-{
-	Fixed,		 /** 지정된 코어 하나를 획득한다. */
-	Choice		/** 제시된 코어 중 하나를 선택한다. */
-};
 
 /**
  * 맵에 배치하여 플레이어에게 코어 보상을 제공하는 액터다.

@@ -5,6 +5,7 @@
 #include "AIController.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Engine/World.h"
+#include "Framework/ActorPoolSubsystem.h"
 
 UGA_BossCircularMissile::UGA_BossCircularMissile()
 {
@@ -118,10 +119,18 @@ void UGA_BossCircularMissile::SpawnNextMissile()
     const FVector SpawnLocation = Boss->GetActorLocation()
         + Boss->GetActorRotation().RotateVector(MissileSpawnOffset);
     const FTransform SpawnTransform(FRotator::ZeroRotator, SpawnLocation);
-    ABossCircularMissile* Missile =
-        GetWorld()->SpawnActorDeferred<ABossCircularMissile>(
-            ActiveConfig.CircularMissileClass, SpawnTransform, Boss, Boss,
-            ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+    UActorPoolSubsystem* Pool =
+        GetWorld()->GetSubsystem<UActorPoolSubsystem>();
+    if (!Pool)
+    {
+        EndAbility(GetCurrentAbilitySpecHandle(), GetCurrentActorInfo(),
+            GetCurrentActivationInfo(), true, true);
+        return;
+    }
+
+    ABossCircularMissile* Missile = Cast<ABossCircularMissile>(
+        Pool->AcquireActor(
+            ActiveConfig.CircularMissileClass, SpawnTransform, Boss, Boss));
     if (!IsValid(Missile))
     {
         EndAbility(GetCurrentAbilitySpecHandle(), GetCurrentActorInfo(),
@@ -129,25 +138,37 @@ void UGA_BossCircularMissile::SpawnNextMissile()
         return;
     }
 
-    SpawnedMissiles.Add(Missile);
+    if (!IsActive() || bEnding)
+    {
+        Missile->ReturnToPool();
+        return;
+    }
+
+    const TWeakObjectPtr<ABossCircularMissile> WeakMissile(Missile);
+    Missile->OnMissileReturned.BindWeakLambda(this, [this, WeakMissile]()
+        {
+            SpawnedMissiles.Remove(WeakMissile);
+        });
+    SpawnedMissiles.Add(WeakMissile);
+
     Missile->Damage = ActiveConfig.Damage;
     Missile->LaunchTime = ActiveConfig.LaunchTime;
     Missile->DamageRadius = ActiveConfig.DamageRadius;
     Missile->FireLocation = FireLocation;
-    Missile->FinishSpawning(SpawnTransform);
+    Missile->StartMissile();
 
     if (!IsActive() || bEnding)
     {
         if (IsValid(Missile))
         {
-            Missile->Destroy();
+            Missile->ReturnToPool();
         }
         return;
     }
-    if (!IsValid(Missile))
+    if (!IsValid(Missile) || !Missile->IsMissileActive())
     {
         UE_LOG(LogTemp, Error,
-            TEXT("BossCircularMissile: missile destroyed during initialization."));
+            TEXT("BossCircularMissile: missile initialization failed."));
         EndAbility(GetCurrentAbilitySpecHandle(), GetCurrentActorInfo(),
             GetCurrentActivationInfo(), true, true);
         return;
@@ -219,17 +240,20 @@ void UGA_BossCircularMissile::EndAbility(
             this, &UGA_BossCircularMissile::HandleBossStateChanged);
     }
 
+    TArray<TWeakObjectPtr<ABossCircularMissile>> Missiles =
+        MoveTemp(SpawnedMissiles);
+    SpawnedMissiles.Reset();
+
     if (bWasCancelled)
     {
-        for (const TWeakObjectPtr<ABossCircularMissile>& Missile : SpawnedMissiles)
+        for (const TWeakObjectPtr<ABossCircularMissile>& Entry : Missiles)
         {
-            if (IsValid(Missile.Get()))
+            if (ABossCircularMissile* Missile = Entry.Get())
             {
-                Missile->Destroy();
+                Missile->ReturnToPool();
             }
         }
     }
-    SpawnedMissiles.Reset();
     LockedTarget.Reset();
 
     if (IsValid(Boss) && Boss->HasAuthority()

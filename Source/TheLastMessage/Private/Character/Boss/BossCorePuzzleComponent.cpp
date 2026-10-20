@@ -285,6 +285,10 @@ void UBossCorePuzzleComponent::SpawnNextPuzzleMissile()
     Missile->MissileLaunchDelta = 300.f;
     Missile->FireLocation = FireLocation;
     Missile->FinishSpawning(SpawnTransform);
+    if (IsValid(Missile))
+    {
+        Missile->StartMissile();
+    }
 
     // BeginPlay 콜백 중 퍼즐이 종료되거나 새로 시작된 경우를 구분한다.
     if (Generation != PuzzleMissileGeneration)

@@ -12,6 +12,7 @@ class UAnimMontage;
 class UNiagaraSystem;
 class UMaterialInterface;
 class UAnimSequence;
+class URangedFireFeedbackData;
 /**
  * 
  */
@@ -22,6 +23,9 @@ class THELASTMESSAGE_API UWeaponDataAsset : public UDataAsset
 
 public:
 	UWeaponDataAsset();
+	// Optional weapon-specific presentation; empty uses the player's pistol/rifle defaults.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect")
+	TObjectPtr<URangedFireFeedbackData> RangedFireFeedback;
 	// Optional weapon-specific ready/idle loop; otherwise the player uses pistol/rifle defaults.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Animation")
 	TObjectPtr<UAnimSequence> RangedIdleAnimation;

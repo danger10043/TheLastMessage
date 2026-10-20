@@ -287,6 +287,7 @@ void UGA_WeaponAttackBase::ExecuteAttack()
 		SourceWeapon->LastSuccessfulFireTime = GetWorld()->GetTimeSeconds();
 		Projectile->ConfigureVisuals(SourceWeapon->WeaponData);
 		Projectile->FinishSpawning(SpawnTransform);
+		Player->PlayRangedShotFeedback(WeaponSlot, Data, SpawnTransform);
 		Projectile->LaunchProjectile(ShotDirection);
 		if (!IsActive() || bFinishingAttack) return;
 	}
@@ -321,12 +322,12 @@ void UGA_WeaponAttackBase::ExecuteAttack()
 		}
 	}
 
-	if (Data->AttackEffect)
+	if (!bRanged && Data->AttackEffect)
 	{
 		UNiagaraFunctionLibrary::SpawnSystemAtLocation(Player, Data->AttackEffect,
 			Player->GetActorLocation(), Player->GetActorRotation());
 	}
-	if (Data->AttackSound)
+	if (!bRanged && Data->AttackSound)
 	{
 		UGameplayStatics::PlaySoundAtLocation(Player, Data->AttackSound, Player->GetActorLocation());
 	}

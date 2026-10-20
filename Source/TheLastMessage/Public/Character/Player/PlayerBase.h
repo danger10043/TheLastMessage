@@ -22,6 +22,10 @@ class UWeaponDataAsset;
 class UStaticMeshComponent;
 class UAnimMontage;
 class UAnimInstance;
+class URangedFireFeedbackData;
+class UNiagaraSystem;
+class USoundBase;
+class UAudioComponent;
 class UGrapplingHookComponent;
 class UCombatFeedbackComponent;
 class UGravityStateComponent;
@@ -121,6 +125,12 @@ public:
 	void BeginWeaponCharge(EWeaponSlot Slot, float Duration);
 	void ClearWeaponCharge(EWeaponSlot Slot);
 	void NotifyWeaponEnergySpent();
+	void PlayRangedShotFeedback(EWeaponSlot Slot, const UWeaponDataAsset* Data, const FTransform& ShotTransform);
+	URangedFireFeedbackData* GetRangedFireFeedback(const UWeaponDataAsset* Data) const;
+	UPROPERTY(EditDefaultsOnly, Category="Player|Weapon|Feedback")
+	TSoftObjectPtr<URangedFireFeedbackData> DefaultLightRangedFeedback;
+	UPROPERTY(EditDefaultsOnly, Category="Player|Weapon|Feedback")
+	TSoftObjectPtr<URangedFireFeedbackData> DefaultHeavyRangedFeedback;
 	void ClearPendingAttack() { PendingAttackInput = FGameplayTag(); PendingAttackWeapon.Reset(); }
 
 	// 실제 공격 활성화에 성공한 슬롯의 외형을 표시한다.
@@ -375,6 +385,13 @@ private:
 	float AimSendElapsed = 0.0f;
 	void AbilityInputPressed(FGameplayTag InputTag);
 	FGameplayTag PendingAttackInput;
+	UFUNCTION(NetMulticast, Unreliable)
+	void MulticastRangedShotFeedback(EWeaponSlot Slot, bool bHeavy, URangedFireFeedbackData* Feedback, UNiagaraSystem* Effect, USoundBase* Sound, FTransform ShotTransform);
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastWeaponChargeSound(URangedFireFeedbackData* Feedback, EWeaponSlot Slot, float Duration);
+	void StopWeaponChargeSound();
+	UPROPERTY(Transient)
+	TObjectPtr<UAudioComponent> WeaponChargeAudio;
 	void UpdateRangedFacing();
 	bool bRangedFacingOverride = false;
 	bool bRestoreOrientToMovement = true;

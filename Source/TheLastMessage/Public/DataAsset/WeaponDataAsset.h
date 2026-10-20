@@ -94,19 +94,11 @@ public:
 	float MaxChargeDamageMultiplier = 1.0f;
 
 	// ------------------------------근접------------------------------
-	// Legacy serialized value; attacks now wait for their animation to complete.
-	UPROPERTY()
-	float AttackInterval = 0.5f;
-
 	// 근접 공격 사거리
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
 	float AttackRange;
 
 	// ------------------------------원거리-----------------------------
-	// Legacy serialized value; no longer used to gate attacks.
-	UPROPERTY()
-	float RPM;
-
 	// 원거리 사거리
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
 	float Range;
@@ -118,14 +110,6 @@ public:
 	// 일반 공격 소모량
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
 	float EnergyPerShot;
-
-	// 충전 대기 시간
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
-	float EnergyRechargeDelay;
-
-	// 초당 충전량
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
-	float EnergyRechargeRate;
 
 	// 탄환 클래스
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")

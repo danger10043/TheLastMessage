@@ -17,7 +17,6 @@
 #include "GAS/WeaponSlotAttributeSet.h"
 #include "GAS/Effects/GE_WeaponEnergyCost.h"
 #include "Projectile/ProjectileBase.h"
-#include "GAS/Effects/GE_WeaponPrimaryCooldown.h"
 #include "GAS/WeaponGameplayTags.h"
 #include "Kismet/GameplayStatics.h"
 #include "NiagaraFunctionLibrary.h"
@@ -38,9 +37,7 @@ UGA_WeaponAttackBase::UGA_WeaponAttackBase()
 	ActivationBlockedTags.AddTag(WeaponGameplayTags::State_Dead);
 	ActivationBlockedTags.AddTag(WeaponGameplayTags::State_HitReacting);
 	ActivationBlockedTags.AddTag(WeaponGameplayTags::State_Grappling);
-	CooldownEffectClass = UGE_WeaponPrimaryCooldown::StaticClass();
 	CostEffectClass = UGE_WeaponPrimaryEnergyCost::StaticClass();
-	AttackCooldownTags.AddTag(WeaponGameplayTags::Cooldown_Primary);
 }
 
 bool UGA_WeaponAttackBase::CanActivateAbility(const FGameplayAbilitySpecHandle Handle,

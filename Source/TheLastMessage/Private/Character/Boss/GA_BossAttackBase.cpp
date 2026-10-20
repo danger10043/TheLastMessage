@@ -34,9 +34,10 @@ bool UGA_BossAttackBase::CanActivateAbility(
     }
 
     const EBossState State = Boss->GetBossState();
-    APawn* Target = Cast<APawn>(Boss->GetCurrentTarget());
+    APlayerBase* Target = Cast<APlayerBase>(Boss->GetCurrentTarget());
     return (State == EBossState::Idle || State == EBossState::Combat)
         && IsValid(Target) && Target->IsPlayerControlled()
+        && !Target->IsDead()
         && Boss->IsDistanceInAttackRange(
             AttackType, Boss->GetDistanceTo(Target));
 }

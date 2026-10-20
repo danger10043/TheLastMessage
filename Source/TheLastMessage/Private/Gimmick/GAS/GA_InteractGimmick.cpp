@@ -1,7 +1,7 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
 
-#include "Gimmick/GAS/GameplayAbility_InteractGimmick.h"
+#include "Gimmick/GAS/GA_InteractGimmick.h"
 
 #include "Abilities/GameplayAbilityTypes.h"
 #include "Character/Player/PlayerBase.h"

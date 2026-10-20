@@ -819,7 +819,10 @@ void APlayerBase::PlayDeathPresentation(FName ReactionSection)
 	bDeathPresentationStarted = true;
 	StopJumping();
 	GetCharacterMovement()->StopMovementImmediately();
-	GetCharacterMovement()->DisableMovement();
+	// Keep gravity active so an airborne death can settle on the ground.
+	ConsumeMovementInputVector();
+	GetCharacterMovement()->ClearAccumulatedForces();
+	GetCharacterMovement()->SetMovementMode(MOVE_Falling);
 	UAnimInstance* AnimInstance = GetMesh()->GetAnimInstance();
 	if (!AnimInstance) return;
 	AnimInstance->StopAllMontages(0.1f);
@@ -883,7 +886,7 @@ bool APlayerBase::RespawnAtCheckpoint()
 	// Keep equipment, core grants and permanent effects on the existing ASC.
 	const bool bGravityReversed = AbilitySystemComponent->HasMatchingGameplayTag(
 		FGameplayTag::RequestGameplayTag(TEXT("State.Gravity.Reversed")));
-	// ToggleGravityState requires a living player; movement stays disabled until reset.
+	// ToggleGravityState requires a living player; reset movement after restoring gravity.
 	DeathState.bDead = false;
 	AbilitySystemComponent->RemoveLooseGameplayTag(WeaponGameplayTags::State_Dead, 1, EGameplayTagReplicationState::TagAndCountToAll);
 	if (bGravityReversed != bCheckpointGravityReversed)
@@ -951,7 +954,9 @@ void APlayerBase::CleanupPlayerActions()
 	DropValue = 0;
 	StopJumping();
 	GetCharacterMovement()->StopMovementImmediately();
-	GetCharacterMovement()->DisableMovement();
+	ConsumeMovementInputVector();
+	GetCharacterMovement()->ClearAccumulatedForces();
+	GetCharacterMovement()->SetMovementMode(MOVE_Falling);
 }
 
 void APlayerBase::HandleDoubleJumpTagChanged(const FGameplayTag Tag, int32 NewCount)

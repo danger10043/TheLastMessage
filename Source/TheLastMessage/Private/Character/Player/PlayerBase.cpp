@@ -745,7 +745,7 @@ void APlayerBase::HandleHitReaction(FName ReactionSection)
 	bGrappleCancelJumpAvailable = false;
 	// Actual damage interrupts grappling even when no reaction montage is assigned.
 	GrapplingHookComponent->ClearAnchor();
-	if (IsHitReacting() || !HitReactMontage) return;
+	if (IsHitReacting() || !HitReactMontage || GetWorld()->GetTimeSeconds() < HitReactionImmunityEndTime) return;
 	const FName Section = PlayerReaction::ResolveSection(HitReactMontage, ReactionSection);
 	const int32 SectionIndex = HitReactMontage->GetSectionIndex(Section);
 	const float Length = SectionIndex != INDEX_NONE ? HitReactMontage->GetSectionLength(SectionIndex) : HitReactMontage->GetPlayLength();
@@ -797,6 +797,7 @@ void APlayerBase::FinishHitReaction()
 	GetWorldTimerManager().ClearTimer(HitReactionTimer);
 	if (HasAuthority() && IsHitReacting())
 	{
+		HitReactionImmunityEndTime = GetWorld()->GetTimeSeconds() + FMath::Max(0.0f, HitReactionImmunityDuration);
 		AbilitySystemComponent->RemoveLooseGameplayTag(WeaponGameplayTags::State_HitReacting, 1, EGameplayTagReplicationState::TagAndCountToAll);
 	}
 }
@@ -943,6 +944,7 @@ void APlayerBase::CleanupPlayerActions()
 	bGrappleCancelJumpAvailable = false;
 	GrapplingHookComponent->ClearAnchor();
 	FinishHitReaction();
+	HitReactionImmunityEndTime = 0.0;
 	AbilitySystemComponent->CancelAllAbilities();
 	GetWorldTimerManager().ClearTimer(EnergyRechargeTimerHandle);
 	ActionValueY = 0;

@@ -23,7 +23,7 @@ public:
 
 	/** How close we want to stay to the view target */
 	UPROPERTY(EditAnywhere, Category="Side Scrolling Camera", meta=(ClampMin=0, ClampMax=10000, Units="cm"))
-	float CurrentZoom = 1000.0f;
+	float CurrentZoom = 2000.0f;
 
 	/** How far above the target do we want the camera to focus */
 	UPROPERTY(EditAnywhere, Category="Side Scrolling Camera", meta=(ClampMin=0, ClampMax=10000, Units="cm"))

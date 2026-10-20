@@ -9,6 +9,8 @@
 #include "Perception/AISense_Sight.h"
 #include "GameFramework/Pawn.h"
 #include "Misc/ScopeExit.h"
+#include "Character/Player/PlayerBase.h"
+#include "AbilitySystemComponent.h"
 
 ABossAIController::ABossAIController()
 {
@@ -148,8 +150,9 @@ void ABossAIController::RefreshTargetFromPerception()
 
     for (AActor* SeenActor : SeenActors)
     {
-        APawn* PlayerPawn = Cast<APawn>(SeenActor);
-        if (!IsValid(PlayerPawn) || !PlayerPawn->IsPlayerControlled())
+        APlayerBase* PlayerPawn = Cast<APlayerBase>(SeenActor);
+        if (!IsValid(PlayerPawn) || !PlayerPawn->IsPlayerControlled()
+            || PlayerPawn->IsDead())
         {
             continue;
         }
@@ -179,8 +182,9 @@ void ABossAIController::UpdateTargetActor(AActor* NewTarget)
         return;
     }
 
-    APawn* PlayerPawn = Cast<APawn>(NewTarget);
+    APlayerBase* PlayerPawn = Cast<APlayerBase>(NewTarget);
     if (!IsValid(PlayerPawn) || !PlayerPawn->IsPlayerControlled()
+        || PlayerPawn->IsDead()
         || ControlledBoss->GetBossState() == EBossState::Dead)
     {
         NewTarget = nullptr;
@@ -248,17 +252,41 @@ void ABossAIController::UpdateCombatRange(
         return;
     }
 
+    if (ControlledBoss->GetBossState() != EBossState::Dead
+        && !IsValid(ControlledBoss->GetCurrentTarget()))
+    {
+        RefreshTargetFromPerception();
+    }
+
     const EBossState State = ControlledBoss->GetBossState();
     BB->SetValueAsEnum(TEXT("BossState"), static_cast<uint8>(State));
     BB->SetValueAsEnum(TEXT("BossPhase"),
         static_cast<uint8>(ControlledBoss->GetBossPhase()));
 
     AActor* Target = ControlledBoss->GetCurrentTarget();
-    APawn* PlayerPawn = Cast<APawn>(Target);
+    APlayerBase* PlayerPawn = Cast<APlayerBase>(Target);
     if (State == EBossState::Dead
-        || !IsValid(PlayerPawn) || !PlayerPawn->IsPlayerControlled())
+        || !IsValid(PlayerPawn) || !PlayerPawn->IsPlayerControlled()
+        || PlayerPawn->IsDead())
     {
         UpdateTargetActor(nullptr);
+
+        if (State == EBossState::Combat || State == EBossState::Attacking)
+        {
+            if (UAbilitySystemComponent* ASC =
+                ControlledBoss->GetAbilitySystemComponent())
+            {
+                ASC->CancelAllAbilities();
+            }
+
+            if (IsValid(ControlledBoss.Get())
+                && (ControlledBoss->GetBossState() == EBossState::Combat
+                    || ControlledBoss->GetBossState() == EBossState::Attacking))
+            {
+                ControlledBoss->StopAnimMontage();
+                ControlledBoss->SetBossState(EBossState::Idle);
+            }
+        }
         return;
     }
 

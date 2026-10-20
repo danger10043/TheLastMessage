@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Interface/PoolableInterface.h"
 #include "BossCircularMissile.generated.h"
 
 class ABossMonster;
@@ -13,13 +14,25 @@ class UGameplayEffect;
 class UCurveFloat;
 
 UCLASS()
-class THELASTMESSAGE_API ABossCircularMissile : public AActor
+class THELASTMESSAGE_API ABossCircularMissile : public AActor, public IPoolableInterface
 {
     GENERATED_BODY()
 
 public:
     ABossCircularMissile();
     virtual void Tick(float DeltaSeconds) override;
+
+    virtual void OnAcquiredFromPool() override;
+
+    virtual void OnReturnedToPool() override;
+
+    void StartMissile();
+
+    void ReturnToPool();
+
+    bool IsMissileActive() const { return !bInPool && !bExploded; }
+
+    FSimpleDelegate OnMissileReturned;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Boss|Missile",
         meta = (ExposeOnSpawn = "true", ClampMin = "0.01"))
@@ -93,4 +106,10 @@ private:
     float FlightDuration = 0.f;
 
     bool bExploded = false;
+
+    bool bInPool = false;
+
+    bool bUsesPool = false;
+
+    bool bResolvingExplosion = false;
 };

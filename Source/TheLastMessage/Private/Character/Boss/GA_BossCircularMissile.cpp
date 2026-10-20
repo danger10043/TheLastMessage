@@ -5,6 +5,10 @@
 #include "AIController.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Engine/World.h"
+#include "Framework/ActorPoolSubsystem.h"
+#include "AbilitySystemComponent.h"
+#include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
+#include "Animation/AnimMontage.h"
 
 UGA_BossCircularMissile::UGA_BossCircularMissile()
 {
@@ -42,6 +46,16 @@ void UGA_BossCircularMissile::ActivateAbility(
         return;
     }
 
+    UAnimInstance* AnimInstance = ActorInfo ? ActorInfo->GetAnimInstance() : nullptr;
+    if (!IsValid(AnimInstance) || !IsValid(AttackMontage.Get())
+        || LaunchNotifyName.IsNone())
+    {
+        UE_LOG(LogTemp, Error,
+            TEXT("BossCircularMissile: invalid montage or LaunchStart settings."));
+        EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+        return;
+    }
+
     TargetA = FVector::ZeroVector;
     TargetB = FVector::ZeroVector;
 
@@ -54,6 +68,10 @@ void UGA_BossCircularMissile::ActivateAbility(
     LockedTarget = Target;
     SpawnedMissiles.Reset();
     SpawnedCount = 0;
+
+    bLaunchStarted = false;
+    bMontageFinished = false;
+    MontageInstanceID = INDEX_NONE;
 
     Boss->OnBossStateChanged.AddUniqueDynamic(
         this, &UGA_BossCircularMissile::HandleBossStateChanged);
@@ -72,10 +90,42 @@ void UGA_BossCircularMissile::ActivateAbility(
         Movement->StopMovementImmediately();
     }
 
-    GetWorld()->GetTimerManager().SetTimer(
-        SpawnTimer, this, &UGA_BossCircularMissile::SpawnNextMissile,
-        ActiveConfig.SpawnInterval, true);
-    SpawnNextMissile();
+    BoundAnimInstance = AnimInstance;
+    AnimInstance->OnPlayMontageNotifyBegin.AddUniqueDynamic(
+        this, &UGA_BossCircularMissile::HandleLaunchNotify);
+
+    MontageTask =
+        UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
+            this, NAME_None, AttackMontage.Get(),
+            1.f, NAME_None, true, 1.f, 0.f, true);
+    if (!IsValid(MontageTask.Get()))
+    {
+        HandleMontageCancelled();
+        return;
+    }
+
+    MontageTask->OnCompleted.AddDynamic(
+        this, &UGA_BossCircularMissile::HandleMontageCompleted);
+    MontageTask->OnInterrupted.AddDynamic(
+        this, &UGA_BossCircularMissile::HandleMontageCancelled);
+    MontageTask->OnCancelled.AddDynamic(
+        this, &UGA_BossCircularMissile::HandleMontageCancelled);
+    MontageTask->ReadyForActivation();
+
+    if (!IsActive() || bEnding)
+    {
+        return;
+    }
+
+    FAnimMontageInstance* Instance =
+        AnimInstance->GetActiveInstanceForMontage(AttackMontage.Get());
+    if (!Instance)
+    {
+        HandleMontageCancelled();
+        return;
+    }
+
+    MontageInstanceID = Instance->GetInstanceID();
 }
 
 void UGA_BossCircularMissile::SpawnNextMissile()
@@ -118,10 +168,18 @@ void UGA_BossCircularMissile::SpawnNextMissile()
     const FVector SpawnLocation = Boss->GetActorLocation()
         + Boss->GetActorRotation().RotateVector(MissileSpawnOffset);
     const FTransform SpawnTransform(FRotator::ZeroRotator, SpawnLocation);
-    ABossCircularMissile* Missile =
-        GetWorld()->SpawnActorDeferred<ABossCircularMissile>(
-            ActiveConfig.CircularMissileClass, SpawnTransform, Boss, Boss,
-            ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+    UActorPoolSubsystem* Pool =
+        GetWorld()->GetSubsystem<UActorPoolSubsystem>();
+    if (!Pool)
+    {
+        EndAbility(GetCurrentAbilitySpecHandle(), GetCurrentActorInfo(),
+            GetCurrentActivationInfo(), true, true);
+        return;
+    }
+
+    ABossCircularMissile* Missile = Cast<ABossCircularMissile>(
+        Pool->AcquireActor(
+            ActiveConfig.CircularMissileClass, SpawnTransform, Boss, Boss));
     if (!IsValid(Missile))
     {
         EndAbility(GetCurrentAbilitySpecHandle(), GetCurrentActorInfo(),
@@ -129,33 +187,47 @@ void UGA_BossCircularMissile::SpawnNextMissile()
         return;
     }
 
-    SpawnedMissiles.Add(Missile);
+    if (!IsActive() || bEnding)
+    {
+        Missile->ReturnToPool();
+        return;
+    }
+
+    const TWeakObjectPtr<ABossCircularMissile> WeakMissile(Missile);
+    Missile->OnMissileReturned.BindWeakLambda(this, [this, WeakMissile]()
+        {
+            SpawnedMissiles.Remove(WeakMissile);
+        });
+    SpawnedMissiles.Add(WeakMissile);
+
     Missile->Damage = ActiveConfig.Damage;
     Missile->LaunchTime = ActiveConfig.LaunchTime;
     Missile->DamageRadius = ActiveConfig.DamageRadius;
     Missile->FireLocation = FireLocation;
-    Missile->FinishSpawning(SpawnTransform);
+    Missile->StartMissile();
 
     if (!IsActive() || bEnding)
     {
         if (IsValid(Missile))
         {
-            Missile->Destroy();
+            Missile->ReturnToPool();
         }
         return;
     }
-    if (!IsValid(Missile))
+    if (!IsValid(Missile) || !Missile->IsMissileActive())
     {
         UE_LOG(LogTemp, Error,
-            TEXT("BossCircularMissile: missile destroyed during initialization."));
+            TEXT("BossCircularMissile: missile initialization failed."));
         EndAbility(GetCurrentAbilitySpecHandle(), GetCurrentActorInfo(),
             GetCurrentActivationInfo(), true, true);
         return;
     }
 
     ++SpawnedCount;
-    UE_LOG(LogTemp, Log, TEXT("BossCircularMissile: shot %d/%d, target=%s"),
-        SpawnedCount, ActiveConfig.MissileCount, *FireLocation.ToString());
+    UE_LOG(LogTemp, Log,
+        TEXT("BossCircularMissile: shot %d/%d, missile=%s, target=%s"),
+        SpawnedCount, ActiveConfig.MissileCount,
+        *Missile->GetName(), *FireLocation.ToString());
 
     if (SpawnedCount >= ActiveConfig.MissileCount)
     {
@@ -168,7 +240,9 @@ void UGA_BossCircularMissile::SpawnNextMissile()
 
 void UGA_BossCircularMissile::CheckMissilesFinished()
 {
-    if (!IsActive() || bEnding)
+    if (!IsActive() || bEnding
+        || !bLaunchStarted || !bMontageFinished
+        || SpawnedCount < ActiveConfig.MissileCount)
     {
         return;
     }
@@ -206,6 +280,29 @@ void UGA_BossCircularMissile::EndAbility(
     }
     TGuardValue<bool> EndingGuard(bEnding, true);
 
+    if (UAnimInstance* AnimInstance = BoundAnimInstance.Get())
+    {
+        AnimInstance->OnPlayMontageNotifyBegin.RemoveDynamic(
+            this, &UGA_BossCircularMissile::HandleLaunchNotify);
+    }
+    BoundAnimInstance.Reset();
+    MontageInstanceID = INDEX_NONE;
+
+    if (IsValid(MontageTask.Get()))
+    {
+        MontageTask->OnCompleted.RemoveAll(this);
+        MontageTask->OnInterrupted.RemoveAll(this);
+        MontageTask->OnCancelled.RemoveAll(this);
+    }
+    MontageTask = nullptr;
+
+    UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo();
+    if (IsValid(ASC) && ASC->GetAnimatingAbility() == this)
+    {
+        ASC->CurrentMontageStop(0.1f);
+        ASC->ClearAnimatingAbility(this);
+    }
+
     if (UWorld* World = GetWorld())
     {
         World->GetTimerManager().ClearTimer(SpawnTimer);
@@ -219,17 +316,20 @@ void UGA_BossCircularMissile::EndAbility(
             this, &UGA_BossCircularMissile::HandleBossStateChanged);
     }
 
+    TArray<TWeakObjectPtr<ABossCircularMissile>> Missiles =
+        MoveTemp(SpawnedMissiles);
+    SpawnedMissiles.Reset();
+
     if (bWasCancelled)
     {
-        for (const TWeakObjectPtr<ABossCircularMissile>& Missile : SpawnedMissiles)
+        for (const TWeakObjectPtr<ABossCircularMissile>& Entry : Missiles)
         {
-            if (IsValid(Missile.Get()))
+            if (ABossCircularMissile* Missile = Entry.Get())
             {
-                Missile->Destroy();
+                Missile->ReturnToPool();
             }
         }
     }
-    SpawnedMissiles.Reset();
     LockedTarget.Reset();
 
     if (IsValid(Boss) && Boss->HasAuthority()
@@ -240,4 +340,72 @@ void UGA_BossCircularMissile::EndAbility(
 
     Super::EndAbility(Handle, ActorInfo, ActivationInfo,
         bReplicateEndAbility, bWasCancelled);
+}
+
+void UGA_BossCircularMissile::HandleLaunchNotify(
+    FName NotifyName, const FBranchingPointNotifyPayload& Payload)
+{
+    ABossMonster* Boss = GetBossOwner();
+    UAnimInstance* AnimInstance = BoundAnimInstance.Get();
+    if (!IsActive() || bEnding || bLaunchStarted
+        || !IsValid(Boss) || !Boss->HasAuthority() || !IsValid(AnimInstance)
+        || NotifyName != LaunchNotifyName
+        || Payload.SkelMeshComponent != Boss->GetMesh())
+    {
+        return;
+    }
+
+    FAnimMontageInstance* Instance =
+        AnimInstance->GetActiveInstanceForMontage(AttackMontage.Get());
+    if (!Instance || Payload.MontageInstanceID != Instance->GetInstanceID()
+        || (MontageInstanceID != INDEX_NONE
+            && Payload.MontageInstanceID != MontageInstanceID))
+    {
+        return;
+    }
+
+    MontageInstanceID = Payload.MontageInstanceID;
+    if (!GetWorld())
+    {
+        HandleMontageCancelled();
+        return;
+    }
+
+    bLaunchStarted = true;
+    UE_LOG(LogTemp, Log, TEXT("BossCircularMissile: LaunchStart received."));
+
+    GetWorld()->GetTimerManager().SetTimer(
+        SpawnTimer, this, &UGA_BossCircularMissile::SpawnNextMissile,
+        ActiveConfig.SpawnInterval, true);
+    SpawnNextMissile();
+}
+
+void UGA_BossCircularMissile::HandleMontageCompleted()
+{
+    if (!IsActive() || bEnding)
+    {
+        return;
+    }
+
+    bMontageFinished = true;
+    if (!bLaunchStarted)
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("BossCircularMissile: montage ended without LaunchStart."));
+        HandleMontageCancelled();
+        return;
+    }
+
+    CheckMissilesFinished();
+}
+
+void UGA_BossCircularMissile::HandleMontageCancelled()
+{
+    if (!IsActive() || bEnding)
+    {
+        return;
+    }
+
+    EndAbility(GetCurrentAbilitySpecHandle(), GetCurrentActorInfo(),
+        GetCurrentActivationInfo(), true, true);
 }

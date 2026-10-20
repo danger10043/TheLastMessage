@@ -30,8 +30,6 @@ UGrapplingHookComponent::UGrapplingHookComponent()
 	ThrowMontage = ThrowAsset.Object;
 	PullMontage = PullAsset.Object;
 	LandMontage = LandAsset.Object;
-	static ConstructorHelpers::FObjectFinder<UMaterialInterface> CableMaterialAsset(TEXT("/Game/Test_Jihong/Materials/M_GrappleCable.M_GrappleCable"));
-	CableMaterial = CableMaterialAsset.Object;
 }
 
 void UGrapplingHookComponent::BeginPlay()

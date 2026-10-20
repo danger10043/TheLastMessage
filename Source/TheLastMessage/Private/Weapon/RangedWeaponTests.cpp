@@ -8,6 +8,9 @@
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/SkeletalMesh.h"
+#include "Engine/StaticMesh.h"
+#include "Engine/StaticMeshSocket.h"
+#include "GameFramework/ProjectileMovementComponent.h"
 #include "Character/Enemy/EnemyBase.h"
 #include "Character/Enemy/EnemyAttributeSet.h"
 #include "DataAsset/WeaponDataAsset.h"
@@ -282,6 +285,62 @@ bool FRangedWeaponTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("BP travel range replaces weapon data range"), FMath::IsNearlyEqual(RangeOverrideProjectile->GetLifeSpan(), 0.075f));
 	Advance(0.1f);
 	TestFalse(TEXT("Projectile expires at BP travel range"), IsValid(RangeOverrideProjectile));
+	// Use a transient mesh so the test never modifies the user's weapon assets.
+	UStaticMesh* SocketMesh = DuplicateObject<UStaticMesh>(LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere")), Player);
+	UStaticMeshSocket* Muzzle = NewObject<UStaticMeshSocket>(SocketMesh);
+	Muzzle->SocketName = TEXT("Muzzle");
+	Muzzle->RelativeLocation = FVector(100, 0, 0);
+	SocketMesh->AddSocket(Muzzle);
+	Data->WeaponMesh = SocketMesh;
+	Data->AttachSocketName = TEXT("spine_03");
+	Data->bSupportsChargeAttack = false;
+	Data->AttackMontage = nullptr;
+	Data->EnergyPerShot = 0;
+	Player->EquipWeapon(EWeaponSlot::Primary, Data);
+	Player->EquipWeapon(EWeaponSlot::Secondary, Data);
+	Player->SetActorRotation(FRotator::ZeroRotator);
+	Player->UpdateAimFromWorldRay(FVector(2000, 500, 200), -FVector::YAxisVector);
+	for (TActorIterator<AProjectileBase> It(World); It; ++It) It->Destroy();
+	TestTrue(TEXT("Shot from muzzle activates"), ASC->TryActivateAbilityByClass(UGA_AttackPrimary::StaticClass()));
+	const FVector MuzzleLocation = Player->GetWeaponMuzzleLocation(EWeaponSlot::Primary);
+	TestFalse(TEXT("Muzzle is distinct from capsule center"), MuzzleLocation.Equals(Player->GetActorLocation(), 1.0f));
+	int32 MuzzleShotCount = 0;
+	for (TActorIterator<AProjectileBase> It(World); It; ++It)
+	{
+		++MuzzleShotCount;
+		TestTrue(TEXT("Projectile starts exactly at muzzle socket"), It->GetActorLocation().Equals(MuzzleLocation, 0.01f));
+		TestTrue(TEXT("Projectile aims from muzzle toward cursor"), It->FindComponentByClass<UProjectileMovementComponent>()->Velocity.GetSafeNormal().Equals(
+			(Player->GetAimTargetLocation() - MuzzleLocation).GetSafeNormal(), 0.001f));
+		It->Destroy();
+	}
+	TestEqual(TEXT("Muzzle shot creates one projectile"), MuzzleShotCount, 1);
+	TestTrue(TEXT("Secondary muzzle shot activates"), ASC->TryActivateAbilityByClass(UGA_AttackSecondary::StaticClass()));
+	MuzzleShotCount = 0;
+	for (TActorIterator<AProjectileBase> It(World); It; ++It)
+	{
+		++MuzzleShotCount;
+		TestTrue(TEXT("Secondary uses its own muzzle socket"), It->GetActorLocation().Equals(Player->GetWeaponMuzzleLocation(EWeaponSlot::Secondary), 0.01f));
+		It->Destroy();
+	}
+	TestEqual(TEXT("Secondary muzzle creates one projectile"), MuzzleShotCount, 1);
+	Advance(0.2f);
+	Player->ShowWeaponInSlot(EWeaponSlot::Primary);
+	const FVector ClearMuzzle = Player->GetWeaponMuzzleLocation(EWeaponSlot::Primary);
+	AActor* MuzzleWall = World->SpawnActor<AActor>();
+	UBoxComponent* MuzzleWallBox = NewObject<UBoxComponent>(MuzzleWall);
+	MuzzleWall->SetRootComponent(MuzzleWallBox); MuzzleWall->AddInstanceComponent(MuzzleWallBox);
+	MuzzleWallBox->SetBoxExtent(FVector(10));
+	MuzzleWallBox->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	MuzzleWallBox->SetCollisionResponseToAllChannels(ECR_Block);
+	MuzzleWallBox->RegisterComponent();
+	MuzzleWall->SetActorLocation((Player->GetActorLocation() + ClearMuzzle) * 0.5f);
+	TestTrue(TEXT("Obstructed muzzle shot activates"), ASC->TryActivateAbilityByClass(UGA_AttackPrimary::StaticClass()));
+	for (TActorIterator<AProjectileBase> It(World); It; ++It)
+	{
+		TestTrue(TEXT("Projectile cannot spawn beyond wall at muzzle"), FVector::Dist(It->GetActorLocation(), Player->GetActorLocation()) < FVector::Dist(ClearMuzzle, Player->GetActorLocation()));
+		It->Destroy();
+	}
+	MuzzleWall->Destroy();
 	// Maximum changes clamp the single shared resource.
 	Energy->SetSharedMaxEnergy(15);
 	TestTrue(TEXT("Maximum reduction clamps energy"), Energy->GetSharedEnergy() <= 15.0f);

@@ -145,6 +145,14 @@ FVector APlayerBase::GetAimTargetLocation() const
 	return bHasAimTarget ? AimTargetLocation : GetActorLocation() + AimDirection * 1000.0f;
 }
 
+FVector APlayerBase::GetWeaponMuzzleLocation(EWeaponSlot Slot) const
+{
+	const UStaticMeshComponent* WeaponMesh = Slot == EWeaponSlot::Primary ? PrimaryWeaponMesh.Get()
+		: Slot == EWeaponSlot::Secondary ? SecondaryWeaponMesh.Get() : nullptr;
+	return WeaponMesh && WeaponMesh->DoesSocketExist(TEXT("Muzzle"))
+		? WeaponMesh->GetSocketLocation(TEXT("Muzzle")) : GetActorLocation();
+}
+
 bool APlayerBase::SetAimTarget(FVector WorldPoint)
 {
 	if (WorldPoint.ContainsNaN() || IsDead()) return false;
@@ -347,6 +355,8 @@ bool APlayerBase::IsGrappling() const
 void APlayerBase::BeginPlay()
 {
 	Super::BeginPlay();
+	// Authority must evaluate hand bones even without a rendered viewport to resolve muzzle sockets.
+	if (HasAuthority()) GetMesh()->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
 	if (UClass* AimClass = RangedAimPostProcessClass.LoadSynchronous())
 	{
 		GetMesh()->SetOverridePostProcessAnimBP(AimClass);

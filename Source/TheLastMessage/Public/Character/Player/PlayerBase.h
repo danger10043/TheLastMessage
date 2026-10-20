@@ -170,6 +170,8 @@ public:
 	// 커서 광선과 캐릭터의 이동 평면이 만나는 지점. 무기/훅 발사 위치에서도 사용한다.
 	UFUNCTION(BlueprintPure, Category="Player|Aim")
 	FVector GetAimTargetLocation() const;
+	UFUNCTION(BlueprintPure, Category="Player|Weapon")
+	FVector GetWeaponMuzzleLocation(EWeaponSlot Slot) const;
 	UFUNCTION(BlueprintPure, Category="Player|Aim")
 	bool IsRangedAiming() const;
 	TSubclassOf<AProjectileBase> GetAttackProjectileClass(const UWeaponDataAsset* Data) const;

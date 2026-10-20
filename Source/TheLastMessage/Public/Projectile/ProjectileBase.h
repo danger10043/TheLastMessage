@@ -23,6 +23,7 @@ public:
 	AProjectileBase();
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 	void ConfigureVisuals(UWeaponDataAsset* Data);
+	float GetProjectileCollisionRadius() const;
 	bool InitializeProjectile(AActor* Source, TSubclassOf<UGameplayEffect> Effect, float InDamage, float Speed, float Range, float InFeedbackStrength = 1.0f);
 
 	void LaunchProjectile(const FVector& Direction);

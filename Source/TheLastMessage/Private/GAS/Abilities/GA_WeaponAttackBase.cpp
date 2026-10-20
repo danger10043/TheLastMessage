@@ -233,8 +233,29 @@ void UGA_WeaponAttackBase::ExecuteAttack()
 	FVector ShotDirection = FVector::ZeroVector;
 	if (bRanged)
 	{
-		// Fire from the aim plane at capsule center; no offset may skip a nearby wall.
-		ShotDirection = (Player->GetAimTargetLocation() - Player->GetActorLocation()).GetSafeNormal();
+		FVector SpawnLocation = Player->GetWeaponMuzzleLocation(WeaponSlot);
+		const TSubclassOf<AProjectileBase> ProjectileClass = Player->GetAttackProjectileClass(Data);
+		if (!ProjectileClass || ProjectileClass->HasAnyClassFlags(CLASS_Abstract))
+		{
+			EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
+			return;
+		}
+		const float Radius = ProjectileClass->GetDefaultObject<AProjectileBase>()->GetProjectileCollisionRadius();
+		// Sweep the whole projectile from the body to the muzzle so a barrel cannot fire through a wall.
+		FCollisionQueryParams WallParams(SCENE_QUERY_STAT(MuzzleObstruction), false, Player);
+		FHitResult Obstruction;
+		if (!SpawnLocation.Equals(Player->GetActorLocation()) && GetWorld()->SweepSingleByChannel(Obstruction,
+			Player->GetActorLocation(), SpawnLocation, FQuat::Identity, ECC_Visibility,
+			FCollisionShape::MakeSphere(Radius), WallParams))
+		{
+			if (Obstruction.bStartPenetrating)
+			{
+				EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
+				return;
+			}
+			SpawnLocation = Obstruction.Location - (SpawnLocation - Player->GetActorLocation()).GetSafeNormal();
+		}
+		ShotDirection = (Player->GetAimTargetLocation() - SpawnLocation).GetSafeNormal();
 		float FinalDamage = Data->AttackPower * ChargeDamageMultiplier;
 		FinalDamage *= FMath::Max(0.0f, Player->GetCombatAttributes()->GetDamageDealtMultiplier());
 		FinalDamage *= GetHealthDamageMultiplier();
@@ -244,8 +265,8 @@ void UGA_WeaponAttackBase::ExecuteAttack()
 			EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
 			return;
 		}
-		SpawnTransform = FTransform(ShotDirection.Rotation(), Player->GetActorLocation());
-		Projectile = GetWorld()->SpawnActorDeferred<AProjectileBase>(Player->GetAttackProjectileClass(Data), SpawnTransform,
+		SpawnTransform = FTransform(ShotDirection.Rotation(), SpawnLocation);
+		Projectile = GetWorld()->SpawnActorDeferred<AProjectileBase>(ProjectileClass, SpawnTransform,
 			Player, Player, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
 		if (!Projectile || !Projectile->InitializeProjectile(Player, DamageEffectClass, FinalDamage, Data->ProjectileSpeed, Data->Range, GetImpactFeedbackStrength()))
 		{

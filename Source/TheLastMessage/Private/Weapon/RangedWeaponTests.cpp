@@ -32,15 +32,6 @@
 #include "GameFramework/PlayerController.h"
 #include "Components/BoxComponent.h"
 #include "UObject/UnrealType.h"
-#include "Engine/SceneCapture2D.h"
-#include "Engine/TextureRenderTarget2D.h"
-#include "Components/SceneCaptureComponent2D.h"
-#include "ImageUtils.h"
-#include "Serialization/BufferArchive.h"
-#include "Misc/FileHelper.h"
-#include "Misc/Paths.h"
-#include "HAL/FileManager.h"
-#include "Materials/MaterialInterface.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRangedWeaponTest, "TheLastMessage.Weapon.RangedLifecycle",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -75,12 +66,9 @@ bool FRangedWeaponTest::RunTest(const FString& Parameters)
 	UWeaponDataAsset* Data = NewObject<UWeaponDataAsset>(Player);
 	Data->WeaponType = EWeaponType::LightRanged;
 	Data->AttackPower = 10;
-	Data->RPM = 600;
 	Data->Range = 1000;
 	Data->MaxEnergy = 100;
 	Data->EnergyPerShot = 10;
-	Data->EnergyRechargeDelay = 0.5f;
-	Data->EnergyRechargeRate = 20;
 	FindFProperty<FFloatProperty>(APlayerBase::StaticClass(), TEXT("SharedEnergyRechargeDelay"))->SetPropertyValue_InContainer(Player, 0.5f);
 	FindFProperty<FFloatProperty>(APlayerBase::StaticClass(), TEXT("SharedEnergyRechargeRate"))->SetPropertyValue_InContainer(Player, 20.0f);
 	Data->ProjectileSpeed = 1000;
@@ -125,7 +113,7 @@ bool FRangedWeaponTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("No recharge before delay"), Energy->GetSharedEnergy(), 90.0f);
 	Advance(0.3f);
 	// Hit stop intentionally delays gameplay clocks; recharge follows game time, not wall time.
-	const float ExpectedRecharge = 90.0f + FMath::Max(0.0, World->GetTimeSeconds() - ShotStartTime - Data->EnergyRechargeDelay) * Data->EnergyRechargeRate;
+	const float ExpectedRecharge = 90.0f + FMath::Max(0.0, World->GetTimeSeconds() - ShotStartTime - 0.5f) * 20.0f;
 	TestTrue(TEXT("Recharge uses only game time after delay"), FMath::IsNearlyEqual(Energy->GetSharedEnergy(), ExpectedRecharge, 1.1f));
 	Advance(0.4f);
 	TestEqual(TEXT("Recharge stops at maximum"), Energy->GetSharedEnergy(), 100.0f);
@@ -152,7 +140,6 @@ bool FRangedWeaponTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Wall prevents damage"), EnemyStats->GetHealth(), BeforeWallShot);
 	Wall->Destroy();
 	Data->bSupportsChargeAttack = true;
-	Data->EnergyRechargeRate = 0;
 	FindFProperty<FFloatProperty>(APlayerBase::StaticClass(), TEXT("SharedEnergyRechargeRate"))->SetPropertyValue_InContainer(Player, 0.0f);
 	Data->MaxChargeTime = 0.2f;
 	Data->MaxChargeDamageMultiplier = 2;
@@ -240,8 +227,7 @@ bool FRangedWeaponTest::RunTest(const FString& Parameters)
 	int32 RemainingProjectiles = 0;
 	for (TActorIterator<AProjectileBase> It(World); It; ++It) ++RemainingProjectiles;
 	TestEqual(TEXT("Expired projectiles are removed"), RemainingProjectiles, 0);
-	Data->RPM = 0;
-	TestTrue(TEXT("Legacy RPM does not gate firing"), ASC->TryActivateAbilityByClass(UGA_AttackPrimary::StaticClass()));
+	TestTrue(TEXT("Animationless weapon can fire again"), ASC->TryActivateAbilityByClass(UGA_AttackPrimary::StaticClass()));
 	Advance(0.2f);
 	Data->bSupportsChargeAttack = true;
 	Player->GetCombatAttributes()->SetChargeTimeMultiplier(0.8f);
@@ -361,43 +347,6 @@ bool FRangedWeaponTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("Energy flash is attached to the Muzzle socket"), It->GetRootComponent()->GetAttachSocketName(), FName(TEXT("Muzzle")));
 	}
 	TestEqual(TEXT("A successful shot creates one energy flash"), EnergyFlashCount, 1);
-	auto CaptureEnergyPulse = [this, World](const FVector& Location, const TCHAR* Name)
-	{
-		if (!FParse::Param(FCommandLine::Get(), TEXT("CaptureEnergyFlash"))) return;
-		for (TActorIterator<AEnergyMuzzleFlash> It(World); It; ++It)
-		{
-			TArray<UStaticMeshComponent*> Parts;
-			It->GetComponents(Parts);
-			for (UStaticMeshComponent* Part : Parts)
-			{
-				if (Part->GetMaterial(0)) Part->GetMaterial(0)->EnsureIsComplete();
-				Part->MarkRenderStateDirty();
-				AddInfo(FString::Printf(TEXT("Energy preview %s: visible=%d hiddenActor=%d registered=%d position=%s scale=%s material=%s"),
-					*Part->GetName(), Part->IsVisible(), It->IsHidden(), Part->IsRegistered(), *Part->GetComponentLocation().ToString(),
-					*Part->GetComponentScale().ToString(), *GetNameSafe(Part->GetMaterial(0))));
-			}
-		}
-		World->SendAllEndOfFrameUpdates();
-		ASceneCapture2D* Camera = World->SpawnActor<ASceneCapture2D>(Location + FVector(0, 200, 0), FRotator(0, -90, 0));
-		USceneCaptureComponent2D* Capture = Camera->GetCaptureComponent2D();
-		UTextureRenderTarget2D* Target = NewObject<UTextureRenderTarget2D>(Camera);
-		Target->InitCustomFormat(768, 512, PF_B8G8R8A8, false);
-		Capture->TextureTarget = Target;
-		Capture->ProjectionType = ECameraProjectionMode::Orthographic;
-		Capture->OrthoWidth = 120.0f;
-		Capture->CaptureSource = SCS_FinalColorLDR;
-		Capture->PostProcessSettings.bOverride_AutoExposureMethod = true;
-		Capture->PostProcessSettings.AutoExposureMethod = AEM_Manual;
-		Capture->bCaptureEveryFrame = false;
-		Capture->CaptureScene();
-		const FString Folder = FPaths::ProjectSavedDir() / TEXT("EnergyFlashPreview");
-		IFileManager::Get().MakeDirectory(*Folder, true);
-		FBufferArchive PNG;
-		const bool bSaved = FImageUtils::ExportRenderTarget2DAsPNG(Target, PNG)
-			&& FFileHelper::SaveArrayToFile(PNG, *(Folder / FString(Name).Append(TEXT(".png"))));
-		TestTrue(FString::Printf(TEXT("%s energy pulse preview saved"), Name), bSaved);
-		Camera->Destroy();
-	};
 	TestTrue(TEXT("Secondary muzzle shot activates"), ASC->TryActivateAbilityByClass(UGA_AttackSecondary::StaticClass()));
 	MuzzleShotCount = 0;
 	for (TActorIterator<AProjectileBase> It(World); It; ++It)
@@ -411,17 +360,6 @@ bool FRangedWeaponTest::RunTest(const FString& Parameters)
 	int32 LingeringFlashes = 0;
 	for (TActorIterator<AEnergyMuzzleFlash> It(World); It; ++It) ++LingeringFlashes;
 	TestEqual(TEXT("Energy flashes expire after their short pulse"), LingeringFlashes, 0);
-	if (FParse::Param(FCommandLine::Get(), TEXT("CaptureEnergyFlash")) && RailFeedback)
-	{
-		AEnergyMuzzleFlash* LightPreview = World->SpawnActor<AEnergyMuzzleFlash>(Player->GetWeaponMuzzleLocation(EWeaponSlot::Secondary), FRotator::ZeroRotator);
-		LightPreview->Initialize(PlasmaFeedback, false);
-		CaptureEnergyPulse(LightPreview->GetActorLocation(), TEXT("Plasma"));
-		LightPreview->Destroy();
-		AEnergyMuzzleFlash* HeavyPreview = World->SpawnActor<AEnergyMuzzleFlash>(Player->GetWeaponMuzzleLocation(EWeaponSlot::Secondary), FRotator::ZeroRotator);
-		HeavyPreview->Initialize(RailFeedback, true);
-		CaptureEnergyPulse(HeavyPreview->GetActorLocation(), TEXT("Railgun"));
-		HeavyPreview->Destroy();
-	}
 	Player->ShowWeaponInSlot(EWeaponSlot::Primary);
 	const FVector ClearMuzzle = Player->GetWeaponMuzzleLocation(EWeaponSlot::Primary);
 	AActor* MuzzleWall = World->SpawnActor<AActor>();
@@ -455,7 +393,6 @@ bool FRangedWeaponTest::RunTest(const FString& Parameters)
 		{
 			++RailFlashes;
 			TestTrue(TEXT("Actual railgun pulse starts at its muzzle"), It->GetActorLocation().Equals(Player->GetWeaponMuzzleLocation(EWeaponSlot::Secondary), 0.01f));
-			CaptureEnergyPulse(It->GetActorLocation(), TEXT("RailgunActual"));
 			It->Tick(0.25f);
 			TestFalse(TEXT("Railgun pulse survives its first slow frame"), It->IsActorBeingDestroyed());
 		}

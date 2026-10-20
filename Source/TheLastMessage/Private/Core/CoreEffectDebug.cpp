@@ -150,7 +150,7 @@ void Draw(UCanvas* Canvas, APlayerController*)
 	UAbilitySystemComponent* Target = Monitor.TargetASC.Get();
 	Lines.Add(Target ? FString::Printf(TEXT("Target %s | HP %.2f | last actual HP loss: %.2f"), *GetNameSafe(Target->GetAvatarActor()), Target->GetNumericAttribute(FindHealth(Target)), Monitor.LastTargetDrop) : TEXT("Target: not selected (tlm.CoreTarget)"));
 	Lines.Add(TEXT("Target HP loss includes ALL damage sources; shields/overkill affect the result."));
-	Lines.Add(TEXT("tlm.CoreGive 2..10 (11 -> 9) | tlm.CoreHealth 80 | tlm.CoreHit 100 | tlm.CoreReset"));
+	Lines.Add(TEXT("tlm.CoreGive 2..11 | tlm.CoreHealth 80 | tlm.CoreHit 100 | tlm.CoreReset"));
 	if (!Monitor.Message.IsEmpty()) Lines.Add(Monitor.Message);
 
 	const FVector2D Origin(24.0f, 120.0f);
@@ -189,15 +189,13 @@ FAutoConsoleCommandWithWorldAndArgs ShowCommand(TEXT("tlm.CoreDebug"), TEXT("Sho
 		else Enable(World);
 	}), ECVF_Cheat);
 
-FAutoConsoleCommandWithWorldAndArgs GiveCommand(TEXT("tlm.CoreGive"), TEXT("Acquire a real core by test-list number 2..10. Former number 11 now gives merged core 9. Existing cores are kept."),
+FAutoConsoleCommandWithWorldAndArgs GiveCommand(TEXT("tlm.CoreGive"), TEXT("Acquire a real core by test-list number 2..11. 9: charge acceleration, 11: energy recharge. Existing cores are kept."),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
 	{
 		APlayerBase* Player = GetPlayer(World);
 		int32 Number = 0;
 		if (!Player || !Player->HasAuthority() || Args.Num() != 1 || !LexTryParseString(Number, *Args[0]) || Number < 2 || Number > 11) return;
-		// 기존 테스트 안내의 11번도 통합된 9번을 지급한다. 서로 다른 보유 기록을 만들지는 않는다.
-		if (Number == 11) Number = 9;
-		const TCHAR* Names[] = {TEXT("ImpactDispersionArmor"), TEXT("OverloadOutput"), TEXT("MeleeAmplifier"), TEXT("StableOutputCircuit"), TEXT("EmergencyOutputCircuit"), TEXT("PrecisionAimingCircuit"), TEXT("HighSpeedDrive"), TEXT("ChargeAccelerationCircuit"), TEXT("EfficientDischargeCircuit")};
+		const TCHAR* Names[] = {TEXT("ImpactDispersionArmor"), TEXT("OverloadOutput"), TEXT("MeleeAmplifier"), TEXT("StableOutputCircuit"), TEXT("EmergencyOutputCircuit"), TEXT("PrecisionAimingCircuit"), TEXT("HighSpeedDrive"), TEXT("ChargeAccelerationCircuit"), TEXT("EfficientDischargeCircuit"), TEXT("FastRechargeCircuit")};
 		UCoreDataAsset* Data = LoadObject<UCoreDataAsset>(nullptr, *FString::Printf(TEXT("/Game/Test_Jihun/Core/Stat/DataAsset/DA_Core_%s.DA_Core_%s"), Names[Number - 2], Names[Number - 2]));
 		Enable(World);
 		const bool bAcquired = Data && Player->GetCoreComponent()->AcquireCore(Data);

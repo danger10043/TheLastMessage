@@ -54,8 +54,11 @@ bool UCoreComponent::CanAcquireCore(const UCoreDataAsset* CoreData) const
 		return false;
 	}
 
-	// 보유 중이어도 최대 단계 미만이면 다시 획득할 수 있다. 잘못된 최대 단계 설정도 거부한다.
-	if (CoreData->MaxLevel < 1 || GetCoreLevel(CoreData->CoreId) >= CoreData->MaxLevel)
+	// Custom에서만 최대 단계를 검사한다. Infinite는 MaxLevel 값과 관계없이 계속 강화할 수 있다.
+	const int32 CurrentLevel = GetCoreLevel(CoreData->CoreId);
+	if (CurrentLevel == MAX_int32
+		|| (CoreData->UpgradeLimitType == ECoreUpgradeLimitType::Custom
+			&& (CoreData->MaxLevel < 1 || CurrentLevel >= CoreData->MaxLevel)))
 	{
 		return false;
 	}
@@ -277,7 +280,7 @@ void UCoreComponent::ResetOwnedCores()
 }
 
 
-TArray<UCoreDataAsset*> UCoreComponent::GenerateCoreChoices(const TArray<UCoreDataAsset*>& CandidatePool)
+TArray<UCoreDataAsset*> UCoreComponent::GenerateCoreChoices(const TArray<UCoreDataAsset*>& CandidatePool, ECoreCategory Category)
 {
 	// 기존 보상의 선택지가 남아 있으면 다른 보상의 후보로 덮어쓰지 않는다.
 	if (bIsChangingCoreGrants || bIsSelectingCore || !CurrentChoiceState.Choices.IsEmpty())
@@ -289,8 +292,9 @@ TArray<UCoreDataAsset*> UCoreComponent::GenerateCoreChoices(const TArray<UCoreDa
 	TSet<FName> CandidateIds;
 	for (UCoreDataAsset* CoreData : CandidatePool)
 	{
-		// 무효 데이터/최대 단계/잘못된 GE·GA 설정을 제외하고, 같은 ID는 한 번만 후보에 넣는다.
-		if (!CanAcquireCore(CoreData) || CandidateIds.Contains(CoreData->CoreId))
+		// 분류에 맞는 무작위 보상 코어만 사용한다. 최대 단계와 GE/GA 검사도 기존 획득 기준을 공유한다.
+		if (!CanAcquireCore(CoreData) || !CoreData->bIncludeInRandomPool
+			|| CoreData->CoreCategory != Category || CandidateIds.Contains(CoreData->CoreId))
 		{
 			continue;
 		}
@@ -305,8 +309,9 @@ TArray<UCoreDataAsset*> UCoreComponent::GenerateCoreChoices(const TArray<UCoreDa
 
 	// 새 보상의 후보와 카드별 리롤 기록을 준비한다.
 	CurrentChoiceState = FCoreChoiceState();
-	CurrentChoiceState.CandidatePool.Reserve(CandidatePool.Num());
-	for (UCoreDataAsset* CoreData : CandidatePool)
+	CurrentChoiceState.CandidatePool.Reserve(EligibleCores.Num());
+	// 추첨에 사용할 분류의 후보만 보관하여, 리롤이나 ESC 재진입 때 다른 풀의 코어가 섞이지 않게 한다.
+	for (UCoreDataAsset* CoreData : EligibleCores)
 	{
 		CurrentChoiceState.CandidatePool.Add(CoreData);
 	}

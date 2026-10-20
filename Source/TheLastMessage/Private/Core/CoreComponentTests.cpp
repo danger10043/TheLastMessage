@@ -68,7 +68,7 @@ bool FCoreUpgradeTest::RunTest(const FString& Parameters)
 		? FGameplayAbilitySpecHandle() : ASC->GetActivatableAbilities()[0].Handle;
 
 	// 보유 중인 강화 후보는 유지하되, 같은 ID를 선택지에 두 번 넣지는 않는다.
-	TestEqual(TEXT("Owned upgradeable core remains a unique candidate"), Core->GenerateCoreChoices(Pool).Num(), 1);
+	TestEqual(TEXT("Owned upgradeable core remains a unique candidate"), Core->GenerateCoreChoices(Pool, ECoreCategory::Stat).Num(), 1);
 	FCoreChoiceState Saved = Core->SuspendCoreChoices();
 	TestTrue(TEXT("Reacquisition upgrades"), Core->AcquireCore(Data));
 	TestEqual(TEXT("Reacquisition is level two"), Core->GetCoreLevel(Data->CoreId), 2);
@@ -87,7 +87,7 @@ bool FCoreUpgradeTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("Acquisition past the maximum is rejected"), Core->AcquireCore(Data));
 	TestEqual(TEXT("Rejected acquisition preserves level"), Core->GetCoreLevel(Data->CoreId), 3);
 	TestTrue(TEXT("Maxed core is removed when resuming"), Core->ResumeCoreChoices(Saved).IsEmpty());
-	TestTrue(TEXT("Maxed core is excluded from new choices"), Core->GenerateCoreChoices(Pool).IsEmpty());
+	TestTrue(TEXT("Maxed core is excluded from new choices"), Core->GenerateCoreChoices(Pool, ECoreCategory::Stat).IsEmpty());
 
 	Core->ResetOwnedCores();
 	TestEqual(TEXT("Reset clears levels"), Core->GetCoreLevel(Data->CoreId), 0);
@@ -106,8 +106,21 @@ bool FCoreUpgradeTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Failed upgrade preserves the old level"), Core->GetCoreLevel(Data->CoreId), 1);
 	Core->ResetOwnedCores();
 
+	// Infinite 설정은 숨겨진 MaxLevel 값과 관계없이 동작해야 한다.
+	Data->UpgradeLimitType = ECoreUpgradeLimitType::Infinite;
+	Data->MaxLevel = 1;
+	for (int32 Level = 1; Level <= 10; ++Level)
+	{
+		TestTrue(TEXT("Infinite ignores the custom maximum"), Core->AcquireCore(Data));
+	}
+	TestEqual(TEXT("Infinite records the actual upgrade level"), Core->GetCoreLevel(Data->CoreId), 10);
+	TestEqual(TEXT("Infinite keeps one effect instead of stacking"), ASC->GetActiveEffects(FGameplayEffectQuery()).Num(), 1);
+	TestEqual(TEXT("Infinite remains eligible for future rewards"), Core->GenerateCoreChoices(Pool, ECoreCategory::Stat).Num(), 1);
+	Core->ResetOwnedCores();
+
 	UCoreDataAsset* SingleLevel = NewObject<UCoreDataAsset>();
 	SingleLevel->CoreId = TEXT("Test_SingleLevel");
+	TestTrue(TEXT("Existing assets default to Custom"), SingleLevel->UpgradeLimitType == ECoreUpgradeLimitType::Custom);
 	TestEqual(TEXT("Existing assets default to one level"), SingleLevel->MaxLevel, 1);
 	TestTrue(TEXT("Single-level core can be acquired"), Core->AcquireCore(SingleLevel));
 	TestFalse(TEXT("Single-level core cannot be acquired twice"), Core->AcquireCore(SingleLevel));
@@ -115,6 +128,86 @@ bool FCoreUpgradeTest::RunTest(const FString& Parameters)
 	Invalid->CoreId = TEXT("Test_InvalidMaximum");
 	Invalid->MaxLevel = 0;
 	TestFalse(TEXT("Invalid maximum is rejected at runtime"), Core->AcquireCore(Invalid));
+	Core->ResetOwnedCores();
+	World->DestroyWorld(false);
+	GEngine->DestroyWorldContext(World);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCoreRewardPoolTest, "TheLastMessage.Core.RewardPools",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCoreRewardPoolTest::RunTest(const FString& Parameters)
+{
+	UWorld::InitializationValues Values;
+	Values.AllowAudioPlayback(false).CreatePhysicsScene(false).CreateNavigation(false).CreateAISystem(false);
+	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false, NAME_None, nullptr, true, ERHIFeatureLevel::Num, &Values);
+	GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World);
+	AActor* Owner = World->SpawnActor<AActor>();
+	UAbilitySystemComponent* ASC = NewObject<UAbilitySystemComponent>(Owner);
+	Owner->AddInstanceComponent(ASC);
+	ASC->RegisterComponent();
+	ASC->InitAbilityActorInfo(Owner, Owner);
+	UCoreComponent* Core = NewObject<UCoreComponent>(Owner);
+	Owner->AddInstanceComponent(Core);
+	Core->RegisterComponent();
+	Core->Initialize(ASC);
+
+	TArray<UCoreDataAsset*> Pool;
+	for (int32 Index = 0; Index < 8; ++Index)
+	{
+		UCoreDataAsset* Data = NewObject<UCoreDataAsset>();
+		Data->CoreId = FName(*FString::Printf(TEXT("Test_Pool_%d"), Index));
+		Data->CoreCategory = Index < 5 ? ECoreCategory::Stat : ECoreCategory::Ability;
+		Pool.Add(Data);
+	}
+	UCoreDataAsset* Maxed = Pool[4];
+	TestTrue(TEXT("Prepare a maxed stat core"), Core->AcquireCore(Maxed));
+	UCoreDataAsset* FixedOnly = NewObject<UCoreDataAsset>();
+	FixedOnly->CoreId = TEXT("Test_FixedOnly");
+	FixedOnly->CoreCategory = ECoreCategory::Ability;
+	FixedOnly->bIncludeInRandomPool = false;
+	Pool.Add(FixedOnly);
+	UCoreDataAsset* Duplicate = Pool[0];
+	Pool.Add(Duplicate);
+	Pool.Add(nullptr);
+
+	TArray<UCoreDataAsset*> Choices = Core->GenerateCoreChoices(Pool, ECoreCategory::Stat);
+	TestEqual(TEXT("Stat pool produces three cards"), Choices.Num(), 3);
+	TSet<FName> OriginalIds;
+	for (const UCoreDataAsset* Data : Choices)
+	{
+		TestTrue(TEXT("Stat choices do not include abilities or maxed cores"), Data->CoreCategory == ECoreCategory::Stat && Data != Maxed);
+		OriginalIds.Add(Data->CoreId);
+	}
+	TestEqual(TEXT("Duplicate source entries do not duplicate cards"), OriginalIds.Num(), 3);
+	UCoreDataAsset* Replacement = Core->RerollCoreChoice(0);
+	TestTrue(TEXT("Reroll stays in the same pool and does not repeat a shown core"),
+		Replacement && Replacement->CoreCategory == ECoreCategory::Stat && !OriginalIds.Contains(Replacement->CoreId));
+	if (Choices.IsValidIndex(0)) Choices[0] = Replacement;
+	TestNull(TEXT("A card cannot reroll twice"), Core->RerollCoreChoice(0));
+	TestFalse(TEXT("Exhausted stat pool does not fall back to abilities"), Core->CanRerollCoreChoice(1));
+
+	FCoreChoiceState Saved = Core->SuspendCoreChoices();
+	TestEqual(TEXT("Saved pool contains only four eligible stat cores"), Saved.CandidatePool.Num(), 4);
+	TestEqual(TEXT("Shown history includes the replaced card"), Saved.ShownCoreIds.Num(), 4);
+	TestTrue(TEXT("Per-card reroll count is saved"), Saved.RerollCounts.Num() == 3 && Saved.RerollCounts[0] == 1);
+	const TArray<UCoreDataAsset*> Resumed = Core->ResumeCoreChoices(Saved);
+	TestTrue(TEXT("Reopening preserves the exact card order"), Resumed == Choices);
+	TestFalse(TEXT("Reopening does not refund a used reroll"), Core->CanRerollCoreChoice(0));
+	Core->CancelCoreChoices();
+
+	Choices = Core->GenerateCoreChoices(Pool, ECoreCategory::Ability);
+	TestEqual(TEXT("Ability pool produces three cards"), Choices.Num(), 3);
+	for (const UCoreDataAsset* Data : Choices)
+	{
+		TestTrue(TEXT("Ability choices do not include stats or fixed rewards"), Data->CoreCategory == ECoreCategory::Ability && Data != FixedOnly);
+	}
+	TestFalse(TEXT("Exhausted ability pool does not fall back to stats"), Core->CanRerollCoreChoice(0));
+	Core->CancelCoreChoices();
+	TestTrue(TEXT("A pool containing only fixed rewards produces no choices"),
+		Core->GenerateCoreChoices({ FixedOnly }, ECoreCategory::Ability).IsEmpty());
+	TestTrue(TEXT("Random pool exclusions do not prevent fixed acquisition"), Core->AcquireCore(FixedOnly));
 	Core->ResetOwnedCores();
 	World->DestroyWorld(false);
 	GEngine->DestroyWorldContext(World);

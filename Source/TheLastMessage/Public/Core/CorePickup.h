@@ -3,12 +3,12 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "Core/CoreChoiceState.h"
+#include "DataAsset/CoreDataAsset.h"
 #include "CorePickup.generated.h"
 
 class APlayerBase;
 class UCoreChoiceWidget;
 class UCoreComponent;
-class UCoreDataAsset;
 class UPrimitiveComponent;
 class USphereComponent;
 class UStaticMeshComponent;
@@ -66,6 +66,11 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Core|Reward",
 		meta = (EditCondition = "RewardMode == ECoreRewardMode::Choice", EditConditionHides))
 	TSubclassOf<UCoreChoiceWidget> ChoiceWidgetClass;
+
+	/** 처음 추첨할 풀을 선택한다. 창을 다시 열면 설정을 다시 추첨하지 않고 저장된 보상을 이어 간다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Core|Reward",
+		meta = (EditCondition = "RewardMode == ECoreRewardMode::Choice", EditConditionHides))
+	ECoreCategory ChoiceCategory = ECoreCategory::Stat;
 
 	/** 보상 지급이 완료되었는지 나타낸다. 이미 소비한 보상의 재지급을 막는다. */
 	UPROPERTY(Transient, VisibleInstanceOnly, BlueprintReadOnly, Category = "Core|Reward")

@@ -122,13 +122,13 @@ bool ACorePickup::TryOpenCoreChoice(APlayerBase* Player)
 		for (const FPrimaryAssetId& AssetId : CoreAssetIds)
 		{
 			UCoreDataAsset* Data = Cast<UCoreDataAsset>(AssetManager.GetPrimaryAssetPath(AssetId).TryLoad());
-			// 더블점프처럼 고정 보상으로만 지급할 코어는 후보에서 제외한다.
-			if (IsValid(Data) && Data->bIncludeInRandomPool)
+			// 등록된 정의를 모으고, 분류·무작위 보상 포함 여부·강화 가능 여부는 코어 컴포넌트에서 검사한다.
+			if (IsValid(Data))
 			{
 				Pool.Add(Data);
 			}
 		}
-		Choices = CoreComponent->GenerateCoreChoices(Pool);
+		Choices = CoreComponent->GenerateCoreChoices(Pool, ChoiceCategory);
 	}
 	if (Choices.IsEmpty()) return false;
 

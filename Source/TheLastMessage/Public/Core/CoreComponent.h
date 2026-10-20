@@ -8,6 +8,7 @@
 
 class UAbilitySystemComponent;
 class UCoreDataAsset;
+enum class ECoreCategory : uint8;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnCoreChangedSignature);
 
@@ -29,7 +30,7 @@ public:
 	void Initialize(UAbilitySystemComponent* InASC);
 
 	/**
-	 * 미보유 코어는 1단계로 획득하고, 보유 코어는 최대 단계까지 한 단계 강화한다.
+	 * 미보유 코어는 1단계로 획득한다. 재획득은 Custom의 최대 단계 또는 Infinite 설정에 따라 한 단계 강화한다.
 	 * 최초 획득은 GE/GA를 부여하며, 강화는 기존 GE/GA의 레벨을 갱신한다. 성공하면 true를 반환한다.
 	 */
 	bool AcquireCore(UCoreDataAsset* CoreData);
@@ -44,9 +45,9 @@ public:
 
 	/**
 	 * 플레이어에게 제시할 코어 선택지를 최대 3개 만든다.
-	 * 미보유 또는 강화 가능한 코어를 추첨하며, 기존 선택지가 남아 있으면 새 요청을 거부한다.
+	 * 지정한 분류의 미보유 또는 강화 가능한 코어를 추첨한다. 기존 선택지가 남아 있으면 새 요청을 거부한다.
 	 */
-	TArray<UCoreDataAsset*> GenerateCoreChoices(const TArray<UCoreDataAsset*>& CandidatePool);
+	TArray<UCoreDataAsset*> GenerateCoreChoices(const TArray<UCoreDataAsset*>& CandidatePool, ECoreCategory Category);
 
 	/** 창을 닫을 때 진행 중인 선택 기록을 보상 쪽으로 옮겨 보관한다. */
 	FCoreChoiceState SuspendCoreChoices();

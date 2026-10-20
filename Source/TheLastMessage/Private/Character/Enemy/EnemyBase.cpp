@@ -10,6 +10,8 @@
 #include "Kismet/GameplayStatics.h"
 #include "Animation/AnimMontage.h"
 #include "Materials/MaterialInterface.h"
+#include "Components/WidgetComponent.h"
+#include "Character/Enemy/UI/EnemyHealthBarWidget.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "NiagaraFunctionLibrary.h"
@@ -25,6 +27,15 @@ AEnemyBase::AEnemyBase()
 
 	AIControllerClass = AEnemyAIController::StaticClass();
 	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
+
+	// 머리 위 체력바: 화면에 항상 정면으로 보이는 스크린 스페이스 위젯. 위치는 BP에서 조정한다.
+	HealthBarComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("HealthBar"));
+	HealthBarComponent->SetupAttachment(GetCapsuleComponent());
+	HealthBarComponent->SetRelativeLocation(FVector(0.f, 0.f, 110.f));
+	HealthBarComponent->SetWidgetSpace(EWidgetSpace::Screen);
+	HealthBarComponent->SetDrawSize(FVector2D(120.f, 14.f));
+	HealthBarComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	HealthBarComponent->SetVisibility(false);
 }
 
 UAbilitySystemComponent* AEnemyBase::GetAbilitySystemComponent() const
@@ -68,6 +79,16 @@ void AEnemyBase::InitializeEnemy()
 			AbilitySystemComponent->GiveAbility(FGameplayAbilitySpec(AbilityClass, 1, INDEX_NONE, this));
 		}
 	}
+
+	// 체력바는 항상 표시 모드가 아니면 맞을 때까지 숨겨 둔다.
+	if (bAlwaysShowHealthBar)
+	{
+		ShowHealthBar();
+	}
+	else
+	{
+		HideHealthBar();
+	}
 }
 
 void AEnemyBase::ApplyLevelScaling(bool bKeepHealthRatio)
@@ -84,6 +105,8 @@ void AEnemyBase::ApplyLevelScaling(bool bKeepHealthRatio)
 	AttributeSet->InitMaxHealth(NewMaxHealth);
 	AttributeSet->InitHealth(NewMaxHealth * HealthRatio);
 	AttributeSet->InitDamageMultiplier(1.f + DamageScale * LevelOffset);
+
+	UpdateHealthBar(true);
 }
 
 void AEnemyBase::SetEnemyLevel(int32 NewLevel)
@@ -271,6 +294,61 @@ void AEnemyBase::HandleDamagedEffect(float Damage)
 	SpawnEffectAtLocation(HitEffect, GetActorLocation());
 	StartHitFlash();
 	PlayHitReaction();
+
+	UpdateHealthBar(false);
+	ShowHealthBar();
+}
+
+UEnemyHealthBarWidget* AEnemyBase::GetHealthBarWidget() const
+{
+	if (!HealthBarComponent)
+	{
+		return nullptr;
+	}
+
+	if (!HealthBarComponent->GetUserWidgetObject())
+	{
+		HealthBarComponent->InitWidget(); // 위젯이 아직 만들어지지 않았으면 만든다.
+	}
+
+	return Cast<UEnemyHealthBarWidget>(HealthBarComponent->GetUserWidgetObject());
+}
+
+void AEnemyBase::UpdateHealthBar(bool bInstant)
+{
+	if (!AttributeSet)
+	{
+		return;
+	}
+
+	if (UEnemyHealthBarWidget* Widget = GetHealthBarWidget())
+	{
+		Widget->SetHealthPercent(AttributeSet->GetHealthPercent(), bInstant);
+	}
+}
+
+void AEnemyBase::ShowHealthBar()
+{
+	if (!HealthBarComponent || !GetWorld())
+	{
+		return;
+	}
+
+	HealthBarComponent->SetVisibility(true);
+
+	// 맞을 때마다 타이머를 다시 시작해 계속 맞는 동안은 유지한다.
+	if (!bAlwaysShowHealthBar)
+	{
+		GetWorldTimerManager().SetTimer(HealthBarTimerHandle, this, &AEnemyBase::HideHealthBar, HealthBarVisibleTime, false);
+	}
+}
+
+void AEnemyBase::HideHealthBar()
+{
+	if (HealthBarComponent)
+	{
+		HealthBarComponent->SetVisibility(false);
+	}
 }
 
 void AEnemyBase::StartHitFlash()
@@ -405,6 +483,8 @@ void AEnemyBase::HandleDeath()
 	SetEnemyState(EEnemyState::Dead);
 	CancelAttack();
 	SetCurrentTarget(nullptr);
+	GetWorldTimerManager().ClearTimer(HealthBarTimerHandle);
+	HideHealthBar();
 
 	// 사망 순서: AI 중지 → 어빌리티 취소 → 콜리전 비활성화 → OnEnemyDied
 	if (AEnemyAIController* AIC = Cast<AEnemyAIController>(GetController()))
@@ -458,6 +538,7 @@ void AEnemyBase::OnReturnedToPool()
 
 	GetWorldTimerManager().ClearAllTimersForObject(this);
 	EndHitFlash();
+	HideHealthBar();
 	CancelAttack();
 
 	if (AEnemyAIController* AIC = Cast<AEnemyAIController>(GetController()))

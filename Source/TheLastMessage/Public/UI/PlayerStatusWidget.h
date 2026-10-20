@@ -7,10 +7,9 @@
 
 class APlayerBase;
 class UAbilitySystemComponent;
-class UProgressBar;
-class UTextBlock;
-class UImage;
-class UWeaponDataAsset;
+class UPlayerResourceBarWidget;
+class UPlayerWeaponSlotWidget;
+
 
 /** Gameplay binding only. Layout belongs to the derived Widget Blueprint. */
 UCLASS(Abstract, Blueprintable)
@@ -24,31 +23,24 @@ public:
 	void RefreshStatus();
 	UPROPERTY(BlueprintReadOnly, Category="Player UI") float Health = 0;
 	UPROPERTY(BlueprintReadOnly, Category="Player UI") float MaxHealth = 0;
-	UPROPERTY(BlueprintReadOnly, Category="Player UI") float PrimaryEnergy = 0;
-	UPROPERTY(BlueprintReadOnly, Category="Player UI") float PrimaryMaxEnergy = 0;
-	UPROPERTY(BlueprintReadOnly, Category="Player UI") float SecondaryEnergy = 0;
-	UPROPERTY(BlueprintReadOnly, Category="Player UI") float SecondaryMaxEnergy = 0;
-	UPROPERTY(BlueprintReadOnly, Category="Player UI") bool bPrimaryRanged = false;
-	UPROPERTY(BlueprintReadOnly, Category="Player UI") bool bSecondaryRanged = false;
+	UPROPERTY(BlueprintReadOnly, Category="Player UI") float DisplayEnergy = 0;
+	UPROPERTY(BlueprintReadOnly, Category="Player UI") float DisplayMaxEnergy = 0;
 
 protected:
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
+	UPROPERTY(meta=(BindWidgetOptional), BlueprintReadOnly) TObjectPtr<UPlayerResourceBarWidget> HealthResource;
+	UPROPERTY(meta=(BindWidgetOptional), BlueprintReadOnly) TObjectPtr<UPlayerResourceBarWidget> EnergyResource;
+	UPROPERTY(meta=(BindWidgetOptional), BlueprintReadOnly) TObjectPtr<UPlayerWeaponSlotWidget> WeaponSlot1;
+	UPROPERTY(meta=(BindWidgetOptional), BlueprintReadOnly) TObjectPtr<UPlayerWeaponSlotWidget> WeaponSlot2;
+	UPROPERTY(meta=(BindWidgetOptional), BlueprintReadOnly) TObjectPtr<UPlayerWeaponSlotWidget> WeaponSlot3;
+	UPROPERTY(meta=(BindWidgetOptional), BlueprintReadOnly) TObjectPtr<UPlayerWeaponSlotWidget> WeaponSlot4;
 	UFUNCTION(BlueprintImplementableEvent, Category="Player UI") void OnStatusUpdated();
-	UPROPERTY(meta=(BindWidgetOptional), BlueprintReadOnly) TObjectPtr<UProgressBar> HealthBar;
-	UPROPERTY(meta=(BindWidgetOptional), BlueprintReadOnly) TObjectPtr<UTextBlock> HealthText;
-	UPROPERTY(meta=(BindWidgetOptional), BlueprintReadOnly) TObjectPtr<UTextBlock> PrimaryWeaponText;
-	UPROPERTY(meta=(BindWidgetOptional), BlueprintReadOnly) TObjectPtr<UTextBlock> SecondaryWeaponText;
-	UPROPERTY(meta=(BindWidgetOptional), BlueprintReadOnly) TObjectPtr<UImage> PrimaryWeaponIcon;
-	UPROPERTY(meta=(BindWidgetOptional), BlueprintReadOnly) TObjectPtr<UImage> SecondaryWeaponIcon;
-	UPROPERTY(meta=(BindWidgetOptional), BlueprintReadOnly) TObjectPtr<UWidget> PrimaryEnergyRow;
-	UPROPERTY(meta=(BindWidgetOptional), BlueprintReadOnly) TObjectPtr<UWidget> SecondaryEnergyRow;
-	UPROPERTY(meta=(BindWidgetOptional), BlueprintReadOnly) TObjectPtr<UProgressBar> PrimaryEnergyBar;
-	UPROPERTY(meta=(BindWidgetOptional), BlueprintReadOnly) TObjectPtr<UProgressBar> SecondaryEnergyBar;
-	UPROPERTY(meta=(BindWidgetOptional), BlueprintReadOnly) TObjectPtr<UTextBlock> PrimaryEnergyText;
-	UPROPERTY(meta=(BindWidgetOptional), BlueprintReadOnly) TObjectPtr<UTextBlock> SecondaryEnergyText;
 
 private:
+	void RefreshLoadout();
+	void RefreshEnergyDisplay();
 	void UnbindPlayer();
 	void HandleAttributeChanged(const FOnAttributeChangeData& Data);
 	TWeakObjectPtr<APlayerBase> ObservedPlayer;

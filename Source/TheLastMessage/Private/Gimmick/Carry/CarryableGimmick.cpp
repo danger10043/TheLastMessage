@@ -6,6 +6,7 @@
 #include "Character/Player/PlayerBase.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Gimmick/Component/CarryComponent.h"
 #include "GameplayEffect.h"
 
 ACarryableGimmick::ACarryableGimmick()
@@ -83,12 +84,36 @@ bool ACarryableGimmick::CanBePickedUp(ACharacter* Player) const
 
     const APlayerBase* PlayerCharacter = Cast<APlayerBase>(Player);
 
-    return IsValid(PlayerCharacter) && !PlayerCharacter->IsDead();
+    if (!IsValid(PlayerCharacter) || PlayerCharacter->IsDead())
+    {
+        return false;
+    }
+
+    const UCarryComponent* CarryComponent = PlayerCharacter->FindComponentByClass<UCarryComponent>();
+
+    return IsValid(CarryComponent) && !CarryComponent->HasCarriedObject();
 }
 
 bool ACarryableGimmick::CanInteractInternal(ACharacter* Player) const
 {
     return CanBePickedUp(Player);
+}
+
+void ACarryableGimmick::PerformInteraction(ACharacter* Player)
+{
+    if (!CanInteractInternal(Player))
+    {
+        return;
+    }
+
+    UCarryComponent* CarryComponent = Player->FindComponentByClass<UCarryComponent>();
+
+    if (!IsValid(CarryComponent))
+    {
+        return;
+    }
+
+    CarryComponent->TryPickUp(this);
 }
 
 void ACarryableGimmick::OnPickedUp(ACharacter* Player)

@@ -12,6 +12,7 @@
 #include "Engine/World.h"
 #include "Gimmick/GAS/GA_InteractGimmick.h"
 #include "NativeGameplayTags.h"
+#include "Gimmick/Component/CarryComponent.h"
 
 UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_EventGimmickInteract, "Event.Gimmick.Interact");
 
@@ -21,16 +22,31 @@ UInteractionComponent::UInteractionComponent()
 
 }
 
-
 void UInteractionComponent::RequestInteract()
 {
-    // 입력 순간의 거리와 조건으로 대상을 다시 확인
+    AActor* OwnerActor = GetOwner();
+    APlayerBase* Player = Cast<APlayerBase>(OwnerActor);
+
+    if (!IsValid(Player) || Player->IsDead() || Player->IsHitReacting())
+    {
+        return;
+    }
+
+    UCarryComponent* CarryComponent = Player->FindComponentByClass<UCarryComponent>();
+
+    // 물체를 들고 있으면 내려놓기만 시도
+    if (IsValid(CarryComponent) && CarryComponent->HasCarriedObject())
+    {
+        CarryComponent->DropCarriedObject();
+        return;
+    }
+
+    // 빈손일 때 주변 상호작용 대상 확인
     UpdateInteractionTarget();
 
-    AActor* OwnerActor = GetOwner();
     AActor* Target = FocusedActor.Get();
 
-    if (!IsValid(OwnerActor) || !IsValid(Target) || !CanUseInteractionAbility())
+    if (!IsValid(Target) || !CanUseInteractionAbility())
     {
         return;
     }
@@ -82,12 +98,13 @@ void UInteractionComponent::UpdateInteractionTarget()
 
     // 플레이어 주변 구형 범위에서 액터 수집
     World->OverlapMultiByObjectType(
-        Overlaps,
-        SearchOrigin,
-        FQuat::Identity,
-        ObjectParams,
-        FCollisionShape::MakeSphere(InteractionDistance),
-        QueryParams);
+        Overlaps, 
+        SearchOrigin, 
+        FQuat::Identity, 
+        ObjectParams, 
+        FCollisionShape::MakeSphere(InteractionDistance), 
+        QueryParams
+    );
 
     AActor* BestTarget = nullptr;
     float BestDistanceSquared = FMath::Square(InteractionDistance);
@@ -212,6 +229,14 @@ bool UInteractionComponent::CanUseInteractionAbility() const
     UAbilitySystemComponent* ASC = OwnerASC.Get();
 
     if (!IsValid(Player) || Player->IsDead() || !IsValid(ASC) || !InteractionAbilityClass || !ASC->AbilityActorInfo.IsValid())
+    {
+        return false;
+    }
+
+    // 운반 중에는 일반 상호작용 차단
+    const UCarryComponent* CarryComponent = Player->FindComponentByClass<UCarryComponent>();
+
+    if (IsValid(CarryComponent) && CarryComponent->HasCarriedObject())
     {
         return false;
     }

@@ -21,6 +21,8 @@
 #include "Gimmick/Laser/LaserReceiver.h"
 #include "Gimmick/Laser/LaserReflector.h"
 #include "Engine/World.h"
+#include "GameFramework/PlayerController.h"
+#include "GameFramework/Pawn.h"
 
 ABossMonster::ABossMonster()
 {
@@ -550,6 +552,7 @@ void ABossMonster::HandleBossDeath()
     CurrentState = EBossState::Dead;
     UpdatePuzzlePresentation();
     CurrentTarget = nullptr;
+    RemoveBossUI();
     bIsRangedImmune = false;
 
     if (IsValid(AbilitySystemComponent.Get()))
@@ -971,6 +974,7 @@ void ABossMonster::SetCurrentTarget(AActor* NewTarget)
     }
 
     CurrentTarget = CurrentState != EBossState::Dead && IsValid(NewTarget) ? NewTarget : nullptr;
+    UpdateBossUI();
 }
 
 void ABossMonster::UpdatePuzzlePresentation()
@@ -1112,6 +1116,7 @@ void ABossMonster::Tick(float DeltaSeconds)
     Super::Tick(DeltaSeconds);
 
     CheckLaserPuzzleCompletion();
+    UpdateBossUI();
 
     if (bPuzzlePresentationActive)
     {
@@ -1154,6 +1159,7 @@ void ABossMonster::Tick(float DeltaSeconds)
 
 void ABossMonster::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+    RemoveBossUI();
     StopLaserPuzzle();
 
     if (UAnimInstance* Anim = PuzzleAnimInstance.Get())
@@ -1333,4 +1339,90 @@ void ABossMonster::CheckLaserPuzzleCompletion()
             }
         }
     }
+}
+
+void ABossMonster::RemoveBossUI()
+{
+    if (IsValid(BossUIWidget.Get()))
+    {
+        BossUIWidget->SetVisibility(ESlateVisibility::Collapsed);
+        BossUIWidget->RemoveFromParent();
+    }
+    BossUIWidget = nullptr;
+}
+
+void ABossMonster::UpdateBossUI()
+{
+    APawn* TargetPawn = Cast<APawn>(GetCurrentTarget());
+    APlayerController* PC = IsValid(TargetPawn)
+        ? Cast<APlayerController>(TargetPawn->GetController()) : nullptr;
+
+    if (CurrentState == EBossState::Dead
+        || !IsValid(TargetPawn) || !IsValid(PC)
+        || !PC->IsLocalController() || !PC->GetLocalPlayer()
+        || PC->GetPawn() != TargetPawn || !BossUIWidgetClass)
+    {
+        RemoveBossUI();
+        return;
+    }
+
+    if (IsValid(BossUIWidget.Get())
+        && BossUIWidget->GetOwningPlayer() != PC)
+    {
+        RemoveBossUI();
+    }
+
+    if (!IsValid(BossUIWidget.Get()))
+    {
+        BossUIWidget = CreateWidget<UBossUIWidget>(PC, BossUIWidgetClass);
+        if (!IsValid(BossUIWidget.Get()))
+        {
+            return;
+        }
+    }
+
+    if (!BossUIWidget->IsInViewport())
+    {
+        if (!BossUIWidget->AddToPlayerScreen(30))
+        {
+            RemoveBossUI();
+            return;
+        }
+    }
+
+    // Widget 초기화 콜백에서 타깃이나 보스 상태가 변경된 경우도 처리한다.
+    if (!IsValid(BossUIWidget.Get())
+        || CurrentState == EBossState::Dead
+        || GetCurrentTarget() != TargetPawn)
+    {
+        RemoveBossUI();
+        return;
+    }
+
+    const float Health = IsValid(AttributeSet.Get())
+        ? AttributeSet->GetHealth() : 0.f;
+    const float MaxHealth = IsValid(AttributeSet.Get())
+        ? AttributeSet->GetMaxHealth() : 0.f;
+    const float HealthRatio = FMath::IsFinite(Health)
+        && FMath::IsFinite(MaxHealth) && MaxHealth > 0.f
+        ? FMath::Clamp(Health / MaxHealth, 0.f, 1.f) : 0.f;
+
+    bool bShowPuzzle = false;
+    float PuzzleRatio = 0.f;
+    if (CurrentState == EBossState::ShieldPuzzle
+        && IsValid(ShieldComponent.Get())
+        && ShieldComponent->IsShieldActive())
+    {
+        const float TimeLimit = ShieldComponent->GetPuzzleTimeLimit();
+        const float Remaining = ShieldComponent->GetRemainingPuzzleTime();
+        bShowPuzzle = FMath::IsFinite(TimeLimit) && TimeLimit > 0.f
+            && FMath::IsFinite(Remaining) && Remaining > 0.f;
+        if (bShowPuzzle)
+        {
+            PuzzleRatio = FMath::Clamp(Remaining / TimeLimit, 0.f, 1.f);
+        }
+    }
+
+    BossUIWidget->SetBossStatus(HealthRatio, bShowPuzzle, PuzzleRatio);
+    BossUIWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
 }

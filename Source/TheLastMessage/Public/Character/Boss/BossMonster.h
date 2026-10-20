@@ -4,6 +4,7 @@
 #include "GameFramework/Character.h"
 #include "AbilitySystemInterface.h"
 #include "Character/Boss/BossTypes.h"
+#include "Character/Boss/BossUIWidget.h"
 #include "BossMonster.generated.h"
 
 class UAbilitySystemComponent;
@@ -208,6 +209,15 @@ protected:
     TSubclassOf<UGameplayEffect> InitialStatsEffect;
 
 private:
+    void UpdateBossUI();
+    void RemoveBossUI();
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|UI")
+    TSubclassOf<UBossUIWidget> BossUIWidgetClass;
+
+    UPROPERTY(Transient)
+    TObjectPtr<UBossUIWidget> BossUIWidget;
+
     // 실행 중인 보스 인스턴스에서만 사용하는 초기화 상태다.
     UPROPERTY(Transient)
     bool bInitialStatsApplied = false;

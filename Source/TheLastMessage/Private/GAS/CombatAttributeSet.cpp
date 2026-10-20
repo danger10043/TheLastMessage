@@ -63,13 +63,13 @@ void UCombatAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCall
 
 	if (Data.EvaluatedData.Attribute == GetIncomingDamageAttribute())
 	{
-		const float IncomingDamage = GetIncomingDamage();
+		const float RawIncomingDamage = GetIncomingDamage();
 
 		// 임시 피해값은 처리 여부와 관계없이 비움
 		SetIncomingDamage(0.0f);
 
 		// 체력을 차감하는 이 지점에서 받는 피해 배율을 한 번만 적용한다. 0.9라면 피해 10% 감소다.
-		const float Damage = IncomingDamage * FMath::Max(0.0f, GetDamageTakenMultiplier());
+		const float Damage = RawIncomingDamage * FMath::Max(0.0f, GetDamageTakenMultiplier());
 		if (FMath::IsFinite(Damage) && Damage > 0.0f && (!Player || !Player->IsDead()))
 		{
 			const float PreviousHealth = GetHealth();

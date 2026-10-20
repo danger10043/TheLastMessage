@@ -12,8 +12,17 @@ UCombatAttributeSet::UCombatAttributeSet()
 	InitCriticalDamageMultiplier(1.0f);
 	InitDamageTakenMultiplier(1.0f);
 	InitDamageDealtMultiplier(1.0f);
+	InitMeleeDamageMultiplier(1.0f);
+	InitChargeTimeMultiplier(1.0f);
+	InitEnergyRechargeRateMultiplier(1.0f);
+	InitMoveSpeedMultiplier(1.0f);
 	InitHighHealthDamageMultiplier(1.0f);
 	InitLowHealthDamageMultiplier(1.0f);
+
+	// 코어가 부여하기 전에는 추가 회복과 보조 타격 피해가 없다.
+	InitLifeStealRatio(0.0f);
+	InitKillHealAmount(0.0f);
+	InitAssistStrikeDamageRatio(0.0f);
 }
 
 void UCombatAttributeSet::PreAttributeChange(const FGameplayAttribute& Attribute, float& NewValue)
@@ -54,12 +63,14 @@ void UCombatAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCall
 
 	if (Data.EvaluatedData.Attribute == GetIncomingDamageAttribute())
 	{
-		const float Damage = GetIncomingDamage();
+		const float IncomingDamage = GetIncomingDamage();
 
 		// 임시 피해값은 처리 여부와 관계없이 비움
 		SetIncomingDamage(0.0f);
 
-		if (Damage > 0.0f && (!Player || !Player->IsDead()))
+		// 체력을 차감하는 이 지점에서 받는 피해 배율을 한 번만 적용한다. 0.9라면 피해 10% 감소다.
+		const float Damage = IncomingDamage * FMath::Max(0.0f, GetDamageTakenMultiplier());
+		if (FMath::IsFinite(Damage) && Damage > 0.0f && (!Player || !Player->IsDead()))
 		{
 			const float PreviousHealth = GetHealth();
 			SetHealth(FMath::Clamp(GetHealth() - Damage, 0.0f, GetMaxHealth()));
@@ -97,6 +108,7 @@ void UCombatAttributeSet::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& 
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME_CONDITION_NOTIFY(UCombatAttributeSet, Health, COND_None, REPNOTIFY_Always);
 	DOREPLIFETIME_CONDITION_NOTIFY(UCombatAttributeSet, MaxHealth, COND_None, REPNOTIFY_Always);
+	DOREPLIFETIME_CONDITION_NOTIFY(UCombatAttributeSet, MoveSpeedMultiplier, COND_None, REPNOTIFY_Always);
 }
 
 void UCombatAttributeSet::OnRep_Health(const FGameplayAttributeData& OldValue)
@@ -107,4 +119,9 @@ void UCombatAttributeSet::OnRep_Health(const FGameplayAttributeData& OldValue)
 void UCombatAttributeSet::OnRep_MaxHealth(const FGameplayAttributeData& OldValue)
 {
 	GAMEPLAYATTRIBUTE_REPNOTIFY(UCombatAttributeSet, MaxHealth, OldValue);
+}
+
+void UCombatAttributeSet::OnRep_MoveSpeedMultiplier(const FGameplayAttributeData& OldValue)
+{
+	GAMEPLAYATTRIBUTE_REPNOTIFY(UCombatAttributeSet, MoveSpeedMultiplier, OldValue);
 }

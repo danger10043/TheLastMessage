@@ -47,6 +47,14 @@ bool FPlayerCheckpointTest::RunTest(const FString& Parameters)
 	Damage->Modifiers.Add(Modifier);
 	Player->GetAbilitySystemComponent()->ApplyGameplayEffectToSelf(Damage, 1, Player->GetAbilitySystemComponent()->MakeEffectContext());
 	TestTrue(TEXT("Lethal damage enters death state"), Player->IsDead());
+	TestTrue(TEXT("Airborne death keeps gravity active"), Player->GetCharacterMovement()->IsFalling());
+	const double DeathHeight = Player->GetActorLocation().Z;
+	for (int32 Frame = 0; Frame < 5; ++Frame)
+	{
+		++GFrameCounter;
+		World->Tick(LEVELTICK_All, 0.02f);
+	}
+	TestTrue(TEXT("Dead player falls instead of hovering"), Player->GetActorLocation().Z < DeathHeight);
 	TestTrue(TEXT("No checkpoint uses initial spawn"), Player->RespawnAtCheckpoint());
 	TestTrue(TEXT("Returned to initial spawn"), Player->GetActorLocation().Equals(Start, 1));
 	TestEqual(TEXT("Health fully restored"), Stats->GetHealth(), 100.0f);

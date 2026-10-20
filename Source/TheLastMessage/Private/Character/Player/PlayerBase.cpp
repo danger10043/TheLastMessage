@@ -179,6 +179,15 @@ void APlayerBase::UpdateMouseAim()
 void APlayerBase::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	if (HasAuthority() && PendingAttackInput.IsValid()
+		&& !AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking))
+	{
+		const FGameplayTag Input = PendingAttackInput;
+		const EWeaponSlot Slot = Input == WeaponGameplayTags::Input_Primary ? EWeaponSlot::Primary : EWeaponSlot::Secondary;
+		const bool bSameWeapon = PendingAttackWeapon.IsValid() && PendingAttackWeapon.Get() == GetWeaponInSlot(Slot);
+		ClearPendingAttack();
+		if (bSameWeapon && !IsDead() && !IsHitReacting()) AbilityInputPressed(Input);
+	}
 	UpdateMouseAim();
 	if (HasAuthority() && !IsLocallyControlled() && bHasAimTarget)
 	{
@@ -482,6 +491,12 @@ void APlayerBase::AbilityInputPressed(FGameplayTag InputTag)
 			AbilitySystemComponent->CancelAbilityHandle(Handle);
 		}
 	}
+	if (RequestedSlot != EWeaponSlot::None && !IsChargingWeapon()
+		&& AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking))
+	{
+		PendingAttackInput = InputTag;
+		PendingAttackWeapon = GetWeaponInSlot(RequestedSlot);
+	}
 	for (const FGameplayAbilitySpecHandle Handle : Handles)
 	{
 		FGameplayAbilitySpec* Spec = AbilitySystemComponent->FindAbilitySpecFromHandle(Handle);
@@ -503,6 +518,7 @@ void APlayerBase::AbilityInputPressed(FGameplayTag InputTag)
 
 void APlayerBase::AbilityInputReleased(FGameplayTag InputTag)
 {
+	if (PendingAttackInput == InputTag) ClearPendingAttack();
 	if (AssignmentClickInputs.HasTagExact(InputTag))
 	{
 		AssignmentClickInputs.RemoveTag(InputTag);
@@ -754,6 +770,7 @@ void APlayerBase::RechargeWeaponEnergy()
 
 void APlayerBase::AbilityInputCanceled(FGameplayTag InputTag)
 {
+	if (PendingAttackInput == InputTag) ClearPendingAttack();
 	if (AssignmentClickInputs.HasTagExact(InputTag))
 	{
 		AssignmentClickInputs.RemoveTag(InputTag);

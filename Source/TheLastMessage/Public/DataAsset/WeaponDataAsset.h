@@ -78,8 +78,8 @@ public:
 	float MaxChargeDamageMultiplier = 1.0f;
 
 	// ------------------------------근접------------------------------
-	// 근접 공격 간격(초)
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
+	// Legacy serialized value; attacks now wait for their animation to complete.
+	UPROPERTY()
 	float AttackInterval = 0.5f;
 
 	// 근접 공격 사거리
@@ -87,8 +87,8 @@ public:
 	float AttackRange;
 
 	// ------------------------------원거리-----------------------------
-	// 분당 발사 횟수
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
+	// Legacy serialized value; no longer used to gate attacks.
+	UPROPERTY()
 	float RPM;
 
 	// 원거리 사거리

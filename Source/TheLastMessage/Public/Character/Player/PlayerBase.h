@@ -119,6 +119,7 @@ public:
 	void BeginWeaponCharge(EWeaponSlot Slot, float Duration);
 	void ClearWeaponCharge(EWeaponSlot Slot);
 	void NotifyWeaponEnergySpent();
+	void ClearPendingAttack() { PendingAttackInput = FGameplayTag(); PendingAttackWeapon.Reset(); }
 
 	// 실제 공격 활성화에 성공한 슬롯의 외형을 표시한다.
 	void ShowWeaponInSlot(EWeaponSlot Slot);
@@ -360,6 +361,8 @@ private:
 	bool bHasAimTarget = false;
 	float AimSendElapsed = 0.0f;
 	void AbilityInputPressed(FGameplayTag InputTag);
+	FGameplayTag PendingAttackInput;
+	TWeakObjectPtr<UWeaponBase> PendingAttackWeapon;
 	void AbilityInputReleased(FGameplayTag InputTag);
 	void AbilityInputCanceled(FGameplayTag InputTag);
 	void RefreshPrimaryWeaponVisual();

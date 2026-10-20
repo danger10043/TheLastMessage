@@ -52,12 +52,11 @@ bool UGA_WeaponAttackBase::CanActivateAbility(const FGameplayAbilitySpecHandle H
 	const UWeaponBase* Weapon = Player ? Player->GetWeaponInSlot(WeaponSlot) : nullptr;
 	const UWeaponDataAsset* Data = IsValid(Weapon) ? Weapon->WeaponData.Get() : nullptr;
 	if (!Player || Player->IsDead() || !IsValid(Data) || !FMath::IsFinite(Data->AttackPower) || Data->AttackPower <= 0.0f) return false;
-	if (Weapon->NextAttackAllowedTime > GetWorld()->GetTimeSeconds()) return false;
+	if (!Data->AttackMontage && Weapon->NextAttackAllowedTime > GetWorld()->GetTimeSeconds()) return false;
 	if (Data->AttackMontage && !Player->GetMesh()->GetAnimInstance()) return false;
 	if (Data->WeaponType == EWeaponType::LightRanged || Data->WeaponType == EWeaponType::HeavyRanged)
 	{
 		return Data->ProjectileClass && !Data->ProjectileClass->HasAnyClassFlags(CLASS_Abstract)
-			&& FMath::IsFinite(Data->RPM) && Data->RPM > 0.0f
 			&& FMath::IsFinite(Data->ProjectileSpeed) && Data->ProjectileSpeed > 0.0f
 			&& FMath::IsFinite(Data->Range) && Data->Range > 0.0f
 			&& FMath::IsFinite(Data->EnergyPerShot) && Data->EnergyPerShot >= 0.0f;
@@ -101,27 +100,18 @@ void UGA_WeaponAttackBase::ApplyCost(const FGameplayAbilitySpecHandle Handle, co
 
 const FGameplayTagContainer* UGA_WeaponAttackBase::GetCooldownTags() const
 {
-	return &AttackCooldownTags;
+	return nullptr;
 }
 
 void UGA_WeaponAttackBase::ApplyCooldown(const FGameplayAbilitySpecHandle Handle,
-	const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo) const
+ const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo) const
 {
-	if (!SourceWeapon || !SourceWeapon->WeaponData || !CooldownEffectClass) return;
-	const UWeaponDataAsset* Data = SourceWeapon->WeaponData;
-	const bool bRanged = Data->WeaponType == EWeaponType::LightRanged || Data->WeaponType == EWeaponType::HeavyRanged;
-	const float Duration = bRanged ? 60.0f / Data->RPM : FMath::Max(0.0f, Data->AttackInterval);
-	if (Duration <= 0.0f) return;
-	FGameplayEffectSpecHandle Spec = MakeOutgoingGameplayEffectSpec(Handle, ActorInfo, ActivationInfo,
-		CooldownEffectClass, GetAbilityLevel(Handle, ActorInfo));
-	if (Spec.IsValid())
-	{
-		Spec.Data->SetDuration(Duration, true);
-		ApplyGameplayEffectSpecToOwner(Handle, ActorInfo, ActivationInfo, Spec);
-		SourceWeapon->NextAttackAllowedTime = GetWorld()->GetTimeSeconds() + Duration;
-	}
+ if (SourceWeapon && SourceWeapon->WeaponData && !SourceWeapon->WeaponData->AttackMontage)
+ {
+  // Only animationless weapons need a safety interval; preserve it across swaps.
+  SourceWeapon->NextAttackAllowedTime = GetWorld()->GetTimeSeconds() + 0.1;
+ }
 }
-
 void UGA_WeaponAttackBase::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
 	const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo,
 	const FGameplayEventData* TriggerEventData)
@@ -413,6 +403,10 @@ void UGA_WeaponAttackBase::EndAbility(const FGameplayAbilitySpecHandle Handle,
 {
 	if (bFinishingAttack || !IsEndAbilityValid(Handle, ActorInfo)) return;
 	bFinishingAttack = true;
+	if (bWasCancelled)
+	{
+		if (APlayerBase* Player = ActorInfo ? Cast<APlayerBase>(ActorInfo->AvatarActor.Get()) : nullptr) Player->ClearPendingAttack();
+	}
 	if (APlayerBase* Player = ActorInfo ? Cast<APlayerBase>(ActorInfo->AvatarActor.Get()) : nullptr) Player->ClearWeaponCharge(WeaponSlot);
 	bWaitingForRelease = false;
 	bAttackExecuted = false;

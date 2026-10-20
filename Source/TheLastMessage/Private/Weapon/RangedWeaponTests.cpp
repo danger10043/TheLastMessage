@@ -76,7 +76,7 @@ bool FRangedWeaponTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Shot activates without a montage"), ASC->TryActivateAbilityByClass(UGA_AttackPrimary::StaticClass()));
 	TestEqual(TEXT("Shot costs primary energy once"), Energy->GetSharedEnergy(), 90.0f);
 	TestEqual(TEXT("Both slots consume the same pool"), Energy->GetSharedEnergy(), 90.0f);
-	TestFalse(TEXT("RPM cooldown blocks immediate repeated shot"), ASC->TryActivateAbilityByClass(UGA_AttackPrimary::StaticClass()));
+	TestFalse(TEXT("Animationless safety interval blocks immediate repeated shot"), ASC->TryActivateAbilityByClass(UGA_AttackPrimary::StaticClass()));
 	Advance(0.4f);
 	TestEqual(TEXT("Projectile hits through common damage GE exactly once"), EnemyStats->GetHealth(), HealthBefore - 10.0f);
 	TestEqual(TEXT("No recharge before delay"), Energy->GetSharedEnergy(), 90.0f);
@@ -179,7 +179,7 @@ bool FRangedWeaponTest::RunTest(const FString& Parameters)
 	SendInput(WeaponGameplayTags::Input_Secondary, 1);
 	TestFalse(TEXT("Switch to uncharged attack clears charge UI"), Player->IsChargingWeapon());
 	TestEqual(TEXT("Immediate switch consumes one shared cost"), Energy->GetSharedEnergy(), BeforeImmediateSwitch - SecondaryData->EnergyPerShot);
-	TestTrue(TEXT("Uncharged switched attack applies its cooldown"), ASC->HasMatchingGameplayTag(WeaponGameplayTags::Cooldown_Secondary));
+	TestFalse(TEXT("Uncharged attack does not apply slot cooldown"), ASC->HasMatchingGameplayTag(WeaponGameplayTags::Cooldown_Secondary));
 	SendInput(WeaponGameplayTags::Input_Primary, 0);
 	SendInput(WeaponGameplayTags::Input_Secondary, 0);
 	Data->bSupportsChargeAttack = false;
@@ -192,7 +192,32 @@ bool FRangedWeaponTest::RunTest(const FString& Parameters)
 	for (TActorIterator<AProjectileBase> It(World); It; ++It) ++RemainingProjectiles;
 	TestEqual(TEXT("Expired projectiles are removed"), RemainingProjectiles, 0);
 	Data->RPM = 0;
-	TestFalse(TEXT("Invalid RPM rejects firing"), ASC->TryActivateAbilityByClass(UGA_AttackPrimary::StaticClass()));
+	TestTrue(TEXT("Legacy RPM does not gate firing"), ASC->TryActivateAbilityByClass(UGA_AttackPrimary::StaticClass()));
+	Advance(0.2f);
+	Data->bSupportsChargeAttack = true;
+	Player->GetCombatAttributes()->SetChargeTimeMultiplier(0.8f);
+	Energy->SetSharedEnergy(100);
+	// Simulate the attack state held by the preceding montage, using the real input route.
+	ASC->AddLooseGameplayTag(WeaponGameplayTags::State_Attacking);
+	SendInput(WeaponGameplayTags::Input_Primary, 1);
+	TestFalse(TEXT("Charge waits while previous animation is active"), Player->IsChargingWeapon());
+	ASC->RemoveLooseGameplayTag(WeaponGameplayTags::State_Attacking);
+	Advance(0.02f);
+	TestTrue(TEXT("Held press starts accelerated charge after animation ends"), Player->IsChargingWeapon());
+	ASC->CancelAbilityHandle(Spec->Handle);
+	SendInput(WeaponGameplayTags::Input_Primary, 0);
+	ASC->AddLooseGameplayTag(WeaponGameplayTags::State_Attacking);
+	SendInput(WeaponGameplayTags::Input_Primary, 1);
+	SendInput(WeaponGameplayTags::Input_Primary, 0);
+	ASC->RemoveLooseGameplayTag(WeaponGameplayTags::State_Attacking);
+	Advance(0.02f);
+	TestFalse(TEXT("Release before animation ends cancels queued charge"), Player->IsChargingWeapon());
+	ASC->AddLooseGameplayTag(WeaponGameplayTags::State_Attacking);
+	SendInput(WeaponGameplayTags::Input_Primary, 1);
+	Player->ClearPendingAttack();
+	ASC->RemoveLooseGameplayTag(WeaponGameplayTags::State_Attacking);
+	Advance(0.02f);
+	TestFalse(TEXT("Interrupted attack discards queued input"), Player->IsChargingWeapon());
 	// Maximum changes clamp the single shared resource.
 	Energy->SetSharedMaxEnergy(15);
 	TestTrue(TEXT("Maximum reduction clamps energy"), Energy->GetSharedEnergy() <= 15.0f);

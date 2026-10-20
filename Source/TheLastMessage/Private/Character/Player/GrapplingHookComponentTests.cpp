@@ -64,6 +64,8 @@ struct FWorld
 	APlayerBase* SpawnPlayer()
 	{
 		APlayerBase* Player = World->SpawnActor<APlayerBase>();
+		// 기존 훅 동작 검사는 사용 권한을 획득한 플레이어를 기준으로 한다.
+		Player->GetAbilitySystemComponent()->AddLooseGameplayTag(FGameplayTag::RequestGameplayTag(TEXT("Unlock.GrapplingHook")));
 		// The fixture has no controller; explicitly enable the real movement simulation.
 		Player->GetCharacterMovement()->bRunPhysicsWithNoController = true;
 		Player->GetCharacterMovement()->SetMovementMode(MOVE_Falling);

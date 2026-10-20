@@ -18,22 +18,25 @@ void UCoreComponent::Initialize(UAbilitySystemComponent* InASC)
 
 bool UCoreComponent::HasCore(FName CoreId) const
 {
-	// 유효한 ID가 없으면 보유 여부를 확인할 수 없으므로 false를 반환한다.
+	return GetCoreLevel(CoreId) > 0;
+}
+
+int32 UCoreComponent::GetCoreLevel(FName CoreId) const
+{
 	if (CoreId.IsNone())
 	{
-		return false;
+		return 0;
 	}
 
-	// 보유 기록을 순회하며 같은 코어 ID가 있는지 검사한다.
 	for (const FCoreGrantRecord& Record : AppliedCoreHandles)
 	{
 		if (Record.CoreId == CoreId)
 		{
-			return true;
+			return Record.Level;
 		}
 	}
 
-	return false;
+	return 0;
 }
 
 
@@ -51,8 +54,8 @@ bool UCoreComponent::CanAcquireCore(const UCoreDataAsset* CoreData) const
 		return false;
 	}
 
-	// 같은 코어의 능력과 효과가 다시 부여되는 것을 막는다.
-	if (HasCore(CoreData->CoreId))
+	// 보유 중이어도 최대 단계 미만이면 다시 획득할 수 있다. 잘못된 최대 단계 설정도 거부한다.
+	if (CoreData->MaxLevel < 1 || GetCoreLevel(CoreData->CoreId) >= CoreData->MaxLevel)
 	{
 		return false;
 	}
@@ -82,6 +85,46 @@ bool UCoreComponent::CanAcquireCore(const UCoreDataAsset* CoreData) const
 		}
 	}
 
+	return true;
+}
+
+bool UCoreComponent::UpgradeCore(FCoreGrantRecord& Record)
+{
+	UAbilitySystemComponent* ASC = AbilitySystemComponent.Get();
+	check(ASC);
+
+	// 다른 처리에서 부여 내용이 제거되었다면, 단계만 올라간 채 보상이 소비되지 않도록 거부한다.
+	for (const FActiveGameplayEffectHandle& EffectHandle : Record.EffectHandles)
+	{
+		if (!ASC->GetActiveGameplayEffect(EffectHandle))
+		{
+			return false;
+		}
+	}
+	for (const FGameplayAbilitySpecHandle& AbilityHandle : Record.AbilityHandles)
+	{
+		const FGameplayAbilitySpec* AbilitySpec = ASC->FindAbilitySpecFromHandle(AbilityHandle);
+		if (!AbilitySpec || AbilitySpec->PendingRemove)
+		{
+			return false;
+		}
+	}
+
+	const int32 NextLevel = Record.Level + 1;
+	for (const FActiveGameplayEffectHandle& EffectHandle : Record.EffectHandles)
+	{
+		// 효과를 새로 쌓지 않고 레벨만 갱신한다. Modifier의 커브가 이 레벨에 해당하는 수치를 계산한다.
+		ASC->SetActiveGameplayEffectLevel(EffectHandle, NextLevel);
+	}
+	for (const FGameplayAbilitySpecHandle& AbilityHandle : Record.AbilityHandles)
+	{
+		if (FGameplayAbilitySpec* AbilitySpec = ASC->FindAbilitySpecFromHandle(AbilityHandle))
+		{
+			AbilitySpec->Level = NextLevel;
+			ASC->MarkAbilitySpecDirty(*AbilitySpec);
+		}
+	}
+	Record.Level = NextLevel;
 	return true;
 }
 
@@ -137,50 +180,62 @@ bool UCoreComponent::AcquireCore(UCoreDataAsset* CoreData)
 	{
 		TGuardValue<bool> ChangingGrantsGuard(bIsChangingCoreGrants, true);
 
-		FCoreGrantRecord Record;
-		Record.CoreId = CoreData->CoreId;
-
-		// 효과와 능력의 출처를 이 코어 데이터로 남긴다.
-		FGameplayEffectContextHandle EffectContext = ASC->MakeEffectContext();
-		EffectContext.AddSourceObject(CoreData);
-
-		// 부여할 효과와 능력을 순회하며 ASC에 적용한다. 실패하면 이미 부여한 내용을 되돌린다.
-		for (const TSubclassOf<UGameplayEffect>& EffectClass : CoreData->GrantedEffects)
+		FCoreGrantRecord* ExistingRecord = AppliedCoreHandles.FindByPredicate(
+			[CoreData](const FCoreGrantRecord& Record) { return Record.CoreId == CoreData->CoreId; });
+		if (ExistingRecord)
 		{
-			// Infinite Duration과 Stacking Type None 설정을 만족하는 GE만 부여한다.
-			const FGameplayEffectSpecHandle SpecHandle = ASC->MakeOutgoingSpec(EffectClass, 1.0f, EffectContext);
-			if (!SpecHandle.IsValid())
+			if (!UpgradeCore(*ExistingRecord))
 			{
-				RemoveCoreGrants(Record);
 				return false;
 			}
-
-			const FActiveGameplayEffectHandle EffectHandle = ASC->ApplyGameplayEffectSpecToSelf(*SpecHandle.Data.Get());
-			if (!EffectHandle.WasSuccessfullyApplied() || !EffectHandle.IsValid())
-			{
-				RemoveCoreGrants(Record);
-				return false;
-			}
-			
-			Record.EffectHandles.Add(EffectHandle);
 		}
-
-		// 효과 적용이 끝나면 능력을 등록하고, 반환된 핸들을 기록한다.
-		for (const TSubclassOf<UGameplayAbility>& AbilityClass : CoreData->GrantedAbilities)
+		else
 		{
-			const FGameplayAbilitySpecHandle AbilityHandle = ASC->GiveAbility(
-				FGameplayAbilitySpec(AbilityClass, 1, INDEX_NONE, CoreData));
-			if (!AbilityHandle.IsValid())
+			FCoreGrantRecord Record;
+			Record.CoreId = CoreData->CoreId;
+
+			// 효과와 능력의 출처를 이 코어 데이터로 남긴다.
+			FGameplayEffectContextHandle EffectContext = ASC->MakeEffectContext();
+			EffectContext.AddSourceObject(CoreData);
+
+			// 부여할 효과와 능력을 순회하며 ASC에 적용한다. 실패하면 이미 부여한 내용을 되돌린다.
+			for (const TSubclassOf<UGameplayEffect>& EffectClass : CoreData->GrantedEffects)
 			{
-				RemoveCoreGrants(Record);
-				return false;
+				// Infinite Duration과 Stacking Type None 설정을 만족하는 GE만 부여한다.
+				const FGameplayEffectSpecHandle SpecHandle = ASC->MakeOutgoingSpec(EffectClass, 1.0f, EffectContext);
+				if (!SpecHandle.IsValid())
+				{
+					RemoveCoreGrants(Record);
+					return false;
+				}
+
+				const FActiveGameplayEffectHandle EffectHandle = ASC->ApplyGameplayEffectSpecToSelf(*SpecHandle.Data.Get());
+				if (!EffectHandle.WasSuccessfullyApplied() || !EffectHandle.IsValid())
+				{
+					RemoveCoreGrants(Record);
+					return false;
+				}
+
+				Record.EffectHandles.Add(EffectHandle);
 			}
 
-			Record.AbilityHandles.Add(AbilityHandle);
-		}
+			// 효과 적용이 끝나면 능력을 등록하고, 반환된 핸들을 기록한다.
+			for (const TSubclassOf<UGameplayAbility>& AbilityClass : CoreData->GrantedAbilities)
+			{
+				const FGameplayAbilitySpecHandle AbilityHandle = ASC->GiveAbility(
+					FGameplayAbilitySpec(AbilityClass, 1, INDEX_NONE, CoreData));
+				if (!AbilityHandle.IsValid())
+				{
+					RemoveCoreGrants(Record);
+					return false;
+				}
 
-		// 모든 부여가 성공한 경우에만 보유 기록에 추가한다.
-		AppliedCoreHandles.Add(MoveTemp(Record));
+				Record.AbilityHandles.Add(AbilityHandle);
+			}
+
+			// 모든 부여가 성공한 경우에만 보유 기록에 추가한다.
+			AppliedCoreHandles.Add(MoveTemp(Record));
+		}
 	}
 
 	OnCoreChanged.Broadcast();
@@ -234,7 +289,7 @@ TArray<UCoreDataAsset*> UCoreComponent::GenerateCoreChoices(const TArray<UCoreDa
 	TSet<FName> CandidateIds;
 	for (UCoreDataAsset* CoreData : CandidatePool)
 	{
-		// 무효 데이터/빈 ID/보유 코어/잘못된 GE·GA 설정을 제외하고, 같은 ID는 한 번만 후보에 넣는다.
+		// 무효 데이터/최대 단계/잘못된 GE·GA 설정을 제외하고, 같은 ID는 한 번만 후보에 넣는다.
 		if (!CanAcquireCore(CoreData) || CandidateIds.Contains(CoreData->CoreId))
 		{
 			continue;
@@ -288,7 +343,7 @@ TArray<UCoreDataAsset*> UCoreComponent::ResumeCoreChoices(FCoreChoiceState& Save
 		|| SavedState.ShownCoreIds.IsEmpty()
 		|| SavedState.Choices.Num() != SavedState.RerollCounts.Num()) return {};
 
-	// 다른 보상에서 획득한 코어는 제외하되, 나머지 카드의 순서와 리롤 사용 횟수는 함께 유지한다.
+	// 다른 보상에서 최대 단계가 된 코어는 제외하되, 나머지 카드의 순서와 리롤 사용 횟수는 함께 유지한다.
 	for (int32 Index = SavedState.Choices.Num() - 1; Index >= 0; --Index)
 	{
 		if (!CanAcquireCore(SavedState.Choices[Index].Get()))

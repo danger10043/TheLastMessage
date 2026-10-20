@@ -27,6 +27,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Core")
 	TObjectPtr<UTexture2D> CoreIcon = nullptr;
 
+	/** 최대 강화 단계. 1이면 한 번만 획득하며, 단계별 효과 수치는 GE의 커브에서 설정한다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Core|Upgrade", meta = (ClampMin = "1", UIMin = "1"))
+	int32 MaxLevel = 1;
+
 	/** 선택형 보상의 전체 후보에 포함할지 정한다. 고정 보상 전용 코어는 끈다. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Core|Reward")
 	bool bIncludeInRandomPool = true;

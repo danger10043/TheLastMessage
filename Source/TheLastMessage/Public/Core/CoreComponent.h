@@ -29,18 +29,22 @@ public:
 	void Initialize(UAbilitySystemComponent* InASC);
 
 	/**
-	 * 코어를 획득하여 플레이어가 그 능력과 효과를 사용할 수 있게 한다.
-	 * GE/GA 부여와 보유 기록 등록까지 모두 성공하면 true를 반환한다.
+	 * 미보유 코어는 1단계로 획득하고, 보유 코어는 최대 단계까지 한 단계 강화한다.
+	 * 최초 획득은 GE/GA를 부여하며, 강화는 기존 GE/GA의 레벨을 갱신한다. 성공하면 true를 반환한다.
 	 */
 	bool AcquireCore(UCoreDataAsset* CoreData);
 
-	/** 해당 CoreId의 코어를 보유하고 있는지 확인한다. 중복 획득과 보상 후보 제외 판정에 사용한다. */
+	/** 해당 CoreId의 코어를 보유하고 있는지 확인한다. 강화 가능 여부와는 별개다. */
 	UFUNCTION(BlueprintPure, Category = "Core")
 	bool HasCore(FName CoreId) const;
 
+	/** 현재 강화 단계를 반환한다. 미보유 코어나 빈 ID는 0이다. UI 등에서 단계 표시에 사용한다. */
+	UFUNCTION(BlueprintPure, Category = "Core")
+	int32 GetCoreLevel(FName CoreId) const;
+
 	/**
 	 * 플레이어에게 제시할 코어 선택지를 최대 3개 만든다.
-	 * 유효한 미보유 코어를 추첨하며, 기존 선택지가 남아 있으면 새 요청을 거부한다.
+	 * 미보유 또는 강화 가능한 코어를 추첨하며, 기존 선택지가 남아 있으면 새 요청을 거부한다.
 	 */
 	TArray<UCoreDataAsset*> GenerateCoreChoices(const TArray<UCoreDataAsset*>& CandidatePool);
 
@@ -76,14 +80,17 @@ public:
 	FOnCoreChangedSignature OnCoreChanged;
 
 private:
-	/** 카드별 사용 횟수를 확인하고, 보유 코어와 이미 나온 코어를 제외한 재추첨 후보를 모은다. */
+	/** 카드별 사용 횟수를 확인하고, 최대 단계 코어와 이미 나온 코어를 제외한 재추첨 후보를 모은다. */
 	TArray<UCoreDataAsset*> GetRerollCandidates(int32 ChoiceIndex) const;
 
 	/**
 	 * 해당 코어를 획득할 수 있는지 사전에 확인한다. 보상 후보를 거를 때도 같은 기준을 사용한다.
-	 * 데이터와 ASC, 보유 여부, GE/GA 설정을 검사하며 실제 획득 성공 여부는 AcquireCore에서 확인한다.
+	 * 데이터와 ASC, 최대 강화 단계, GE/GA 설정을 검사하며 실제 획득 성공 여부는 AcquireCore에서 확인한다.
 	 */
 	bool CanAcquireCore(const UCoreDataAsset* CoreData) const;
+
+	/** 기존 GE/GA가 남아 있는지 확인한 뒤 레벨을 올린다. 재부여하지 않으므로 효과와 능력이 중복되지 않는다. */
+	bool UpgradeCore(FCoreGrantRecord& Record);
 
 	/**
 	 * 특정 코어가 플레이어에게 부여한 능력과 효과를 제거한다.
@@ -97,9 +104,9 @@ private:
 
 	/**
 	 * 보유 코어를 조회하고, 각 코어가 부여한 능력과 효과를 제거하기 위한 기록이다.
-	 * 획득이 완료된 코어별로 CoreId와 부여한 GE/GA 핸들을 보관한다.
-	 * HasCore는 이 기록의 CoreId를 조회하고, 코어 초기화는 기록된 핸들로 능력과 효과를 제거한다.
-	 * 불러오기 시 보유 CoreId를 기준으로 능력과 효과를 다시 부여하여 이 실행의 기록을 구성한다.
+	 * 코어별 CoreId, 현재 강화 단계, 부여한 GE/GA 핸들을 보관한다.
+	 * 강화는 기존 핸들의 레벨을 갱신하고, 초기화는 이 핸들로 능력과 효과를 제거한다.
+	 * 실행 중 기록이며 저장·복원 기능은 별도로 구현해야 한다. 실행 중 핸들을 저장 데이터로 사용하지 않는다.
 	 */
 	UPROPERTY(Transient)
 	TArray<FCoreGrantRecord> AppliedCoreHandles;

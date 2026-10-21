@@ -10,6 +10,7 @@
 #include "Engine/AssetManager.h"
 #include "Engine/Engine.h"
 #include "GameFramework/PlayerController.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "Templates/UnrealTemplate.h"
 #include "UI/CoreChoiceWidget.h"
 
@@ -17,7 +18,8 @@ DEFINE_LOG_CATEGORY_STATIC(LogCoreReward, Log, All);
 
 ACorePickup::ACorePickup()
 {
-	PrimaryActorTick.bCanEverTick = false;
+	// 대기 움직임과 흡수 연출을 Tick에서 처리한다. 일시정지 중에는 함께 멈춘다.
+	PrimaryActorTick.bCanEverTick = true;
 
 	// 메시를 루트로 설정하여 액터의 배치 위치와 회전을 메시에도 적용한다.
 	CoreMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("CoreMesh"));
@@ -87,16 +89,16 @@ bool ACorePickup::TryAcquireFixedCore(UCoreComponent* InCoreComponent)
 		return false;
 	}
 
-	// 획득 성공 후 소비 상태를 먼저 기록하고, 맵의 보상 액터를 파괴한다.
+	// 획득 성공 후 소비 상태를 먼저 기록하고, 코어를 받은 액터에게 빨려 들어가는 연출을 시작한다.
 	bConsumed = true;
-	Destroy();
+	StartAbsorb(InCoreComponent->GetOwner());
 	return true;
 }
 
 bool ACorePickup::TryOpenCoreChoice(APlayerBase* Player)
 {
 	if (!HasAuthority() || IsActorBeingDestroyed() || bConsumed || bIsGrantingReward
-		|| RewardMode != ECoreRewardMode::Choice || IsValid(ActiveChoiceWidget)
+		|| RewardMode != ECoreRewardMode::Choice || IsValid(ActiveChoiceWidget) || IsValid(ActiveRewardSession)
 		|| !IsValid(Player) || Player->IsDead() || !ChoiceWidgetClass)
 	{
 		return false;
@@ -132,24 +134,46 @@ bool ACorePickup::TryOpenCoreChoice(APlayerBase* Player)
 		return false;
 	}
 
+	// 후보를 먼저 확보해 두면, 코어가 빨려 들어간 뒤 선택 화면을 열 수 없는 경우가 생기지 않는다.
 	ChoosingPlayer = Player;
 	ActiveRewardSession = Session;
-	ActiveChoiceWidget = UCoreChoiceWidget::OpenCoreChoiceUI(Controller, Session->GetChoiceEntries(), ChoiceWidgetClass);
-	if (!IsValid(ActiveChoiceWidget) || !Session->IsActive() || IsActorBeingDestroyed() || !IsValid(Player) || Player->IsDead()
-		|| Player->GetController() != Controller)
+	Session->OnCancelled.AddUObject(this, &ACorePickup::HandleRewardCancelled);
+	Player->OnPlayerDied.AddDynamic(this, &ACorePickup::HandleChoosingPlayerDied);
+	Player->OnDestroyed.AddDynamic(this, &ACorePickup::HandleChoosingPlayerDestroyed);
+
+	// 코어가 플레이어에게 빨려 들어간 뒤 선택 화면을 연다. 연출 시간이 0이면 바로 연다.
+	if (AbsorbDuration > KINDA_SMALL_NUMBER)
 	{
-		// 화면 준비에 실패하면 기록을 폐기해 다른 보상을 막지 않는다. 픽업 자체는 유지한다.
+		bOpenChoiceAfterAbsorb = true;
+		StartAbsorb(Player);
+		return true;
+	}
+	return OpenChoiceScreen();
+}
+
+bool ACorePickup::OpenChoiceScreen()
+{
+	TGuardValue<bool> GrantingRewardGuard(bIsGrantingReward, true);
+	APlayerBase* Player = ChoosingPlayer.Get();
+	UCoreRewardSession* Session = ActiveRewardSession;
+	APlayerController* Controller = IsValid(Player) ? Cast<APlayerController>(Player->GetController()) : nullptr;
+	if (IsValid(Controller) && Controller->IsLocalController() && IsValid(Session) && Session->IsActive()
+		&& !IsActorBeingDestroyed() && !Player->IsDead())
+	{
+		ActiveChoiceWidget = UCoreChoiceWidget::OpenCoreChoiceUI(Controller, Session->GetChoiceEntries(), ChoiceWidgetClass);
+	}
+	if (!IsValid(ActiveChoiceWidget) || !IsValid(Session) || !Session->IsActive() || IsActorBeingDestroyed()
+		|| !IsValid(Player) || Player->IsDead() || Player->GetController() != Controller)
+	{
+		// 화면 준비에 실패하면 기록을 폐기해 다른 보상을 막지 않는다. 픽업은 소비하지 않고 제자리로 되돌린다.
 		ClearChoiceReward();
 		return false;
 	}
 
 	ActiveChoiceWidget->OnCoreSelected.AddDynamic(this, &ACorePickup::HandleCoreSelected);
 	ActiveChoiceWidget->OnRerollRequested.AddDynamic(this, &ACorePickup::HandleCoreReroll);
-	Session->OnCancelled.AddUObject(this, &ACorePickup::HandleRewardCancelled);
 	UpdateRerollButtons();
 	ActiveChoiceWidget->OnChoiceClosed.AddDynamic(this, &ACorePickup::HandleChoiceClosed);
-	Player->OnPlayerDied.AddDynamic(this, &ACorePickup::HandleChoosingPlayerDied);
-	Player->OnDestroyed.AddDynamic(this, &ACorePickup::HandleChoosingPlayerDestroyed);
 	return true;
 }
 
@@ -251,6 +275,7 @@ void ACorePickup::HandleCoreSelected(UCoreDataAsset* SelectedCore)
 		return;
 	}
 
+	// 코어는 선택 화면을 열기 전에 이미 빨려 들어갔으므로 바로 제거한다.
 	bConsumed = true;
 	ClearChoiceReward(true);
 	Destroy();
@@ -313,10 +338,155 @@ void ACorePickup::ClearChoiceReward(bool bAnimateClose)
 		Session->Cancel();
 	}
 	CloseChoiceScreen(bAnimateClose);
+
+	// 선택을 마치지 못했다면 빨려 들어갔던 코어를 제자리로 되돌려 다시 획득할 수 있게 한다.
+	if (!bConsumed)
+	{
+		RestorePickup();
+	}
+}
+
+void ACorePickup::RestorePickup()
+{
+	if (!bOpenChoiceAfterAbsorb && !bHiddenForChoice) return;
+
+	bOpenChoiceAfterAbsorb = false;
+	bHiddenForChoice = false;
+	bIsAbsorbing = false;
+	AbsorbTarget.Reset();
+	SetActorLocation(IdleBaseLocation);
+	SetActorScale3D(IdleBaseScale);
+	SetEmissive(IdleEmissive);
+	SetActorHiddenInGame(false);
+	SetActorTickEnabled(true);
+	PickupCollision->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+}
+
+void ACorePickup::BeginPlay()
+{
+	Super::BeginPlay();
+
+	// 배치한 위치·크기를 기준으로 떠다녀야 계속 움직여도 위치가 밀리지 않는다.
+	// 여러 코어가 같은 박자로 움직이지 않도록 시작 시점을 흩뜨린다.
+	IdleBaseLocation = GetActorLocation();
+	IdleBaseScale = GetActorScale3D();
+	IdleTime = FMath::FRandRange(0.0f, 10.0f);
+
+	// 머티리얼에 발광 파라미터가 있을 때만 인스턴스를 만들어 세기를 조절한다.
+	UMaterialInterface* Material = CoreMesh->GetMaterial(0);
+	float DefaultEmissive = 0.0f;
+	if (!EmissiveParameter.IsNone() && Material
+		&& Material->GetScalarParameterValue(FHashedMaterialParameterInfo(EmissiveParameter), DefaultEmissive))
+	{
+		CoreMaterial = CoreMesh->CreateDynamicMaterialInstance(0);
+	}
+	SetEmissive(IdleEmissive);
 }
 
 void ACorePickup::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	// 제거되는 중에는 코어를 제자리로 되돌릴 필요가 없다.
+	bOpenChoiceAfterAbsorb = false;
+	bHiddenForChoice = false;
 	ClearChoiceReward();
 	Super::EndPlay(EndPlayReason);
+}
+
+void ACorePickup::StartAbsorb(AActor* Target)
+{
+	// 연출 중에 다시 획득되지 않도록 충돌을 먼저 끈다. 소비 여부는 보상 방식에 따라 호출한 쪽에서 정한다.
+	PickupCollision->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	// 지금 떠 있는 위치·크기·밝기에서 그대로 이어서 빨려 들어가게 한다.
+	AbsorbTarget = Target;
+	AbsorbStartLocation = GetActorLocation();
+	AbsorbStartScale = GetActorScale3D();
+	AbsorbStartEmissive = CurrentEmissive;
+	AbsorbElapsed = 0.0f;
+	if (!IsValid(Target) || AbsorbDuration <= KINDA_SMALL_NUMBER)
+	{
+		FinishAbsorb();
+		return;
+	}
+
+	bIsAbsorbing = true;
+	SetActorTickEnabled(true);
+}
+
+void ACorePickup::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+
+	if (!bIsAbsorbing)
+	{
+		UpdateIdle(DeltaSeconds);
+	}
+	else if (UpdateAbsorb(DeltaSeconds))
+	{
+		FinishAbsorb();
+	}
+}
+
+void ACorePickup::UpdateIdle(float DeltaSeconds)
+{
+	// 크기와 발광은 같은 사인 곡선을 사용해 함께 숨 쉬듯 바뀐다.
+	IdleTime += DeltaSeconds;
+	const float Bob = FMath::Sin(IdleTime * BobSpeed * UE_TWO_PI) * BobHeight;
+	const float Pulse = FMath::Sin(IdleTime * PulseSpeed * UE_TWO_PI);
+
+	SetActorLocation(IdleBaseLocation + FVector(0.0f, 0.0f, Bob));
+	AddActorWorldRotation(FRotator(0.0f, SpinSpeed * DeltaSeconds, 0.0f));
+	SetActorScale3D(IdleBaseScale * (1.0f + PulseScale * Pulse));
+	SetEmissive(IdleEmissive * (1.0f + EmissivePulse * Pulse));
+}
+
+bool ACorePickup::UpdateAbsorb(float DeltaSeconds)
+{
+	AActor* Target = AbsorbTarget.Get();
+	const APlayerBase* Player = Cast<APlayerBase>(Target);
+	if (!IsValid(Target) || (Player && Player->IsDead()))
+	{
+		return true;
+	}
+
+	// 처음에는 천천히, 끝에 빠르게 빨려 들어가도록 가속 곡선을 사용한다.
+	// 대상이 움직여도 따라가도록 도착 지점은 매 프레임 다시 계산한다.
+	AbsorbElapsed += DeltaSeconds;
+	const float Alpha = FMath::Clamp(AbsorbElapsed / AbsorbDuration, 0.0f, 1.0f);
+	const float Eased = Alpha * Alpha;
+	const FVector TargetLocation = Target->GetActorLocation() + AbsorbTargetOffset;
+	SetActorLocation(FMath::Lerp(AbsorbStartLocation, TargetLocation, Eased));
+
+	// 크기 0은 변환 계산에서 경고가 날 수 있어 아주 작은 값에서 멈춘다.
+	SetActorScale3D(AbsorbStartScale * FMath::Max(1.0f - Eased, 0.01f));
+	SetEmissive(FMath::Lerp(AbsorbStartEmissive, AbsorbEmissive, Alpha));
+	return Alpha >= 1.0f;
+}
+
+void ACorePickup::FinishAbsorb()
+{
+	bIsAbsorbing = false;
+	SetActorTickEnabled(false);
+	AbsorbTarget.Reset();
+	if (!bOpenChoiceAfterAbsorb)
+	{
+		Destroy();
+		return;
+	}
+
+	// 선택형 보상은 코어를 숨긴 채 선택 화면을 연다. 선택에 성공해야 픽업을 제거하고,
+	// 화면을 열지 못하거나 선택이 취소되면 ClearChoiceReward에서 제자리로 되돌린다.
+	bOpenChoiceAfterAbsorb = false;
+	bHiddenForChoice = true;
+	SetActorHiddenInGame(true);
+	OpenChoiceScreen();
+}
+
+void ACorePickup::SetEmissive(float Value)
+{
+	CurrentEmissive = Value;
+	if (CoreMaterial)
+	{
+		CoreMaterial->SetScalarParameterValue(EmissiveParameter, Value);
+	}
 }

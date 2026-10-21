@@ -100,7 +100,27 @@ namespace
 				FEnumProperty* Mode = FindFProperty<FEnumProperty>(ACorePickup::StaticClass(), TEXT("RewardMode"));
 				Mode->GetUnderlyingProperty()->SetIntPropertyValue(Mode->ContainerPtrToValuePtr<void>(Pickup.Get()), static_cast<int64>(ECoreRewardMode::Choice));
 				FindFProperty<FClassProperty>(ACorePickup::StaticClass(), TEXT("ChoiceWidgetClass"))->SetObjectPropertyValue_InContainer(Pickup.Get(), ScreenClass);
-				if (!OpenScreen(World)) return true;
+
+				// 코어가 먼저 빨려 들어가고, 도착한 뒤에 선택 화면이 열린다.
+				Test->TestTrue(TEXT("Pickup starts its absorb effect"), Pickup->TryOpenCoreChoice(Player.Get()));
+				Test->TestNull(TEXT("Choice screen waits for the absorb effect"), FindScreen(World));
+				Test->TestFalse(TEXT("Gameplay is not paused during the absorb effect"), UGameplayStatics::IsGamePaused(World));
+				Advance(10);
+				return false;
+			}
+			if (Phase == 10)
+			{
+				Screen = FindScreen(World);
+				if (!Screen.IsValid())
+				{
+					if (FPlatformTime::Seconds() < Deadline) return false;
+					Test->AddError(TEXT("Choice screen did not open after the absorb effect"));
+					return true;
+				}
+				const FBoolProperty* Consumed = FindFProperty<FBoolProperty>(ACorePickup::StaticClass(), TEXT("bConsumed"));
+				Test->TestTrue(TEXT("Absorbed pickup stays hidden while choosing"), Pickup.IsValid() && Pickup->IsHidden());
+				Test->TestFalse(TEXT("Absorbed pickup is not consumed before selection"), Pickup.IsValid() && Consumed->GetPropertyValue_InContainer(Pickup.Get()));
+				Test->TestTrue(TEXT("Game is paused while choosing"), UGameplayStatics::IsGamePaused(World));
 				Test->TestNull(TEXT("Cancel button is removed from the WBP"), Screen->GetWidgetFromName(TEXT("CancelButton")));
 				Test->TestTrue(TEXT("Mouse cursor is visible during selection"), Controller->bShowMouseCursor);
 				const FKeyEvent Escape(EKeys::Escape, FModifierKeysState(), 0, false, 0, 0);
@@ -138,11 +158,12 @@ namespace
 			Test->TestEqual(TEXT("Original cursor visibility is restored"), Controller->bShowMouseCursor, PreviousCursor);
 			if (Phase == 1)
 			{
-				// 새 픽업으로 외부 화면 제거와 기존 일시정지 보존을 검사한다.
+				// 새 픽업으로 외부 화면 제거와 기존 일시정지 보존을 검사한다. 이후 단계는 흡수 연출 없이 바로 연다.
 				Pickup = World->SpawnActor<ACorePickup>(FVector(11000, 0, 10000), FRotator::ZeroRotator);
 				FEnumProperty* Mode = FindFProperty<FEnumProperty>(ACorePickup::StaticClass(), TEXT("RewardMode"));
 				Mode->GetUnderlyingProperty()->SetIntPropertyValue(Mode->ContainerPtrToValuePtr<void>(Pickup.Get()), static_cast<int64>(ECoreRewardMode::Choice));
 				FindFProperty<FClassProperty>(ACorePickup::StaticClass(), TEXT("ChoiceWidgetClass"))->SetObjectPropertyValue_InContainer(Pickup.Get(), LoadClass<UCoreChoiceWidget>(nullptr, TEXT("/Game/Test_Jihun/Core/WBP/WBP_CoreChoice.WBP_CoreChoice_C")));
+				FindFProperty<FFloatProperty>(ACorePickup::StaticClass(), TEXT("AbsorbDuration"))->SetPropertyValue_InContainer(Pickup.Get(), 0.0f);
 				if (!OpenScreen(World)) return true;
 				Screen->RemoveFromParent();
 				Advance(2);
@@ -204,12 +225,16 @@ namespace
 		bool OpenScreen(UWorld* World)
 		{
 			if (!Test->TestTrue(TEXT("Pickup opens a choice screen"), Pickup->TryOpenCoreChoice(Player.Get()))) return false;
-			TArray<UUserWidget*> Screens;
-			UWidgetBlueprintLibrary::GetAllWidgetsOfClass(World, Screens, UCoreChoiceWidget::StaticClass(), true);
-			Screen = Screens.IsEmpty() ? nullptr : Cast<UCoreChoiceWidget>(Screens[0]);
+			Screen = FindScreen(World);
 			if (!Test->TestNotNull(TEXT("Choice screen is in the viewport"), Screen.Get())) return false;
 			Test->TestTrue(TEXT("Game is paused while choosing"), UGameplayStatics::IsGamePaused(World));
 			return true;
+		}
+		static UCoreChoiceWidget* FindScreen(UWorld* World)
+		{
+			TArray<UUserWidget*> Screens;
+			UWidgetBlueprintLibrary::GetAllWidgetsOfClass(World, Screens, UCoreChoiceWidget::StaticClass(), true);
+			return Screens.IsEmpty() ? nullptr : Cast<UCoreChoiceWidget>(Screens[0]);
 		}
 		void Advance(int32 NextPhase) { Phase = NextPhase; Deadline = FPlatformTime::Seconds() + 4.0; }
 		FAutomationTestBase* Test;

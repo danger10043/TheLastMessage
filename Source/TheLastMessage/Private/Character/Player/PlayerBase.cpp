@@ -30,6 +30,7 @@
 #include "Animation/AnimMontage.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/PlayerController.h"
+#include "Camera/PlayerCameraManager.h"
 #include "DrawDebugHelpers.h"
 #include "HAL/IConsoleManager.h"
 #include "Engine/DamageEvents.h"
@@ -876,6 +877,19 @@ void APlayerBase::MulticastMeleeAttackFeedback_Implementation(EWeaponSlot Slot, 
 	else StartMeleeAttackFeedback();
 }
 
+// 슬래시 리본은 Niagara 시스템의 Z축을 "리본 면의 법선"으로 쓴다. 무기 메시에 그대로 붙이면 Z축이 휘두르는 동안 같이 돌아
+// 리본이 옆면으로 서서 얇은 선처럼 보이므로, 회전은 월드 기준으로 고정하고 법선이 카메라를 향하게 맞춘다.
+static void AlignTrailToCamera(const UObject* WorldContext, UNiagaraComponent* Trail)
+{
+	if (!Trail) return;
+	FVector Facing = FVector::LeftVector;
+	if (const UWorld* World = WorldContext ? WorldContext->GetWorld() : nullptr)
+		if (const APlayerController* PC = World->GetFirstPlayerController())
+			if (PC->PlayerCameraManager) Facing = -PC->PlayerCameraManager->GetCameraRotation().Vector();
+	Trail->SetUsingAbsoluteRotation(true);
+	Trail->SetWorldRotation(FQuat::FindBetweenNormals(FVector::UpVector, Facing.GetSafeNormal()));
+}
+
 void APlayerBase::StartMeleeAttackFeedback()
 {
 	const UWeaponDataAsset* Data = MeleeFeedbackData;
@@ -890,7 +904,11 @@ void APlayerBase::StartMeleeAttackFeedback()
 			Offset.GetLocation(), Offset.Rotator(), Offset.GetScale3D(), EAttachLocation::KeepRelativeOffset, true, ENCPoolMethod::None);
 	};
 	MeleeAttackEffect = SpawnAttached(Data->AttackEffect, Data->MeleeAttackEffectSocketName, Data->MeleeAttackEffectOffset);
-	MeleeTrailEffect = SpawnAttached(Data->MeleeTrailEffect, Data->MeleeTrailSocketName, Data->MeleeTrailOffset);
+	if (!Data->bUseMeleeTrailNotifyWindow)
+	{
+		MeleeTrailEffect = SpawnAttached(Data->MeleeTrailEffect, Data->MeleeTrailSocketName, Data->MeleeTrailOffset);
+		AlignTrailToCamera(this, MeleeTrailEffect);
+	}
 	if (MeleeTrailEffect && Data->MeleeTrailDuration > 0.0f)
 		GetWorldTimerManager().SetTimer(MeleeTrailTimer, this, &APlayerBase::StopMeleeTrail, Data->MeleeTrailDuration, false);
 	if (Data->AttackSound)
@@ -907,6 +925,32 @@ void APlayerBase::StopMeleeTrail()
 	GetWorldTimerManager().ClearTimer(MeleeTrailTimer);
 	if (IsValid(MeleeTrailEffect)) MeleeTrailEffect->DestroyComponent();
 	MeleeTrailEffect = nullptr;
+}
+
+void APlayerBase::BeginMeleeTrailWindow(const UAnimSequenceBase* Animation)
+{
+	const UWeaponDataAsset* Data = MeleeFeedbackData;
+	if (GetNetMode() == NM_DedicatedServer || IsDead() || !Data || !Data->bUseMeleeTrailNotifyWindow
+		|| Data->AttackMontage != Animation || !Data->MeleeTrailEffect) return;
+	StopMeleeTrail();
+	UStaticMeshComponent* Attachment = MeleeFeedbackSlot == EWeaponSlot::Secondary ? SecondaryWeaponMesh.Get() : PrimaryWeaponMesh.Get();
+	if (!Attachment) return;
+	const FName Socket = Attachment->DoesSocketExist(Data->MeleeTrailSocketName) ? Data->MeleeTrailSocketName : NAME_None;
+	const FTransform& Offset = Data->MeleeTrailOffset;
+	MeleeTrailEffect = UNiagaraFunctionLibrary::SpawnSystemAttached(Data->MeleeTrailEffect, Attachment, Socket,
+		Offset.GetLocation(), Offset.Rotator(), Offset.GetScale3D(), EAttachLocation::KeepRelativeOffset, true, ENCPoolMethod::None);
+	AlignTrailToCamera(this, MeleeTrailEffect);
+}
+
+void APlayerBase::EndMeleeTrailWindow(const UAnimSequenceBase* Animation)
+{
+	if (MeleeFeedbackData && MeleeFeedbackData->bUseMeleeTrailNotifyWindow && MeleeFeedbackData->AttackMontage == Animation)
+	{
+		// 즉시 파괴하면 리본이 뚝 끊겨 싸구려처럼 보인다. 스폰만 멈추고 남은 파티클이 수명만큼 사라지게 둔다
+		GetWorldTimerManager().ClearTimer(MeleeTrailTimer);
+		if (IsValid(MeleeTrailEffect)) MeleeTrailEffect->Deactivate();
+		MeleeTrailEffect = nullptr;
+	}
 }
 
 void APlayerBase::StopMeleeAttackFeedback()

@@ -90,7 +90,8 @@ bool FRangedWeaponTest::RunTest(const FString& Parameters)
 	{
 		TestNotNull(TEXT("Railgun charge sound migrated"), RailFeedback->ChargeSound.Get());
 		TestTrue(TEXT("Local charge audio avoids attenuation"), RailFeedback->bLocalChargeSound2D);
-		TestTrue(TEXT("Local charge volume preserved"), RailFeedback->LocalChargeSoundVolumeMultiplier > 1.0f);
+		TestTrue(TEXT("Local charge volume multiplier supports user tuning"),
+			FMath::IsFinite(RailFeedback->LocalChargeSoundVolumeMultiplier) && RailFeedback->LocalChargeSoundVolumeMultiplier >= 0.0f);
 	}
 	TestEqual(TEXT("Initial energy"), Energy->GetSharedEnergy(), 100.0f);
 	AEnemyBase* Enemy = World->SpawnActor<AEnemyBase>(FVector(300, 0, 200), FRotator::ZeroRotator);

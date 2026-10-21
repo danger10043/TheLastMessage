@@ -174,6 +174,9 @@ public:
 	// 근거리 무기의 움직임을 따라 재생할 Niagara 트레일 시스템, 머티리얼이나 텍스처를 직접 넣는 항목이 아니다
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Melee|Trail", meta=(ToolTip="근거리 무기의 움직임을 따라 재생할 Niagara 트레일 시스템, 머티리얼이나 텍스처를 직접 넣는 항목이 아니다"))
 	TObjectPtr<UNiagaraSystem> MeleeTrailEffect;
+	// 켜면 Melee Trail 노티파이 구간에서만 트레일을 재생하며 지속 시간 타이머 대신 애니메이션 구간을 사용한다
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Melee|Trail", meta=(ToolTip="켜면 Melee Trail 노티파이 구간에서만 트레일을 재생하며 지속 시간 타이머 대신 애니메이션 구간을 사용한다"))
+	bool bUseMeleeTrailNotifyWindow = false;
 
 	// 트레일을 부착할 무기 메시의 소켓, 없거나 비어 있으면 무기 메시 원점을 사용한다
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Melee|Trail", meta=(ToolTip="트레일을 부착할 무기 메시의 소켓, 없거나 비어 있으면 무기 메시 원점을 사용한다"))

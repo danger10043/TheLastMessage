@@ -21,6 +21,7 @@ class UWeaponBase;
 class UWeaponDataAsset;
 class UStaticMeshComponent;
 class UAnimMontage;
+class UAnimSequenceBase;
 class UAnimInstance;
 class UNiagaraSystem;
 class UNiagaraComponent;
@@ -130,6 +131,8 @@ public:
 	void MulticastMeleeAttackFeedback(EWeaponSlot Slot, UWeaponDataAsset* Data);
 	UFUNCTION(NetMulticast, Reliable)
 	void MulticastStopMeleeAttackFeedback(EWeaponSlot Slot);
+	void BeginMeleeTrailWindow(const UAnimSequenceBase* Animation);
+	void EndMeleeTrailWindow(const UAnimSequenceBase* Animation);
 	UFUNCTION(NetMulticast, Unreliable)
 	void MulticastWeaponImpact(UWeaponDataAsset* Data, FVector_NetQuantize Location, FVector_NetQuantizeNormal Normal,
 		UNiagaraSystem* FallbackEffect, USoundBase* FallbackSound);

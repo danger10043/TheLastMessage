@@ -5,13 +5,13 @@
 
 class UCoreDataAsset;
 
-/** 같은 보상의 선택을 이어 가기 위해 후보·등장 기록·카드별 리롤 사용 횟수를 함께 보관한다. */
+/** 선택 화면이 열려 있는 동안 후보·등장 기록·카드별 리롤 사용 횟수를 함께 관리한다. */
 USTRUCT()
 struct THELASTMESSAGE_API FCoreChoiceState
 {
 	GENERATED_BODY()
 
-	/** 처음 선택한 보상 분류로 걸러 둔 후보 목록. 리롤과 재진입에서도 같은 풀을 사용한다. */
+	/** 보상 분류로 걸러 둔 후보 목록. 같은 선택 화면의 리롤에서도 이 풀을 사용한다. */
 	UPROPERTY()
 	TArray<TObjectPtr<UCoreDataAsset>> CandidatePool;
 

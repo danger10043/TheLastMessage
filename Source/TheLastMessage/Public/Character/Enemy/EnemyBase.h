@@ -16,6 +16,7 @@ class UGameplayEffect;
 class UAnimMontage;
 class UNiagaraSystem;
 class UMaterialInterface;
+struct FGameplayEffectSpec;
 class UWidgetComponent;
 class UEnemyHealthBarWidget;
 class AEnemyBase;
@@ -74,6 +75,12 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Enemy")
 	FVector GetHomeLocation() const { return HomeLocation; }
 
+	/** 정찰 기준점을 바꾼다. Blackboard의 HomeLocation도 함께 갱신한다. */
+	void SetHomeLocation(const FVector& NewHome);
+
+	/** 착지했을 때 호출된다. 홈과 높이가 많이 다른 곳에 떨어졌으면 그 자리를 새 홈으로 삼는다. */
+	virtual void Landed(const FHitResult& Hit) override;
+
 	UFUNCTION(BlueprintCallable, Category = "Enemy")
 	void HandleDeath();
 
@@ -100,6 +107,12 @@ public:
 	 * DamageEffectClass가 있고 대상에 ASC가 있으면 GE를 적용하고, 아니면 엔진 기본 피해로 대신한다.
 	 */
 	void ApplyEnemyDamage(AActor* Target, float Damage);
+
+	/**
+	 * 받는 피해를 몬스터 특성에 맞게 조정한다(예: 플레이어 원거리 피해 감소).
+	 * AttributeSet이 체력을 깎기 전에 호출한다. 서브클래스가 오버라이드할 수 있다.
+	 */
+	virtual float ModifyIncomingDamage(float Damage, const FGameplayEffectSpec& Spec) const;
 	float GetPatrolRadius() const { return PatrolRadius; }
 	FVector GetPatrolAxis() const { return PatrolAxis.IsNearlyZero() ? FVector::ForwardVector : PatrolAxis.GetSafeNormal(); }
 
@@ -269,6 +282,13 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Effects")
 	TObjectPtr<UNiagaraSystem> DeathEffect;
 
+	/**
+	 * 착지한 높이가 홈과 이 값보다 많이 다르면(낭떠러지에서 떨어진 경우 등) 착지한 자리를 새 홈으로 삼는다.
+	 * 다른 층에 떨어진 몬스터가 원래 홈으로 돌아가려다 막히는 것을 막는다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Patrol", meta = (ClampMin = "0.0"))
+	float HomeReanchorHeight = 150.f;
+
 	/** 플레이어에게 피해를 줄 때 적용할 GameplayEffect (IncomingDamage를 올리는 GE) */
 	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Damage")
 	TSubclassOf<UGameplayEffect> DamageEffectClass;
@@ -279,6 +299,13 @@ protected:
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Damage")
 	FGameplayTag DamageSetByCallerTag;
+
+	/**
+	 * 플레이어 원거리 피해(Damage.Category.Player.Ranged)에 곱할 배율. 1이면 그대로, 0.5면 절반으로 줄어든다.
+	 * 근접 피해에는 적용되지 않는다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Damage", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float RangedDamageMultiplier = 1.f;
 
 	/** 몬스터 레벨. 후반 지역일수록 높게 배치해 체력·공격력을 키운다. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Level", meta = (ClampMin = "1", ExposeOnSpawn = "true"))

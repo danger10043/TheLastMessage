@@ -32,6 +32,7 @@ bool UCarryComponent::TryPickUp(ACarryableGimmick* Target)
         || bIsClearingCarryState
         || HasCarriedObject()
         || ActiveCarryEffectHandle.IsValid()
+        || bHasJumpVelocityOverride
         || !IsValid(Player)
         || Player->IsDead()
         || !Player->HasAuthority()
@@ -46,8 +47,20 @@ bool UCarryComponent::TryPickUp(ACarryableGimmick* Target)
     USkeletalMeshComponent* CarryParent = Player->GetMesh();
     UStaticMeshComponent* ObjectMesh = Target->GetObjectMesh();
 
-    if (!IsValid(CarryParent) || !IsValid(ObjectMesh))
+    UCharacterMovementComponent* Movement = Player->GetCharacterMovement();
+
+    if (!IsValid(CarryParent) || !IsValid(ObjectMesh) || !IsValid(Movement) || !FMath::IsFinite(Movement->JumpZVelocity))
     {
+        return false;
+    }
+
+    const FCarryConfigRow Config = Target->GetCarryConfig();
+
+    // 잘못된 배율로 점프 속도가 변경되는 것을 방지
+    if (!FMath::IsFinite(Config.JumpVelocityMultiplier) || Config.JumpVelocityMultiplier <= 0.0f || Config.JumpVelocityMultiplier > 1.0f)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("%s: 점프 속도 배율은 0보다 크고 1 이하여야 합니다."), *Target->GetName());
+
         return false;
     }
 
@@ -59,8 +72,6 @@ bool UCarryComponent::TryPickUp(ACarryableGimmick* Target)
     }
 
     TGuardValue<bool> ChangingGuard(bIsChangingCarryState, true);
-
-    const FCarryConfigRow Config = Target->GetCarryConfig();
 
     FGameplayEffectContextHandle Context = ASC->MakeEffectContext();
     Context.AddSourceObject(Target);
@@ -137,6 +148,15 @@ bool UCarryComponent::TryPickUp(ACarryableGimmick* Target)
 
     CarriedObject = Target;
     ActiveCarryEffectHandle = NewEffectHandle;
+
+    // 집기에 성공한 뒤 점프 초기 속도 변경
+    if (!FMath::IsNearlyEqual(Config.JumpVelocityMultiplier, 1.0f))
+    {
+        OriginalJumpZVelocity = Movement->JumpZVelocity;
+        bHasJumpVelocityOverride = true;
+
+        Movement->JumpZVelocity = OriginalJumpZVelocity * Config.JumpVelocityMultiplier;
+    }
 
     // 운반 물체가 파괴되거나 레벨에서 제거될 때 정리
     Target->OnEndPlay.AddUniqueDynamic(this, &UCarryComponent::HandleCarriedObjectEndPlay);
@@ -451,7 +471,7 @@ void UCarryComponent::RestoreObjectState(ACarryableGimmick* Target, bool bRestor
 
 void UCarryComponent::FinishCarryState()
 {
-    const bool bHadCarryState = CarriedObject.IsValid() || ActiveCarryEffectHandle.IsValid();
+    const bool bHadCarryState = CarriedObject.IsValid() || ActiveCarryEffectHandle.IsValid() || bHasJumpVelocityOverride;
 
     if (ACarryableGimmick* Target = CarriedObject.Get())
     {
@@ -459,6 +479,29 @@ void UCarryComponent::FinishCarryState()
     }
 
     CarriedObject.Reset();
+
+    // 복구할 값을 보관하고 먼저 변경 상태 해제
+    const bool bRestoreJumpVelocity = bHasJumpVelocityOverride;
+    const float JumpVelocityToRestore = OriginalJumpZVelocity;
+
+    bHasJumpVelocityOverride = false;
+    OriginalJumpZVelocity = 0.0f;
+
+    // 내려놓기, 사망, 물체 삭제 시 기존 점프 속도로 복구
+    if (bRestoreJumpVelocity)
+    {
+        APlayerBase* Player = OwnerPlayer.Get();
+
+        if (IsValid(Player))
+        {
+            UCharacterMovementComponent* Movement = Player->GetCharacterMovement();
+
+            if (IsValid(Movement))
+            {
+                Movement->JumpZVelocity = JumpVelocityToRestore;
+            }
+        }
+    }
 
     // 태그 변경 알림에서 정리가 다시 호출되어도 중복 제거하지 않도록 먼저 무효화
     const FActiveGameplayEffectHandle HandleToRemove = ActiveCarryEffectHandle;

@@ -31,6 +31,9 @@ public:
     // BPI CanInteract에서 사용하는 조건
     virtual bool CanInteractInternal(ACharacter* Player) const override;
 
+    // 상호작용 요청을 플레이어의 운반 컴포넌트에 전달
+    virtual void PerformInteraction(ACharacter* Player) override;
+
     // CarryComponent가 집기 완료 시 호출
     virtual void OnPickedUp(ACharacter* Player);
 

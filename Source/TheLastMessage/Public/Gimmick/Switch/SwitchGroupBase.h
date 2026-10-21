@@ -7,7 +7,8 @@
 #include "SwitchGroupBase.generated.h"
 
 class AToggleSwitch;
-
+class UStaticMeshComponent;
+class UMaterialInstanceDynamic;
 /**
  * 
  */
@@ -44,6 +45,20 @@ protected:
 	UFUNCTION()
 	virtual void HandleSwitchStateChanged(AGimmickBase* Source, bool bActive);
 
+	// 그룹 종류에 따른 진행 중 상태 확인
+	virtual bool IsGroupInProgress() const;
+
+	// 현재 그룹 상태를 표시등 색상에 반영
+	void UpdateGroupIndicator();
+
+	// 그룹의 외형과 표시등
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Gimmick|Components")
+	TObjectPtr<UStaticMeshComponent> GroupMesh;
+
+	// 표시등 재질이 들어 있는 슬롯 번호
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|SwitchGroup|Indicator", meta = (ClampMin = "0"))
+	int32 IndicatorMaterialIndex = 1;
+
 	// 맵에서 그룹에 속할 스위치를 지정
 	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Gimmick|SwitchGroup")
 	TArray<TObjectPtr<AToggleSwitch>> GroupSwitches;
@@ -55,4 +70,14 @@ protected:
 	// 초기화 중 발생하는 이벤트의 재판정 방지
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Gimmick|SwitchGroup")
 	bool bIsResetting = false;
+
+private:
+	// 자식의 판정이 끝난 다음 표시등 갱신
+	UFUNCTION()
+	void HandleGroupSwitchStateChanged(AGimmickBase* Source, bool bActive);
+
+	// 시작할 때 찾아두고 색상 변경에 재사용
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> GroupIndicatorMaterial;
+
 };

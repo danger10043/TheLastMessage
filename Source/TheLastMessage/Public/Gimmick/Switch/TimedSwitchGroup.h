@@ -43,6 +43,9 @@ protected:
 
 	virtual void HandleSwitchStateChanged(AGimmickBase* Source, bool bActive) override;
 
+	// 타이머가 흐르는 동안 진행 중으로 표시
+	virtual bool IsGroupInProgress() const override;
+
 	// 제한 시간이 끝나면 호출
 	UFUNCTION()
 	void HandleTimeExpired();

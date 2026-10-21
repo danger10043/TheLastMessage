@@ -74,6 +74,9 @@ void ATimedSwitchGroup::StartChallengeTimer()
 		0.05f,
 		true);
 
+	// 외부에서 타이머를 시작한 경우에도 진행 중 색상 반영
+	UpdateGroupIndicator();
+
 	// 첫 갱신까지 기다리지 않고 즉시 표시
 	UpdateSwitchGlow();
 }
@@ -200,6 +203,11 @@ void ATimedSwitchGroup::HandleSwitchStateChanged(AGimmickBase* Source, bool bAct
 
 	// 꺼진 경우에도 타이머는 유지하고 현재 상태만 재확인
 	EvaluateTimedCompletion();
+}
+
+bool ATimedSwitchGroup::IsGroupInProgress() const
+{
+	return bIsTimerRunning;
 }
 
 void ATimedSwitchGroup::HandleTimeExpired()

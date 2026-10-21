@@ -40,6 +40,9 @@ public:
     // CarryComponent가 운반 종료 시 호출
     virtual void OnDropped();
 
+    // 내려놓을 위치를 아이템의 최초 Y 좌표에 맞게 보정
+    virtual FVector ConstrainDropLocation(const FVector& WorldLocation) const;
+
     // CarryComponent에서 사용하는 접근 함수
     UStaticMeshComponent* GetObjectMesh() const;
     ACharacter* GetCarrier() const;
@@ -51,6 +54,8 @@ public:
 
 protected:
     virtual void BeginPlay() override;
+
+    virtual void Tick(float DeltaSeconds) override;
 
     // 운반할 물체의 메시
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Gimmick|Components")
@@ -70,4 +75,16 @@ protected:
 
 private:
     bool bCarryConfigLoaded = false;
+
+    // 물리 시뮬레이션의 Y축 이동 제한 적용
+    void ApplyYLock();
+
+    // 현재 위치를 최초 Y 좌표에 맞게 보정
+    void UpdateYLockedLocation();
+
+    // 게임 시작 시 기록한 월드 Y 좌표
+    double InitialWorldY = 0.0;
+
+    // 최초 Y 좌표 기록 여부
+    bool bHasInitialWorldY = false;
 };

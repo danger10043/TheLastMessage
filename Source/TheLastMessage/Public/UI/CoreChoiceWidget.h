@@ -45,6 +45,8 @@ public:
 	bool UpdateCoreChoices(const TArray<FCoreChoiceEntry>& Choices);
 
 	void SetStatusMessage(const FText& Message);
+	/** WBP에 작성한 기본 안내로 되돌린다. */
+	void ResetStatusMessage();
 
 	/** 보상 쪽에서 확인한 카드별 리롤 가능 여부를 해당 버튼에 반영한다. */
 	UFUNCTION(BlueprintCallable, Category = "Core|UI")
@@ -149,6 +151,9 @@ private:
 
 	/** DisplayedChoices와 같은 순서의 보유 단계. 보상 세션이 전달한 값을 그대로 표시한다. */
 	TArray<int32> DisplayedLevels;
+
+	/** 오류 안내를 지울 때 복구할 WBP의 기본 문구. */
+	FText DefaultStatusMessage;
 
 	/** 화면에 생성한 카드 위젯들. 현재 카드 수와 유효한 선택 위치를 확인할 때 사용한다. */
 	UPROPERTY(Transient)

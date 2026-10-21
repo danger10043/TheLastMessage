@@ -6,6 +6,9 @@
 #include "Character/Player/PlayerBase.h"
 #include "Components/Button.h"
 #include "Components/HorizontalBox.h"
+#include "Components/HorizontalBoxSlot.h"
+#include "Components/Image.h"
+#include "Components/TextBlock.h"
 #include "Core/CoreComponent.h"
 #include "Core/CorePickup.h"
 #include "DataAsset/CoreDataAsset.h"
@@ -18,6 +21,15 @@
 #include "Input/Events.h"
 #include "InputCoreTypes.h"
 #include "Kismet/GameplayStatics.h"
+#include "Engine/TextureRenderTarget2D.h"
+#include "Engine/Texture2D.h"
+#include "ImageUtils.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "RenderingThread.h"
+#include "Serialization/BufferArchive.h"
+#include "Slate/WidgetRenderer.h"
+#include "TextureCompiler.h"
 #include "UI/CoreChoiceCardWidget.h"
 #include "UI/CoreChoiceWidget.h"
 #include "UObject/UnrealType.h"
@@ -129,10 +141,21 @@ namespace
 				UGameplayStatics::SetGamePaused(World, false);
 				Test->TestTrue(TEXT("Selection prevents an early unpause"), UGameplayStatics::IsGamePaused(World));
 				UButton* Reroll = Cast<UButton>(Screen->GetWidgetFromName(TEXT("FirstRerollButton")));
-				if (Test->TestNotNull(TEXT("First reroll button exists"), Reroll) && Reroll->GetIsEnabled())
+				if (Test->TestNotNull(TEXT("First reroll button exists"), Reroll)
+					&& Test->TestTrue(TEXT("A replacement is available for the hint test"), Reroll->GetIsEnabled()))
 				{
+					UTextBlock* Hint = Cast<UTextBlock>(Screen->GetWidgetFromName(TEXT("HintText")));
+					if (!Test->TestNotNull(TEXT("Status hint exists"), Hint)) return true;
+					const FString DefaultHint = Hint->GetText().ToString();
+					const FText Failure = FText::FromString(TEXT("Test: choice could not be granted"));
+					Screen->SetStatusMessage(Failure);
 					Reroll->OnClicked.Broadcast();
 					Test->TestFalse(TEXT("Reroll is still limited to one use"), Reroll->GetIsEnabled());
+					Test->TestEqual(TEXT("Successful reroll restores the designer hint"), Hint->GetText().ToString(), DefaultHint);
+					Screen->SetStatusMessage(Failure);
+					// 사용한 카드에 다시 요청해도 후보와 오류 안내를 바꾸지 않는다.
+					Screen->OnRerollRequested.Broadcast(0);
+					Test->TestEqual(TEXT("Rejected reroll preserves the failure hint"), Hint->GetText().ToString(), Failure.ToString());
 				}
 				UHorizontalBox* Cards = Cast<UHorizontalBox>(Screen->GetWidgetFromName(TEXT("CardsBox")));
 				UCoreChoiceCardWidget* Card = Cards ? Cast<UCoreChoiceCardWidget>(Cards->GetChildAt(0)) : nullptr;
@@ -260,6 +283,124 @@ bool FCoreChoiceLifecycleTest::RunTest(const FString& Parameters)
 	ADD_LATENT_AUTOMATION_COMMAND(FStartPIECommand(false));
 	ADD_LATENT_AUTOMATION_COMMAND(FCoreChoiceLifecycleCommand(this));
 	ADD_LATENT_AUTOMATION_COMMAND(FEndPlayMapCommand());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCoreCardLayoutTest, "TheLastMessage.UI.CoreCardLayout",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCoreCardLayoutTest::RunTest(const FString& Parameters)
+{
+	UClass* CardClass = LoadClass<UCoreChoiceCardWidget>(nullptr, TEXT("/Game/Test_Jihun/Core/WBP/WBP_CoreChoiceCard.WBP_CoreChoiceCard_C"));
+	if (!TestNotNull(TEXT("Card WBP exists"), CardClass)) return false;
+	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+	GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World);
+	UCoreChoiceCardWidget* Card = CreateWidget<UCoreChoiceCardWidget>(World, CardClass);
+	if (!TestNotNull(TEXT("Card can be created"), Card))
+	{
+		World->DestroyWorld(false); GEngine->DestroyWorldContext(World); return false;
+	}
+	UCoreDataAsset* Data = NewObject<UCoreDataAsset>(Card);
+	Data->CoreName = FText::FromString(TEXT("보강 프레임"));
+	Data->CoreDescription = FText::FromString(TEXT("기본 최대 체력 대비 +30% → +45%"));
+	Data->MaxLevel = 5;
+	Data->CoreIcon = LoadObject<UTexture2D>(nullptr, TEXT("/Game/Test_Jihun/Core/UI/T_UI_CoreIcon_Default.T_UI_CoreIcon_Default"));
+	Card->SetCoreData(Data, 0, 2);
+	TSharedRef<SWidget> SlateCard = Card->TakeWidget();
+	UTextBlock* Name = Cast<UTextBlock>(Card->GetWidgetFromName(TEXT("CoreNameText")));
+	UWidget* Level = Card->GetWidgetFromName(TEXT("CoreLevelText"));
+	UWidget* Description = Card->GetWidgetFromName(TEXT("CoreDescriptionText"));
+	UWidget* Divider = Card->GetWidgetFromName(TEXT("DividerSizeBox"));
+	UWidget* Action = Card->GetWidgetFromName(TEXT("ActionBox"));
+	if (TestNotNull(TEXT("Name exists"), Name) && TestNotNull(TEXT("Level exists"), Level)
+		&& TestNotNull(TEXT("Description exists"), Description) && TestNotNull(TEXT("Divider exists"), Divider)
+		&& TestNotNull(TEXT("Action exists"), Action))
+	{
+		// 실제 WBP를 그려 줄바꿈 이후의 배치와 고정된 하단 영역을 검사한다.
+		TArray<UTexture*> Textures = {Data->CoreIcon};
+		if (UImage* Pattern = Cast<UImage>(Card->GetWidgetFromName(TEXT("DiagramPatternImage"))))
+		{
+			if (UTexture* Texture = Cast<UTexture>(Pattern->GetBrush().GetResourceObject())) Textures.Add(Texture);
+		}
+		FTextureCompilingManager::Get().FinishCompilation(Textures);
+		FlushRenderingCommands();
+		FWidgetRenderer Renderer(true);
+		UTextureRenderTarget2D* Target = Renderer.DrawWidget(SlateCard, FVector2D(350, 510));
+		if (TestNotNull(TEXT("Layout test requires rendering (do not use -NullRHI)"), Target))
+		{
+			auto Render = [&](const TCHAR* Filename)
+			{
+				for (int32 Frame = 0; Frame < 3; ++Frame)
+				{
+					++GFrameCounter;
+					Renderer.DrawWidget(Target, SlateCard, FVector2D(350, 510), 0.016f);
+					FlushRenderingCommands();
+				}
+				FBufferArchive PNG;
+				const FString Path = FPaths::ProjectSavedDir() / TEXT("Automation/CoreCardLayout") / Filename;
+				IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true);
+				TestTrue(TEXT("Layout preview is exported"), FImageUtils::ExportRenderTarget2DAsPNG(Target, PNG)
+					&& FFileHelper::SaveArrayToFile(PNG, *Path));
+			};
+			auto Top = [](UWidget* Widget) { return Widget->GetCachedGeometry().GetAbsolutePosition().Y; };
+			auto Bottom = [&](UWidget* Widget) { return Top(Widget) + Widget->GetCachedGeometry().GetLocalSize().Y; };
+			Render(TEXT("Short.png"));
+			const double LevelTop = Top(Level), DividerTop = Top(Divider), ActionTop = Top(Action);
+			Data->CoreName = FText::FromString(TEXT("고성능 복합 장갑\n출력 증폭 장치"));
+			Data->CoreDescription = FText::FromString(TEXT("체력이 30% 이하일 때 피해량이 30% → 40% 증가합니다. 긴 설명과 NoSpacesABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZ를 함께 표시합니다."));
+			Card->SetCoreData(Data, 0, 2);
+			Render(TEXT("Long.png"));
+			AddInfo(FString::Printf(TEXT("Two-line name: desired %.1f, allocated %.1f"), Name->GetDesiredSize().Y, Name->GetCachedGeometry().GetLocalSize().Y));
+			TestTrue(TEXT("Two name lines fit the reserved height"), Name->GetDesiredSize().Y <= Name->GetCachedGeometry().GetLocalSize().Y + 1.0);
+			Data->CoreName = FText::FromString(TEXT("고성능\n복합 장갑\n출력 증폭\n초장문 이름"));
+			Card->SetCoreData(Data, 0, 2);
+			Render(TEXT("Overflow.png"));
+			TestTrue(TEXT("Name does not push level text"), FMath::IsNearlyEqual(Top(Level), LevelTop, 0.1));
+			TestTrue(TEXT("Description does not push divider"), FMath::IsNearlyEqual(Top(Divider), DividerTop, 0.1));
+			TestTrue(TEXT("Selection action stays at the same position"), FMath::IsNearlyEqual(Top(Action), ActionTop, 0.1));
+			TestTrue(TEXT("Name and level do not overlap"), Bottom(Name) <= Top(Level) + 0.1);
+			TestTrue(TEXT("Description stays above divider"), Bottom(Description) <= Top(Divider) + 0.1);
+			TestTrue(TEXT("Action remains inside the card"), Bottom(Action) <= 510.0);
+
+			UClass* ScreenClass = LoadClass<UCoreChoiceWidget>(nullptr, TEXT("/Game/Test_Jihun/Core/WBP/WBP_CoreChoice.WBP_CoreChoice_C"));
+			UCoreChoiceWidget* Screen = ScreenClass ? CreateWidget<UCoreChoiceWidget>(World, ScreenClass) : nullptr;
+			if (TestNotNull(TEXT("Screen WBP exists"), Screen))
+			{
+				UHorizontalBox* Cards = CastChecked<UHorizontalBox>(Screen->GetWidgetFromName(TEXT("CardsBox")));
+				Cards->ClearChildren();
+				for (int32 Index = 0; Index < 3; ++Index)
+				{
+					UCoreChoiceCardWidget* Preview = CreateWidget<UCoreChoiceCardWidget>(World, CardClass);
+					Data->CoreName = FText::FromString(TEXT("고성능 복합 장갑\n출력 증폭 장치"));
+					Preview->SetCoreData(Data, Index, 2);
+					Cards->AddChildToHorizontalBox(Preview)->SetPadding(FMargin(12, 0));
+				}
+				TSharedRef<SWidget> SlateScreen = Screen->TakeWidget();
+				UTextureRenderTarget2D* ScreenTarget = Renderer.DrawWidget(SlateScreen, FVector2D(1920, 1080));
+				if (TestNotNull(TEXT("Screen renders"), ScreenTarget))
+				{
+					for (int32 Frame = 0; Frame < 3; ++Frame)
+					{
+						++GFrameCounter;
+						Renderer.DrawWidget(ScreenTarget, SlateScreen, FVector2D(1920, 1080), 0.016f);
+						FlushRenderingCommands();
+					}
+					UWidget* Layout = Screen->GetWidgetFromName(TEXT("LayoutSizeBox"));
+					UWidget* Footer = Screen->GetWidgetFromName(TEXT("FooterBox"));
+					const FVector2D FooterBottom = Footer->GetCachedGeometry().LocalToAbsolute(Footer->GetCachedGeometry().GetLocalSize());
+					const FVector2D LayoutBottom = Layout->GetCachedGeometry().LocalToAbsolute(Layout->GetCachedGeometry().GetLocalSize());
+					TestTrue(TEXT("Footer stays inside the screen layout"), FooterBottom.Y <= LayoutBottom.Y + 0.1);
+					FBufferArchive PNG;
+					TestTrue(TEXT("Screen preview is exported"), FImageUtils::ExportRenderTarget2DAsPNG(ScreenTarget, PNG)
+						&& FFileHelper::SaveArrayToFile(PNG, *(FPaths::ProjectSavedDir() / TEXT("Automation/CoreCardLayout/Screen.png"))));
+				}
+				Screen->ReleaseSlateResources(true);
+			}
+		}
+	}
+	Card->ReleaseSlateResources(true);
+	World->DestroyWorld(false);
+	GEngine->DestroyWorldContext(World);
 	return true;
 }
 

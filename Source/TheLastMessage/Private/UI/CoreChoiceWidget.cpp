@@ -66,6 +66,7 @@ void UCoreChoiceWidget::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
 	SetIsFocusable(true);
+	if (HintText) DefaultStatusMessage = HintText->GetText();
 	// WBP에서 만든 버튼에 동작을 연결한다. 배치와 색상은 디자이너에서 관리한다.
 	if (FirstRerollButton) FirstRerollButton->OnClicked.AddDynamic(this, &UCoreChoiceWidget::HandleFirstReroll);
 	if (SecondRerollButton) SecondRerollButton->OnClicked.AddDynamic(this, &UCoreChoiceWidget::HandleSecondReroll);
@@ -177,6 +178,11 @@ bool UCoreChoiceWidget::UpdateCoreChoices(const TArray<FCoreChoiceEntry>& Choice
 void UCoreChoiceWidget::SetStatusMessage(const FText& Message)
 {
 	if (HintText) HintText->SetText(Message);
+}
+
+void UCoreChoiceWidget::ResetStatusMessage()
+{
+	SetStatusMessage(DefaultStatusMessage);
 }
 
 void UCoreChoiceWidget::MoveActiveCard(int32 Offset)

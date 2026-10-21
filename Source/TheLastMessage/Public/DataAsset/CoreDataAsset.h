@@ -86,6 +86,7 @@ public:
 	/**
 	 * GrantedEffects·GrantedAbilities가 코어 부여 규칙을 지키는지 확인한다.
 	 * GE는 Infinite Duration·Stacking None이어야 하며, 클래스는 유효하고 추상이 아니어야 한다.
+	 * 한 목록에 같은 클래스를 중복 등록할 수 없다. 서로 다른 코어가 같은 클래스를 쓰는 것은 허용한다.
 	 * 획득 판정과 에디터 데이터 검증이 같은 기준을 쓰도록 한 곳에 둔다.
 	 */
 	bool HasValidGrantSetup(FText* OutReason = nullptr) const;

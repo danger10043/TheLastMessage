@@ -1,5 +1,5 @@
 #include "Weapon/EnergyMuzzleFlash.h"
-#include "DataAsset/RangedFireFeedbackData.h"
+#include "DataAsset/WeaponDataAsset.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/PointLightComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -29,16 +29,16 @@ AEnergyMuzzleFlash::AEnergyMuzzleFlash()
 	SetActorHiddenInGame(true);
 }
 
-void AEnergyMuzzleFlash::Initialize(URangedFireFeedbackData* Settings, bool bHeavy)
+void AEnergyMuzzleFlash::Initialize(UWeaponDataAsset* Settings, bool bHeavy)
 {
-	UMaterialInterface* Material = Settings ? Settings->EnergyMaterial.LoadSynchronous() : nullptr;
+	UMaterialInterface* Material = Settings ? Settings->EnergyFlashMaterial.LoadSynchronous() : nullptr;
 	if (!Material) { Destroy(); return; }
 	bHeavyPulse = bHeavy;
-	Size = FMath::Max(1.0f, Settings->EnergySize) * (bHeavy ? 1.35f : 1.0f);
-	Brightness = FMath::Max(0.0f, Settings->EnergyBrightness);
-	Duration = Settings->FlashDuration > 0.0f ? Settings->FlashDuration : 0.1f;
-	const FLinearColor Color = Settings->bAutomaticEnergyColor
-		? (bHeavy ? FLinearColor(0.3f, 0.12f, 1.0f) : FLinearColor(0.02f, 0.7f, 1.0f)) : Settings->EnergyColor;
+	Size = FMath::Max(1.0f, Settings->EnergyFlashSize) * (bHeavy ? 1.35f : 1.0f);
+	Brightness = FMath::Max(0.0f, Settings->EnergyFlashBrightness);
+	Duration = Settings->MuzzleFlashDuration > 0.0f ? Settings->MuzzleFlashDuration : 0.1f;
+	const FLinearColor Color = Settings->bUseAutomaticEnergyFlashColor
+		? (bHeavy ? FLinearColor(0.3f, 0.12f, 1.0f) : FLinearColor(0.02f, 0.7f, 1.0f)) : Settings->EnergyFlashColor;
 	CoreMaterial = UMaterialInstanceDynamic::Create(Material, this);
 	HaloMaterial = UMaterialInstanceDynamic::Create(Material, this);
 	CoreMaterial->SetVectorParameterValue(TEXT("ProjectileColor"), FMath::Lerp(Color, FLinearColor::White, 0.65f));

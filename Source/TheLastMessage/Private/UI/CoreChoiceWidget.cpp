@@ -7,10 +7,13 @@
 #include "Components/TextBlock.h"
 #include "Core/CoreComponent.h"
 #include "DataAsset/CoreDataAsset.h"
+#include "Engine/World.h"
+#include "GameFramework/GameModeBase.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/Pawn.h"
 #include "Input/Reply.h"
 #include "InputCoreTypes.h"
+#include "Kismet/GameplayStatics.h"
 #include "UI/CoreChoiceCardWidget.h"
 
 
@@ -48,7 +51,11 @@ UCoreChoiceWidget* UCoreChoiceWidget::OpenCoreChoiceUI(APlayerController* Player
 	if (!Screen->PopulateCards()) return nullptr;
 	// 카드 준비가 끝나면 화면을 표시하고 플레이어 입력을 이 화면으로 옮긴다.
 	Screen->AddToViewport(100);
-	Screen->CapturePlayerInput();
+	if (!Screen->IsInViewport() || !Screen->CapturePlayerInput())
+	{
+		Screen->CloseChoiceUI(false);
+		return nullptr;
+	}
 	return Screen;
 }
 
@@ -57,7 +64,6 @@ void UCoreChoiceWidget::NativeOnInitialized()
 	Super::NativeOnInitialized();
 	SetIsFocusable(true);
 	// WBP에서 만든 버튼에 동작을 연결한다. 배치와 색상은 디자이너에서 관리한다.
-	if (CancelButton) CancelButton->OnClicked.AddDynamic(this, &UCoreChoiceWidget::HandleCancel);
 	if (FirstRerollButton) FirstRerollButton->OnClicked.AddDynamic(this, &UCoreChoiceWidget::HandleFirstReroll);
 	if (SecondRerollButton) SecondRerollButton->OnClicked.AddDynamic(this, &UCoreChoiceWidget::HandleSecondReroll);
 	if (ThirdRerollButton) ThirdRerollButton->OnClicked.AddDynamic(this, &UCoreChoiceWidget::HandleThirdReroll);
@@ -112,7 +118,7 @@ void UCoreChoiceWidget::SetActiveCardIndex(int32 Index)
 		Cards[CardIndex]->SetHighlighted(CardIndex == Index);
 	}
 	if (SelectionCounter) SelectionCounter->SetText(FText::FromString(FString::Printf(TEXT("%02d / %02d"), Index + 1, Cards.Num())));
-	// 마우스로 카드를 가리킨 뒤에도 방향키와 취소 키를 부모 화면에서 받을 수 있게 한다.
+	// 마우스로 카드를 가리킨 뒤에도 방향키 입력을 부모 화면에서 받을 수 있게 한다.
 	if (IsInViewport()) SetKeyboardFocus();
 }
 
@@ -122,11 +128,6 @@ void UCoreChoiceWidget::HandleCardChosen(UCoreDataAsset* CoreData)
 	SetKeyboardFocus();
 	// 지급 성공 여부에 따라 화면을 유지하거나 닫을 수 있도록 선택 결과만 전달한다.
 	OnCoreSelected.Broadcast(CoreData);
-}
-
-void UCoreChoiceWidget::HandleCancel()
-{
-	BeginClose(true, true);
 }
 
 void UCoreChoiceWidget::HandleReroll(int32 ChoiceIndex)
@@ -194,11 +195,26 @@ void UCoreChoiceWidget::HandleThirdReroll()
 	HandleReroll(2);
 }
 
-void UCoreChoiceWidget::CapturePlayerInput()
+bool UCoreChoiceWidget::CapturePlayerInput()
 {
+	if (bCapturedInput) return true;
 	if (APlayerController* Player = GetOwningPlayer())
 	{
+		InputOwner = Player;
+		InputWorld = Player->GetWorld();
 		bPreviousMouseCursorVisible = Player->bShowMouseCursor;
+		bCapturedInput = true;
+		if (!UGameplayStatics::IsGamePaused(Player))
+		{
+			bPausedByThisScreen = Player->SetPause(true, FCanUnpause::CreateUObject(this, &UCoreChoiceWidget::CanUnpauseAfterClose));
+			if (!bPausedByThisScreen)
+			{
+				bCapturedInput = false;
+				InputOwner.Reset();
+				InputWorld.Reset();
+				return false;
+			}
+		}
 		// UIOnly는 입력을 UI에만 전달한다. TakeWidget은 이 UMG 위젯의 내부 Slate 위젯을 가져온다.
 		FInputModeUIOnly InputMode;
 		InputMode.SetWidgetToFocus(TakeWidget());
@@ -207,9 +223,15 @@ void UCoreChoiceWidget::CapturePlayerInput()
 		Player->SetShowMouseCursor(true);
 		// 화면을 열기 전에 누르고 있던 이동·공격 키 상태가 남지 않도록 비운다.
 		Player->FlushPressedKeys();
-		bCapturedInput = true;
 		SetKeyboardFocus();
+		return true;
 	}
+	return false;
+}
+
+bool UCoreChoiceWidget::CanUnpauseAfterClose() const
+{
+	return !bCapturedInput;
 }
 
 void UCoreChoiceWidget::RestorePlayerInput()
@@ -217,20 +239,33 @@ void UCoreChoiceWidget::RestorePlayerInput()
 	if (!bCapturedInput) return;
 	// CloseChoiceUI뿐 아니라 외부 RemoveFromParent로 제거된 경우에도 한 번만 복구한다.
 	bCapturedInput = false;
-	if (APlayerController* Player = GetOwningPlayer())
+	UWorld* World = InputWorld.Get();
+	if (APlayerController* Player = InputOwner.Get(); IsValid(Player) && IsValid(World)
+		&& !World->bIsTearingDown && Player->GetWorld() == World)
 	{
 		Player->SetInputMode(FInputModeGameOnly());
 		Player->SetShowMouseCursor(bPreviousMouseCursorVisible);
 		Player->FlushPressedKeys();
 	}
+	if (bPausedByThisScreen)
+	{
+		bPausedByThisScreen = false;
+		// 컨트롤러가 먼저 파괴됐더라도 원래 월드의 일시정지는 정리한다.
+		if (IsValid(World) && !World->bIsTearingDown)
+		{
+			if (AGameModeBase* GameMode = World->GetAuthGameMode()) GameMode->ClearPause();
+		}
+	}
+	InputOwner.Reset();
+	InputWorld.Reset();
 }
 
 void UCoreChoiceWidget::CloseChoiceUI(bool bAnimate)
 {
-	BeginClose(false, bAnimate);
+	BeginClose(bAnimate);
 }
 
-void UCoreChoiceWidget::BeginClose(bool bCancelled, bool bAnimate)
+void UCoreChoiceWidget::BeginClose(bool bAnimate)
 {
 	if (bClosing)
 	{
@@ -243,7 +278,6 @@ void UCoreChoiceWidget::BeginClose(bool bCancelled, bool bAnimate)
 	CloseStartOpacity = GetRenderOpacity();
 	// 비활성화 색상이 입혀지지 않도록, 색상은 유지하면서 마우스 입력만 막는다.
 	SetVisibility(ESlateVisibility::HitTestInvisible);
-	if (bCancelled) OnChoiceCancelled.Broadcast();
 	if (!bAnimate || CloseFadeDuration <= KINDA_SMALL_NUMBER) RemoveFromParent();
 }
 
@@ -270,9 +304,9 @@ void UCoreChoiceWidget::NativeDestruct()
 
 FReply UCoreChoiceWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, const FKeyEvent& Event)
 {
-	// 버튼 자체의 확인 입력도 실행되지 않도록 Space와 Enter를 자식에게 전달하기 전에 소비한다.
+	// 확인 키로 버튼을 실행하거나 ESC로 선택을 취소하지 못하게, 자식에게 전달하기 전에 소비한다.
 	const FKey Key = Event.GetKey();
-	if (bClosing || Key == EKeys::SpaceBar || Key == EKeys::Enter) return FReply::Handled();
+	if (bClosing || Key == EKeys::SpaceBar || Key == EKeys::Enter || Key == EKeys::Escape) return FReply::Handled();
 	return Super::NativeOnPreviewKeyDown(Geometry, Event);
 }
 
@@ -280,12 +314,6 @@ FReply UCoreChoiceWidget::NativeOnKeyDown(const FGeometry& Geometry, const FKeyE
 {
 	if (bClosing) return FReply::Handled();
 	const FKey Key = Event.GetKey();
-	if (Key == EKeys::Escape)
-	{
-		HandleCancel();
-		// Handled는 이 입력을 UI가 처리했음을 뜻한다. Unhandled는 다른 처리 경로로 넘길 수 있다.
-		return FReply::Handled();
-	}
 	// 나머지 연산(%)으로 처음과 마지막 카드 사이를 순환한다.
 	if (Key == EKeys::Left || (Key == EKeys::Tab && Event.IsShiftDown()))
 	{

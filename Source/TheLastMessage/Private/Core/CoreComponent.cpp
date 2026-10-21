@@ -339,42 +339,6 @@ TArray<UCoreDataAsset*> UCoreComponent::GenerateCoreChoices(const TArray<UCoreDa
 	return Choices;
 }
 
-FCoreChoiceState UCoreComponent::SuspendCoreChoices()
-{
-	// 창을 닫으면 선택 기록을 해당 보상으로 옮겨 보관한다.
-	FCoreChoiceState SavedState = MoveTemp(CurrentChoiceState);
-	CurrentChoiceState = FCoreChoiceState();
-	return SavedState;
-}
-
-TArray<UCoreDataAsset*> UCoreComponent::ResumeCoreChoices(FCoreChoiceState& SavedState)
-{
-	if (bIsChangingCoreGrants || bIsSelectingCore || !CurrentChoiceState.Choices.IsEmpty()
-		|| SavedState.ShownCoreIds.IsEmpty()
-		|| SavedState.Choices.Num() != SavedState.RerollCounts.Num()) return {};
-
-	// 다른 보상에서 최대 단계가 된 코어는 제외하되, 나머지 카드의 순서와 리롤 사용 횟수는 함께 유지한다.
-	for (int32 Index = SavedState.Choices.Num() - 1; Index >= 0; --Index)
-	{
-		if (!CanAcquireCore(SavedState.Choices[Index].Get()))
-		{
-			SavedState.Choices.RemoveAt(Index);
-			SavedState.RerollCounts.RemoveAt(Index);
-		}
-	}
-	if (SavedState.Choices.IsEmpty()) return {};
-
-	CurrentChoiceState = MoveTemp(SavedState);
-	SavedState = FCoreChoiceState();
-	TArray<UCoreDataAsset*> Choices;
-	for (const TObjectPtr<UCoreDataAsset>& CoreData : CurrentChoiceState.Choices)
-	{
-		Choices.Add(CoreData.Get());
-	}
-	return Choices;
-}
-
-
 ECoreAcquireResult UCoreComponent::SelectCore(FName CoreId)
 {
 	if (bIsChangingCoreGrants || bIsSelectingCore)

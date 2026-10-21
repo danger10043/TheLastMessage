@@ -54,12 +54,6 @@ public:
 	 */
 	TArray<UCoreDataAsset*> GenerateCoreChoices(const TArray<UCoreDataAsset*>& CandidatePool, ECoreCategory Category);
 
-	/** 창을 닫을 때 진행 중인 선택 기록을 보상 쪽으로 옮겨 보관한다. */
-	FCoreChoiceState SuspendCoreChoices();
-
-	/** 보상에 보관한 기록으로 선택을 이어 간다. 획득할 수 없게 된 코어는 제외한다. */
-	TArray<UCoreDataAsset*> ResumeCoreChoices(FCoreChoiceState& SavedState);
-
 	/**
 	 * 플레이어가 고른 코어를 획득하여 선택 보상을 완료한다.
 	 * 현재 선택지에 있는 코어만 획득할 수 있으며, 성공하면 선택 목록을 비운다.
@@ -122,7 +116,7 @@ private:
 	UPROPERTY(Transient)
 	TArray<FCoreGrantRecord> AppliedCoreHandles;
 
-	/** 현재 처리 중인 보상 하나의 선택 기록. 창을 닫으면 해당 픽업으로 옮겨 다음 선택까지 보관한다. */
+	/** 현재 열려 있는 보상 하나의 선택 기록. 선택을 마치거나 화면이 제거되면 폐기한다. */
 	UPROPERTY(Transient)
 	FCoreChoiceState CurrentChoiceState;
 

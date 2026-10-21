@@ -106,30 +106,21 @@ bool ACorePickup::TryOpenCoreChoice(APlayerBase* Player)
 	}
 
 	TGuardValue<bool> GrantingRewardGuard(bIsGrantingReward, true);
-	TArray<UCoreDataAsset*> Choices;
-	if (!SavedChoiceState.ShownCoreIds.IsEmpty())
+	// 선택을 보류하지 않으므로, 새 화면을 열 때마다 현재 보유 상태를 기준으로 추첨한다.
+	UAssetManager& AssetManager = UAssetManager::Get();
+	TArray<FPrimaryAssetId> CoreAssetIds;
+	AssetManager.GetPrimaryAssetIdList(UCoreDataAsset::StaticClass()->GetFName(), CoreAssetIds);
+	TArray<UCoreDataAsset*> Pool;
+	for (const FPrimaryAssetId& AssetId : CoreAssetIds)
 	{
-		// 같은 픽업을 다시 열 때는 마지막 카드와 리롤 기록을 그대로 이어 간다.
-		Choices = CoreComponent->ResumeCoreChoices(SavedChoiceState);
-	}
-	else
-	{
-		// 처음 여는 보상만 전체 코어를 조회하여 후보를 추첨한다.
-		UAssetManager& AssetManager = UAssetManager::Get();
-		TArray<FPrimaryAssetId> CoreAssetIds;
-		AssetManager.GetPrimaryAssetIdList(UCoreDataAsset::StaticClass()->GetFName(), CoreAssetIds);
-		TArray<UCoreDataAsset*> Pool;
-		for (const FPrimaryAssetId& AssetId : CoreAssetIds)
+		UCoreDataAsset* Data = Cast<UCoreDataAsset>(AssetManager.GetPrimaryAssetPath(AssetId).TryLoad());
+		// 분류·무작위 보상 포함 여부·강화 가능 여부는 코어 컴포넌트에서 검사한다.
+		if (IsValid(Data))
 		{
-			UCoreDataAsset* Data = Cast<UCoreDataAsset>(AssetManager.GetPrimaryAssetPath(AssetId).TryLoad());
-			// 등록된 정의를 모으고, 분류·무작위 보상 포함 여부·강화 가능 여부는 코어 컴포넌트에서 검사한다.
-			if (IsValid(Data))
-			{
-				Pool.Add(Data);
-			}
+			Pool.Add(Data);
 		}
-		Choices = CoreComponent->GenerateCoreChoices(Pool, ChoiceCategory);
 	}
+	const TArray<UCoreDataAsset*> Choices = CoreComponent->GenerateCoreChoices(Pool, ChoiceCategory);
 	if (Choices.IsEmpty()) return false;
 
 	ChoosingPlayer = Player;
@@ -138,8 +129,8 @@ bool ACorePickup::TryOpenCoreChoice(APlayerBase* Player)
 	if (!IsValid(ActiveChoiceWidget) || IsActorBeingDestroyed() || !IsValid(Player) || Player->IsDead()
 		|| Player->GetController() != Controller)
 	{
-		// 화면 준비에 실패해도 이 보상의 기록은 보관하고, 다른 보상의 선택은 막지 않는다.
-		SuspendChoiceReward();
+		// 화면 준비에 실패하면 기록을 폐기해 다른 보상을 막지 않는다. 픽업 자체는 유지한다.
+		ClearChoiceReward();
 		return false;
 	}
 
@@ -186,7 +177,7 @@ void ACorePickup::HandleCoreSelected(UCoreDataAsset* SelectedCore)
 	TGuardValue<bool> GrantingRewardGuard(bIsGrantingReward, true);
 	if (!IsCoreAcquireSuccess(CoreComponent->SelectCore(SelectedCore->CoreId)))
 	{
-		// 실패하면 화면과 선택지를 유지하여 다른 코어를 선택하거나 취소할 수 있게 한다.
+		// 지급에 실패하면 화면과 선택지를 유지하여 다른 코어를 선택할 수 있게 한다.
 		return;
 	}
 
@@ -205,8 +196,8 @@ void ACorePickup::HandleCoreReroll(int32 ChoiceIndex)
 	UCoreDataAsset* Replacement = CoreComponent->RerollCoreChoice(ChoiceIndex);
 	if (Replacement && !Widget->UpdateCoreChoice(ChoiceIndex, Replacement))
 	{
-		// 화면 반영에 실패해도 변경된 코어와 사용 횟수를 보관하여 재진입 시 복원한다.
-		SuspendChoiceReward();
+		// 후보와 화면이 어긋난 상태로 선택하지 못하도록 현재 선택을 정리한다.
+		ClearChoiceReward();
 		return;
 	}
 	// 카드의 강조 알림에서 화면이 닫혔다면, 종료된 선택 화면을 다시 갱신하지 않는다.
@@ -215,26 +206,17 @@ void ACorePickup::HandleCoreReroll(int32 ChoiceIndex)
 
 void ACorePickup::HandleChoiceClosed()
 {
-	SuspendChoiceReward();
+	ClearChoiceReward();
 }
 
 void ACorePickup::HandleChoosingPlayerDied(APlayerBase* Player)
 {
-	SuspendChoiceReward();
+	ClearChoiceReward();
 }
 
 void ACorePickup::HandleChoosingPlayerDestroyed(AActor* Player)
 {
-	SuspendChoiceReward();
-}
-
-void ACorePickup::SuspendChoiceReward()
-{
-	if (UCoreComponent* CoreComponent = ChoosingCoreComponent.Get(); IsValid(CoreComponent))
-	{
-		SavedChoiceState = CoreComponent->SuspendCoreChoices();
-	}
-	CloseChoiceScreen();
+	ClearChoiceReward();
 }
 
 void ACorePickup::CloseChoiceScreen(bool bAnimateClose)
@@ -266,7 +248,6 @@ void ACorePickup::ClearChoiceReward(bool bAnimateClose)
 	{
 		CoreComponent->CancelCoreChoices();
 	}
-	SavedChoiceState = FCoreChoiceState();
 	CloseChoiceScreen(bAnimateClose);
 }
 

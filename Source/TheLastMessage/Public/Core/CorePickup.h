@@ -2,7 +2,6 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
-#include "Core/CoreChoiceState.h"
 #include "Core/GameCoreTypes.h"
 #include "CorePickup.generated.h"
 
@@ -35,7 +34,7 @@ public:
 	bool TryOpenCoreChoice(APlayerBase* Player);
 
 protected:
-	/** 픽업이 제거되면 선택 화면과 보관 중인 선택 기록도 정리한다. */
+	/** 픽업이 제거되면 선택 화면과 진행 중인 선택 기록을 정리한다. */
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	/** 플레이어가 코어를 획득할 수 있는 범위를 감지한다. */
@@ -60,7 +59,7 @@ protected:
 		meta = (EditCondition = "RewardMode == ECoreRewardMode::Choice", EditConditionHides))
 	TSubclassOf<UCoreChoiceWidget> ChoiceWidgetClass;
 
-	/** 처음 추첨할 풀을 선택한다. 창을 다시 열면 설정을 다시 추첨하지 않고 저장된 보상을 이어 간다. */
+	/** 선택형 보상을 추첨할 코어 분류다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Core|Reward",
 		meta = (EditCondition = "RewardMode == ECoreRewardMode::Choice", EditConditionHides))
 	ECoreCategory ChoiceCategory = ECoreCategory::Stat;
@@ -89,20 +88,17 @@ private:
 	UFUNCTION()
 	void HandleCoreReroll(int32 ChoiceIndex);
 
-	/** 창이 닫히면 마지막 선택 목록과 카드별 리롤 기록을 보관한다. */
+	/** 창이 외부에서 닫히면 진행 중인 선택 기록을 폐기한다. */
 	UFUNCTION()
 	void HandleChoiceClosed();
 
-	/** 플레이어가 사망하면 선택 기록을 보관하고 화면을 닫는다. */
+	/** 플레이어가 사망하면 선택 기록을 폐기하고 화면을 닫는다. */
 	UFUNCTION()
 	void HandleChoosingPlayerDied(APlayerBase* Player);
 
-	/** 플레이어가 파괴되면 선택 기록을 보관하고 화면을 닫는다. */
+	/** 플레이어가 파괴되면 선택 기록을 폐기하고 화면을 닫는다. */
 	UFUNCTION()
 	void HandleChoosingPlayerDestroyed(AActor* Player);
-
-	/** 다음에 같은 보상을 열 수 있도록 선택 기록을 옮긴 뒤 화면을 닫는다. */
-	void SuspendChoiceReward();
 
 	/** 화면과 입력 이벤트 연결만 정리한다. 획득 성공 시에는 페이드를 허용한다. */
 	void CloseChoiceScreen(bool bAnimateClose = false);
@@ -118,13 +114,9 @@ private:
 	UPROPERTY(Transient)
 	TWeakObjectPtr<APlayerBase> ChoosingPlayer;
 
-	/** 현재 선택을 처리하는 컴포넌트. 화면 종료 시 선택 기록을 이 픽업으로 옮긴다. */
+	/** 현재 선택을 처리하는 컴포넌트. 화면 종료 시 이 컴포넌트의 선택 기록을 비운다. */
 	UPROPERTY(Transient)
 	TWeakObjectPtr<UCoreComponent> ChoosingCoreComponent;
-
-	/** 화면을 닫아 둔 동안 보관하는 이 보상의 기록. 재진입 시 같은 목록과 리롤 사용 횟수를 복원한다. */
-	UPROPERTY(Transient)
-	FCoreChoiceState SavedChoiceState;
 
 	/** 현재 보상을 처리 중인지 나타낸다. 획득·재추첨 요청이 겹치는 것을 막는다. */
 	bool bIsGrantingReward = false;

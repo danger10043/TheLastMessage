@@ -109,7 +109,7 @@ bool FCoreUpgradeTest::RunTest(const FString& Parameters)
 
 	// 보유 중인 강화 후보는 유지하되, 같은 ID를 선택지에 두 번 넣지는 않는다.
 	TestEqual(TEXT("Owned upgradeable core remains a unique candidate"), Core->GenerateCoreChoices(Pool, ECoreCategory::Stat).Num(), 1);
-	FCoreChoiceState Saved = Core->SuspendCoreChoices();
+	Core->CancelCoreChoices();
 	TestTrue(TEXT("Reacquisition upgrades"), Core->AcquireCore(Data) == ECoreAcquireResult::Upgraded);
 	TestEqual(TEXT("Reacquisition is level two"), Core->GetCoreLevel(Data->CoreId), 2);
 	TestTrue(TEXT("Curve replaces the old magnitude instead of stacking"), FMath::IsNearlyEqual(Attributes->GetDamageDealtMultiplier(), 1.30f));
@@ -118,15 +118,14 @@ bool FCoreUpgradeTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Upgrade does not duplicate abilities"), ASC->GetActivatableAbilities().Num(), 1);
 	const FGameplayAbilitySpec* AbilitySpec = ASC->FindAbilitySpecFromHandle(AbilityHandle);
 	TestTrue(TEXT("Existing ability level is updated"), AbilitySpec && AbilitySpec->Level == 2);
-	TestEqual(TEXT("Suspended choice remains while upgradeable"), Core->ResumeCoreChoices(Saved).Num(), 1);
-	Saved = Core->SuspendCoreChoices();
+	TestEqual(TEXT("Upgraded core remains eligible for a new reward"), Core->GenerateCoreChoices(Pool, ECoreCategory::Stat).Num(), 1);
+	Core->CancelCoreChoices();
 
 	TestTrue(TEXT("Final upgrade succeeds"), Core->AcquireCore(Data) == ECoreAcquireResult::Upgraded);
 	TestEqual(TEXT("Final level is capped"), Core->GetCoreLevel(Data->CoreId), 3);
 	TestTrue(TEXT("Final curve value is applied"), FMath::IsNearlyEqual(Attributes->GetDamageDealtMultiplier(), 1.45f));
 	TestTrue(TEXT("Acquisition past the maximum is rejected"), Core->AcquireCore(Data) == ECoreAcquireResult::MaxLevel);
 	TestEqual(TEXT("Rejected acquisition preserves level"), Core->GetCoreLevel(Data->CoreId), 3);
-	TestTrue(TEXT("Maxed core is removed when resuming"), Core->ResumeCoreChoices(Saved).IsEmpty());
 	TestTrue(TEXT("Maxed core is excluded from new choices"), Core->GenerateCoreChoices(Pool, ECoreCategory::Stat).IsEmpty());
 
 	Core->ResetOwnedCores();
@@ -250,14 +249,9 @@ bool FCoreRewardPoolTest::RunTest(const FString& Parameters)
 	TestNull(TEXT("A card cannot reroll twice"), Core->RerollCoreChoice(0));
 	TestFalse(TEXT("Exhausted stat pool does not fall back to abilities"), Core->CanRerollCoreChoice(1));
 
-	FCoreChoiceState Saved = Core->SuspendCoreChoices();
-	TestEqual(TEXT("Saved pool contains only four eligible stat cores"), Saved.CandidatePool.Num(), 4);
-	TestEqual(TEXT("Shown history includes the replaced card"), Saved.ShownCoreIds.Num(), 4);
-	TestTrue(TEXT("Per-card reroll count is saved"), Saved.RerollCounts.Num() == 3 && Saved.RerollCounts[0] == 1);
-	const TArray<UCoreDataAsset*> Resumed = Core->ResumeCoreChoices(Saved);
-	TestTrue(TEXT("Reopening preserves the exact card order"), Resumed == Choices);
-	TestFalse(TEXT("Reopening does not refund a used reroll"), Core->CanRerollCoreChoice(0));
+	TestTrue(TEXT("An open reward cannot be replaced by another reward"), Core->GenerateCoreChoices(Pool, ECoreCategory::Ability).IsEmpty());
 	Core->CancelCoreChoices();
+	TestTrue(TEXT("Closing a reward discards its card choices"), Core->SelectCore(Choices[0]->CoreId) == ECoreAcquireResult::NotOffered);
 
 	Choices = Core->GenerateCoreChoices(Pool, ECoreCategory::Ability);
 	TestEqual(TEXT("Ability pool produces three cards"), Choices.Num(), 3);

@@ -5,8 +5,10 @@
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
 #include "Components/TextBlock.h"
+#include "Core/CoreComponent.h"
 #include "DataAsset/CoreDataAsset.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/Pawn.h"
 #include "Input/Reply.h"
 #include "InputCoreTypes.h"
 #include "UI/CoreChoiceCardWidget.h"
@@ -79,7 +81,7 @@ bool UCoreChoiceWidget::PopulateCards()
 			Cards.Reset();
 			return false;
 		}
-		Card->SetCoreData(DisplayedChoices[Index], Index);
+		Card->SetCoreData(DisplayedChoices[Index], Index, GetCurrentCoreLevel(DisplayedChoices[Index]));
 		// 카드가 보낸 클릭·마우스 알림을 부모 화면의 처리 함수에 연결한다.
 		Card->OnCoreChosen.AddUObject(this, &UCoreChoiceWidget::HandleCardChosen);
 		Card->OnCoreHovered.AddUObject(this, &UCoreChoiceWidget::SetActiveCardIndex);
@@ -137,6 +139,13 @@ void UCoreChoiceWidget::HandleReroll(int32 ChoiceIndex)
 	OnRerollRequested.Broadcast(ChoiceIndex);
 }
 
+int32 UCoreChoiceWidget::GetCurrentCoreLevel(const UCoreDataAsset* CoreData) const
+{
+	const APawn* Pawn = GetOwningPlayerPawn();
+	const UCoreComponent* Core = Pawn ? Pawn->FindComponentByClass<UCoreComponent>() : nullptr;
+	return Core && IsValid(CoreData) ? Core->GetCoreLevel(CoreData->CoreId) : 0;
+}
+
 bool UCoreChoiceWidget::UpdateCoreChoice(int32 ChoiceIndex, UCoreDataAsset* CoreData)
 {
 	if (bClosing || !DisplayedChoices.IsValidIndex(ChoiceIndex) || !Cards.IsValidIndex(ChoiceIndex)
@@ -146,7 +155,7 @@ bool UCoreChoiceWidget::UpdateCoreChoice(int32 ChoiceIndex, UCoreDataAsset* Core
 		if (Index != ChoiceIndex && DisplayedChoices[Index]->CoreId == CoreData->CoreId) return false;
 	}
 	DisplayedChoices[ChoiceIndex] = CoreData;
-	Cards[ChoiceIndex]->SetCoreData(CoreData, ChoiceIndex);
+	Cards[ChoiceIndex]->SetCoreData(CoreData, ChoiceIndex, GetCurrentCoreLevel(CoreData));
 	SetActiveCardIndex(ChoiceIndex);
 	return true;
 }
@@ -271,26 +280,21 @@ FReply UCoreChoiceWidget::NativeOnKeyDown(const FGeometry& Geometry, const FKeyE
 {
 	if (bClosing) return FReply::Handled();
 	const FKey Key = Event.GetKey();
-	if (Key == EKeys::Escape || Key == EKeys::Gamepad_FaceButton_Right)
+	if (Key == EKeys::Escape)
 	{
 		HandleCancel();
 		// Handled는 이 입력을 UI가 처리했음을 뜻한다. Unhandled는 다른 처리 경로로 넘길 수 있다.
 		return FReply::Handled();
 	}
 	// 나머지 연산(%)으로 처음과 마지막 카드 사이를 순환한다.
-	if (Key == EKeys::Left || Key == EKeys::Gamepad_DPad_Left || (Key == EKeys::Tab && Event.IsShiftDown()))
+	if (Key == EKeys::Left || (Key == EKeys::Tab && Event.IsShiftDown()))
 	{
 		if (!Cards.IsEmpty()) SetActiveCardIndex((ActiveCardIndex + Cards.Num() - 1) % Cards.Num());
 		return FReply::Handled();
 	}
-	if (Key == EKeys::Right || Key == EKeys::Gamepad_DPad_Right || Key == EKeys::Tab)
+	if (Key == EKeys::Right || Key == EKeys::Tab)
 	{
 		if (!Cards.IsEmpty()) SetActiveCardIndex((ActiveCardIndex + 1) % Cards.Num());
-		return FReply::Handled();
-	}
-	if (Key == EKeys::Gamepad_FaceButton_Bottom)
-	{
-		if (DisplayedChoices.IsValidIndex(ActiveCardIndex)) HandleCardChosen(DisplayedChoices[ActiveCardIndex]);
 		return FReply::Handled();
 	}
 	return Super::NativeOnKeyDown(Geometry, Event);

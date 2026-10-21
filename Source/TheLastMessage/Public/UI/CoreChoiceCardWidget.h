@@ -25,9 +25,9 @@ class THELASTMESSAGE_API UCoreChoiceCardWidget : public UUserWidget
 	GENERATED_BODY()
 
 public:
-	/** 표시할 코어와 카드 위치(0부터 시작)를 설정한다. 위치는 마우스로 가리킨 카드를 구분할 때 사용한다. */
+	/** 코어·카드 순번·현재 보유 단계를 받아 신규 획득 또는 다음 강화의 효과를 표시한다. */
 	UFUNCTION(BlueprintCallable, Category = "Core|UI")
-	void SetCoreData(UCoreDataAsset* InCoreData, int32 InDisplayIndex);
+	void SetCoreData(UCoreDataAsset* InCoreData, int32 InDisplayIndex, int32 InCurrentLevel = 0);
 
 	/** 입력 대상으로 가리키는 카드인지 설정하고 테두리·배경·선택 문구의 강조 색상을 갱신한다. */
 	UFUNCTION(BlueprintCallable, Category = "Core|UI")
@@ -64,6 +64,10 @@ protected:
 	/** 화면에 배치된 카드 순서를 / 01, / 02 형식으로 표시한다. */
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> ModuleNumberText;
+
+	/** 카드 순번과 별도로 신규/강화 단계 및 최대 단계를 표시한다. 배치는 WBP에서 관리한다. */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> CoreLevelText;
 
 	/** 강조 상태에 맞춰 색상을 바꿀 카드 하단의 선택 문구. */
 	UPROPERTY(meta = (BindWidgetOptional))

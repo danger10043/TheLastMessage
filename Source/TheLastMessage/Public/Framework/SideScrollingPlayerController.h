@@ -9,6 +9,7 @@
 
 class ASideScrollingCharacter;
 class UInputMappingContext;
+class UAreaMapWidget;
 
 /**
  *  A simple Side Scrolling Player Controller
@@ -19,8 +20,18 @@ UCLASS(abstract, Config="Game")
 class ASideScrollingPlayerController : public APlayerController
 {
 	GENERATED_BODY()
-	
+public:
+	ASideScrollingPlayerController();
+	UFUNCTION(BlueprintCallable, Category="Area Map") void ToggleAreaMap();
+	/** 구역 지도를 열고 닫는 입력 액션 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Input|Area Map", meta=(ToolTip="구역 지도를 열고 닫는 입력 액션"))
+	TObjectPtr<UInputAction> MapAction;
+	/** 구역 지도 화면 클래스 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Area Map", meta=(ToolTip="구역 지도 화면 클래스"))
+	TSubclassOf<UAreaMapWidget> MapWidgetClass;
 protected:
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	UPROPERTY(Transient) TObjectPtr<UAreaMapWidget> AreaMapWidget;
 
 	/** Input mapping context for this player */
 	UPROPERTY(EditAnywhere, Category="Input|Input Mappings")

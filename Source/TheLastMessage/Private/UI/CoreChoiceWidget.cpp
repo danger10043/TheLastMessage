@@ -304,7 +304,7 @@ void UCoreChoiceWidget::NativeDestruct()
 
 FReply UCoreChoiceWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, const FKeyEvent& Event)
 {
-	// 확인 키로 버튼을 실행하거나 ESC로 선택을 취소하지 못하게, 자식에게 전달하기 전에 소비한다.
+	// 확인 키로 버튼이 실행되지 않고 ESC가 다른 입력 경로로 새지 않도록, 자식에게 전달하기 전에 소비한다.
 	const FKey Key = Event.GetKey();
 	if (bClosing || Key == EKeys::SpaceBar || Key == EKeys::Enter || Key == EKeys::Escape) return FReply::Handled();
 	return Super::NativeOnPreviewKeyDown(Geometry, Event);

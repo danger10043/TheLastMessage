@@ -63,7 +63,7 @@ protected:
 	virtual void NativeDestruct() override;
 	/** 화면을 닫는 동안 투명도를 줄이고, 페이드가 끝나면 위젯을 제거한다. */
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
-	/** Space·Enter 선택과 ESC 취소를 자식 위젯이나 다른 입력 경로로 전달하지 않는다. */
+	/** Space·Enter·ESC 입력을 먼저 소비해 자식 버튼이나 다른 입력 경로로 넘기지 않는다. 선택은 마우스로만 하고 취소는 없다. */
 	virtual FReply NativeOnPreviewKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
 	/** 방향키·Tab으로 강조 카드를 옮긴다. 선택은 마우스로만 한다. */
 	virtual FReply NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;

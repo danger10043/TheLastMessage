@@ -366,6 +366,9 @@ bool UCarryComponent::FindDropTransform(FTransform& OutTransform) const
 
     const FQuat DropRotation = Target->GetActorQuat().GetNormalized();
 
+    // 기존 함수 끝부분에 있던 중심 보정 계산을 여기로 이동
+    const FVector CenterOffset = DropRotation.RotateVector(LocalCenter * OriginalWorldScale);
+
     const auto GetExtentAlong = [&HalfSize, &DropRotation](const FVector& Direction)
         {
             return
@@ -376,7 +379,10 @@ bool UCarryComponent::FindDropTransform(FTransform& OutTransform) const
 
     const double CapsuleHalfHeight = Capsule->GetScaledCapsuleHalfHeight();
 
-    const FVector DesiredCenter = Player->GetActorLocation() + ForwardDirection * DropDistance;
+    // 아이템 원점의 Y 좌표를 먼저 고정하고 검사할 중심 위치 계산
+    const FVector DesiredActorLocation = Target->ConstrainDropLocation(Player->GetActorLocation() + ForwardDirection * DropDistance - CenterOffset);
+
+    const FVector DesiredCenter = DesiredActorLocation + CenterOffset;
 
     FCollisionQueryParams PathParams(SCENE_QUERY_STAT(CarryDropPath), false, Player);
 
@@ -407,7 +413,12 @@ bool UCarryComponent::FindDropTransform(FTransform& OutTransform) const
 
     constexpr double SurfaceClearance = 2.0;
 
-    const FVector BoxCenter = FloorHit.ImpactPoint + FloorNormal * (GetExtentAlong(FloorNormal) + SurfaceClearance);
+    const FVector RawBoxCenter = FloorHit.ImpactPoint + FloorNormal * (GetExtentAlong(FloorNormal) + SurfaceClearance);
+
+    // 최종 배치 위치도 최초 Y 좌표에 맞게 보정
+    const FVector DropActorLocation = Target->ConstrainDropLocation(RawBoxCenter - CenterOffset);
+
+    const FVector BoxCenter = DropActorLocation + CenterOffset;
 
     const FCollisionShape BoxShape = FCollisionShape::MakeBox(HalfSize);
 
@@ -433,11 +444,7 @@ bool UCarryComponent::FindDropTransform(FTransform& OutTransform) const
         return false;
     }
 
-    // 메시 중심이 원점에서 벗어나 있어도 위치 보정
-    const FVector CenterOffset = DropRotation.RotateVector(LocalCenter * OriginalWorldScale);
-
-    OutTransform = FTransform(DropRotation, BoxCenter - CenterOffset, OriginalWorldScale);
-
+    OutTransform = FTransform(DropRotation, DropActorLocation, OriginalWorldScale);
     return true;
 }
 

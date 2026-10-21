@@ -47,6 +47,14 @@ struct FGrapplingProbeState
 };
 
 // Fixed-anchor grappling. CharacterMovement performs the actual swept movement.
+USTRUCT()
+struct FGrappleCooldownState
+{
+	GENERATED_BODY()
+	UPROPERTY() float EndTime = 0;
+	UPROPERTY() float Duration = 0;
+};
+
 UCLASS(ClassGroup=(Player), meta=(BlueprintSpawnableComponent))
 class THELASTMESSAGE_API UGrapplingHookComponent : public UActorComponent
 {
@@ -73,6 +81,18 @@ public:
 	bool HasGrappleAnchor() const { return ProbeState.Result == EGrapplingProbeResult::Connected; }
 	UFUNCTION(BlueprintPure, Category="Player|Grappling")
 	bool IsPulling() const { return bMovementOverrideActive; }
+	UFUNCTION(BlueprintPure, Category="Player|Grappling|Cooldown")
+	float GetCooldownRemaining() const;
+	UFUNCTION(BlueprintPure, Category="Player|Grappling|Cooldown")
+	float GetCooldownProgress() const;
+	UFUNCTION(BlueprintPure, Category="Player|Grappling")
+	bool IsGrappleUnlocked() const;
+	/** 훅 도착이나 취소 후 다시 사용할 때까지 걸리는 시간 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Player|Grappling|Cooldown", meta=(ClampMin="0", Units="s", ToolTip="훅 도착이나 취소 후 다시 사용할 때까지 걸리는 시간"))
+	float CooldownDuration = 1.0f;
+	/** 연결 실패 후 다시 시도할 때까지 걸리는 시간 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Player|Grappling|Cooldown", meta=(ClampMin="0", Units="s", ToolTip="연결 실패 후 다시 시도할 때까지 걸리는 시간"))
+	float FailedCooldownDuration = 0.2f;
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, ReplicatedUsing=OnRep_ProbeState, Category="Player|Grappling")
 	FGrapplingProbeState ProbeState;
@@ -117,17 +137,18 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Player|Grappling")
 	float ReleaseVelocityValue = 0.75f;
 
-	// The first blocking surface must carry this Actor Tag or Component Tag.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Player|Grappling")
-	FName GrappleableTag = TEXT("Grappleable");
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Player|Grappling")
-	TEnumAsByte<ECollisionChannel> TraceChannel = ECC_Visibility;
+	/** 보이는 메시만 훅 대상으로 검사하며 숨겨진 충돌 벽과 캐릭터는 제외 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Player|Grappling", meta=(ToolTip="보이는 메시만 훅 대상으로 검사하며 숨겨진 충돌 벽과 캐릭터는 제외"))
+	TEnumAsByte<ECollisionChannel> TraceChannel = ECC_GameTraceChannel4;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Player|Grappling|Debug")
 	bool bDrawDebug = false;
 
 private:
+	UPROPERTY(Replicated)
+	FGrappleCooldownState CooldownState;
+	float GetCooldownTime() const;
+	void StartCooldown(float Duration);
 	UFUNCTION(Server, Reliable)
 	void ServerRequestGrapple(FVector_NetQuantize WorldAimPoint);
 	UFUNCTION(Server, Reliable)

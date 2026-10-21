@@ -5,11 +5,15 @@
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Core/CoreComponent.h"
+#include "Core/CoreRewardSession.h"
 #include "DataAsset/CoreDataAsset.h"
 #include "Engine/AssetManager.h"
+#include "Engine/Engine.h"
 #include "GameFramework/PlayerController.h"
 #include "Templates/UnrealTemplate.h"
 #include "UI/CoreChoiceWidget.h"
+
+DEFINE_LOG_CATEGORY_STATIC(LogCoreReward, Log, All);
 
 ACorePickup::ACorePickup()
 {
@@ -106,7 +110,7 @@ bool ACorePickup::TryOpenCoreChoice(APlayerBase* Player)
 	}
 
 	TGuardValue<bool> GrantingRewardGuard(bIsGrantingReward, true);
-	// 선택을 보류하지 않으므로, 새 화면을 열 때마다 현재 보유 상태를 기준으로 추첨한다.
+	// Asset Manager에 등록된 코어를 보상 후보의 원본 목록으로 수집한다.
 	UAssetManager& AssetManager = UAssetManager::Get();
 	TArray<FPrimaryAssetId> CoreAssetIds;
 	AssetManager.GetPrimaryAssetIdList(UCoreDataAsset::StaticClass()->GetFName(), CoreAssetIds);
@@ -114,19 +118,24 @@ bool ACorePickup::TryOpenCoreChoice(APlayerBase* Player)
 	for (const FPrimaryAssetId& AssetId : CoreAssetIds)
 	{
 		UCoreDataAsset* Data = Cast<UCoreDataAsset>(AssetManager.GetPrimaryAssetPath(AssetId).TryLoad());
-		// 분류·무작위 보상 포함 여부·강화 가능 여부는 코어 컴포넌트에서 검사한다.
+		// 보상 세션에서 분류와 포함 여부를 검사하고, 획득 가능 여부는 코어 컴포넌트에 조회한다.
 		if (IsValid(Data))
 		{
 			Pool.Add(Data);
 		}
 	}
-	const TArray<UCoreDataAsset*> Choices = CoreComponent->GenerateCoreChoices(Pool, ChoiceCategory);
-	if (Choices.IsEmpty()) return false;
+	UCoreRewardSession* Session = NewObject<UCoreRewardSession>(this);
+	const ECoreRewardStartResult StartResult = Session->Start(CoreComponent, Pool, ChoiceCategory);
+	if (StartResult != ECoreRewardStartResult::Started)
+	{
+		ShowUnavailableNotice(StartResult);
+		return false;
+	}
 
 	ChoosingPlayer = Player;
-	ChoosingCoreComponent = CoreComponent;
-	ActiveChoiceWidget = UCoreChoiceWidget::OpenCoreChoiceUI(Controller, Choices, ChoiceWidgetClass);
-	if (!IsValid(ActiveChoiceWidget) || IsActorBeingDestroyed() || !IsValid(Player) || Player->IsDead()
+	ActiveRewardSession = Session;
+	ActiveChoiceWidget = UCoreChoiceWidget::OpenCoreChoiceUI(Controller, Session->GetChoiceEntries(), ChoiceWidgetClass);
+	if (!IsValid(ActiveChoiceWidget) || !Session->IsActive() || IsActorBeingDestroyed() || !IsValid(Player) || Player->IsDead()
 		|| Player->GetController() != Controller)
 	{
 		// 화면 준비에 실패하면 기록을 폐기해 다른 보상을 막지 않는다. 픽업 자체는 유지한다.
@@ -136,6 +145,7 @@ bool ACorePickup::TryOpenCoreChoice(APlayerBase* Player)
 
 	ActiveChoiceWidget->OnCoreSelected.AddDynamic(this, &ACorePickup::HandleCoreSelected);
 	ActiveChoiceWidget->OnRerollRequested.AddDynamic(this, &ACorePickup::HandleCoreReroll);
+	Session->OnCancelled.AddUObject(this, &ACorePickup::HandleRewardCancelled);
 	UpdateRerollButtons();
 	ActiveChoiceWidget->OnChoiceClosed.AddDynamic(this, &ACorePickup::HandleChoiceClosed);
 	Player->OnPlayerDied.AddDynamic(this, &ACorePickup::HandleChoosingPlayerDied);
@@ -143,41 +153,101 @@ bool ACorePickup::TryOpenCoreChoice(APlayerBase* Player)
 	return true;
 }
 
-UCoreComponent* ACorePickup::GetValidChoosingCoreComponent() const
+UCoreRewardSession* ACorePickup::GetValidRewardSession()
 {
+	if (bConsumed || bIsGrantingReward) return nullptr;
 	APlayerBase* Player = ChoosingPlayer.Get();
-	UCoreComponent* CoreComponent = ChoosingCoreComponent.Get();
-	if (!HasAuthority() || IsActorBeingDestroyed() || bConsumed || bIsGrantingReward
+	if (!HasAuthority() || IsActorBeingDestroyed()
 		|| !IsValid(ActiveChoiceWidget)
-		|| !IsValid(Player) || Player->IsDead() || !IsValid(CoreComponent)
-		|| Player->GetCoreComponent() != CoreComponent
+		|| !IsValid(Player) || Player->IsDead()
+		|| !IsValid(ActiveRewardSession) || !ActiveRewardSession->IsActive()
+		|| Player->GetCoreComponent() != ActiveRewardSession->GetCoreComponent()
 		|| Player->GetController() != ActiveChoiceWidget->GetOwningPlayer())
 	{
+		ClearChoiceReward();
 		return nullptr;
 	}
-	return CoreComponent;
+	return ActiveRewardSession;
 }
 
 void ACorePickup::UpdateRerollButtons()
 {
-	UCoreComponent* CoreComponent = ChoosingCoreComponent.Get();
-	if (!IsValid(ActiveChoiceWidget) || !IsValid(CoreComponent)) return;
-	for (int32 Index = 0; Index < 3; ++Index)
+	if (!IsValid(ActiveChoiceWidget) || !IsValid(ActiveRewardSession)) return;
+	for (int32 Index = 0; Index < CoreRewardRules::MaxChoices; ++Index)
 	{
-		ActiveChoiceWidget->SetRerollEnabled(Index, CoreComponent->CanRerollCoreChoice(Index));
+		ActiveChoiceWidget->SetRerollEnabled(Index, ActiveRewardSession->CanRerollCoreChoice(Index));
+	}
+}
+
+bool ACorePickup::RefreshChoiceScreen()
+{
+	if (!IsValid(ActiveRewardSession) || !ActiveRewardSession->IsActive() || !IsValid(ActiveChoiceWidget)) return false;
+	UCoreChoiceWidget* Widget = ActiveChoiceWidget;
+	UCoreRewardSession* Session = ActiveRewardSession;
+	if (!Widget->UpdateCoreChoices(Session->GetChoiceEntries()))
+	{
+		if (ActiveChoiceWidget == Widget) ClearChoiceReward();
+		return false;
+	}
+	if (ActiveChoiceWidget != Widget || ActiveRewardSession != Session || !Session->IsActive()) return false;
+	UpdateRerollButtons();
+	return true;
+}
+
+void ACorePickup::HandleRewardCancelled()
+{
+	UE_LOG(LogCoreReward, Display, TEXT("%s: 코어 선택 상태를 정리합니다. 픽업은 소비하지 않습니다."), *GetName());
+	ClearChoiceReward();
+}
+
+void ACorePickup::ShowUnavailableNotice(ECoreRewardStartResult Result) const
+{
+	if (Result == ECoreRewardStartResult::Started) return;
+
+	// UMETA DisplayName은 에디터에서만 읽을 수 있으므로 분류 이름을 직접 지정한다.
+	const TCHAR* CategoryName = ChoiceCategory == ECoreCategory::Ability ? TEXT("능력형") : TEXT("스탯형");
+	FString Message;
+	switch (Result)
+	{
+	case ECoreRewardStartResult::Busy:
+		Message = TEXT("다른 코어 보상을 선택 중이거나 지급 처리 중입니다.");
+		break;
+	case ECoreRewardStartResult::AllAtMaxLevel:
+		Message = FString::Printf(TEXT("%s 코어를 모두 최대 단계까지 획득했습니다."), CategoryName);
+		break;
+	case ECoreRewardStartResult::NoCandidates:
+		Message = FString::Printf(TEXT("이 보상에서 받을 수 있는 %s 코어가 없습니다."), CategoryName);
+		break;
+	default:
+		Message = TEXT("지금은 코어를 받을 수 없습니다. 코어 데이터 또는 지급 대상을 확인하세요.");
+		break;
+	}
+	UE_LOG(LogCoreReward, Display, TEXT("%s: 코어 선택을 열 수 없습니다. %s"), *GetName(), *Message);
+
+	// 다른 보상을 처리 중일 때는 곧 끝나므로 화면에는 띄우지 않는다.
+	// 같은 픽업에 여러 번 닿아도 메시지가 쌓이지 않도록 픽업마다 같은 키를 사용한다.
+	if (Result != ECoreRewardStartResult::Busy && GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(GetUniqueID(), 2.5f, FColor::Yellow, Message);
 	}
 }
 
 void ACorePickup::HandleCoreSelected(UCoreDataAsset* SelectedCore)
 {
-	UCoreComponent* CoreComponent = GetValidChoosingCoreComponent();
-	if (!CoreComponent || !IsValid(SelectedCore)) return;
+	UCoreRewardSession* Session = GetValidRewardSession();
+	if (!Session || !IsValid(SelectedCore)) return;
 
 	// 획득 알림 중 다른 카드가 선택되더라도 한 보상은 한 번만 지급한다.
 	TGuardValue<bool> GrantingRewardGuard(bIsGrantingReward, true);
-	if (!IsCoreAcquireSuccess(CoreComponent->SelectCore(SelectedCore->CoreId)))
+	const ECoreAcquireResult Result = Session->SelectCore(SelectedCore->CoreId);
+	if (!IsCoreAcquireSuccess(Result))
 	{
-		// 지급에 실패하면 화면과 선택지를 유지하여 다른 코어를 선택할 수 있게 한다.
+		if (RefreshChoiceScreen())
+		{
+			ActiveChoiceWidget->SetStatusMessage(Result == ECoreAcquireResult::Busy
+				? NSLOCTEXT("CoreReward", "Busy", "코어를 처리 중입니다. 잠시 후 다시 선택하세요.")
+				: NSLOCTEXT("CoreReward", "ChoiceUnavailable", "지급할 수 없는 선택지를 정리했습니다. 코어를 다시 선택하세요."));
+		}
 		return;
 	}
 
@@ -188,20 +258,12 @@ void ACorePickup::HandleCoreSelected(UCoreDataAsset* SelectedCore)
 
 void ACorePickup::HandleCoreReroll(int32 ChoiceIndex)
 {
-	UCoreComponent* CoreComponent = GetValidChoosingCoreComponent();
-	if (!CoreComponent) return;
+	UCoreRewardSession* Session = GetValidRewardSession();
+	if (!Session) return;
 
 	TGuardValue<bool> GrantingRewardGuard(bIsGrantingReward, true);
-	UCoreChoiceWidget* Widget = ActiveChoiceWidget;
-	UCoreDataAsset* Replacement = CoreComponent->RerollCoreChoice(ChoiceIndex);
-	if (Replacement && !Widget->UpdateCoreChoice(ChoiceIndex, Replacement))
-	{
-		// 후보와 화면이 어긋난 상태로 선택하지 못하도록 현재 선택을 정리한다.
-		ClearChoiceReward();
-		return;
-	}
-	// 카드의 강조 알림에서 화면이 닫혔다면, 종료된 선택 화면을 다시 갱신하지 않는다.
-	if (ActiveChoiceWidget == Widget) UpdateRerollButtons();
+	Session->RerollCoreChoice(ChoiceIndex);
+	RefreshChoiceScreen();
 }
 
 void ACorePickup::HandleChoiceClosed()
@@ -226,7 +288,6 @@ void ACorePickup::CloseChoiceScreen(bool bAnimateClose)
 
 	// 화면 종료 알림에서 이 함수가 다시 호출되어도 같은 상태를 정리하지 않도록 먼저 비운다.
 	ActiveChoiceWidget = nullptr;
-	ChoosingCoreComponent.Reset();
 	ChoosingPlayer.Reset();
 	if (IsValid(Player))
 	{
@@ -244,9 +305,12 @@ void ACorePickup::CloseChoiceScreen(bool bAnimateClose)
 
 void ACorePickup::ClearChoiceReward(bool bAnimateClose)
 {
-	if (UCoreComponent* CoreComponent = ChoosingCoreComponent.Get(); IsValid(CoreComponent))
+	UCoreRewardSession* Session = ActiveRewardSession;
+	ActiveRewardSession = nullptr;
+	if (IsValid(Session))
 	{
-		CoreComponent->CancelCoreChoices();
+		Session->OnCancelled.RemoveAll(this);
+		Session->Cancel();
 	}
 	CloseChoiceScreen(bAnimateClose);
 }

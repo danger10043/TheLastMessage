@@ -5,12 +5,10 @@
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
 #include "Components/TextBlock.h"
-#include "Core/CoreComponent.h"
 #include "DataAsset/CoreDataAsset.h"
 #include "Engine/World.h"
 #include "GameFramework/GameModeBase.h"
 #include "GameFramework/PlayerController.h"
-#include "GameFramework/Pawn.h"
 #include "Input/Reply.h"
 #include "InputCoreTypes.h"
 #include "Kismet/GameplayStatics.h"
@@ -19,7 +17,7 @@
 
 
 UCoreChoiceWidget* UCoreChoiceWidget::OpenCoreChoiceUI(APlayerController* PlayerController,
-	const TArray<UCoreDataAsset*>& Choices, TSubclassOf<UCoreChoiceWidget> ScreenClass)
+	const TArray<FCoreChoiceEntry>& Choices, TSubclassOf<UCoreChoiceWidget> ScreenClass)
 {
 	if (!IsValid(PlayerController) || !PlayerController->IsLocalController()
 		|| !ScreenClass || ScreenClass->HasAnyClassFlags(CLASS_Abstract)) return nullptr;
@@ -33,21 +31,26 @@ UCoreChoiceWidget* UCoreChoiceWidget::OpenCoreChoiceUI(APlayerController* Player
 	}
 
 	// 비어 있거나 ID가 중복된 항목을 걸러, 표시 가능한 후보를 최대 3개 준비한다.
-	TArray<UCoreDataAsset*> ValidChoices;
+	TArray<FCoreChoiceEntry> ValidChoices;
 	TSet<FName> Ids;
-	for (UCoreDataAsset* Data : Choices)
+	for (const FCoreChoiceEntry& Entry : Choices)
 	{
+		const UCoreDataAsset* Data = Entry.CoreData.Get();
 		if (!IsValid(Data) || Data->CoreId.IsNone() || Ids.Contains(Data->CoreId)) continue;
-		ValidChoices.Add(Data);
+		ValidChoices.Add(Entry);
 		Ids.Add(Data->CoreId);
-		if (ValidChoices.Num() == 3) break;
+		if (ValidChoices.Num() == CoreRewardRules::MaxChoices) break;
 	}
 	if (ValidChoices.IsEmpty()) return nullptr;
 
 	// 전달받은 WBP 클래스로 화면을 만들어 디자이너에서 작성한 배치를 사용한다.
 	UCoreChoiceWidget* Screen = CreateWidget<UCoreChoiceWidget>(PlayerController, ScreenClass);
 	if (!Screen) return nullptr;
-	for (UCoreDataAsset* Data : ValidChoices) Screen->DisplayedChoices.Add(Data);
+	for (const FCoreChoiceEntry& Entry : ValidChoices)
+	{
+		Screen->DisplayedChoices.Add(Entry.CoreData);
+		Screen->DisplayedLevels.Add(FMath::Max(0, Entry.CurrentLevel));
+	}
 	if (!Screen->PopulateCards()) return nullptr;
 	// 카드 준비가 끝나면 화면을 표시하고 플레이어 입력을 이 화면으로 옮긴다.
 	Screen->AddToViewport(100);
@@ -67,7 +70,7 @@ void UCoreChoiceWidget::NativeOnInitialized()
 	if (FirstRerollButton) FirstRerollButton->OnClicked.AddDynamic(this, &UCoreChoiceWidget::HandleFirstReroll);
 	if (SecondRerollButton) SecondRerollButton->OnClicked.AddDynamic(this, &UCoreChoiceWidget::HandleSecondReroll);
 	if (ThirdRerollButton) ThirdRerollButton->OnClicked.AddDynamic(this, &UCoreChoiceWidget::HandleThirdReroll);
-	for (int32 Index = 0; Index < 3; ++Index) SetRerollEnabled(Index, false);
+	for (int32 Index = 0; Index < CoreRewardRules::MaxChoices; ++Index) SetRerollEnabled(Index, false);
 }
 
 bool UCoreChoiceWidget::PopulateCards()
@@ -87,7 +90,7 @@ bool UCoreChoiceWidget::PopulateCards()
 			Cards.Reset();
 			return false;
 		}
-		Card->SetCoreData(DisplayedChoices[Index], Index, GetCurrentCoreLevel(DisplayedChoices[Index]));
+		Card->SetCoreData(DisplayedChoices[Index], Index, DisplayedLevels.IsValidIndex(Index) ? DisplayedLevels[Index] : 0);
 		// 카드가 보낸 클릭·마우스 알림을 부모 화면의 처리 함수에 연결한다.
 		Card->OnCoreChosen.AddUObject(this, &UCoreChoiceWidget::HandleCardChosen);
 		Card->OnCoreHovered.AddUObject(this, &UCoreChoiceWidget::SetActiveCardIndex);
@@ -110,7 +113,7 @@ bool UCoreChoiceWidget::PopulateCards()
 
 void UCoreChoiceWidget::SetActiveCardIndex(int32 Index)
 {
-	if (bClosing || !Cards.IsValidIndex(Index)) return;
+	if (bClosing || !Cards.IsValidIndex(Index) || !IsValid(DisplayedChoices[Index])) return;
 	ActiveCardIndex = Index;
 	// 어느 카드를 강조할지 전달한다. 카드는 WBP에 지정한 기본 색상과 강조 색상을 적용한다.
 	for (int32 CardIndex = 0; CardIndex < Cards.Num(); ++CardIndex)
@@ -140,25 +143,49 @@ void UCoreChoiceWidget::HandleReroll(int32 ChoiceIndex)
 	OnRerollRequested.Broadcast(ChoiceIndex);
 }
 
-int32 UCoreChoiceWidget::GetCurrentCoreLevel(const UCoreDataAsset* CoreData) const
+bool UCoreChoiceWidget::UpdateCoreChoices(const TArray<FCoreChoiceEntry>& Choices)
 {
-	const APawn* Pawn = GetOwningPlayerPawn();
-	const UCoreComponent* Core = Pawn ? Pawn->FindComponentByClass<UCoreComponent>() : nullptr;
-	return Core && IsValid(CoreData) ? Core->GetCoreLevel(CoreData->CoreId) : 0;
+	if (bClosing || Choices.Num() != Cards.Num()) return false;
+	TSet<FName> Ids;
+	int32 FirstValidIndex = INDEX_NONE;
+	for (int32 Index = 0; Index < Choices.Num(); ++Index)
+	{
+		const UCoreDataAsset* Data = Choices[Index].CoreData.Get();
+		if (!IsValid(Data)) continue;
+		if (Data->CoreId.IsNone() || Ids.Contains(Data->CoreId)) return false;
+		Ids.Add(Data->CoreId);
+		if (FirstValidIndex == INDEX_NONE) FirstValidIndex = Index;
+	}
+	if (FirstValidIndex == INDEX_NONE) return false;
+	DisplayedLevels.SetNum(Choices.Num());
+	for (int32 Index = 0; Index < Choices.Num(); ++Index)
+	{
+		UCoreDataAsset* Data = Choices[Index].CoreData.Get();
+		DisplayedChoices[Index] = Data;
+		DisplayedLevels[Index] = FMath::Max(0, Choices[Index].CurrentLevel);
+		Cards[Index]->SetCoreData(Data, Index, DisplayedLevels[Index]);
+		Cards[Index]->SetVisibility(IsValid(Data) ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+		if (RerollButtonsBox && Index < RerollButtonsBox->GetChildrenCount())
+		{
+			RerollButtonsBox->GetChildAt(Index)->SetVisibility(IsValid(Data) ? ESlateVisibility::SelfHitTestInvisible : ESlateVisibility::Collapsed);
+		}
+	}
+	SetActiveCardIndex(IsValid(DisplayedChoices[ActiveCardIndex]) ? ActiveCardIndex : FirstValidIndex);
+	return true;
 }
 
-bool UCoreChoiceWidget::UpdateCoreChoice(int32 ChoiceIndex, UCoreDataAsset* CoreData)
+void UCoreChoiceWidget::SetStatusMessage(const FText& Message)
 {
-	if (bClosing || !DisplayedChoices.IsValidIndex(ChoiceIndex) || !Cards.IsValidIndex(ChoiceIndex)
-		|| !IsValid(CoreData) || CoreData->CoreId.IsNone()) return false;
-	for (int32 Index = 0; Index < DisplayedChoices.Num(); ++Index)
+	if (HintText) HintText->SetText(Message);
+}
+
+void UCoreChoiceWidget::MoveActiveCard(int32 Offset)
+{
+	for (int32 Step = 1; Step <= Cards.Num(); ++Step)
 	{
-		if (Index != ChoiceIndex && DisplayedChoices[Index]->CoreId == CoreData->CoreId) return false;
+		const int32 Index = (ActiveCardIndex + (Offset * Step) + Cards.Num()) % Cards.Num();
+		if (IsValid(DisplayedChoices[Index])) { SetActiveCardIndex(Index); break; }
 	}
-	DisplayedChoices[ChoiceIndex] = CoreData;
-	Cards[ChoiceIndex]->SetCoreData(CoreData, ChoiceIndex, GetCurrentCoreLevel(CoreData));
-	SetActiveCardIndex(ChoiceIndex);
-	return true;
 }
 
 UButton* UCoreChoiceWidget::GetRerollButton(int32 ChoiceIndex) const
@@ -176,7 +203,8 @@ void UCoreChoiceWidget::SetRerollEnabled(int32 ChoiceIndex, bool bEnabled)
 {
 	if (UButton* Button = GetRerollButton(ChoiceIndex))
 	{
-		Button->SetIsEnabled(bEnabled && !bClosing && DisplayedChoices.IsValidIndex(ChoiceIndex));
+		Button->SetIsEnabled(bEnabled && !bClosing && DisplayedChoices.IsValidIndex(ChoiceIndex)
+			&& IsValid(DisplayedChoices[ChoiceIndex]));
 	}
 }
 
@@ -262,11 +290,6 @@ void UCoreChoiceWidget::RestorePlayerInput()
 
 void UCoreChoiceWidget::CloseChoiceUI(bool bAnimate)
 {
-	BeginClose(bAnimate);
-}
-
-void UCoreChoiceWidget::BeginClose(bool bAnimate)
-{
 	if (bClosing)
 	{
 		// 액터 파괴나 화면 교체 시에는 진행 중인 페이드도 즉시 끝낼 수 있다.
@@ -317,12 +340,12 @@ FReply UCoreChoiceWidget::NativeOnKeyDown(const FGeometry& Geometry, const FKeyE
 	// 나머지 연산(%)으로 처음과 마지막 카드 사이를 순환한다.
 	if (Key == EKeys::Left || (Key == EKeys::Tab && Event.IsShiftDown()))
 	{
-		if (!Cards.IsEmpty()) SetActiveCardIndex((ActiveCardIndex + Cards.Num() - 1) % Cards.Num());
+		MoveActiveCard(-1);
 		return FReply::Handled();
 	}
 	if (Key == EKeys::Right || Key == EKeys::Tab)
 	{
-		if (!Cards.IsEmpty()) SetActiveCardIndex((ActiveCardIndex + 1) % Cards.Num());
+		MoveActiveCard(1);
 		return FReply::Handled();
 	}
 	return Super::NativeOnKeyDown(Geometry, Event);

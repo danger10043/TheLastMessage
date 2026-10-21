@@ -42,6 +42,7 @@ int32 UCoreComponent::GetCoreLevel(FName CoreId) const
 
 ECoreAcquireResult UCoreComponent::CheckAcquire(const UCoreDataAsset* CoreData) const
 {
+	if (bIsChangingCoreGrants) return ECoreAcquireResult::Busy;
 	// 유효한 데이터와 보유 기록에 사용할 ID가 필요하다.
 	if (!IsValid(CoreData) || CoreData->CoreId.IsNone())
 	{
@@ -55,7 +56,9 @@ ECoreAcquireResult UCoreComponent::CheckAcquire(const UCoreDataAsset* CoreData) 
 	}
 
 	// Custom에서만 최대 단계를 검사한다. Infinite는 MaxLevel 값과 관계없이 계속 강화할 수 있다.
-	const int32 CurrentLevel = GetCoreLevel(CoreData->CoreId);
+	const FCoreGrantRecord* Existing = AppliedCoreHandles.FindByPredicate(
+		[CoreData](const FCoreGrantRecord& Record) { return Record.CoreId == CoreData->CoreId; });
+	const int32 CurrentLevel = Existing ? Existing->Level : 0;
 	if (CurrentLevel == MAX_int32)
 	{
 		return ECoreAcquireResult::MaxLevel;
@@ -77,36 +80,33 @@ ECoreAcquireResult UCoreComponent::CheckAcquire(const UCoreDataAsset* CoreData) 
 	{
 		return ECoreAcquireResult::InvalidData;
 	}
+	const UAbilitySystemComponent* ASC = AbilitySystemComponent.Get();
+	if (!ASC->IsOwnerActorAuthoritative() || !ASC->AbilityActorInfo.IsValid()
+		|| !ASC->AbilityActorInfo->OwnerActor.IsValid() || !ASC->AbilityActorInfo->AvatarActor.IsValid())
+	{
+		return ECoreAcquireResult::NoAbilitySystem;
+	}
 
+	// 유지 효과나 능력이 사라진 코어는 정상적으로 강화할 수 없으므로 후보에서도 제외한다.
+	if (Existing)
+	{
+		for (const FActiveGameplayEffectHandle& Handle : Existing->EffectHandles)
+		{
+			if (!ASC->GetActiveGameplayEffect(Handle)) return ECoreAcquireResult::GrantFailed;
+		}
+		for (const FGameplayAbilitySpecHandle& Handle : Existing->AbilityHandles)
+		{
+			const FGameplayAbilitySpec* Ability = ASC->FindAbilitySpecFromHandle(Handle);
+			if (!Ability || Ability->PendingRemove) return ECoreAcquireResult::GrantFailed;
+		}
+	}
 	return CurrentLevel > 0 ? ECoreAcquireResult::Upgraded : ECoreAcquireResult::Acquired;
 }
 
-bool UCoreComponent::CanAcquireCore(const UCoreDataAsset* CoreData) const
-{
-	return IsCoreAcquireSuccess(CheckAcquire(CoreData));
-}
-
-bool UCoreComponent::UpgradeCore(FCoreGrantRecord& Record)
+void UCoreComponent::UpgradeCore(FCoreGrantRecord& Record)
 {
 	UAbilitySystemComponent* ASC = AbilitySystemComponent.Get();
 	check(ASC);
-
-	// 다른 처리에서 부여 내용이 제거되었다면, 단계만 올라간 채 보상이 소비되지 않도록 거부한다.
-	for (const FActiveGameplayEffectHandle& EffectHandle : Record.EffectHandles)
-	{
-		if (!ASC->GetActiveGameplayEffect(EffectHandle))
-		{
-			return false;
-		}
-	}
-	for (const FGameplayAbilitySpecHandle& AbilityHandle : Record.AbilityHandles)
-	{
-		const FGameplayAbilitySpec* AbilitySpec = ASC->FindAbilitySpecFromHandle(AbilityHandle);
-		if (!AbilitySpec || AbilitySpec->PendingRemove)
-		{
-			return false;
-		}
-	}
 
 	const int32 NextLevel = Record.Level + 1;
 	for (const FActiveGameplayEffectHandle& EffectHandle : Record.EffectHandles)
@@ -123,7 +123,6 @@ bool UCoreComponent::UpgradeCore(FCoreGrantRecord& Record)
 		}
 	}
 	Record.Level = NextLevel;
-	return true;
 }
 
 
@@ -159,27 +158,13 @@ void UCoreComponent::RemoveCoreGrants(const FCoreGrantRecord& Record)
 
 ECoreAcquireResult UCoreComponent::AcquireCore(UCoreDataAsset* CoreData)
 {
-	// 코어 획득 중에 다른 획득이나 초기화가 다시 시작되는 것을 막는다.
-	if (bIsChangingCoreGrants)
-	{
-		return ECoreAcquireResult::Busy;
-	}
-
 	const ECoreAcquireResult ExpectedResult = CheckAcquire(CoreData);
 	if (!IsCoreAcquireSuccess(ExpectedResult))
 	{
 		return ExpectedResult;
 	}
 
-	// ASC가 유효하고 권한이 있는 경우에만 능력과 효과를 부여한다.
 	UAbilitySystemComponent* ASC = AbilitySystemComponent.Get();
-	if (!IsValid(ASC) || !ASC->IsOwnerActorAuthoritative()
-		|| !ASC->AbilityActorInfo.IsValid()
-		|| !ASC->AbilityActorInfo->OwnerActor.IsValid()
-		|| !ASC->AbilityActorInfo->AvatarActor.IsValid())
-	{
-		return ECoreAcquireResult::NoAbilitySystem;
-	}
 
 	const int32 OldLevel = GetCoreLevel(CoreData->CoreId);
 
@@ -191,10 +176,7 @@ ECoreAcquireResult UCoreComponent::AcquireCore(UCoreDataAsset* CoreData)
 			[CoreData](const FCoreGrantRecord& Record) { return Record.CoreId == CoreData->CoreId; });
 		if (ExistingRecord)
 		{
-			if (!UpgradeCore(*ExistingRecord))
-			{
-				return ECoreAcquireResult::GrantFailed;
-			}
+			UpgradeCore(*ExistingRecord);
 		}
 		else
 		{
@@ -270,7 +252,8 @@ void UCoreComponent::ResetOwnedCores()
 	// 첫 제거 알림부터 모든 코어가 미보유 상태로 조회되도록 기록을 먼저 비운다.
 	const TArray<FCoreGrantRecord> RemovedRecords = MoveTemp(AppliedCoreHandles);
 	AppliedCoreHandles.Reset();
-	CancelCoreChoices();
+	ActiveRewardOwner.Reset();
+	OnRewardInvalidated.Broadcast();
 
 	for (const FCoreGrantRecord& Record : RemovedRecords)
 	{
@@ -285,139 +268,22 @@ void UCoreComponent::ResetOwnedCores()
 }
 
 
-TArray<UCoreDataAsset*> UCoreComponent::GenerateCoreChoices(const TArray<UCoreDataAsset*>& CandidatePool, ECoreCategory Category)
+bool UCoreComponent::TryReserveReward(UObject* Requester)
 {
-	// 기존 보상의 선택지가 남아 있으면 다른 보상의 후보로 덮어쓰지 않는다.
-	if (bIsChangingCoreGrants || bIsSelectingCore || !CurrentChoiceState.Choices.IsEmpty())
-	{
-		return {};
-	}
-
-	TArray<UCoreDataAsset*> EligibleCores;
-	TSet<FName> CandidateIds;
-	for (UCoreDataAsset* CoreData : CandidatePool)
-	{
-		// 분류에 맞는 무작위 보상 코어만 사용한다. 최대 단계와 GE/GA 검사도 기존 획득 기준을 공유한다.
-		if (!CanAcquireCore(CoreData) || !CoreData->bIncludeInRandomPool
-			|| CoreData->CoreCategory != Category || CandidateIds.Contains(CoreData->CoreId))
-		{
-			continue;
-		}
-
-		CandidateIds.Add(CoreData->CoreId);
-		EligibleCores.Add(CoreData);
-	}
-
-	constexpr int32 MaxChoices = 3;
-	const int32 NumChoices = FMath::Min(MaxChoices, EligibleCores.Num());
-	if (NumChoices == 0) return {};
-
-	// 새 보상의 후보와 카드별 리롤 기록을 준비한다.
-	CurrentChoiceState = FCoreChoiceState();
-	CurrentChoiceState.CandidatePool.Reserve(EligibleCores.Num());
-	// 추첨에 사용할 분류의 후보만 보관하여, 리롤이나 ESC 재진입 때 다른 풀의 코어가 섞이지 않게 한다.
-	for (UCoreDataAsset* CoreData : EligibleCores)
-	{
-		CurrentChoiceState.CandidatePool.Add(CoreData);
-	}
-	CurrentChoiceState.RerollCounts.Init(0, NumChoices);
-
-	TArray<UCoreDataAsset*> Choices;
-	Choices.Reserve(NumChoices);
-
-	// 남은 후보 중 하나를 균등하게 고르고 제거하여, 최대 3개를 중복 없이 추첨한다.
-	for (int32 ChoiceIndex = 0; ChoiceIndex < NumChoices; ++ChoiceIndex)
-	{
-		const int32 RandomIndex = FMath::RandRange(0, EligibleCores.Num() - 1);
-		UCoreDataAsset* SelectedCore = EligibleCores[RandomIndex];
-		Choices.Add(SelectedCore);
-		CurrentChoiceState.Choices.Add(SelectedCore);
-		CurrentChoiceState.ShownCoreIds.Add(SelectedCore->CoreId);
-		EligibleCores.RemoveAtSwap(RandomIndex, EAllowShrinking::No);
-	}
-
-	return Choices;
+	if (!IsValid(Requester) || bIsChangingCoreGrants || ActiveRewardOwner.IsValid()) return false;
+	ActiveRewardOwner = Requester;
+	return true;
 }
 
-ECoreAcquireResult UCoreComponent::SelectCore(FName CoreId)
+void UCoreComponent::ReleaseReward(const UObject* Requester)
 {
-	if (bIsChangingCoreGrants || bIsSelectingCore)
-	{
-		return ECoreAcquireResult::Busy;
-	}
-	if (CoreId.IsNone())
-	{
-		return ECoreAcquireResult::InvalidData;
-	}
-
-	// 선택한 코어 ID와 일치하는 현재 선택지의 데이터를 찾는다.
-	UCoreDataAsset* SelectedCore = nullptr;
-	for (const TObjectPtr<UCoreDataAsset>& CoreData : CurrentChoiceState.Choices)
-	{
-		if (IsValid(CoreData.Get()) && CoreData->CoreId == CoreId)
-		{
-			SelectedCore = CoreData.Get();
-			break;
-		}
-	}
-
-	if (!SelectedCore)
-	{
-		return ECoreAcquireResult::NotOffered;
-	}
-
-	// 획득 성공 알림이 발생하는 동안에도 한 보상에서 두 코어를 선택할 수 없게 한다.
-	TGuardValue<bool> SelectingCoreGuard(bIsSelectingCore, true);
-	const ECoreAcquireResult Result = AcquireCore(SelectedCore);
-	if (!IsCoreAcquireSuccess(Result))
-	{
-		return Result;
-	}
-
-	// 획득 성공 후에만 선택 상태를 비운다. 실패한 경우에는 기존 선택지를 유지한다.
-	CancelCoreChoices();
-	return Result;
+	if (ActiveRewardOwner.Get() == Requester) ActiveRewardOwner.Reset();
 }
 
-void UCoreComponent::CancelCoreChoices()
+void UCoreComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	CurrentChoiceState = FCoreChoiceState();
-}
-
-TArray<UCoreDataAsset*> UCoreComponent::GetRerollCandidates(int32 ChoiceIndex) const
-{
-	if (bIsChangingCoreGrants || bIsSelectingCore
-		|| !CurrentChoiceState.Choices.IsValidIndex(ChoiceIndex)
-		|| !CurrentChoiceState.RerollCounts.IsValidIndex(ChoiceIndex)
-		|| CurrentChoiceState.RerollCounts[ChoiceIndex] >= 1) return {};
-
-	// 현재 카드뿐 아니라 리롤로 사라진 코어도 제외한다. 같은 ID의 후보도 한 번만 모은다.
-	TSet<FName> ExcludedIds = CurrentChoiceState.ShownCoreIds;
-
-	TArray<UCoreDataAsset*> Candidates;
-	for (const TObjectPtr<UCoreDataAsset>& Data : CurrentChoiceState.CandidatePool)
-	{
-		if (!CanAcquireCore(Data.Get()) || ExcludedIds.Contains(Data->CoreId)) continue;
-		ExcludedIds.Add(Data->CoreId);
-		Candidates.Add(Data.Get());
-	}
-	return Candidates;
-}
-
-bool UCoreComponent::CanRerollCoreChoice(int32 ChoiceIndex) const
-{
-	return !GetRerollCandidates(ChoiceIndex).IsEmpty();
-}
-
-UCoreDataAsset* UCoreComponent::RerollCoreChoice(int32 ChoiceIndex)
-{
-	const TArray<UCoreDataAsset*> Candidates = GetRerollCandidates(ChoiceIndex);
-	if (Candidates.IsEmpty()) return nullptr;
-
-	UCoreDataAsset* Replacement = Candidates[FMath::RandRange(0, Candidates.Num() - 1)];
-	// 나머지 선택지와 전체 후보 풀은 그대로 유지한다.
-	CurrentChoiceState.Choices[ChoiceIndex] = Replacement;
-	CurrentChoiceState.ShownCoreIds.Add(Replacement->CoreId);
-	++CurrentChoiceState.RerollCounts[ChoiceIndex];
-	return Replacement;
+	TGuardValue<bool> ChangingGrantsGuard(bIsChangingCoreGrants, true);
+	ActiveRewardOwner.Reset();
+	OnRewardInvalidated.Broadcast();
+	Super::EndPlay(EndPlayReason);
 }

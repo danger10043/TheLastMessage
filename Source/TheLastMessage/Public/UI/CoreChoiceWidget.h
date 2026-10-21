@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "Core/GameCoreTypes.h"
 #include "Layout/Margin.h"
 #include "CoreChoiceWidget.generated.h"
 
@@ -27,18 +28,23 @@ class THELASTMESSAGE_API UCoreChoiceWidget : public UUserWidget
 	GENERATED_BODY()
 
 public:
-	/** 지정한 화면 WBP로 로컬 플레이어의 선택 화면을 연다. 유효한 후보가 없으면 열지 않는다. */
+	/**
+	 * 지정한 화면 WBP로 로컬 플레이어의 선택 화면을 연다. 유효한 후보가 없으면 열지 않는다.
+	 * 카드에 표시할 보유 단계는 호출한 쪽(보상 세션)이 함께 전달한다.
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Core|UI")
 	static UCoreChoiceWidget* OpenCoreChoiceUI(APlayerController* PlayerController,
-		const TArray<UCoreDataAsset*>& Choices, TSubclassOf<UCoreChoiceWidget> ScreenClass);
+		const TArray<FCoreChoiceEntry>& Choices, TSubclassOf<UCoreChoiceWidget> ScreenClass);
 
 	/** 기본적으로 페이드를 마친 뒤 화면을 닫는다. 강제 정리가 필요하면 bAnimate를 false로 전달한다. */
 	UFUNCTION(BlueprintCallable, Category = "Core|UI")
 	void CloseChoiceUI(bool bAnimate = true);
 
-	/** 재추첨 결과를 해당 카드 한 장에 반영한다. 나머지 카드는 그대로 유지한다. */
+	/** 카드 위치와 리롤 기록을 유지하면서 현재 선택지를 갱신한다. 비어 있는 위치는 접는다. */
 	UFUNCTION(BlueprintCallable, Category = "Core|UI")
-	bool UpdateCoreChoice(int32 ChoiceIndex, UCoreDataAsset* CoreData);
+	bool UpdateCoreChoices(const TArray<FCoreChoiceEntry>& Choices);
+
+	void SetStatusMessage(const FText& Message);
 
 	/** 보상 쪽에서 확인한 카드별 리롤 가능 여부를 해당 버튼에 반영한다. */
 	UFUNCTION(BlueprintCallable, Category = "Core|UI")
@@ -88,6 +94,9 @@ protected:
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UTextBlock> SelectionCounter;
 
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> HintText;
+
 	/** 카드 아래의 리롤 버튼들을 배치할 영역. 후보 수에 맞춰 표시한다. */
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UHorizontalBox> RerollButtonsBox;
@@ -107,10 +116,9 @@ protected:
 private:
 	/** 후보마다 카드와 입력 이벤트를 준비한다. 모든 카드 생성에 성공하면 true를 반환한다. */
 	bool PopulateCards();
-	/** 표시 대상 코어의 현재 보유 단계를 조회한다. 최초 표시와 리롤에 같은 기준을 사용한다. */
-	int32 GetCurrentCoreLevel(const UCoreDataAsset* CoreData) const;
 	/** 입력 대상과 카드별 강조 상태를 바꾸고 화면 상단의 선택 위치를 갱신한다. */
 	void SetActiveCardIndex(int32 Index);
+	void MoveActiveCard(int32 Offset);
 	/** 선택한 코어를 외부에 알린다. 지급 결과에 따라 외부에서 화면을 닫을 수 있다. */
 	void HandleCardChosen(UCoreDataAsset* CoreData);
 	/** 게임을 일시정지하고 입력을 UI로 옮긴다. 일시정지에 실패하면 화면을 열지 않는다. */
@@ -119,9 +127,6 @@ private:
 	void RestorePlayerInput();
 	/** 선택 화면이 열려 있는 동안 다른 곳에서 일시정지를 풀지 못하게 한다. */
 	bool CanUnpauseAfterClose() const;
-	/** 추가 입력을 막고 페이드 또는 즉시 종료를 시작한다. */
-	void BeginClose(bool bAnimate);
-
 	/** 유효한 카드 위치의 리롤 요청을 외부에 전달한다. */
 	void HandleReroll(int32 ChoiceIndex);
 
@@ -141,6 +146,9 @@ private:
 	/** 현재 화면에 표시하는 후보 데이터. */
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UCoreDataAsset>> DisplayedChoices;
+
+	/** DisplayedChoices와 같은 순서의 보유 단계. 보상 세션이 전달한 값을 그대로 표시한다. */
+	TArray<int32> DisplayedLevels;
 
 	/** 화면에 생성한 카드 위젯들. 현재 카드 수와 유효한 선택 위치를 확인할 때 사용한다. */
 	UPROPERTY(Transient)

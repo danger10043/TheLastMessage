@@ -3,6 +3,7 @@
 #include "Misc/AutomationTest.h"
 #include "AbilitySystemComponent.h"
 #include "Core/CoreComponent.h"
+#include "Core/CoreRewardSession.h"
 #include "CoreComponentTestObserver.h"
 #include "DataAsset/CoreDataAsset.h"
 #include "Engine/CurveTable.h"
@@ -24,8 +25,9 @@ namespace
 		UAbilitySystemComponent* ASC = nullptr;
 		UCombatAttributeSet* Attributes = nullptr;
 		UCoreComponent* Core = nullptr;
+		TStrongObjectPtr<UCoreRewardSession> Reward;
 
-		explicit FCoreTestFixture(bool bWithCombatAttributes)
+		explicit FCoreTestFixture(bool bWithCombatAttributes) : Reward(NewObject<UCoreRewardSession>())
 		{
 			UWorld::InitializationValues Values;
 			Values.AllowAudioPlayback(false).CreatePhysicsScene(false).CreateNavigation(false).CreateAISystem(false);
@@ -45,6 +47,11 @@ namespace
 			Owner->AddInstanceComponent(Core);
 			Core->RegisterComponent();
 			Core->Initialize(ASC);
+		}
+
+		TArray<UCoreDataAsset*> GenerateChoices(const TArray<UCoreDataAsset*>& Pool, ECoreCategory Category)
+		{
+			return Reward->Start(Core, Pool, Category) == ECoreRewardStartResult::Started ? Reward->GetChoices() : TArray<UCoreDataAsset*>();
 		}
 
 		~FCoreTestFixture()
@@ -108,8 +115,8 @@ bool FCoreUpgradeTest::RunTest(const FString& Parameters)
 		? FGameplayAbilitySpecHandle() : ASC->GetActivatableAbilities()[0].Handle;
 
 	// 보유 중인 강화 후보는 유지하되, 같은 ID를 선택지에 두 번 넣지는 않는다.
-	TestEqual(TEXT("Owned upgradeable core remains a unique candidate"), Core->GenerateCoreChoices(Pool, ECoreCategory::Stat).Num(), 1);
-	Core->CancelCoreChoices();
+	TestEqual(TEXT("Owned upgradeable core remains a unique candidate"), Fixture.GenerateChoices(Pool, ECoreCategory::Stat).Num(), 1);
+	Fixture.Reward->Cancel();
 	TestTrue(TEXT("Reacquisition upgrades"), Core->AcquireCore(Data) == ECoreAcquireResult::Upgraded);
 	TestEqual(TEXT("Reacquisition is level two"), Core->GetCoreLevel(Data->CoreId), 2);
 	TestTrue(TEXT("Curve replaces the old magnitude instead of stacking"), FMath::IsNearlyEqual(Attributes->GetDamageDealtMultiplier(), 1.30f));
@@ -118,15 +125,15 @@ bool FCoreUpgradeTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Upgrade does not duplicate abilities"), ASC->GetActivatableAbilities().Num(), 1);
 	const FGameplayAbilitySpec* AbilitySpec = ASC->FindAbilitySpecFromHandle(AbilityHandle);
 	TestTrue(TEXT("Existing ability level is updated"), AbilitySpec && AbilitySpec->Level == 2);
-	TestEqual(TEXT("Upgraded core remains eligible for a new reward"), Core->GenerateCoreChoices(Pool, ECoreCategory::Stat).Num(), 1);
-	Core->CancelCoreChoices();
+	TestEqual(TEXT("Upgraded core remains eligible for a new reward"), Fixture.GenerateChoices(Pool, ECoreCategory::Stat).Num(), 1);
+	Fixture.Reward->Cancel();
 
 	TestTrue(TEXT("Final upgrade succeeds"), Core->AcquireCore(Data) == ECoreAcquireResult::Upgraded);
 	TestEqual(TEXT("Final level is capped"), Core->GetCoreLevel(Data->CoreId), 3);
 	TestTrue(TEXT("Final curve value is applied"), FMath::IsNearlyEqual(Attributes->GetDamageDealtMultiplier(), 1.45f));
 	TestTrue(TEXT("Acquisition past the maximum is rejected"), Core->AcquireCore(Data) == ECoreAcquireResult::MaxLevel);
 	TestEqual(TEXT("Rejected acquisition preserves level"), Core->GetCoreLevel(Data->CoreId), 3);
-	TestTrue(TEXT("Maxed core is excluded from new choices"), Core->GenerateCoreChoices(Pool, ECoreCategory::Stat).IsEmpty());
+	TestTrue(TEXT("Maxed core is excluded from new choices"), Fixture.GenerateChoices(Pool, ECoreCategory::Stat).IsEmpty());
 
 	Core->ResetOwnedCores();
 	TestEqual(TEXT("Reset clears levels"), Core->GetCoreLevel(Data->CoreId), 0);
@@ -154,7 +161,7 @@ bool FCoreUpgradeTest::RunTest(const FString& Parameters)
 	}
 	TestEqual(TEXT("Infinite records the actual upgrade level"), Core->GetCoreLevel(Data->CoreId), 10);
 	TestEqual(TEXT("Infinite keeps one effect instead of stacking"), ASC->GetActiveEffects(FGameplayEffectQuery()).Num(), 1);
-	TestEqual(TEXT("Infinite remains eligible for future rewards"), Core->GenerateCoreChoices(Pool, ECoreCategory::Stat).Num(), 1);
+	TestEqual(TEXT("Infinite remains eligible for future rewards"), Fixture.GenerateChoices(Pool, ECoreCategory::Stat).Num(), 1);
 	Core->ResetOwnedCores();
 
 	// 치명타는 커브의 추가 확률을 적용한다. 최대 단계 이후에는 더 획득할 수 없다.
@@ -233,7 +240,7 @@ bool FCoreRewardPoolTest::RunTest(const FString& Parameters)
 	Pool.Add(Duplicate);
 	Pool.Add(nullptr);
 
-	TArray<UCoreDataAsset*> Choices = Core->GenerateCoreChoices(Pool, ECoreCategory::Stat);
+	TArray<UCoreDataAsset*> Choices = Fixture.GenerateChoices(Pool, ECoreCategory::Stat);
 	TestEqual(TEXT("Stat pool produces three cards"), Choices.Num(), 3);
 	TSet<FName> OriginalIds;
 	for (const UCoreDataAsset* Data : Choices)
@@ -242,27 +249,27 @@ bool FCoreRewardPoolTest::RunTest(const FString& Parameters)
 		OriginalIds.Add(Data->CoreId);
 	}
 	TestEqual(TEXT("Duplicate source entries do not duplicate cards"), OriginalIds.Num(), 3);
-	UCoreDataAsset* Replacement = Core->RerollCoreChoice(0);
+	UCoreDataAsset* Replacement = Fixture.Reward->RerollCoreChoice(0);
 	TestTrue(TEXT("Reroll stays in the same pool and does not repeat a shown core"),
 		Replacement && Replacement->CoreCategory == ECoreCategory::Stat && !OriginalIds.Contains(Replacement->CoreId));
 	if (Choices.IsValidIndex(0)) Choices[0] = Replacement;
-	TestNull(TEXT("A card cannot reroll twice"), Core->RerollCoreChoice(0));
-	TestFalse(TEXT("Exhausted stat pool does not fall back to abilities"), Core->CanRerollCoreChoice(1));
+	TestNull(TEXT("A card cannot reroll twice"), Fixture.Reward->RerollCoreChoice(0));
+	TestFalse(TEXT("Exhausted stat pool does not fall back to abilities"), Fixture.Reward->CanRerollCoreChoice(1));
 
-	TestTrue(TEXT("An open reward cannot be replaced by another reward"), Core->GenerateCoreChoices(Pool, ECoreCategory::Ability).IsEmpty());
-	Core->CancelCoreChoices();
-	TestTrue(TEXT("Closing a reward discards its card choices"), Core->SelectCore(Choices[0]->CoreId) == ECoreAcquireResult::NotOffered);
+	TestTrue(TEXT("An open reward cannot be replaced by another reward"), Fixture.GenerateChoices(Pool, ECoreCategory::Ability).IsEmpty());
+	Fixture.Reward->Cancel();
+	TestTrue(TEXT("Closing a reward discards its card choices"), Fixture.Reward->SelectCore(Choices[0]->CoreId) == ECoreAcquireResult::NotOffered);
 
-	Choices = Core->GenerateCoreChoices(Pool, ECoreCategory::Ability);
+	Choices = Fixture.GenerateChoices(Pool, ECoreCategory::Ability);
 	TestEqual(TEXT("Ability pool produces three cards"), Choices.Num(), 3);
 	for (const UCoreDataAsset* Data : Choices)
 	{
 		TestTrue(TEXT("Ability choices do not include stats or fixed rewards"), Data->CoreCategory == ECoreCategory::Ability && Data != FixedOnly);
 	}
-	TestFalse(TEXT("Exhausted ability pool does not fall back to stats"), Core->CanRerollCoreChoice(0));
-	Core->CancelCoreChoices();
+	TestFalse(TEXT("Exhausted ability pool does not fall back to stats"), Fixture.Reward->CanRerollCoreChoice(0));
+	Fixture.Reward->Cancel();
 	TestTrue(TEXT("A pool containing only fixed rewards produces no choices"),
-		Core->GenerateCoreChoices({ FixedOnly }, ECoreCategory::Ability).IsEmpty());
+		Fixture.GenerateChoices({ FixedOnly }, ECoreCategory::Ability).IsEmpty());
 	TestTrue(TEXT("Random pool exclusions do not prevent fixed acquisition"), Core->AcquireCore(FixedOnly) == ECoreAcquireResult::Acquired);
 	return true;
 }
@@ -282,24 +289,106 @@ bool FCoreSelectResultTest::RunTest(const FString& Parameters)
 		Data->CoreId = FName(*FString::Printf(TEXT("Test_Select_%d"), Index));
 		Pool.Add(Data);
 	}
-	TestTrue(TEXT("Selecting without choices is rejected"), Core->SelectCore(Pool[0]->CoreId) == ECoreAcquireResult::NotOffered);
-	TestTrue(TEXT("Selecting an empty ID is invalid"), Core->SelectCore(NAME_None) == ECoreAcquireResult::InvalidData);
+	TestTrue(TEXT("Selecting without choices is rejected"), Fixture.Reward->SelectCore(Pool[0]->CoreId) == ECoreAcquireResult::NotOffered);
+	TestTrue(TEXT("Selecting an empty ID is invalid"), Fixture.Reward->SelectCore(NAME_None) == ECoreAcquireResult::InvalidData);
 
-	const TArray<UCoreDataAsset*> Choices = Core->GenerateCoreChoices(Pool, ECoreCategory::Stat);
+	const TArray<UCoreDataAsset*> Choices = Fixture.GenerateChoices(Pool, ECoreCategory::Stat);
 	TestEqual(TEXT("Three choices are offered"), Choices.Num(), 3);
 	FName NotOfferedId;
 	for (const UCoreDataAsset* Data : Pool)
 	{
 		if (!Choices.Contains(Data)) NotOfferedId = Data->CoreId;
 	}
-	TestTrue(TEXT("A core outside the shown cards is rejected"), Core->SelectCore(NotOfferedId) == ECoreAcquireResult::NotOffered);
+	TestTrue(TEXT("A core outside the shown cards is rejected"), Fixture.Reward->SelectCore(NotOfferedId) == ECoreAcquireResult::NotOffered);
 	if (Choices.Num() > 0)
 	{
-		TestTrue(TEXT("Selecting a shown card acquires it"), Core->SelectCore(Choices[0]->CoreId) == ECoreAcquireResult::Acquired);
-		TestTrue(TEXT("Successful selection closes the choices"), Core->SelectCore(Choices[0]->CoreId) == ECoreAcquireResult::NotOffered);
+		TestTrue(TEXT("Selecting a shown card acquires it"), Fixture.Reward->SelectCore(Choices[0]->CoreId) == ECoreAcquireResult::Acquired);
+		TestTrue(TEXT("Successful selection closes the choices"), Fixture.Reward->SelectCore(Choices[0]->CoreId) == ECoreAcquireResult::NotOffered);
 	}
 
 	TestTrue(TEXT("Null data is invalid"), Core->AcquireCore(nullptr) == ECoreAcquireResult::InvalidData);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCoreRewardRecoveryTest, "TheLastMessage.Core.RewardRecovery",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCoreRewardRecoveryTest::RunTest(const FString& Parameters)
+{
+	FCoreTestFixture Fixture(false);
+	UCoreComponent* Core = Fixture.Core;
+	UCoreRewardSession* Reward = Fixture.Reward.Get();
+	TestTrue(TEXT("A missing recipient is unavailable"), Reward->Start(nullptr, {}, ECoreCategory::Stat) == ECoreRewardStartResult::Unavailable);
+	TestTrue(TEXT("Empty category is distinguished from maxed cores"), Reward->Start(Core, {}, ECoreCategory::Stat) == ECoreRewardStartResult::NoCandidates);
+	TestFalse(TEXT("An empty reward never becomes active"), Reward->IsActive());
+	TArray<UCoreDataAsset*> Pool;
+	for (int32 Index = 0; Index < 4; ++Index)
+	{
+		UCoreDataAsset* Data = NewObject<UCoreDataAsset>();
+		Data->CoreId = FName(*FString::Printf(TEXT("Recovery_%d"), Index));
+		Pool.Add(Data);
+	}
+	TestTrue(TEXT("A normal reward starts after an empty attempt"), Reward->Start(Core, Pool, ECoreCategory::Stat) == ECoreRewardStartResult::Started);
+	const TArray<UCoreDataAsset*> Original = Reward->GetChoices();
+	TStrongObjectPtr<UCoreRewardSession> Other(NewObject<UCoreRewardSession>());
+	TestTrue(TEXT("Another reward cannot reserve the same player"), Other->Start(Core, Pool, ECoreCategory::Stat) == ECoreRewardStartResult::Busy);
+	Other->Cancel();
+	TestTrue(TEXT("Cancelling an unrelated reward cannot release the active reservation"), Other->Start(Core, Pool, ECoreCategory::Stat) == ECoreRewardStartResult::Busy);
+	TestNull(TEXT("Invalid card indices cannot reroll"), Reward->RerollCoreChoice(-1));
+	TestTrue(TEXT("A failed reroll does not spend the valid card's use"), Reward->CanRerollCoreChoice(0));
+	for (UCoreDataAsset* Data : Original) Core->AcquireCore(Data);
+	TestTrue(TEXT("A stale maxed selection reports its actual failure"), Reward->SelectCore(Original[0]->CoreId) == ECoreAcquireResult::MaxLevel);
+	const TArray<UCoreDataAsset*> Repaired = Reward->GetChoices();
+	TestEqual(TEXT("Card slot indices remain stable during recovery"), Repaired.Num(), Original.Num());
+	UCoreDataAsset* Remaining = nullptr;
+	int32 ValidCount = 0;
+	for (UCoreDataAsset* Data : Repaired)
+	{
+		if (!Data) continue;
+		++ValidCount;
+		Remaining = Data;
+		TestFalse(TEXT("Recovery does not show a previous card again"), Original.Contains(Data));
+	}
+	TestEqual(TEXT("Only the unshown eligible core remains"), ValidCount, 1);
+	int32 CancellationCount = 0;
+	Reward->OnCancelled.AddLambda([&CancellationCount]() { ++CancellationCount; });
+	if (Remaining)
+	{
+		Core->AcquireCore(Remaining);
+		TestTrue(TEXT("Exhausting the last card preserves the failure result"), Reward->SelectCore(Remaining->CoreId) == ECoreAcquireResult::MaxLevel);
+	}
+	TestFalse(TEXT("Exhaustion ends the reward"), Reward->IsActive());
+	TestEqual(TEXT("Exhaustion notifies its caller exactly once"), CancellationCount, 1);
+	Reward->Cancel();
+	TestEqual(TEXT("Repeated cleanup is idempotent"), CancellationCount, 1);
+	TestTrue(TEXT("Fully upgraded pool has its own start result"), Other->Start(Core, Pool, ECoreCategory::Stat) == ECoreRewardStartResult::AllAtMaxLevel);
+	Core->ResetOwnedCores();
+	TestTrue(TEXT("Reset permits a new reward"), Other->Start(Core, Pool, ECoreCategory::Stat) == ECoreRewardStartResult::Started);
+	Core->ResetOwnedCores();
+	TestFalse(TEXT("Ownership reset also invalidates the active reward"), Other->IsActive());
+	Reward->OnCancelled.Clear();
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCoreRewardGrantFailureTest, "TheLastMessage.Core.RewardGrantFailure",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCoreRewardGrantFailureTest::RunTest(const FString& Parameters)
+{
+	UGameplayEffect* Effect = GetMutableDefault<UGameplayEffect>();
+	TGuardValue<EGameplayEffectDurationType> DurationGuard(Effect->DurationPolicy, EGameplayEffectDurationType::Infinite);
+	FCoreTestFixture Fixture(false);
+	UCoreDataAsset* Data = NewObject<UCoreDataAsset>();
+	Data->CoreId = TEXT("MissingGrant");
+	Data->MaxLevel = 3;
+	Data->GrantedEffects.Add(UGameplayEffect::StaticClass());
+	TestTrue(TEXT("Prepare an upgradeable core"), IsCoreAcquireSuccess(Fixture.Core->AcquireCore(Data)));
+	TestEqual(TEXT("A single candidate still opens a reward"), Fixture.GenerateChoices({Data}, ECoreCategory::Stat).Num(), 1);
+	for (const FActiveGameplayEffectHandle& Handle : Fixture.ASC->GetActiveEffects(FGameplayEffectQuery())) Fixture.ASC->RemoveActiveGameplayEffect(Handle);
+	TestTrue(TEXT("Missing grants report a grant failure"), Fixture.Reward->SelectCore(Data->CoreId) == ECoreAcquireResult::GrantFailed);
+	TestFalse(TEXT("A permanently failing last card cannot trap the screen"), Fixture.Reward->IsActive());
+	TestEqual(TEXT("The failed reward does not upgrade ownership"), Fixture.Core->GetCoreLevel(Data->CoreId), 1);
+	TestTrue(TEXT("A broken grant is excluded before reopening its screen"), Fixture.Reward->Start(Fixture.Core, {Data}, ECoreCategory::Stat) == ECoreRewardStartResult::Unavailable);
 	return true;
 }
 

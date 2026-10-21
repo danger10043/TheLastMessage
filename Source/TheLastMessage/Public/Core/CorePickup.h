@@ -9,6 +9,7 @@ class APlayerBase;
 class UCoreChoiceWidget;
 class UCoreComponent;
 class UCoreDataAsset;
+class UCoreRewardSession;
 class UPrimitiveComponent;
 class USphereComponent;
 class UStaticMeshComponent;
@@ -69,11 +70,16 @@ protected:
 	bool bConsumed = false;
 
 private:
-	/** 선택·리롤을 처리할 수 있는 플레이어와 보상 상태인지 확인하고, 유효한 코어 컴포넌트를 반환한다. */
-	UCoreComponent* GetValidChoosingCoreComponent() const;
+	/** 선택 권한과 소유자를 확인하고, 더 이상 유효하지 않은 선택은 정리한다. */
+	UCoreRewardSession* GetValidRewardSession();
 
 	/** 대체 후보와 카드별 사용 횟수에 따라 각 리롤 버튼의 활성 상태를 갱신한다. */
 	void UpdateRerollButtons();
+	bool RefreshChoiceScreen();
+	void HandleRewardCancelled();
+
+	/** 선택 화면을 열지 못한 원인을 로그와 화면 디버그 메시지로 남긴다. 처리 중(Busy)에는 화면에 띄우지 않는다. */
+	void ShowUnavailableNotice(ECoreRewardStartResult Result) const;
 
 	/** 획득 범위에 들어온 플레이어에게 보상 모드에 맞는 획득 처리를 시작한다. */
 	UFUNCTION()
@@ -114,9 +120,9 @@ private:
 	UPROPERTY(Transient)
 	TWeakObjectPtr<APlayerBase> ChoosingPlayer;
 
-	/** 현재 선택을 처리하는 컴포넌트. 화면 종료 시 이 컴포넌트의 선택 기록을 비운다. */
+	/** 이 픽업에서 진행 중인 보상의 추첨·리롤 기록. */
 	UPROPERTY(Transient)
-	TWeakObjectPtr<UCoreComponent> ChoosingCoreComponent;
+	TObjectPtr<UCoreRewardSession> ActiveRewardSession;
 
 	/** 현재 보상을 처리 중인지 나타낸다. 획득·재추첨 요청이 겹치는 것을 막는다. */
 	bool bIsGrantingReward = false;

@@ -534,11 +534,23 @@ void APlayerBase::AbilityInputPressed(FGameplayTag InputTag)
 	}
 	const EWeaponSlot RequestedSlot = InputTag == WeaponGameplayTags::Input_Primary ? EWeaponSlot::Primary
 		: InputTag == WeaponGameplayTags::Input_Secondary ? EWeaponSlot::Secondary : EWeaponSlot::None;
-	if (IsChargingWeapon() && RequestedSlot != EWeaponSlot::None && RequestedSlot != GetChargingWeaponSlot()
+	// The initial hold delay is also cancelable by the opposite slot, before charge HUD/audio starts.
+	EWeaponSlot WaitingSlot = EWeaponSlot::None;
+	for (const FGameplayAbilitySpec& Spec : AbilitySystemComponent->GetActivatableAbilities())
+	{
+		const UGA_WeaponAttackBase* Attack = Cast<UGA_WeaponAttackBase>(Spec.GetPrimaryInstance());
+		if (Spec.IsActive() && Attack && Attack->IsWaitingForAttackRelease())
+		{
+			WaitingSlot = Spec.GetDynamicSpecSourceTags().HasTagExact(WeaponGameplayTags::Input_Primary)
+				? EWeaponSlot::Primary : EWeaponSlot::Secondary;
+			break;
+		}
+	}
+	if (WaitingSlot != EWeaponSlot::None && RequestedSlot != EWeaponSlot::None && RequestedSlot != WaitingSlot
 		&& IsValid(GetWeaponInSlot(RequestedSlot)) && !Handles.IsEmpty())
 	{
 		// 반대 슬롯 입력은 발사 전 차지만 취소한다. 비용과 쿨다운은 실제 공격 실행 때 적용된다.
-		const FGameplayTag ChargingInput = GetChargingWeaponSlot() == EWeaponSlot::Primary
+		const FGameplayTag ChargingInput = WaitingSlot == EWeaponSlot::Primary
 			? WeaponGameplayTags::Input_Primary : WeaponGameplayTags::Input_Secondary;
 		TArray<FGameplayAbilitySpecHandle> ChargingHandles;
 		{
@@ -554,7 +566,7 @@ void APlayerBase::AbilityInputPressed(FGameplayTag InputTag)
 			AbilitySystemComponent->CancelAbilityHandle(Handle);
 		}
 	}
-	if (RequestedSlot != EWeaponSlot::None && !IsChargingWeapon()
+	if (RequestedSlot != EWeaponSlot::None && WaitingSlot == EWeaponSlot::None
 		&& AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking))
 	{
 		PendingAttackInput = InputTag;

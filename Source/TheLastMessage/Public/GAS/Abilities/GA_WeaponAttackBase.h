@@ -21,6 +21,7 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Weapon|Charge")
 	float GetChargeRatio() const;
+	bool IsWaitingForAttackRelease() const { return bWaitingForRelease && IsActive() && !bFinishingAttack; }
 	virtual bool CanActivateAbility(const FGameplayAbilitySpecHandle Handle,
 		const FGameplayAbilityActorInfo* ActorInfo, const FGameplayTagContainer* SourceTags = nullptr,
 		const FGameplayTagContainer* TargetTags = nullptr, FGameplayTagContainer* OptionalRelevantTags = nullptr) const override;
@@ -75,6 +76,9 @@ protected:
 
 private:
 	void ExecuteAttack();
+	void StartWeaponCharge();
+	FTimerHandle ChargeStartTimer;
+	bool bChargeStarted = false;
 	/** 현재 체력 비율에 따라 근접·원거리 공격에 적용할 피해 배율을 계산한다. */
 	float GetHealthDamageMultiplier() const;
 	/** 치명타 확률로 판정하고 이번 공격에 적용할 피해 배율을 반환한다. */

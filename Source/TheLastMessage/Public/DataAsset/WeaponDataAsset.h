@@ -150,8 +150,11 @@ public:
 	// 차지 지원 여부
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
 	bool bSupportsChargeAttack = false;
+	// Hold this long before charge audio, HUD and bonus damage begin. Short clicks release a normal attack.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Charge", meta=(ClampMin="0", EditCondition="bSupportsChargeAttack"))
+	float ChargeStartDelay = 0.2f;
 
-	// 최대 충전 시간
+	// 차지 시작 이후 최대 충전까지 걸리는 시간 (ChargeStartDelay 제외).
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon", meta = (ClampMin = "0.01", EditCondition = "bSupportsChargeAttack"))
 	float MaxChargeTime = 1.0f;
 

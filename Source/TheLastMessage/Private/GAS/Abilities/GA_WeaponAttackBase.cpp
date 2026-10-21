@@ -12,6 +12,7 @@
 #include "Components/PrimitiveComponent.h"
 #include "DataAsset/WeaponDataAsset.h"
 #include "Engine/World.h"
+#include "TimerManager.h"
 #include "DrawDebugHelpers.h"
 #include "HAL/IConsoleManager.h"
 #include "GAS/CombatAttributeSet.h"
@@ -115,6 +116,7 @@ void UGA_WeaponAttackBase::ActivateAbility(const FGameplayAbilitySpecHandle Hand
 {
 	bFinishingAttack = false;
 	bWaitingForRelease = false;
+	bChargeStarted = false;
 	bAttackExecuted = false;
 	ChargeDamageMultiplier = 1.0f;
 	CriticalHitDamageMultiplier = 1.0f;
@@ -144,9 +146,11 @@ void UGA_WeaponAttackBase::ActivateAbility(const FGameplayAbilitySpecHandle Hand
 		// 차지 시작 시 배율을 적용하고, 차지 비율 계산과 UI 게이지에 같은 시간을 사용한다.
 		const float ScaledChargeTime = Data->MaxChargeTime * Player->GetCombatAttributes()->GetChargeTimeMultiplier();
 		ChargeDuration = FMath::IsFinite(ScaledChargeTime) ? FMath::Max(0.01f, ScaledChargeTime) : Data->MaxChargeTime;
-		ChargeStartTime = GetWorld()->GetTimeSeconds();
 		bWaitingForRelease = true;
-		Player->BeginWeaponCharge(WeaponSlot, ChargeDuration);
+		const float Delay = FMath::IsFinite(Data->ChargeStartDelay) ? FMath::Max(0.0f, Data->ChargeStartDelay) : 0.2f;
+		if (Delay > 0.0f)
+			GetWorld()->GetTimerManager().SetTimer(ChargeStartTimer, this, &UGA_WeaponAttackBase::StartWeaponCharge, Delay, false);
+		else StartWeaponCharge();
 		// 빠른 클릭으로 활성화 전에 해제된 경우도 한 번만 공격한다.
 		const FGameplayAbilitySpec* Spec = GetAbilitySystemComponentFromActorInfo()->FindAbilitySpecFromHandle(Handle);
 		if (!Spec || !Spec->InputPressed) InputReleased(Handle, ActorInfo, ActivationInfo);
@@ -155,10 +159,19 @@ void UGA_WeaponAttackBase::ActivateAbility(const FGameplayAbilitySpecHandle Hand
 	ExecuteAttack();
 }
 
+void UGA_WeaponAttackBase::StartWeaponCharge()
+{
+	APlayerBase* Player = Cast<APlayerBase>(GetAvatarActorFromActorInfo());
+	if (!IsWaitingForAttackRelease() || !Player || Player->IsDead()) return;
+	bChargeStarted = true;
+	ChargeStartTime = GetWorld()->GetTimeSeconds();
+	Player->BeginWeaponCharge(WeaponSlot, ChargeDuration);
+}
+
 float UGA_WeaponAttackBase::GetChargeRatio() const
 {
 	const UWeaponDataAsset* Data = SourceWeapon ? SourceWeapon->WeaponData.Get() : nullptr;
-	if (!Data || !Data->bSupportsChargeAttack || ChargeDuration <= 0.0f) return 0.0f;
+	if (!Data || !Data->bSupportsChargeAttack || !bChargeStarted || ChargeDuration <= 0.0f) return 0.0f;
 	const float Elapsed = bWaitingForRelease ? float(GetWorld()->GetTimeSeconds() - ChargeStartTime) : ChargeElapsedTime;
 	return FMath::Clamp(Elapsed / ChargeDuration, 0.0f, 1.0f);
 }
@@ -168,6 +181,7 @@ void UGA_WeaponAttackBase::InputReleased(const FGameplayAbilitySpecHandle Handle
 {
 	Super::InputReleased(Handle, ActorInfo, ActivationInfo);
 	if (!IsActive() || bFinishingAttack || !bWaitingForRelease) return;
+	GetWorld()->GetTimerManager().ClearTimer(ChargeStartTimer);
 	const UWeaponDataAsset* Data = SourceWeapon ? SourceWeapon->WeaponData.Get() : nullptr;
 	const float Ratio = GetChargeRatio();
 	ChargeElapsedTime = Ratio * ChargeDuration;
@@ -434,6 +448,7 @@ void UGA_WeaponAttackBase::EndAbility(const FGameplayAbilitySpecHandle Handle,
 {
 	if (bFinishingAttack || !IsEndAbilityValid(Handle, ActorInfo)) return;
 	bFinishingAttack = true;
+	GetWorld()->GetTimerManager().ClearTimer(ChargeStartTimer);
 	if (bWasCancelled)
 	{
 		if (APlayerBase* Player = ActorInfo ? Cast<APlayerBase>(ActorInfo->AvatarActor.Get()) : nullptr) Player->ClearPendingAttack();
@@ -446,6 +461,7 @@ void UGA_WeaponAttackBase::EndAbility(const FGameplayAbilitySpecHandle Handle,
 			Player->MulticastStopMeleeAttackFeedback(WeaponSlot);
 	}
 	bWaitingForRelease = false;
+	bChargeStarted = false;
 	bAttackExecuted = false;
 	ChargeStartTime = 0.0;
 	ChargeDuration = 0.0f;

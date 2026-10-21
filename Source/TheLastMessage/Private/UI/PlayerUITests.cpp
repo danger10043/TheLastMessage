@@ -61,7 +61,6 @@ bool FPlayerUITest::RunTest(const FString& Parameters)
 	UWeaponDataAsset* Ranged = NewObject<UWeaponDataAsset>(Player);
 	Ranged->WeaponType = EWeaponType::HeavyRanged;
 	Ranged->WeaponId = TEXT("Railgun");
-	Ranged->MaxEnergy = 100;
 	Player->WeaponChoices[0] = Melee;
 	Player->WeaponChoices[1] = DuplicateObject<UWeaponDataAsset>(Melee, Player);
 	Player->WeaponChoices[2] = Ranged;

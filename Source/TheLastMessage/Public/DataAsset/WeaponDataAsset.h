@@ -103,10 +103,6 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
 	float Range;
 
-	// 기본 최대 에너지
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
-	float MaxEnergy;
-
 	// 일반 공격 소모량
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")
 	float EnergyPerShot;

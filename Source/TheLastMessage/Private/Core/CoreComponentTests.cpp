@@ -3,6 +3,7 @@
 #include "Misc/AutomationTest.h"
 #include "AbilitySystemComponent.h"
 #include "Core/CoreComponent.h"
+#include "CoreComponentTestObserver.h"
 #include "DataAsset/CoreDataAsset.h"
 #include "Engine/CurveTable.h"
 #include "Engine/Engine.h"
@@ -11,6 +12,7 @@
 #include "GAS/CombatAttributeSet.h"
 #include "Misc/DataValidation.h"
 #include "Templates/UnrealTemplate.h"
+#include "UObject/StrongObjectPtr.h"
 
 namespace
 {
@@ -307,6 +309,143 @@ bool FCoreSelectResultTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCoreResetNotificationsTest, "TheLastMessage.Core.ResetNotifications",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCoreResetNotificationsTest::RunTest(const FString& Parameters)
+{
+	FCoreTestFixture Fixture(false);
+	UCoreComponent* Core = Fixture.Core;
+	UCoreDataAsset* First = NewObject<UCoreDataAsset>();
+	First->CoreId = TEXT("Test_Reset_First");
+	UCoreDataAsset* Second = NewObject<UCoreDataAsset>();
+	Second->CoreId = TEXT("Test_Reset_Second");
+	TestTrue(TEXT("First core is acquired"), Core->AcquireCore(First) == ECoreAcquireResult::Acquired);
+	TestTrue(TEXT("Second core is acquired"), Core->AcquireCore(Second) == ECoreAcquireResult::Acquired);
+
+	// 첫 제거 알림에서 두 번째 코어를 다시 획득하려는 상황을 재현한다.
+	TStrongObjectPtr<UCoreComponentTestObserver> Observer(NewObject<UCoreComponentTestObserver>());
+	TArray<FName> RemovedIds;
+	ECoreAcquireResult ReentrantResult = ECoreAcquireResult::InvalidData;
+	Observer->Callback = [&](FName CoreId, int32 OldLevel, int32 NewLevel)
+	{
+		if (NewLevel != 0) return;
+		RemovedIds.Add(CoreId);
+		TestEqual(TEXT("Removal reports the previous level"), OldLevel, 1);
+		TestEqual(TEXT("Removal notification agrees with actual ownership"), Core->GetCoreLevel(CoreId), 0);
+		TestEqual(TEXT("All ownership is cleared before the first notification"), Core->GetCoreLevel(Second->CoreId), 0);
+		if (CoreId == First->CoreId)
+		{
+			ReentrantResult = Core->AcquireCore(Second);
+		}
+	};
+	Core->OnCoreChanged.AddDynamic(Observer.Get(), &UCoreComponentTestObserver::HandleCoreChanged);
+	Core->ResetOwnedCores();
+	TestTrue(TEXT("Acquisition during reset notification is rejected as busy"), ReentrantResult == ECoreAcquireResult::Busy);
+	TestEqual(TEXT("Each removed core emits one notification"), RemovedIds.Num(), 2);
+	TestTrue(TEXT("Both core removals are reported"), RemovedIds.Contains(First->CoreId) && RemovedIds.Contains(Second->CoreId));
+	TestFalse(TEXT("Reset leaves the first core unowned"), Core->HasCore(First->CoreId));
+	TestFalse(TEXT("Reset leaves the second core unowned"), Core->HasCore(Second->CoreId));
+	TestTrue(TEXT("Acquisition is allowed again after reset returns"), Core->AcquireCore(Second) == ECoreAcquireResult::Acquired);
+	Core->OnCoreChanged.RemoveAll(Observer.Get());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCoreAcquireNotificationsTest, "TheLastMessage.Core.AcquireNotifications",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCoreAcquireNotificationsTest::RunTest(const FString& Parameters)
+{
+	FCoreTestFixture Fixture(false);
+	UCoreComponent* Core = Fixture.Core;
+	UCoreDataAsset* Data = NewObject<UCoreDataAsset>();
+	Data->CoreId = TEXT("Test_Acquire_Notifications");
+	Data->MaxLevel = 2;
+	UCoreDataAsset* Other = NewObject<UCoreDataAsset>();
+	Other->CoreId = TEXT("Test_Acquire_Other");
+
+	TStrongObjectPtr<UCoreComponentTestObserver> MutatingObserver(NewObject<UCoreComponentTestObserver>());
+	TStrongObjectPtr<UCoreComponentTestObserver> ReadingObserver(NewObject<UCoreComponentTestObserver>());
+	int32 Attempts = 0;
+	int32 Notifications = 0;
+	// 앞선 수신자가 상태 변경을 요청해도, 뒤의 수신자는 알림과 일치하는 보유 상태를 읽어야 한다.
+	MutatingObserver->Callback = [&](FName CoreId, int32 OldLevel, int32 NewLevel)
+	{
+		if (CoreId != Data->CoreId || NewLevel == 0) return;
+		++Attempts;
+		TestTrue(TEXT("Another acquisition is busy during notification"), Core->AcquireCore(Other) == ECoreAcquireResult::Busy);
+		TestTrue(TEXT("Another upgrade is busy during notification"), Core->AcquireCore(Data) == ECoreAcquireResult::Busy);
+		Core->ResetOwnedCores();
+		TestEqual(TEXT("Reset during acquisition notification cannot clear ownership"), Core->GetCoreLevel(CoreId), NewLevel);
+	};
+	ReadingObserver->Callback = [&](FName CoreId, int32 OldLevel, int32 NewLevel)
+	{
+		++Notifications;
+		TestEqual(TEXT("Only the requested core emits a notification"), CoreId, Data->CoreId);
+		TestEqual(TEXT("Notification level agrees with actual ownership"), Core->GetCoreLevel(CoreId), NewLevel);
+		TestEqual(TEXT("Acquisition or upgrade advances one level"), NewLevel, OldLevel + 1);
+	};
+	Core->OnCoreChanged.AddDynamic(MutatingObserver.Get(), &UCoreComponentTestObserver::HandleCoreChanged);
+	Core->OnCoreChanged.AddDynamic(ReadingObserver.Get(), &UCoreComponentTestObserver::HandleCoreChanged);
+	TestTrue(TEXT("First acquisition succeeds"), Core->AcquireCore(Data) == ECoreAcquireResult::Acquired);
+	TestEqual(TEXT("First acquisition leaves the core at level one"), Core->GetCoreLevel(Data->CoreId), 1);
+	TestTrue(TEXT("Upgrade after the previous notification succeeds"), Core->AcquireCore(Data) == ECoreAcquireResult::Upgraded);
+	TestEqual(TEXT("Upgrade leaves the core at level two"), Core->GetCoreLevel(Data->CoreId), 2);
+	TestEqual(TEXT("Both acquisition and upgrade were checked"), Attempts, 2);
+	TestEqual(TEXT("Each successful request emits one notification"), Notifications, 2);
+	TestFalse(TEXT("Rejected acquisition does not grant the other core"), Core->HasCore(Other->CoreId));
+	Core->OnCoreChanged.RemoveAll(MutatingObserver.Get());
+	Core->OnCoreChanged.RemoveAll(ReadingObserver.Get());
+	Core->ResetOwnedCores();
+	TestFalse(TEXT("Reset is allowed after acquisition notifications finish"), Core->HasCore(Data->CoreId));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCoreGrantValidationTest, "TheLastMessage.Core.GrantValidation",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCoreGrantValidationTest::RunTest(const FString& Parameters)
+{
+	UGameplayEffect* Effect = GetMutableDefault<UGameplayEffect>();
+	TGuardValue<EGameplayEffectDurationType> DurationGuard(Effect->DurationPolicy, EGameplayEffectDurationType::Infinite);
+	FCoreTestFixture Fixture(false);
+	UCoreDataAsset* Data = NewObject<UCoreDataAsset>();
+	Data->CoreId = TEXT("Test_DuplicateGrants");
+	Data->MaxLevel = 2;
+	Data->GrantedEffects = { UGameplayEffect::StaticClass(), UGameplayEffect::StaticClass() };
+	FText Reason;
+	TestFalse(TEXT("Duplicate effects fail shared grant validation"), Data->HasValidGrantSetup(&Reason));
+	TestFalse(TEXT("Duplicate effect validation supplies a reason"), Reason.IsEmpty());
+	TestTrue(TEXT("Duplicate effects are rejected before acquisition"), Fixture.Core->AcquireCore(Data) == ECoreAcquireResult::InvalidData);
+	TestTrue(TEXT("Rejected effect data leaves no active effects"), Fixture.ASC->GetActiveEffects(FGameplayEffectQuery()).IsEmpty());
+	TestFalse(TEXT("Rejected effect data is not recorded as owned"), Fixture.Core->HasCore(Data->CoreId));
+
+	Data->GrantedEffects.SetNum(1);
+	Data->GrantedAbilities = { UGameplayAbility::StaticClass(), UGameplayAbility::StaticClass() };
+	Reason = FText::GetEmpty();
+	TestFalse(TEXT("Duplicate abilities fail shared grant validation"), Data->HasValidGrantSetup(&Reason));
+	TestFalse(TEXT("Duplicate ability validation supplies a reason"), Reason.IsEmpty());
+	TestTrue(TEXT("Duplicate abilities are rejected before acquisition"), Fixture.Core->AcquireCore(Data) == ECoreAcquireResult::InvalidData);
+	TestTrue(TEXT("Rejected ability data leaves no partial effects"), Fixture.ASC->GetActiveEffects(FGameplayEffectQuery()).IsEmpty());
+	TestTrue(TEXT("Rejected ability data leaves no granted abilities"), Fixture.ASC->GetActivatableAbilities().IsEmpty());
+
+	Data->GrantedAbilities.SetNum(1);
+	TestTrue(TEXT("Distinct GE and GA classes are valid"), Data->HasValidGrantSetup());
+	TestTrue(TEXT("Corrected data can be acquired"), Fixture.Core->AcquireCore(Data) == ECoreAcquireResult::Acquired);
+	Data->GrantedEffects.Add(UGameplayEffect::StaticClass());
+	TestTrue(TEXT("Duplicate data also rejects upgrades"), Fixture.Core->AcquireCore(Data) == ECoreAcquireResult::InvalidData);
+	TestEqual(TEXT("Rejected upgrade preserves the owned level"), Fixture.Core->GetCoreLevel(Data->CoreId), 1);
+	TestEqual(TEXT("Rejected upgrade preserves one existing effect"), Fixture.ASC->GetActiveEffects(FGameplayEffectQuery()).Num(), 1);
+	Data->GrantedEffects.SetNum(1);
+
+	UCoreDataAsset* Other = NewObject<UCoreDataAsset>();
+	Other->CoreId = TEXT("Test_SharedEffectClass");
+	Other->GrantedEffects.Add(UGameplayEffect::StaticClass());
+	TestTrue(TEXT("Different cores may use the same effect class"), Fixture.Core->AcquireCore(Other) == ECoreAcquireResult::Acquired);
+	TestEqual(TEXT("Different core records keep separate effects"), Fixture.ASC->GetActiveEffects(FGameplayEffectQuery()).Num(), 2);
+	return true;
+}
+
 #if WITH_EDITOR
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCoreDataValidationTest, "TheLastMessage.Core.DataValidation",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -370,6 +509,20 @@ bool FCoreDataValidationTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Unbound description token is invalid"), Validate(Errors, Warnings) == EDataValidationResult::Invalid);
 
 	Data->CoreDescription = FText::FromString(TEXT("피해 {Damage}% 증가"));
+	Data->DescriptionValues.Add(Binding);
+	TestTrue(TEXT("Duplicate description tokens are invalid"), Validate(Errors, Warnings) == EDataValidationResult::Invalid);
+	TestEqual(TEXT("Duplicate token is reported as one error"), Errors, 1);
+	Data->DescriptionValues.SetNum(1);
+	TestTrue(TEXT("Removing duplicate token restores valid data"), Validate(Errors, Warnings) == EDataValidationResult::Valid);
+
+	Data->GrantedEffects.Add(UGameplayEffect::StaticClass());
+	TestTrue(TEXT("Editor validation rejects duplicate effects"), Validate(Errors, Warnings) == EDataValidationResult::Invalid);
+	Data->GrantedEffects.SetNum(1);
+	Data->GrantedAbilities = { UGameplayAbility::StaticClass(), UGameplayAbility::StaticClass() };
+	TestTrue(TEXT("Editor validation rejects duplicate abilities"), Validate(Errors, Warnings) == EDataValidationResult::Invalid);
+	Data->GrantedAbilities.Reset();
+	TestTrue(TEXT("Removing duplicate grants restores valid data"), Validate(Errors, Warnings) == EDataValidationResult::Valid);
+
 	Effect->DurationPolicy = EGameplayEffectDurationType::Instant;
 	TestTrue(TEXT("Non-infinite effect is invalid"), Validate(Errors, Warnings) == EDataValidationResult::Invalid);
 	return true;

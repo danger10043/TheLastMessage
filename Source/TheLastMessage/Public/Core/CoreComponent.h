@@ -36,6 +36,7 @@ public:
 	 * 미보유 코어는 1단계로 획득한다. 재획득은 Custom의 최대 단계 또는 Infinite 설정에 따라 한 단계 강화한다.
 	 * 최초 획득은 GE/GA를 부여하며, 강화는 기존 GE/GA의 레벨을 갱신한다.
 	 * 성공하면 Acquired 또는 Upgraded를, 실패하면 원인을 반환한다. IsCoreAcquireSuccess로 성공 여부를 확인한다.
+	 * 변경 알림이 모두 끝나기 전의 추가 획득 요청은 Busy로 거부하고, 초기화 요청은 처리하지 않는다.
 	 */
 	ECoreAcquireResult AcquireCore(UCoreDataAsset* CoreData);
 
@@ -78,6 +79,7 @@ public:
 	/**
 	 * 플레이어의 보유 코어와 진행 중인 코어 선택 상태를 초기화한다.
 	 * 코어가 부여한 능력과 효과를 제거하며, 기본 능력과 다른 시스템의 효과는 유지한다.
+	 * 제거 알림이 모두 끝나기 전의 재획득 요청은 Busy로 거부한다. 초기화가 반환된 뒤에는 다시 획득할 수 있다.
 	 */
 	void ResetOwnedCores();
 
@@ -124,7 +126,7 @@ private:
 	UPROPERTY(Transient)
 	FCoreChoiceState CurrentChoiceState;
 
-	/** 코어 획득 또는 초기화가 진행 중인지 나타낸다. 처리 도중 같은 작업이 다시 시작되는 것을 막는다. */
+	/** 코어 획득·초기화와 해당 알림이 진행 중인지 나타낸다. 처리 도중 같은 작업이 다시 시작되는 것을 막는다. */
 	bool bIsChangingCoreGrants = false;
 
 	/** 선택한 코어의 획득 알림에서 다른 선택이나 재추첨이 다시 실행되는 것을 막는다. */

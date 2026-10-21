@@ -184,6 +184,7 @@ ECoreAcquireResult UCoreComponent::AcquireCore(UCoreDataAsset* CoreData)
 	const int32 OldLevel = GetCoreLevel(CoreData->CoreId);
 
 	{
+		// 획득·강화 결과를 모든 수신자에게 알릴 때까지 다른 획득이나 초기화가 끼어들지 못하게 한다.
 		TGuardValue<bool> ChangingGrantsGuard(bIsChangingCoreGrants, true);
 
 		FCoreGrantRecord* ExistingRecord = AppliedCoreHandles.FindByPredicate(
@@ -242,9 +243,10 @@ ECoreAcquireResult UCoreComponent::AcquireCore(UCoreDataAsset* CoreData)
 			// 모든 부여가 성공한 경우에만 보유 기록에 추가한다.
 			AppliedCoreHandles.Add(MoveTemp(Record));
 		}
+
+		OnCoreChanged.Broadcast(CoreData->CoreId, OldLevel, GetCoreLevel(CoreData->CoreId));
 	}
 
-	OnCoreChanged.Broadcast(CoreData->CoreId, OldLevel, GetCoreLevel(CoreData->CoreId));
 	return ExpectedResult;
 }
 
@@ -261,19 +263,18 @@ void UCoreComponent::ResetOwnedCores()
 		return;
 	}
 
-	// 제거 알림 중에도 보유 조회가 초기화된 상태를 보도록, 기록을 먼저 별도 목록으로 옮긴다.
-	TArray<FCoreGrantRecord> RemovedRecords;
+	// 초기화 알림을 받는 코드가 코어를 다시 획득하면, 남은 제거 알림과 실제 보유 상태가 달라질 수 있다.
+	// 효과 제거뿐 아니라 모든 알림이 끝날 때까지 초기화 중인 상태를 유지한다.
+	TGuardValue<bool> ChangingGrantsGuard(bIsChangingCoreGrants, true);
+
+	// 첫 제거 알림부터 모든 코어가 미보유 상태로 조회되도록 기록을 먼저 비운다.
+	const TArray<FCoreGrantRecord> RemovedRecords = MoveTemp(AppliedCoreHandles);
+	AppliedCoreHandles.Reset();
+	CancelCoreChoices();
+
+	for (const FCoreGrantRecord& Record : RemovedRecords)
 	{
-		TGuardValue<bool> ChangingGrantsGuard(bIsChangingCoreGrants, true);
-
-		RemovedRecords = MoveTemp(AppliedCoreHandles);
-		AppliedCoreHandles.Reset();
-		CancelCoreChoices();
-
-		for (const FCoreGrantRecord& Record : RemovedRecords)
-		{
-			RemoveCoreGrants(Record);
-		}
+		RemoveCoreGrants(Record);
 	}
 
 	// 제거가 모두 끝난 뒤 코어마다 단계가 0이 되었음을 알린다.

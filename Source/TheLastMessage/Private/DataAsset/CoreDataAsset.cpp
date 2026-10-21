@@ -39,12 +39,20 @@ bool UCoreDataAsset::HasValidGrantSetup(FText* OutReason) const
 	using CoreDataAssetPrivate::Fail;
 
 	// 강화는 같은 GE의 레벨만 갱신하므로, 지속 시간이 무한이고 스택이 쌓이지 않는 GE만 허용한다.
+	TSet<const UClass*> RegisteredEffects;
 	for (const TSubclassOf<UGameplayEffect>& EffectClass : GrantedEffects)
 	{
 		if (!IsValid(EffectClass.Get()) || EffectClass->HasAnyClassFlags(CLASS_Abstract))
 		{
 			return Fail(OutReason, LOCTEXT("InvalidEffect", "GrantedEffects에 비어 있거나 추상 클래스인 GE가 있습니다."));
 		}
+		// 한 코어의 목록에 같은 GE가 반복되면 최초 획득부터 효과가 두 번 적용된다.
+		if (RegisteredEffects.Contains(EffectClass.Get()))
+		{
+			return Fail(OutReason, FText::Format(LOCTEXT("DuplicateEffect", "GrantedEffects에 GE {0}가 중복 등록되어 있습니다."),
+				FText::FromString(GetNameSafe(EffectClass.Get()))));
+		}
+		RegisteredEffects.Add(EffectClass.Get());
 
 		const UGameplayEffect* Definition = EffectClass.GetDefaultObject();
 		if (!IsValid(Definition) || Definition->DurationPolicy != EGameplayEffectDurationType::Infinite)
@@ -59,12 +67,19 @@ bool UCoreDataAsset::HasValidGrantSetup(FText* OutReason) const
 		}
 	}
 
+	TSet<const UClass*> RegisteredAbilities;
 	for (const TSubclassOf<UGameplayAbility>& AbilityClass : GrantedAbilities)
 	{
 		if (!IsValid(AbilityClass.Get()) || AbilityClass->HasAnyClassFlags(CLASS_Abstract))
 		{
 			return Fail(OutReason, LOCTEXT("InvalidAbility", "GrantedAbilities에 비어 있거나 추상 클래스인 GA가 있습니다."));
 		}
+		if (RegisteredAbilities.Contains(AbilityClass.Get()))
+		{
+			return Fail(OutReason, FText::Format(LOCTEXT("DuplicateAbility", "GrantedAbilities에 GA {0}가 중복 등록되어 있습니다."),
+				FText::FromString(GetNameSafe(AbilityClass.Get()))));
+		}
+		RegisteredAbilities.Add(AbilityClass.Get());
 	}
 
 	return true;
@@ -247,6 +262,12 @@ EDataValidationResult UCoreDataAsset::IsDataValid(FDataValidationContext& Contex
 
 		const FString Token = Binding.Token.ToString();
 		const FText TokenText = FText::FromString(Token);
+		// 같은 토큰에 여러 값을 연결하면 설명을 만들 때 앞의 값이 덮어써진다.
+		if (BoundTokens.Contains(Token))
+		{
+			AddError(FText::Format(LOCTEXT("DuplicateDescriptionToken", "설명 바인딩의 Token {0}가 중복 등록되어 있습니다."), TokenText));
+			continue;
+		}
 		BoundTokens.Add(Token);
 		if (!DescriptionTokens.Contains(Token))
 		{

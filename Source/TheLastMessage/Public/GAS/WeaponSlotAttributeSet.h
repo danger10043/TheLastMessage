@@ -6,13 +6,17 @@
 #include "Weapon/WeaponTypes.h"
 #include "WeaponSlotAttributeSet.generated.h"
 
-/** Equipped weapon energy lives only on the player's ASC. */
+/**
+ * 두 무기 슬롯이 함께 사용하는 공용 에너지. 플레이어 ASC에만 존재한다.
+ * 시작 최대 에너지·충전 속도는 APlayerBase의 InitialSharedMaxEnergy·SharedEnergyRecharge* 값에서 정한다.
+ */
 UCLASS()
 class THELASTMESSAGE_API UWeaponSlotAttributeSet : public UAttributeSet
 {
 	GENERATED_BODY()
 public:
 	UWeaponSlotAttributeSet();
+
 	UPROPERTY(BlueprintReadOnly, ReplicatedUsing=OnRep_SharedEnergy, Category="Weapon|Energy")
 	FGameplayAttributeData SharedEnergy;
 	ATTRIBUTE_ACCESSORS_BASIC(UWeaponSlotAttributeSet, SharedEnergy);
@@ -23,26 +27,7 @@ public:
 	virtual void PostAttributeChange(const FGameplayAttribute& Attribute, float OldValue, float NewValue) override;
 	virtual void PostGameplayEffectExecute(const FGameplayEffectModCallbackData& Data) override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
-	static FGameplayAttribute EnergyAttribute(EWeaponSlot Slot);
-	static FGameplayAttribute MaxEnergyAttribute(EWeaponSlot Slot);
-
-	UPROPERTY(BlueprintReadOnly, ReplicatedUsing=OnRep_PrimaryEnergy, Category="Weapon|Energy")
-	FGameplayAttributeData PrimaryEnergy;
-	ATTRIBUTE_ACCESSORS_BASIC(UWeaponSlotAttributeSet, PrimaryEnergy);
-	UPROPERTY(BlueprintReadOnly, ReplicatedUsing=OnRep_PrimaryMaxEnergy, Category="Weapon|Energy")
-	FGameplayAttributeData PrimaryMaxEnergy;
-	ATTRIBUTE_ACCESSORS_BASIC(UWeaponSlotAttributeSet, PrimaryMaxEnergy);
-	UPROPERTY(BlueprintReadOnly, ReplicatedUsing=OnRep_SecondaryEnergy, Category="Weapon|Energy")
-	FGameplayAttributeData SecondaryEnergy;
-	ATTRIBUTE_ACCESSORS_BASIC(UWeaponSlotAttributeSet, SecondaryEnergy);
-	UPROPERTY(BlueprintReadOnly, ReplicatedUsing=OnRep_SecondaryMaxEnergy, Category="Weapon|Energy")
-	FGameplayAttributeData SecondaryMaxEnergy;
-	ATTRIBUTE_ACCESSORS_BASIC(UWeaponSlotAttributeSet, SecondaryMaxEnergy);
 private:
 	UFUNCTION() void OnRep_SharedEnergy(const FGameplayAttributeData& OldValue);
 	UFUNCTION() void OnRep_SharedMaxEnergy(const FGameplayAttributeData& OldValue);
-	UFUNCTION() void OnRep_PrimaryEnergy(const FGameplayAttributeData& OldValue);
-	UFUNCTION() void OnRep_PrimaryMaxEnergy(const FGameplayAttributeData& OldValue);
-	UFUNCTION() void OnRep_SecondaryEnergy(const FGameplayAttributeData& OldValue);
-	UFUNCTION() void OnRep_SecondaryMaxEnergy(const FGameplayAttributeData& OldValue);
 };

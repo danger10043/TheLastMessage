@@ -5,7 +5,7 @@
 class UStaticMeshComponent;
 class UMaterialInstanceDynamic;
 class UPointLightComponent;
-class URangedFireFeedbackData;
+class UWeaponDataAsset;
 
 /** Short-lived, socket-attached emissive energy pulse; entirely cosmetic. */
 UCLASS(NotBlueprintable, Transient)
@@ -14,7 +14,7 @@ class THELASTMESSAGE_API AEnergyMuzzleFlash : public AActor
 	GENERATED_BODY()
 public:
 	AEnergyMuzzleFlash();
-	void Initialize(URangedFireFeedbackData* Settings, bool bHeavy);
+	void Initialize(UWeaponDataAsset* Settings, bool bHeavy);
 	virtual void Tick(float DeltaSeconds) override;
 private:
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> Core;

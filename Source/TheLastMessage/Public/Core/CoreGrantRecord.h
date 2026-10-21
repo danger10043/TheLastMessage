@@ -24,6 +24,10 @@ struct THELASTMESSAGE_API FCoreGrantRecord
 	UPROPERTY()
 	FName CoreId = NAME_None;
 
+	/** 처음 획득하면 1단계이며, 재획득에 성공할 때마다 1씩 증가한다. 태그 카운트와 별도로 관리한다. */
+	UPROPERTY()
+	int32 Level = 1;
+
 	/**
 	 * 이 코어가 ASC에 부여한 능력의 핸들. 해당 능력의 부여 기록을 찾아 제거하는 데 사용한다.
 	 * Transient는 실행 중 메모리에서는 사용하되 Unreal의 일반 저장/로드 대상에서 제외한다.

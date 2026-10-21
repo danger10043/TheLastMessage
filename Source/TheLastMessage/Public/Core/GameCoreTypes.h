@@ -1,7 +1,16 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "UObject/ObjectPtr.h"
 #include "GameCoreTypes.generated.h"
+
+class UCoreDataAsset;
+
+namespace CoreRewardRules
+{
+	inline constexpr int32 MaxChoices = 3;
+	inline constexpr int32 RerollsPerCard = 1;
+}
 
 /*
  * 코어 시스템 전반에서 함께 쓰는 열거형을 모아 둔 헤더다.
@@ -61,3 +70,27 @@ FORCEINLINE bool IsCoreAcquireSuccess(ECoreAcquireResult Result)
 {
 	return Result == ECoreAcquireResult::Acquired || Result == ECoreAcquireResult::Upgraded;
 }
+
+/** 코어 선택 보상을 시작한 결과. 선택 화면을 열 수 없을 때 원인을 구분한다. */
+enum class ECoreRewardStartResult : uint8
+{
+	Started,		/** 후보를 추첨하고 보상을 시작했다. */
+	Busy,			/** 다른 보상을 선택 중이거나 코어 지급·초기화를 처리 중이다. */
+	NoCandidates,	/** 분류에 맞는 무작위 보상 코어가 없다. */
+	AllAtMaxLevel,	/** 분류에 맞는 코어가 모두 최대 단계다. */
+	Unavailable		/** 지급 대상이 없거나 데이터·부여 상태가 잘못되어 받을 수 있는 코어가 없다. */
+};
+
+/** 선택 화면 카드 하나에 표시할 코어와 현재 보유 단계. 보상 세션이 만들어 UI에 전달한다. */
+USTRUCT(BlueprintType)
+struct FCoreChoiceEntry
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "Core")
+	TObjectPtr<UCoreDataAsset> CoreData = nullptr;
+
+	/** 카드를 만든 시점의 보유 단계. 미보유는 0이다. */
+	UPROPERTY(BlueprintReadOnly, Category = "Core")
+	int32 CurrentLevel = 0;
+};

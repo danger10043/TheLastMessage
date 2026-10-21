@@ -228,7 +228,7 @@ void ACorePickup::ShowUnavailableNotice(ECoreRewardStartResult Result) const
 	// 같은 픽업에 여러 번 닿아도 메시지가 쌓이지 않도록 픽업마다 같은 키를 사용한다.
 	if (Result != ECoreRewardStartResult::Busy && GEngine)
 	{
-		GEngine->AddOnScreenDebugMessage(GetUniqueID(), 2.5f, FColor::Yellow, Message);
+		GEngine->AddOnScreenDebugMessage(static_cast<uint64>(GetUniqueID()), 2.5f, FColor::Yellow, Message);
 	}
 }
 

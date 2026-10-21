@@ -3,6 +3,8 @@
 #include "Character/Player/GrapplingHookComponent.h"
 #include "Character/Player/PlayerBase.h"
 #include "Components/BoxComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "GameFramework/WorldSettings.h"
@@ -18,6 +20,7 @@
 #include "Components/CapsuleComponent.h"
 #include "Engine/SkeletalMesh.h"
 #include "CableComponent.h"
+#include "Materials/MaterialInterface.h"
 
 namespace GrapplingProbeTest
 {
@@ -40,7 +43,21 @@ struct FWorld
 		World->DestroyWorld(false);
 		GEngine->DestroyWorldContext(World);
 	}
-	UBoxComponent* MakeSurface(float X)
+	UStaticMeshComponent* MakeSurface(float X, AActor* Owner = nullptr)
+	{
+		AActor* Actor = Owner ? Owner : World->SpawnActor<AActor>();
+		UStaticMeshComponent* Mesh = NewObject<UStaticMeshComponent>(Actor);
+		Actor->SetRootComponent(Mesh);
+		Actor->AddInstanceComponent(Mesh);
+		Mesh->SetStaticMesh(LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube")));
+		Mesh->SetRelativeScale3D(FVector(0.5, 1, 1));
+		Mesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+		Mesh->SetCollisionResponseToAllChannels(ECR_Block);
+		Mesh->RegisterComponent();
+		Actor->SetActorLocation(FVector(X, 0, 0));
+		return Mesh;
+	}
+	UBoxComponent* MakeBlocker(float X)
 	{
 		AActor* Actor = World->SpawnActor<AActor>();
 		UBoxComponent* Box = NewObject<UBoxComponent>(Actor);
@@ -63,7 +80,10 @@ struct FWorld
 	}
 	APlayerBase* SpawnPlayer()
 	{
-		APlayerBase* Player = World->SpawnActor<APlayerBase>();
+		APlayerBase* Player = World->SpawnActorDeferred<APlayerBase>(APlayerBase::StaticClass(), FTransform::Identity);
+		Player->FindComponentByClass<UGrapplingHookComponent>()->CableMaterial = LoadObject<UMaterialInterface>(nullptr,
+			TEXT("/Game/Test_Jihong/Blueprints/GrapplingCable/Materials/M_GrappleCable.M_GrappleCable"));
+		Player->FinishSpawning(FTransform::Identity);
 		// 기존 훅 동작 검사는 사용 권한을 획득한 플레이어를 기준으로 한다.
 		Player->GetAbilitySystemComponent()->AddLooseGameplayTag(FGameplayTag::RequestGameplayTag(TEXT("Unlock.GrapplingHook")));
 		// The fixture has no controller; explicitly enable the real movement simulation.
@@ -77,7 +97,7 @@ struct FWorld
 	{
 		UGrapplingHookComponent* Grapple = Player->FindComponentByClass<UGrapplingHookComponent>();
 		Grapple->ThrowMontage = LoadObject<UAnimMontage>(nullptr, TEXT("/Game/Test_Jihong/Animations/Grappling/AM_Grapple_Throw.AM_Grapple_Throw"));
-		Player->GetMesh()->SetSkeletalMesh(LoadObject<USkeletalMesh>(nullptr, TEXT("/Game/Test_Jihong/Robbie_01.Robbie_01")));
+		Player->GetMesh()->SetSkeletalMesh(LoadObject<USkeletalMesh>(nullptr, TEXT("/Game/Test_Jihong/Blueprints/Player/Robbie_01.Robbie_01")));
 		Player->GetMesh()->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
 		Player->GetMesh()->SetAnimInstanceClass(UAnimInstance::StaticClass());
 		return Player->GetMesh()->GetAnimInstance();
@@ -95,14 +115,10 @@ bool FGrapplingProbeTest::RunTest(const FString& Parameters)
 	UGrapplingHookComponent* Grapple = Player->FindComponentByClass<UGrapplingHookComponent>();
 	if (!TestNotNull(TEXT("Player owns grappling component"), Grapple)) return false;
 	Grapple->bDrawDebug = false;
-	UBoxComponent* Surface = Fixture.MakeSurface(400);
+	UStaticMeshComponent* Surface = Fixture.MakeSurface(400);
 	Player->UpdateAimFromWorldRay(FVector(800,500,0), FVector(0,-1,0));
 	Player->RequestGrapplingHook();
-	TestTrue(TEXT("Untagged surface blocks"), Grapple->ProbeState.Result == EGrapplingProbeResult::Blocked);
-	TestFalse(TEXT("Untagged surface does not attach"), Grapple->HasGrappleAnchor());
-	Surface->GetOwner()->Tags.Add(TEXT("Grappleable"));
-	Player->RequestGrapplingHook();
-	TestTrue(TEXT("Actor tag permits attachment"), Grapple->HasGrappleAnchor());
+	TestTrue(TEXT("Visible mesh attaches without any tag"), Grapple->HasGrappleAnchor());
 	TestTrue(TEXT("Anchor is the impact point, not target center"), Grapple->ProbeState.AnchorPoint.Equals(FVector(375,0,0), 0.1f));
 	const FVector Anchor = Grapple->ProbeState.AnchorPoint;
 	Player->UpdateAimFromWorldRay(FVector(-800,500,0), FVector(0,-1,0));
@@ -110,16 +126,38 @@ bool FGrapplingProbeTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Changing aim and moving player preserve fixed anchor"), Grapple->ProbeState.AnchorPoint.Equals(Anchor));
 	Player->SetActorLocation(FVector::ZeroVector);
 	Player->UpdateAimFromWorldRay(FVector(800,500,0), FVector(0,-1,0));
-	Surface->GetOwner()->Tags.Reset();
-	Surface->ComponentTags.Add(TEXT("Grappleable"));
 	Grapple->ReleaseGrapple();
 	Player->RequestGrapplingHook();
-	TestTrue(TEXT("Component tag permits attachment"), Grapple->HasGrappleAnchor());
-	UBoxComponent* Blocker = Fixture.MakeSurface(200);
+	TestTrue(TEXT("Untagged mesh reconnects"), Grapple->HasGrappleAnchor());
+	UBoxComponent* Blocker = Fixture.MakeBlocker(200);
 	Grapple->ReleaseGrapple();
 	Player->RequestGrapplingHook();
-	TestTrue(TEXT("Foreground wall blocks tagged surface behind it"), Grapple->ProbeState.Result == EGrapplingProbeResult::Blocked);
-	TestFalse(TEXT("Failed new attempt clears previous anchor"), Grapple->HasGrappleAnchor());
+	TestTrue(TEXT("Collision-only wall is skipped"), Grapple->HasGrappleAnchor() && Grapple->ProbeState.AnchorPoint.Equals(Anchor));
+	Grapple->ReleaseGrapple();
+	Surface->SetHiddenInGame(true);
+	Player->RequestGrapplingHook();
+	TestFalse(TEXT("Hidden mesh cannot attach"), Grapple->HasGrappleAnchor());
+	Surface->SetHiddenInGame(false);
+	APawn* Enemy = Fixture.World->SpawnActor<APawn>();
+	UStaticMeshComponent* EnemyMesh = Fixture.MakeSurface(200, Enemy);
+	Player->RequestGrapplingHook();
+	TestTrue(TEXT("Enemy mesh is skipped"), Grapple->HasGrappleAnchor() && Grapple->ProbeState.AnchorPoint.Equals(Anchor));
+	Grapple->ReleaseGrapple();
+	Surface->SetHiddenInGame(true);
+	Player->RequestGrapplingHook();
+	TestFalse(TEXT("Enemy mesh alone cannot attach"), Grapple->HasGrappleAnchor());
+	Surface->SetHiddenInGame(false);
+	EnemyMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	UStaticMeshComponent* InvisibleWall = Fixture.MakeSurface(200);
+	InvisibleWall->SetCollisionProfileName(TEXT("InvisibleWall"));
+	Player->RequestGrapplingHook();
+	TestTrue(TEXT("InvisibleWall profile cannot become the anchor"), Grapple->HasGrappleAnchor() && Grapple->ProbeState.AnchorPoint.Equals(Anchor));
+	Grapple->ReleaseGrapple();
+	InvisibleWall->SetCollisionProfileName(TEXT("BlockAll"));
+	Player->RequestGrapplingHook();
+	TestTrue(TEXT("Nearest visible mesh wins"), Grapple->HasGrappleAnchor() && Grapple->ProbeState.AnchorPoint.Equals(FVector(175,0,0), 0.1f));
+	Grapple->ReleaseGrapple();
+	InvisibleWall->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	Blocker->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	Grapple->MaxGrappleDistance = 100;
 	Player->RequestGrapplingHook();
@@ -153,7 +191,7 @@ bool FGrapplingPullTest::RunTest(const FString& Parameters)
 	const float OriginalGravity = Movement->GravityScale;
 	Grapple->bDrawDebug = false;
 	Grapple->PullSpeed = 500;
-	UBoxComponent* Surface = Fixture.MakeSurface(400);
+	UStaticMeshComponent* Surface = Fixture.MakeSurface(400);
 	Surface->ComponentTags.Add(TEXT("Grappleable"));
 	Player->UpdateAimFromWorldRay(FVector(800,500,0), FVector(0,-1,0));
 	Player->RequestGrapplingHook();
@@ -209,7 +247,7 @@ bool FGrapplingInterruptionTest::RunTest(const FString& Parameters)
 	StartPull();
 	TestTrue(TEXT("Pull starts after attack ends"), Grapple->IsPulling());
 	// Obstacle appears after the connection so the initial ray can see the anchor.
-	UBoxComponent* Blocker = Fixture.MakeSurface(200);
+	UBoxComponent* Blocker = Fixture.MakeBlocker(200);
 	Fixture.TickFrames(15);
 	TestFalse(TEXT("Blocking capsule collision detaches"), Grapple->IsPulling());
 	TestTrue(TEXT("Character cannot cross the obstacle"), Player->GetActorLocation().X < 170);
@@ -236,7 +274,7 @@ bool FGrapplingInterruptionTest::RunTest(const FString& Parameters)
 	StartPull();
 	Player->HandleDeath();
 	TestFalse(TEXT("Death clears pulling state"), Grapple->IsPulling());
-	TestTrue(TEXT("Death remains movement-disabled"), Movement->MovementMode == MOVE_None);
+	TestTrue(TEXT("Death keeps gravity active and prevents further grappling"), Player->IsDead() && Movement->MovementMode == MOVE_Falling);
 	TestFalse(TEXT("Death clears grappling tag"), ASC->HasMatchingGameplayTag(WeaponGameplayTags::State_Grappling));
 	return !HasAnyErrors();
 }
@@ -285,7 +323,7 @@ bool FGrapplingAnimationTest::RunTest(const FString& Parameters)
 	Start();
 	Fixture.TickFrames(54);
 	TestTrue(TEXT("Air arrival returns to falling instead of playing landing"), !Grapple->IsPulling() && Grapple->AnimationPhase == EGrappleAnimationPhase::None);
-	UBoxComponent* Floor = Fixture.MakeSurface(-2000);
+	UBoxComponent* Floor = Fixture.MakeBlocker(-2000);
 	Floor->SetBoxExtent(FVector(3000,100,50));
 	Floor->GetOwner()->SetActorLocation(FVector(0,0,-Player->GetCapsuleComponent()->GetScaledCapsuleHalfHeight()-50));
 	Player->SetActorLocation(FVector::ZeroVector);

@@ -117,12 +117,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Player|Grappling")
 	float ReleaseVelocityValue = 0.75f;
 
-	// The first blocking surface must carry this Actor Tag or Component Tag.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Player|Grappling")
-	FName GrappleableTag = TEXT("Grappleable");
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Player|Grappling")
-	TEnumAsByte<ECollisionChannel> TraceChannel = ECC_Visibility;
+	/** 보이는 메시만 훅 대상으로 검사하며 숨겨진 충돌 벽과 캐릭터는 제외 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Player|Grappling", meta=(ToolTip="보이는 메시만 훅 대상으로 검사하며 숨겨진 충돌 벽과 캐릭터는 제외"))
+	TEnumAsByte<ECollisionChannel> TraceChannel = ECC_GameTraceChannel4;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Player|Grappling|Debug")
 	bool bDrawDebug = false;

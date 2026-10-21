@@ -16,6 +16,32 @@
 #include "UObject/ConstructorHelpers.h"
 #include "CableComponent.h"
 #include "Materials/MaterialInterface.h"
+#include "Components/StaticMeshComponent.h"
+
+namespace
+{
+bool IsGrappleMesh(const FHitResult& Hit)
+{
+	const UMeshComponent* Mesh = Cast<UMeshComponent>(Hit.GetComponent());
+	if (!Mesh || !Mesh->IsVisible() || Mesh->bHiddenInGame) return false;
+	const FName Profile = Mesh->GetCollisionProfileName();
+	if (Profile == TEXT("InvisibleWall") || Profile == TEXT("InvisibleWallDynamic")) return false;
+	const AActor* Actor = Hit.GetActor();
+	if (!Actor || Actor->IsHidden()) return false;
+	// 캐릭터가 소유하거나 부착한 장비도 제외
+	for (const AActor* Owner = Actor; Owner; Owner = Owner->GetOwner())
+	{
+		if (Owner->IsA<APawn>()) return false;
+	}
+	for (const AActor* Parent = Actor->GetAttachParentActor(); Parent; Parent = Parent->GetAttachParentActor())
+	{
+		if (Parent->IsA<APawn>()) return false;
+	}
+	if (const UStaticMeshComponent* StaticMesh = Cast<UStaticMeshComponent>(Mesh)) return StaticMesh->GetStaticMesh() != nullptr;
+	if (const USkeletalMeshComponent* SkeletalMesh = Cast<USkeletalMeshComponent>(Mesh)) return SkeletalMesh->GetSkeletalMeshAsset() != nullptr;
+	return false;
+}
+}
 
 UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_GrapplingHookUnlock, "Unlock.GrapplingHook");
 
@@ -191,18 +217,27 @@ void UGrapplingHookComponent::ProbeForAnchor(FVector WorldAimPoint)
 	if (Direction.ContainsNaN() || !Direction.Normalize() || !FMath::IsFinite(MaxGrappleDistance) || MaxGrappleDistance <= 0.0f) return;
 	const FVector End = Start + Direction * MaxGrappleDistance;
 	FHitResult Hit;
-	FCollisionQueryParams Params(SCENE_QUERY_STAT(GrapplingProbe), false, Player);
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(GrapplingProbe), true, Player);
 	// Ignore anything attached to the character, including future weapon actors.
 	TArray<AActor*> AttachedActors;
 	Player->GetAttachedActors(AttachedActors, true, true);
 	Params.AddIgnoredActors(AttachedActors);
-	const bool bHit = GetWorld()->LineTraceSingleByChannel(Hit, Start, End, TraceChannel, Params);
+	bool bHit = false;
+	// 숨겨진 충돌 프록시와 적을 건너뛰고 실제 메시 검사
+	while (GetWorld()->LineTraceSingleByChannel(Hit, Start, End, TraceChannel, Params))
+	{
+		if (IsGrappleMesh(Hit))
+		{
+			bHit = true;
+			break;
+		}
+		if (!Hit.GetComponent()) break;
+		Params.AddIgnoredComponent(Hit.GetComponent());
+	}
 	ProbeState.TraceStart = Start;
 	ProbeState.TraceEnd = bHit ? Hit.ImpactPoint : End;
 	ProbeState.Result = bHit ? EGrapplingProbeResult::Blocked : EGrapplingProbeResult::Miss;
-	if (bHit && !Hit.bStartPenetrating && !GrappleableTag.IsNone()
-		&& ((Hit.GetActor() && Hit.GetActor()->ActorHasTag(GrappleableTag))
-			|| (Hit.GetComponent() && Hit.GetComponent()->ComponentHasTag(GrappleableTag))))
+	if (bHit && !Hit.bStartPenetrating)
 	{
 		ProbeState.Result = EGrapplingProbeResult::Connected;
 		ProbeState.AnchorPoint = Hit.ImpactPoint;

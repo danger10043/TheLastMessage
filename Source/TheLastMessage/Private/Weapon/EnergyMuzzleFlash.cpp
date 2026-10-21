@@ -1,5 +1,5 @@
 #include "Weapon/EnergyMuzzleFlash.h"
-#include "DataAsset/RangedFireFeedbackData.h"
+#include "DataAsset/WeaponDataAsset.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/PointLightComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -29,7 +29,7 @@ AEnergyMuzzleFlash::AEnergyMuzzleFlash()
 	SetActorHiddenInGame(true);
 }
 
-void AEnergyMuzzleFlash::Initialize(URangedFireFeedbackData* Settings, bool bHeavy)
+void AEnergyMuzzleFlash::Initialize(UWeaponDataAsset* Settings, bool bHeavy)
 {
 	UMaterialInterface* Material = Settings ? Settings->EnergyMaterial.LoadSynchronous() : nullptr;
 	if (!Material) { Destroy(); return; }

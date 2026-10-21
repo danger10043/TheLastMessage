@@ -18,8 +18,6 @@
 #include "GAS/Effects/GE_WeaponEnergyCost.h"
 #include "Projectile/ProjectileBase.h"
 #include "GAS/WeaponGameplayTags.h"
-#include "Kismet/GameplayStatics.h"
-#include "NiagaraFunctionLibrary.h"
 #include "Weapon/WeaponBase.h"
 
 #if ENABLE_DRAW_DEBUG
@@ -319,14 +317,9 @@ void UGA_WeaponAttackBase::ExecuteAttack()
 		}
 	}
 
-	if (!bRanged && Data->AttackEffect)
+	if (!bRanged)
 	{
-		UNiagaraFunctionLibrary::SpawnSystemAtLocation(Player, Data->AttackEffect,
-			Player->GetActorLocation(), Player->GetActorRotation());
-	}
-	if (!bRanged && Data->AttackSound)
-	{
-		UGameplayStatics::PlaySoundAtLocation(Player, Data->AttackSound, Player->GetActorLocation());
+		Player->MulticastMeleeAttackFeedback(WeaponSlot, SourceWeapon->WeaponData);
 	}
 	if (!Data->AttackMontage) EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
 }
@@ -428,7 +421,13 @@ void UGA_WeaponAttackBase::EndAbility(const FGameplayAbilitySpecHandle Handle,
 	{
 		if (APlayerBase* Player = ActorInfo ? Cast<APlayerBase>(ActorInfo->AvatarActor.Get()) : nullptr) Player->ClearPendingAttack();
 	}
-	if (APlayerBase* Player = ActorInfo ? Cast<APlayerBase>(ActorInfo->AvatarActor.Get()) : nullptr) Player->ClearWeaponCharge(WeaponSlot);
+	if (APlayerBase* Player = ActorInfo ? Cast<APlayerBase>(ActorInfo->AvatarActor.Get()) : nullptr)
+	{
+		Player->ClearWeaponCharge(WeaponSlot);
+		if (bAttackExecuted && SourceWeapon && SourceWeapon->WeaponData
+			&& (SourceWeapon->WeaponData->WeaponType == EWeaponType::LightMelee || SourceWeapon->WeaponData->WeaponType == EWeaponType::HeavyMelee))
+			Player->MulticastStopMeleeAttackFeedback(WeaponSlot);
+	}
 	bWaitingForRelease = false;
 	bAttackExecuted = false;
 	ChargeStartTime = 0.0;

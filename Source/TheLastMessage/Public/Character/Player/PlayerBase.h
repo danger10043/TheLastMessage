@@ -22,8 +22,8 @@ class UWeaponDataAsset;
 class UStaticMeshComponent;
 class UAnimMontage;
 class UAnimInstance;
-class URangedFireFeedbackData;
 class UNiagaraSystem;
+class UNiagaraComponent;
 class USoundBase;
 class UAudioComponent;
 class UGrapplingHookComponent;
@@ -126,11 +126,11 @@ public:
 	void ClearWeaponCharge(EWeaponSlot Slot);
 	void NotifyWeaponEnergySpent();
 	void PlayRangedShotFeedback(EWeaponSlot Slot, const UWeaponDataAsset* Data, const FTransform& ShotTransform);
-	URangedFireFeedbackData* GetRangedFireFeedback(const UWeaponDataAsset* Data) const;
-	UPROPERTY(EditDefaultsOnly, Category="Player|Weapon|Feedback")
-	TSoftObjectPtr<URangedFireFeedbackData> DefaultLightRangedFeedback;
-	UPROPERTY(EditDefaultsOnly, Category="Player|Weapon|Feedback")
-	TSoftObjectPtr<URangedFireFeedbackData> DefaultHeavyRangedFeedback;
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastMeleeAttackFeedback(EWeaponSlot Slot, UWeaponDataAsset* Data);
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastStopMeleeAttackFeedback(EWeaponSlot Slot);
+
 	void ClearPendingAttack() { PendingAttackInput = FGameplayTag(); PendingAttackWeapon.Reset(); }
 
 	// 실제 공격 활성화에 성공한 슬롯의 외형을 표시한다.
@@ -386,10 +386,24 @@ private:
 	void AbilityInputPressed(FGameplayTag InputTag);
 	FGameplayTag PendingAttackInput;
 	UFUNCTION(NetMulticast, Unreliable)
-	void MulticastRangedShotFeedback(EWeaponSlot Slot, bool bHeavy, URangedFireFeedbackData* Feedback, UNiagaraSystem* Effect, USoundBase* Sound, FTransform ShotTransform);
+	void MulticastRangedShotFeedback(EWeaponSlot Slot, bool bHeavy, UWeaponDataAsset* Feedback, UNiagaraSystem* Effect, USoundBase* Sound, FTransform ShotTransform);
 	UFUNCTION(NetMulticast, Reliable)
-	void MulticastWeaponChargeSound(URangedFireFeedbackData* Feedback, EWeaponSlot Slot, float Duration);
+	void MulticastWeaponChargeSound(UWeaponDataAsset* Feedback, EWeaponSlot Slot, float Duration);
 	void StopWeaponChargeSound();
+	void StartMeleeAttackFeedback();
+	void StopMeleeAttackFeedback();
+	void StopMeleeTrail();
+	FTimerHandle MeleeFeedbackTimer;
+	FTimerHandle MeleeTrailTimer;
+	EWeaponSlot MeleeFeedbackSlot = EWeaponSlot::None;
+	UPROPERTY(Transient)
+	TObjectPtr<UWeaponDataAsset> MeleeFeedbackData;
+	UPROPERTY(Transient)
+	TObjectPtr<UNiagaraComponent> MeleeAttackEffect;
+	UPROPERTY(Transient)
+	TObjectPtr<UNiagaraComponent> MeleeTrailEffect;
+	UPROPERTY(Transient)
+	TObjectPtr<UAudioComponent> MeleeAttackAudio;
 	UPROPERTY(Transient)
 	TObjectPtr<UAudioComponent> WeaponChargeAudio;
 	void UpdateRangedFacing();

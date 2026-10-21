@@ -37,7 +37,6 @@
 #include "Engine/World.h"
 #include "Projectile/ProjectileBase.h"
 #include "GameFramework/GameStateBase.h"
-#include "DataAsset/RangedFireFeedbackData.h"
 #include "Components/AudioComponent.h"
 #include "Sound/SoundBase.h"
 #include "Kismet/GameplayStatics.h"
@@ -72,8 +71,6 @@ static TAutoConsoleVariable<int32> CVarDebugAim(
 
 APlayerBase::APlayerBase()
 {
-	DefaultLightRangedFeedback = FSoftObjectPath(TEXT("/Game/Test_Jihong/Blueprints/Weapon/Effects/DA_FireFeedback_Plasma.DA_FireFeedback_Plasma"));
-	DefaultHeavyRangedFeedback = FSoftObjectPath(TEXT("/Game/Test_Jihong/Blueprints/Weapon/Effects/DA_FireFeedback_Railgun.DA_FireFeedback_Railgun"));
 	RangedAimPostProcessClass = FSoftObjectPath(TEXT("/Game/Test_Jihong/Animations/ABP_PlayerRangedReady.ABP_PlayerRangedReady_C"));
 	DefaultLightRangedProjectileClass = FSoftObjectPath(TEXT("/Game/Test_Jihong/Blueprints/Projectile/BP_Projectile_Plasma.BP_Projectile_Plasma_C"));
 	DefaultHeavyRangedProjectileClass = FSoftObjectPath(TEXT("/Game/Test_Jihong/Blueprints/Projectile/BP_Projectile_Railgun.BP_Projectile_Railgun_C"));
@@ -778,7 +775,7 @@ void APlayerBase::BeginWeaponCharge(EWeaponSlot Slot, float Duration)
 	WeaponChargeState.Slot = Slot;
 	WeaponChargeState.Duration = Duration;
 	WeaponChargeState.ServerStartTime = GetChargeClockTime();
-	MulticastWeaponChargeSound(GetRangedFireFeedback(GetWeaponDataInSlot(Slot)), Slot, Duration);
+	MulticastWeaponChargeSound(GetWeaponDataInSlot(Slot), Slot, Duration);
 	ForceNetUpdate();
 }
 
@@ -790,22 +787,16 @@ void APlayerBase::ClearWeaponCharge(EWeaponSlot Slot)
 	ForceNetUpdate();
 }
 
-URangedFireFeedbackData* APlayerBase::GetRangedFireFeedback(const UWeaponDataAsset* Data) const
-{
-	if (!Data || (Data->WeaponType != EWeaponType::LightRanged && Data->WeaponType != EWeaponType::HeavyRanged)) return nullptr;
-	if (Data->RangedFireFeedback) return Data->RangedFireFeedback;
-	return (Data->WeaponType == EWeaponType::HeavyRanged ? DefaultHeavyRangedFeedback : DefaultLightRangedFeedback).LoadSynchronous();
-}
 
 void APlayerBase::PlayRangedShotFeedback(EWeaponSlot Slot, const UWeaponDataAsset* Data, const FTransform& ShotTransform)
 {
 	if (!HasAuthority() || !Data) return;
-	URangedFireFeedbackData* Feedback = GetRangedFireFeedback(Data);
-	MulticastRangedShotFeedback(Slot, Data->WeaponType == EWeaponType::HeavyRanged, Feedback, Data->AttackEffect ? Data->AttackEffect.Get() : Feedback ? Feedback->MuzzleFlash.Get() : nullptr,
-		Data->AttackSound ? Data->AttackSound.Get() : Feedback ? Feedback->FireSound.Get() : nullptr, ShotTransform);
+	UWeaponDataAsset* Feedback = const_cast<UWeaponDataAsset*>(Data);
+	MulticastRangedShotFeedback(Slot, Data->WeaponType == EWeaponType::HeavyRanged, Feedback, Data->AttackEffect.Get(),
+		Data->AttackSound.Get(), ShotTransform);
 }
 
-void APlayerBase::MulticastRangedShotFeedback_Implementation(EWeaponSlot Slot, bool bHeavy, URangedFireFeedbackData* Feedback, UNiagaraSystem* Effect, USoundBase* Sound, FTransform ShotTransform)
+void APlayerBase::MulticastRangedShotFeedback_Implementation(EWeaponSlot Slot, bool bHeavy, UWeaponDataAsset* Feedback, UNiagaraSystem* Effect, USoundBase* Sound, FTransform ShotTransform)
 {
 	if (GetNetMode() == NM_DedicatedServer) return;
 	UStaticMeshComponent* Attachment = Slot == EWeaponSlot::Secondary ? SecondaryWeaponMesh.Get() : PrimaryWeaponMesh.Get();
@@ -842,8 +833,8 @@ void APlayerBase::MulticastRangedShotFeedback_Implementation(EWeaponSlot Slot, b
 			GetWorldTimerManager().SetTimer(FlashTimer, FTimerDelegate::CreateWeakLambda(Flash, [Flash]() { Flash->DestroyComponent(); }), Feedback->FlashDuration, false);
 		}
 	}
-	if (Sound) UGameplayStatics::PlaySoundAtLocation(this, Sound, MuzzleTransform.GetLocation(), Feedback ? Feedback->FireVolume : 1.0f,
-		Feedback ? Feedback->FirePitch : 1.0f, 0.0f, Feedback ? Feedback->SoundAttenuation.Get() : nullptr);
+	if (Sound) UGameplayStatics::PlaySoundAtLocation(this, Sound, MuzzleTransform.GetLocation(), Feedback ? Feedback->AttackVolume : 1.0f,
+		Feedback ? Feedback->AttackPitch : 1.0f, 0.0f, Feedback ? Feedback->SoundAttenuation.Get() : nullptr);
 }
 
 void APlayerBase::StopWeaponChargeSound()
@@ -852,7 +843,70 @@ void APlayerBase::StopWeaponChargeSound()
 	WeaponChargeAudio = nullptr;
 }
 
-void APlayerBase::MulticastWeaponChargeSound_Implementation(URangedFireFeedbackData* Feedback, EWeaponSlot Slot, float Duration)
+void APlayerBase::MulticastMeleeAttackFeedback_Implementation(EWeaponSlot Slot, UWeaponDataAsset* Data)
+{
+	if (GetNetMode() == NM_DedicatedServer || !Data || IsDead()
+		|| (Slot != EWeaponSlot::Primary && Slot != EWeaponSlot::Secondary)
+		|| (Data->WeaponType != EWeaponType::LightMelee && Data->WeaponType != EWeaponType::HeavyMelee)) return;
+	StopMeleeAttackFeedback();
+	MeleeFeedbackSlot = Slot;
+	MeleeFeedbackData = Data;
+	if (Data->MeleeFeedbackDelay > 0.0f)
+		GetWorldTimerManager().SetTimer(MeleeFeedbackTimer, this, &APlayerBase::StartMeleeAttackFeedback, Data->MeleeFeedbackDelay, false);
+	else StartMeleeAttackFeedback();
+}
+
+void APlayerBase::StartMeleeAttackFeedback()
+{
+	const UWeaponDataAsset* Data = MeleeFeedbackData;
+	if (!Data || IsDead()) { StopMeleeAttackFeedback(); return; }
+	UStaticMeshComponent* Attachment = MeleeFeedbackSlot == EWeaponSlot::Secondary ? SecondaryWeaponMesh.Get() : PrimaryWeaponMesh.Get();
+	if (!Attachment) { StopMeleeAttackFeedback(); return; }
+	auto SpawnAttached = [Attachment](UNiagaraSystem* System, FName Socket, const FTransform& Offset) -> UNiagaraComponent*
+	{
+		if (!System) return nullptr;
+		if (!Attachment->DoesSocketExist(Socket)) Socket = NAME_None;
+		return UNiagaraFunctionLibrary::SpawnSystemAttached(System, Attachment, Socket,
+			Offset.GetLocation(), Offset.Rotator(), Offset.GetScale3D(), EAttachLocation::KeepRelativeOffset, true, ENCPoolMethod::None);
+	};
+	MeleeAttackEffect = SpawnAttached(Data->AttackEffect, Data->MeleeEffectSocket, Data->MeleeEffectOffset);
+	MeleeTrailEffect = SpawnAttached(Data->MeleeTrail, Data->MeleeTrailSocket, Data->MeleeTrailOffset);
+	if (MeleeTrailEffect && Data->MeleeTrailDuration > 0.0f)
+		GetWorldTimerManager().SetTimer(MeleeTrailTimer, this, &APlayerBase::StopMeleeTrail, Data->MeleeTrailDuration, false);
+	if (Data->AttackSound)
+	{
+		const FName Socket = Attachment->DoesSocketExist(Data->MeleeEffectSocket) ? Data->MeleeEffectSocket : NAME_None;
+		MeleeAttackAudio = UGameplayStatics::SpawnSoundAttached(Data->AttackSound, Attachment, Socket,
+			Data->MeleeEffectOffset.GetLocation(), EAttachLocation::KeepRelativeOffset, true,
+			Data->AttackVolume, Data->AttackPitch, 0.0f, Data->SoundAttenuation);
+	}
+}
+
+void APlayerBase::StopMeleeTrail()
+{
+	GetWorldTimerManager().ClearTimer(MeleeTrailTimer);
+	if (IsValid(MeleeTrailEffect)) MeleeTrailEffect->DestroyComponent();
+	MeleeTrailEffect = nullptr;
+}
+
+void APlayerBase::StopMeleeAttackFeedback()
+{
+	GetWorldTimerManager().ClearTimer(MeleeFeedbackTimer);
+	StopMeleeTrail();
+	if (IsValid(MeleeAttackEffect)) MeleeAttackEffect->DestroyComponent();
+	if (IsValid(MeleeAttackAudio)) MeleeAttackAudio->Stop();
+	MeleeAttackEffect = nullptr;
+	MeleeAttackAudio = nullptr;
+	MeleeFeedbackData = nullptr;
+	MeleeFeedbackSlot = EWeaponSlot::None;
+}
+
+void APlayerBase::MulticastStopMeleeAttackFeedback_Implementation(EWeaponSlot Slot)
+{
+	if (Slot == MeleeFeedbackSlot) StopMeleeAttackFeedback();
+}
+
+void APlayerBase::MulticastWeaponChargeSound_Implementation(UWeaponDataAsset* Feedback, EWeaponSlot Slot, float Duration)
 {
 	StopWeaponChargeSound();
 	if (GetNetMode() == NM_DedicatedServer || !Feedback || !Feedback->ChargeSound || Duration <= 0.0f) return;
@@ -887,10 +941,7 @@ bool APlayerBase::EquipWeapon(EWeaponSlot Slot, UWeaponDataAsset* Data)
 	if (bRanged)
 	{
 		// Warm the shared flash material while equipping/charging, not on its first 0.14-second pulse.
-		if (URangedFireFeedbackData* Feedback = GetRangedFireFeedback(Data))
-		{
-			if (Feedback->bUseEnergyFlash) Feedback->EnergyMaterial.LoadSynchronous();
-		}
+		if (Data->bUseEnergyFlash) Data->EnergyMaterial.LoadSynchronous();
 	}
 	for (int32 Index = 0; Index < 4; ++Index)
 	{
@@ -1372,6 +1423,7 @@ UCoreComponent* APlayerBase::GetCoreComponent() const
 
 void APlayerBase::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	StopMeleeAttackFeedback();
 	StopWeaponChargeSound();
 	GetWorldTimerManager().ClearTimer(RespawnTimer);
 	GetWorldTimerManager().ClearTimer(HitReactionTimer);

@@ -12,7 +12,8 @@ class UAnimMontage;
 class UNiagaraSystem;
 class UMaterialInterface;
 class UAnimSequence;
-class URangedFireFeedbackData;
+
+class USoundAttenuation;
 /**
  * 
  */
@@ -23,9 +24,44 @@ class THELASTMESSAGE_API UWeaponDataAsset : public UDataAsset
 
 public:
 	UWeaponDataAsset();
-	// Optional weapon-specific presentation; empty uses the player's pistol/rifle defaults.
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect")
-	TObjectPtr<URangedFireFeedbackData> RangedFireFeedback;
+	// Default energy pulse replaces the old gunpowder Niagara flash.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Ranged")
+	bool bUseEnergyFlash = true;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Ranged")
+	TSoftObjectPtr<UMaterialInterface> EnergyMaterial { FSoftObjectPath(TEXT("/Game/Test_Jihong/Blueprints/Weapon/Effects/M_EnergyMuzzleFlash.M_EnergyMuzzleFlash")) };
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Ranged", meta=(ClampMin="1"))
+	float EnergySize = 14.0f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Ranged", meta=(ClampMin="0"))
+	float EnergyBrightness = 12.0f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Ranged")
+	bool bAutomaticEnergyColor = true;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Ranged")
+	FLinearColor EnergyColor = FLinearColor(0.02f, 0.7f, 1.0f);
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Charge", meta=(ClampMin="0"))
+	float LocalChargeVolumeMultiplier = 2.0f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Charge")
+	bool bLocalChargeSound2D = true;
+	// Local X follows the shot direction. Translation/rotation/scale are relative to the muzzle.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Ranged")
+	FTransform MuzzleFlashOffset = FTransform::Identity;
+	// Zero lets the Niagara system control its own lifetime.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Ranged", meta=(ClampMin="0"))
+	float FlashDuration = 0.1f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Sound", meta=(ClampMin="0"))
+	float AttackVolume = 1.0f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Sound", meta=(ClampMin="0.1"))
+	float AttackPitch = 1.0f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Charge")
+	TObjectPtr<USoundBase> ChargeSound;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Charge", meta=(ClampMin="0"))
+	float ChargeVolume = 0.5f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Charge", meta=(ClampMin="0.1"))
+	float ChargePitch = 1.0f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Charge")
+	bool bFitChargeSoundToDuration = true;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Sound")
+	TObjectPtr<USoundAttenuation> SoundAttenuation;
+
 	// Optional weapon-specific ready/idle loop; otherwise the player uses pistol/rifle defaults.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Animation")
 	TObjectPtr<UAnimSequence> RangedIdleAnimation;
@@ -80,6 +116,24 @@ public:
 	TObjectPtr<UNiagaraSystem> AttackEffect;
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Effect")
 	TObjectPtr<USoundBase> AttackSound;
+
+	// Melee swing presentation is attached to the equipped weapon, relative to this socket.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Melee")
+	FName MeleeEffectSocket = NAME_None;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Melee")
+	FTransform MeleeEffectOffset = FTransform::Identity;
+	// Seconds after the swing starts. Canceling the attack also cancels pending feedback.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Melee", meta=(ClampMin="0"))
+	float MeleeFeedbackDelay = 0.0f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Melee")
+	TObjectPtr<UNiagaraSystem> MeleeTrail;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Melee")
+	FName MeleeTrailSocket = NAME_None;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Melee")
+	FTransform MeleeTrailOffset = FTransform::Identity;
+	// Zero keeps the trail until the attack ends; otherwise stop after this many seconds.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Melee", meta=(ClampMin="0"))
+	float MeleeTrailDuration = 0.25f;
 
 	// 차지 지원 여부
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon")

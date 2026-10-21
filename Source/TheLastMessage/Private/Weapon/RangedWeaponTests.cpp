@@ -14,7 +14,7 @@
 #include "Character/Enemy/EnemyBase.h"
 #include "Character/Enemy/EnemyAttributeSet.h"
 #include "DataAsset/WeaponDataAsset.h"
-#include "DataAsset/RangedFireFeedbackData.h"
+
 #include "Weapon/EnergyMuzzleFlash.h"
 #include "Components/AudioComponent.h"
 #include "GAS/Abilities/GA_AttackPrimary.h"
@@ -77,27 +77,22 @@ bool FRangedWeaponTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Secondary ranged equipment"), Player->EquipWeapon(EWeaponSlot::Secondary, Data));
 	UAbilitySystemComponent* ASC = Player->GetAbilitySystemComponent();
 	UWeaponSlotAttributeSet* Energy = Player->GetWeaponSlotAttributes();
-	URangedFireFeedbackData* PlasmaFeedback = Player->GetRangedFireFeedback(Data);
-	TestNotNull(TEXT("Default plasma fire feedback is configured"), PlasmaFeedback);
+	UWeaponDataAsset* PlasmaFeedback = LoadObject<UWeaponDataAsset>(nullptr, TEXT("/Game/Test_Jihong/DataAsset/DA_Weapon_Plasmapistol.DA_Weapon_Plasmapistol"));
+	UWeaponDataAsset* RailFeedback = LoadObject<UWeaponDataAsset>(nullptr, TEXT("/Game/Test_Jihong/DataAsset/DA_Weapon_Railgun.DA_Weapon_Railgun"));
+	TestNotNull(TEXT("Plasma weapon data exists"), PlasmaFeedback);
+	TestNotNull(TEXT("Railgun weapon data exists"), RailFeedback);
 	if (PlasmaFeedback)
 	{
-		TestTrue(TEXT("Plasma defaults to energy rather than gunpowder flash"), PlasmaFeedback->bUseEnergyFlash);
-		TestNotNull(TEXT("Plasma muzzle flash is configured"), PlasmaFeedback->MuzzleFlash.Get());
-		TestNotNull(TEXT("Plasma fire sound is configured"), PlasmaFeedback->FireSound.Get());
-		TestTrue(TEXT("Muzzle flash has a short bounded duration"), PlasmaFeedback->FlashDuration > 0.0f && PlasmaFeedback->FlashDuration < 0.3f);
+		TestTrue(TEXT("Plasma uses energy flash"), PlasmaFeedback->bUseEnergyFlash);
+		TestNotNull(TEXT("Plasma attack sound migrated"), PlasmaFeedback->AttackSound.Get());
+		TestTrue(TEXT("Flash duration migrated"), PlasmaFeedback->FlashDuration > 0.0f && PlasmaFeedback->FlashDuration < 0.3f);
 	}
-	UWeaponDataAsset* HeavyFeedbackData = DuplicateObject<UWeaponDataAsset>(Data, Player);
-	HeavyFeedbackData->WeaponType = EWeaponType::HeavyRanged;
-	URangedFireFeedbackData* RailFeedback = Player->GetRangedFireFeedback(HeavyFeedbackData);
-	TestNotNull(TEXT("Default railgun fire feedback is configured"), RailFeedback);
 	if (RailFeedback)
 	{
-		TestNotNull(TEXT("Railgun charge sound is configured"), RailFeedback->ChargeSound.Get());
-		TestTrue(TEXT("Local charge audio avoids camera-distance attenuation"), RailFeedback->bLocalChargeSound2D);
-		TestTrue(TEXT("Local charge volume is boosted"), RailFeedback->LocalChargeVolumeMultiplier > 1.0f);
+		TestNotNull(TEXT("Railgun charge sound migrated"), RailFeedback->ChargeSound.Get());
+		TestTrue(TEXT("Local charge audio avoids attenuation"), RailFeedback->bLocalChargeSound2D);
+		TestTrue(TEXT("Local charge volume preserved"), RailFeedback->LocalChargeVolumeMultiplier > 1.0f);
 	}
-	HeavyFeedbackData->RangedFireFeedback = PlasmaFeedback;
-	TestEqual(TEXT("Weapon-specific feedback overrides the default"), Player->GetRangedFireFeedback(HeavyFeedbackData), PlasmaFeedback);
 	TestEqual(TEXT("Initial energy"), Energy->GetSharedEnergy(), 100.0f);
 	AEnemyBase* Enemy = World->SpawnActor<AEnemyBase>(FVector(300, 0, 200), FRotator::ZeroRotator);
 	Enemy->GetCharacterMovement()->DisableMovement();

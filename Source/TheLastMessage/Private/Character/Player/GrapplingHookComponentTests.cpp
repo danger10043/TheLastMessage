@@ -91,6 +91,9 @@ struct FWorld
 		Player->GetCharacterMovement()->SetMovementMode(MOVE_Falling);
 		// Movement-only cases deliberately omit the cosmetic launch delay.
 		Player->FindComponentByClass<UGrapplingHookComponent>()->ThrowMontage = nullptr;
+		// 기존 이동 검사는 대기 시간을 제외하고 별도 쿨타임 검사에서 제한 검증
+		Player->FindComponentByClass<UGrapplingHookComponent>()->CooldownDuration = 0;
+		Player->FindComponentByClass<UGrapplingHookComponent>()->FailedCooldownDuration = 0;
 		return Player;
 	}
 	UAnimInstance* EnableGrappleAnimations(APlayerBase* Player)
@@ -399,6 +402,48 @@ bool FGrapplingCancelJumpCableTest::RunTest(const FString& Parameters)
 	Start();
 	Fixture.TickFrames(25);
 	TestFalse(TEXT("Arrival preserves exhausted jump budget"), Grapple->IsPulling() || Player->CanJump());
+	return !HasAnyErrors();
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGrapplingCooldownTest, "TheLastMessage.Grappling.CooldownAndRetry",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FGrapplingCooldownTest::RunTest(const FString& Parameters)
+{
+	GrapplingProbeTest::FWorld Fixture;
+	APlayerBase* Player = Fixture.SpawnPlayer();
+	UGrapplingHookComponent* Grapple = Player->FindComponentByClass<UGrapplingHookComponent>();
+	Grapple->CooldownDuration = 1;
+	Grapple->FailedCooldownDuration = 0.2f;
+	auto Request = [&]() { Grapple->RequestGrapple(FVector(800,0,0)); };
+	TestTrue(TEXT("Unlocked component is visible to HUD"), Grapple->IsGrappleUnlocked());
+	Request();
+	TestTrue(TEXT("Miss starts short retry cooldown"), FMath::IsNearlyEqual(Grapple->GetCooldownRemaining(), 0.2f, 0.01f));
+	TestTrue(TEXT("Cooldown ring starts empty"), Grapple->GetCooldownProgress() < 0.01f);
+	Fixture.MakeSurface(400);
+	Request();
+	TestFalse(TEXT("Immediate retry cannot connect"), Grapple->HasGrappleAnchor());
+	Fixture.TickFrames(6);
+	TestTrue(TEXT("Cooldown ring advances with game time"), Grapple->GetCooldownProgress() > 0.5f && Grapple->GetCooldownProgress() < 1);
+	Fixture.TickFrames(6);
+	Player->SetActorLocation(FVector::ZeroVector);
+	Request();
+	TestTrue(TEXT("Retry connects when short cooldown expires"), Grapple->HasGrappleAnchor());
+	TestEqual(TEXT("Active hook has no running cooldown"), Grapple->GetCooldownRemaining(), 0.0f);
+	Grapple->CancelGrapple();
+	TestFalse(TEXT("Cancellation remains available"), Grapple->HasGrappleAnchor());
+	TestTrue(TEXT("Cancellation starts one-second cooldown"), FMath::IsNearlyEqual(Grapple->GetCooldownRemaining(), 1.0f, 0.01f));
+	Fixture.TickFrames(10);
+	const float Remaining = Grapple->GetCooldownRemaining();
+	Grapple->ClearAnchor();
+	Request();
+	TestFalse(TEXT("Repeated request cannot bypass cooldown"), Grapple->HasGrappleAnchor());
+	TestEqual(TEXT("Cleanup and blocked input do not restart cooldown"), Grapple->GetCooldownRemaining(), Remaining);
+	Fixture.TickFrames(42);
+	Player->SetActorLocation(FVector::ZeroVector);
+	Request();
+	TestTrue(TEXT("Hook becomes usable again"), Grapple->HasGrappleAnchor());
+	Grapple->ReleaseGrapple();
+	TestTrue(TEXT("Normal release also starts full cooldown"), Grapple->GetCooldownRemaining() > 0.99f);
 	return !HasAnyErrors();
 }
 #endif

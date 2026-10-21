@@ -17,6 +17,7 @@
 #include "CableComponent.h"
 #include "Materials/MaterialInterface.h"
 #include "Components/StaticMeshComponent.h"
+#include "GameFramework/GameStateBase.h"
 
 namespace
 {
@@ -90,14 +91,47 @@ void UGrapplingHookComponent::GetLifetimeReplicatedProps(TArray<FLifetimePropert
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(UGrapplingHookComponent, ProbeState);
+	DOREPLIFETIME_CONDITION(UGrapplingHookComponent, CooldownState, COND_OwnerOnly);
+}
+
+float UGrapplingHookComponent::GetCooldownTime() const
+{
+	const UWorld* World = GetWorld();
+	if (!World) return 0;
+	const AGameStateBase* State = World->GetGameState();
+	return State ? State->GetServerWorldTimeSeconds() : World->GetTimeSeconds();
+}
+
+float UGrapplingHookComponent::GetCooldownRemaining() const
+{
+	return FMath::Max(0.0f, CooldownState.EndTime - GetCooldownTime());
+}
+
+float UGrapplingHookComponent::GetCooldownProgress() const
+{
+	return CooldownState.Duration > 0 ? 1.0f - FMath::Clamp(GetCooldownRemaining() / CooldownState.Duration, 0.0f, 1.0f) : 1.0f;
+}
+
+bool UGrapplingHookComponent::IsGrappleUnlocked() const
+{
+	const APlayerBase* Player = Cast<APlayerBase>(GetOwner());
+	const UAbilitySystemComponent* ASC = Player ? Player->GetAbilitySystemComponent() : nullptr;
+	return ASC && ASC->HasMatchingGameplayTag(TAG_GrapplingHookUnlock);
+}
+
+void UGrapplingHookComponent::StartCooldown(float Duration)
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority()) return;
+	CooldownState.Duration = FMath::IsFinite(Duration) ? FMath::Max(0.0f, Duration) : 0.0f;
+	CooldownState.EndTime = GetCooldownTime() + CooldownState.Duration;
+	GetOwner()->ForceNetUpdate();
 }
 
 void UGrapplingHookComponent::RequestGrapple(FVector WorldAimPoint)
 {
 	const APlayerBase* Player = Cast<APlayerBase>(GetOwner());
-	const UAbilitySystemComponent* ASC = Player ? Player->GetAbilitySystemComponent() : nullptr;
 	// 그래플링 훅 코어의 GE가 부여한 사용 권한이 있어야 훅을 요청할 수 있다.
-	if (!IsValid(ASC) || !ASC->HasMatchingGameplayTag(TAG_GrapplingHookUnlock)) return;
+	if (!IsGrappleUnlocked() || GetCooldownRemaining() > 0 || HasGrappleAnchor()) return;
 	bPullRequested = true;
 	if (Player->HasAuthority())
 	{
@@ -191,6 +225,7 @@ void UGrapplingHookComponent::ClearAnchor()
 {
 	if (GetOwner() && GetOwner()->HasAuthority())
 	{
+		if (HasGrappleAnchor() || bMovementOverrideActive) StartCooldown(CooldownDuration);
 		EndPull();
 		MulticastFinishPresentation(bCompletedPull);
 		bCompletedPull = false;
@@ -243,6 +278,11 @@ void UGrapplingHookComponent::ProbeForAnchor(FVector WorldAimPoint)
 		ProbeState.AnchorPoint = Hit.ImpactPoint;
 		ProbeState.SurfaceNormal = Hit.ImpactNormal;
 		BeginPull();
+	}
+	else
+	{
+		bPullRequested = false;
+		StartCooldown(FailedCooldownDuration);
 	}
 	UpdateCable();
 	GetOwner()->ForceNetUpdate();

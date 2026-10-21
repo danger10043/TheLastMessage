@@ -28,6 +28,7 @@ class UNiagaraComponent;
 class USoundBase;
 class UAudioComponent;
 class UGrapplingHookComponent;
+class UAreaMapComponent;
 class UCombatFeedbackComponent;
 class UGravityStateComponent;
 class APlayerBase;
@@ -138,6 +139,8 @@ public:
 		UNiagaraSystem* FallbackEffect, USoundBase* FallbackSound);
 
 	void ClearPendingAttack() { PendingAttackInput = FGameplayTag(); PendingAttackWeapon.Reset(); }
+	// 메뉴 전환 중 입력 해제가 누락되어 공격이나 무기 선택이 남지 않도록 정리
+	void CancelWeaponInputsForUI();
 
 	// 실제 공격 활성화에 성공한 슬롯의 외형을 표시한다.
 	void ShowWeaponInSlot(EWeaponSlot Slot);
@@ -224,6 +227,9 @@ public:
 	UCoreComponent* GetCoreComponent() const;
 
 protected:
+	/** 실제 지형과 방별 탐사 기록을 관리하는 지도 컴포넌트 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Player|Area Map", meta=(ToolTip="실제 지형과 방별 탐사 기록을 관리하는 지도 컴포넌트"))
+	TObjectPtr<UAreaMapComponent> AreaMapComponent;
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Player|Energy", meta=(ClampMin="0"))
 	float InitialSharedMaxEnergy = 100.0f;
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Player|Energy", meta=(ClampMin="0", Units="s"))

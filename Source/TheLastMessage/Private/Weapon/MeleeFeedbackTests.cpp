@@ -22,7 +22,7 @@ bool FMeleeFeedbackTest::RunTest(const FString& Parameters)
 	APlayerBase* Player = World->SpawnActor<APlayerBase>();
 	UWeaponDataAsset* Swing = NewObject<UWeaponDataAsset>(Player);
 	Swing->WeaponType = EWeaponType::LightMelee;
-	Swing->MeleeFeedbackDelay = 0.1f;
+	Swing->MeleeAttackFeedbackDelay = 0.1f;
 	UWeaponDataAsset* HeavySwing = DuplicateObject<UWeaponDataAsset>(Swing, Player);
 	HeavySwing->WeaponType = EWeaponType::HeavyMelee;
 	const FObjectPropertyBase* Feedback = FindFProperty<FObjectPropertyBase>(APlayerBase::StaticClass(), TEXT("MeleeFeedbackData"));
@@ -44,9 +44,9 @@ bool FMeleeFeedbackTest::RunTest(const FString& Parameters)
 	Player->MulticastMeleeAttackFeedback(EWeaponSlot::Primary, Ranged);
 	TestEqual(TEXT("Ranged data cannot replace melee presentation"), CurrentFeedback(), static_cast<UObject*>(HeavySwing));
 	Player->MulticastStopMeleeAttackFeedback(EWeaponSlot::Secondary);
-	Swing->MeleeFeedbackDelay = 0.0f;
-	Swing->MeleeEffectSocket = TEXT("MissingSocket");
-	Swing->MeleeTrailSocket = TEXT("MissingSocket");
+	Swing->MeleeAttackFeedbackDelay = 0.0f;
+	Swing->MeleeAttackEffectSocketName = TEXT("MissingSocket");
+	Swing->MeleeTrailSocketName = TEXT("MissingSocket");
 	Player->MulticastMeleeAttackFeedback(EWeaponSlot::Primary, Swing);
 	TestEqual(TEXT("Unassigned cosmetic assets are supported"), CurrentFeedback(), static_cast<UObject*>(Swing));
 	Player->MulticastStopMeleeAttackFeedback(EWeaponSlot::Primary);

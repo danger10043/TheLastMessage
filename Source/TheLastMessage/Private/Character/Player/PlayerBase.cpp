@@ -840,14 +840,14 @@ void APlayerBase::MulticastRangedShotFeedback_Implementation(EWeaponSlot Slot, b
 		UNiagaraComponent* Flash = bHasSocket
 			? UNiagaraFunctionLibrary::SpawnSystemAttached(Effect, Attachment, Socket, Offset.GetLocation(), Offset.Rotator(), Offset.GetScale3D(), EAttachLocation::KeepRelativeOffset, true, ENCPoolMethod::None)
 			: UNiagaraFunctionLibrary::SpawnSystemAtLocation(this, Effect, EffectTransform.GetLocation(), EffectTransform.Rotator(), EffectTransform.GetScale3D());
-		if (Flash && Feedback && Feedback->FlashDuration > 0.0f)
+		if (Flash && Feedback && Feedback->MuzzleFlashDuration > 0.0f)
 		{
 			FTimerHandle FlashTimer;
-			GetWorldTimerManager().SetTimer(FlashTimer, FTimerDelegate::CreateWeakLambda(Flash, [Flash]() { Flash->DestroyComponent(); }), Feedback->FlashDuration, false);
+			GetWorldTimerManager().SetTimer(FlashTimer, FTimerDelegate::CreateWeakLambda(Flash, [Flash]() { Flash->DestroyComponent(); }), Feedback->MuzzleFlashDuration, false);
 		}
 	}
-	if (Sound) UGameplayStatics::PlaySoundAtLocation(this, Sound, MuzzleTransform.GetLocation(), Feedback ? Feedback->AttackVolume : 1.0f,
-		Feedback ? Feedback->AttackPitch : 1.0f, 0.0f, Feedback ? Feedback->SoundAttenuation.Get() : nullptr);
+	if (Sound) UGameplayStatics::PlaySoundAtLocation(this, Sound, MuzzleTransform.GetLocation(), Feedback ? Feedback->AttackSoundVolume : 1.0f,
+		Feedback ? Feedback->AttackSoundPitch : 1.0f, 0.0f, Feedback ? Feedback->WeaponSoundAttenuation.Get() : nullptr);
 }
 
 void APlayerBase::StopWeaponChargeSound()
@@ -871,8 +871,8 @@ void APlayerBase::MulticastMeleeAttackFeedback_Implementation(EWeaponSlot Slot, 
 	StopMeleeAttackFeedback();
 	MeleeFeedbackSlot = Slot;
 	MeleeFeedbackData = Data;
-	if (Data->MeleeFeedbackDelay > 0.0f)
-		GetWorldTimerManager().SetTimer(MeleeFeedbackTimer, this, &APlayerBase::StartMeleeAttackFeedback, Data->MeleeFeedbackDelay, false);
+	if (Data->MeleeAttackFeedbackDelay > 0.0f)
+		GetWorldTimerManager().SetTimer(MeleeFeedbackTimer, this, &APlayerBase::StartMeleeAttackFeedback, Data->MeleeAttackFeedbackDelay, false);
 	else StartMeleeAttackFeedback();
 }
 
@@ -889,16 +889,16 @@ void APlayerBase::StartMeleeAttackFeedback()
 		return UNiagaraFunctionLibrary::SpawnSystemAttached(System, Attachment, Socket,
 			Offset.GetLocation(), Offset.Rotator(), Offset.GetScale3D(), EAttachLocation::KeepRelativeOffset, true, ENCPoolMethod::None);
 	};
-	MeleeAttackEffect = SpawnAttached(Data->AttackEffect, Data->MeleeEffectSocket, Data->MeleeEffectOffset);
-	MeleeTrailEffect = SpawnAttached(Data->MeleeTrail, Data->MeleeTrailSocket, Data->MeleeTrailOffset);
+	MeleeAttackEffect = SpawnAttached(Data->AttackEffect, Data->MeleeAttackEffectSocketName, Data->MeleeAttackEffectOffset);
+	MeleeTrailEffect = SpawnAttached(Data->MeleeTrailEffect, Data->MeleeTrailSocketName, Data->MeleeTrailOffset);
 	if (MeleeTrailEffect && Data->MeleeTrailDuration > 0.0f)
 		GetWorldTimerManager().SetTimer(MeleeTrailTimer, this, &APlayerBase::StopMeleeTrail, Data->MeleeTrailDuration, false);
 	if (Data->AttackSound)
 	{
-		const FName Socket = Attachment->DoesSocketExist(Data->MeleeEffectSocket) ? Data->MeleeEffectSocket : NAME_None;
+		const FName Socket = Attachment->DoesSocketExist(Data->MeleeAttackEffectSocketName) ? Data->MeleeAttackEffectSocketName : NAME_None;
 		MeleeAttackAudio = UGameplayStatics::SpawnSoundAttached(Data->AttackSound, Attachment, Socket,
-			Data->MeleeEffectOffset.GetLocation(), EAttachLocation::KeepRelativeOffset, true,
-			Data->AttackVolume, Data->AttackPitch, 0.0f, Data->SoundAttenuation);
+			Data->MeleeAttackEffectOffset.GetLocation(), EAttachLocation::KeepRelativeOffset, true,
+			Data->AttackSoundVolume, Data->AttackSoundPitch, 0.0f, Data->WeaponSoundAttenuation);
 	}
 }
 
@@ -932,20 +932,20 @@ void APlayerBase::MulticastWeaponChargeSound_Implementation(UWeaponDataAsset* Fe
 	if (GetNetMode() == NM_DedicatedServer || !Feedback || !Feedback->ChargeSound || Duration <= 0.0f) return;
 	USceneComponent* Attachment = Slot == EWeaponSlot::Secondary ? SecondaryWeaponMesh.Get() : PrimaryWeaponMesh.Get();
 	const FName Socket = Attachment->DoesSocketExist(TEXT("Muzzle")) ? FName(TEXT("Muzzle")) : NAME_None;
-	float Pitch = FMath::Max(0.1f, Feedback->ChargePitch);
+	float Pitch = FMath::Max(0.1f, Feedback->ChargeSoundPitch);
 	const float SoundDuration = Feedback->ChargeSound->GetDuration();
 	if (Feedback->bFitChargeSoundToDuration && FMath::IsFinite(SoundDuration) && SoundDuration > 0.0f && SoundDuration < 60.0f)
 		Pitch *= FMath::Clamp(SoundDuration / Duration, 0.25f, 4.0f);
 	if (IsLocallyControlled() && Feedback->bLocalChargeSound2D)
 	{
 		WeaponChargeAudio = UGameplayStatics::SpawnSound2D(this, Feedback->ChargeSound,
-			Feedback->ChargeVolume * Feedback->LocalChargeVolumeMultiplier, Pitch);
+			Feedback->ChargeSoundVolume * Feedback->LocalChargeSoundVolumeMultiplier, Pitch);
 	}
 	else
 	{
 		WeaponChargeAudio = UGameplayStatics::SpawnSoundAttached(Feedback->ChargeSound, Attachment, Socket,
 			FVector::ZeroVector, FRotator::ZeroRotator, EAttachLocation::KeepRelativeOffset, true,
-			Feedback->ChargeVolume, Pitch, 0.0f, Feedback->SoundAttenuation);
+			Feedback->ChargeSoundVolume, Pitch, 0.0f, Feedback->WeaponSoundAttenuation);
 	}
 }
 
@@ -961,7 +961,7 @@ bool APlayerBase::EquipWeapon(EWeaponSlot Slot, UWeaponDataAsset* Data)
 	if (bRanged)
 	{
 		// Warm the shared flash material while equipping/charging, not on its first 0.14-second pulse.
-		if (Data->bUseEnergyFlash) Data->EnergyMaterial.LoadSynchronous();
+		if (Data->bUseEnergyFlash) Data->EnergyFlashMaterial.LoadSynchronous();
 	}
 	for (int32 Index = 0; Index < 4; ++Index)
 	{

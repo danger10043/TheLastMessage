@@ -18,5 +18,5 @@ void WeaponImpactFeedback::Play(UObject* WorldContext, const UWeaponDataAsset* D
 	const FTransform Transform = MakeTransform(Data, Location, Normal);
 	if (Effect) UNiagaraFunctionLibrary::SpawnSystemAtLocation(WorldContext, Effect, Transform.GetLocation(), Transform.Rotator(), Transform.GetScale3D());
 	if (Sound) UGameplayStatics::PlaySoundAtLocation(WorldContext, Sound, Location,
-		Data ? Data->ImpactVolume : 1.0f, Data ? Data->ImpactPitch : 1.0f, 0.0f, Data ? Data->SoundAttenuation.Get() : nullptr);
+		Data ? Data->ImpactSoundVolume : 1.0f, Data ? Data->ImpactSoundPitch : 1.0f, 0.0f, Data ? Data->WeaponSoundAttenuation.Get() : nullptr);
 }

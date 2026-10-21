@@ -85,13 +85,13 @@ bool FRangedWeaponTest::RunTest(const FString& Parameters)
 	{
 		TestTrue(TEXT("Plasma uses energy flash"), PlasmaFeedback->bUseEnergyFlash);
 		TestNotNull(TEXT("Plasma attack sound migrated"), PlasmaFeedback->AttackSound.Get());
-		TestTrue(TEXT("Flash duration migrated"), PlasmaFeedback->FlashDuration > 0.0f && PlasmaFeedback->FlashDuration < 0.3f);
+		TestTrue(TEXT("Flash duration migrated"), PlasmaFeedback->MuzzleFlashDuration > 0.0f && PlasmaFeedback->MuzzleFlashDuration < 0.3f);
 	}
 	if (RailFeedback)
 	{
 		TestNotNull(TEXT("Railgun charge sound migrated"), RailFeedback->ChargeSound.Get());
 		TestTrue(TEXT("Local charge audio avoids attenuation"), RailFeedback->bLocalChargeSound2D);
-		TestTrue(TEXT("Local charge volume preserved"), RailFeedback->LocalChargeVolumeMultiplier > 1.0f);
+		TestTrue(TEXT("Local charge volume preserved"), RailFeedback->LocalChargeSoundVolumeMultiplier > 1.0f);
 	}
 	TestEqual(TEXT("Initial energy"), Energy->GetSharedEnergy(), 100.0f);
 	AEnemyBase* Enemy = World->SpawnActor<AEnemyBase>(FVector(300, 0, 200), FRotator::ZeroRotator);

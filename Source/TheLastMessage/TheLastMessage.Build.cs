@@ -15,6 +15,10 @@ public class TheLastMessage : ModuleRules
 
         // UI 입력 처리에 쓰는 FReply와 화면 배치 정보인 FGeometry 등 Slate 기본 타입을 사용한다.
         PrivateDependencyModuleNames.AddRange(new string[] { "SlateCore", "CableComponent" });
+        if (Target.bBuildEditor)
+        {
+            PrivateDependencyModuleNames.AddRange(new string[] { "UnrealEd", "UMGEditor", "AssetRegistry", "RenderCore", "RHI", "SlateRHIRenderer", "NiagaraEditor" });
+        }
 
         // Uncomment if you are using Slate UI
         // PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });

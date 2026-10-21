@@ -70,12 +70,12 @@ protected:
 
 private:
 	UFUNCTION(NetMulticast, Unreliable)
-	void MulticastImpact(FVector_NetQuantize Location);
+	void MulticastImpact(UWeaponDataAsset* Data, FVector_NetQuantize Location, FVector_NetQuantizeNormal Normal);
 	UFUNCTION()
 	void OnRep_VisualData();
 	UPROPERTY(ReplicatedUsing=OnRep_VisualData)
 	TObjectPtr<UWeaponDataAsset> VisualData;
-	void HandleImpact(AActor* OtherActor, bool bBlocking);
+	void HandleImpact(AActor* OtherActor, bool bBlocking, const FHitResult* Hit = nullptr);
 	UPROPERTY(Transient)
 	TWeakObjectPtr<AActor> SourceActor;
 	UPROPERTY(Transient)

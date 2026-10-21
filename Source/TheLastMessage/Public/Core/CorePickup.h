@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "Core/CoreChoiceState.h"
+#include "Core/GameCoreTypes.h"
 #include "CorePickup.generated.h"
 
 class APlayerBase;
@@ -12,14 +13,6 @@ class UCoreDataAsset;
 class UPrimitiveComponent;
 class USphereComponent;
 class UStaticMeshComponent;
-
-/** 코어 보상을 지정된 코어로 지급할지, 선택지로 제공할지 구분한다. */
-UENUM(BlueprintType)
-enum class ECoreRewardMode : uint8
-{
-	Fixed,		 /** 지정된 코어 하나를 획득한다. */
-	Choice		/** 제시된 코어 중 하나를 선택한다. */
-};
 
 /**
  * 맵에 배치하여 플레이어에게 코어 보상을 제공하는 액터다.
@@ -66,6 +59,11 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Core|Reward",
 		meta = (EditCondition = "RewardMode == ECoreRewardMode::Choice", EditConditionHides))
 	TSubclassOf<UCoreChoiceWidget> ChoiceWidgetClass;
+
+	/** 처음 추첨할 풀을 선택한다. 창을 다시 열면 설정을 다시 추첨하지 않고 저장된 보상을 이어 간다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Core|Reward",
+		meta = (EditCondition = "RewardMode == ECoreRewardMode::Choice", EditConditionHides))
+	ECoreCategory ChoiceCategory = ECoreCategory::Stat;
 
 	/** 보상 지급이 완료되었는지 나타낸다. 이미 소비한 보상의 재지급을 막는다. */
 	UPROPERTY(Transient, VisibleInstanceOnly, BlueprintReadOnly, Category = "Core|Reward")

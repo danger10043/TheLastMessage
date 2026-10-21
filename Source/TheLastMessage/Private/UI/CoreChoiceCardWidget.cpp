@@ -6,6 +6,7 @@
 #include "Components/TextBlock.h"
 #include "DataAsset/CoreDataAsset.h"
 #include "Engine/Texture2D.h"
+#include "UI/CoreDescriptionFormatter.h"
 
 // 언리얼이 제공하는 UUserWidget::NativeOnInitialized()를 재정의하여, WBP에서 배치한 위젯과 연결하고 버튼 이벤트를 처리한다.
 void UCoreChoiceCardWidget::NativeOnInitialized()
@@ -33,7 +34,7 @@ void UCoreChoiceCardWidget::NativeOnInitialized()
 	}
 }
 
-void UCoreChoiceCardWidget::SetCoreData(UCoreDataAsset* InCoreData, int32 InDisplayIndex)
+void UCoreChoiceCardWidget::SetCoreData(UCoreDataAsset* InCoreData, int32 InDisplayIndex, int32 InCurrentLevel)
 {
 	CoreData = InCoreData;
 	DisplayIndex = InDisplayIndex;
@@ -55,8 +56,9 @@ void UCoreChoiceCardWidget::SetCoreData(UCoreDataAsset* InCoreData, int32 InDisp
 
 	if (CoreDescriptionText)
 	{
-		CoreDescriptionText->SetText(bHasCore ? CoreData->CoreDescription : FText::GetEmpty());
+		CoreDescriptionText->SetText(bHasCore ? CoreDescriptionFormatter::MakeDescription(*CoreData, InCurrentLevel) : FText::GetEmpty());
 	}
+	if (CoreLevelText) CoreLevelText->SetText(bHasCore ? CoreDescriptionFormatter::MakeLevelText(*CoreData, InCurrentLevel) : FText::GetEmpty());
 	if (CoreIconImage)
 	{
 		UTexture2D* IconTexture = nullptr;

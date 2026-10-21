@@ -14,7 +14,7 @@
 #include "Character/Enemy/EnemyBase.h"
 #include "Character/Enemy/EnemyAttributeSet.h"
 #include "DataAsset/WeaponDataAsset.h"
-#include "DataAsset/RangedFireFeedbackData.h"
+
 #include "Weapon/EnergyMuzzleFlash.h"
 #include "Components/AudioComponent.h"
 #include "GAS/Abilities/GA_AttackPrimary.h"
@@ -67,7 +67,6 @@ bool FRangedWeaponTest::RunTest(const FString& Parameters)
 	Data->WeaponType = EWeaponType::LightRanged;
 	Data->AttackPower = 10;
 	Data->Range = 1000;
-	Data->MaxEnergy = 100;
 	Data->EnergyPerShot = 10;
 	FindFProperty<FFloatProperty>(APlayerBase::StaticClass(), TEXT("SharedEnergyRechargeDelay"))->SetPropertyValue_InContainer(Player, 0.5f);
 	FindFProperty<FFloatProperty>(APlayerBase::StaticClass(), TEXT("SharedEnergyRechargeRate"))->SetPropertyValue_InContainer(Player, 20.0f);
@@ -77,27 +76,23 @@ bool FRangedWeaponTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Secondary ranged equipment"), Player->EquipWeapon(EWeaponSlot::Secondary, Data));
 	UAbilitySystemComponent* ASC = Player->GetAbilitySystemComponent();
 	UWeaponSlotAttributeSet* Energy = Player->GetWeaponSlotAttributes();
-	URangedFireFeedbackData* PlasmaFeedback = Player->GetRangedFireFeedback(Data);
-	TestNotNull(TEXT("Default plasma fire feedback is configured"), PlasmaFeedback);
+	UWeaponDataAsset* PlasmaFeedback = LoadObject<UWeaponDataAsset>(nullptr, TEXT("/Game/Test_Jihong/DataAsset/DA_Weapon_Plasmapistol.DA_Weapon_Plasmapistol"));
+	UWeaponDataAsset* RailFeedback = LoadObject<UWeaponDataAsset>(nullptr, TEXT("/Game/Test_Jihong/DataAsset/DA_Weapon_Railgun.DA_Weapon_Railgun"));
+	TestNotNull(TEXT("Plasma weapon data exists"), PlasmaFeedback);
+	TestNotNull(TEXT("Railgun weapon data exists"), RailFeedback);
 	if (PlasmaFeedback)
 	{
-		TestTrue(TEXT("Plasma defaults to energy rather than gunpowder flash"), PlasmaFeedback->bUseEnergyFlash);
-		TestNotNull(TEXT("Plasma muzzle flash is configured"), PlasmaFeedback->MuzzleFlash.Get());
-		TestNotNull(TEXT("Plasma fire sound is configured"), PlasmaFeedback->FireSound.Get());
-		TestTrue(TEXT("Muzzle flash has a short bounded duration"), PlasmaFeedback->FlashDuration > 0.0f && PlasmaFeedback->FlashDuration < 0.3f);
+		TestTrue(TEXT("Plasma uses energy flash"), PlasmaFeedback->bUseEnergyFlash);
+		TestNotNull(TEXT("Plasma attack sound migrated"), PlasmaFeedback->AttackSound.Get());
+		TestTrue(TEXT("Flash duration migrated"), PlasmaFeedback->MuzzleFlashDuration > 0.0f && PlasmaFeedback->MuzzleFlashDuration < 0.3f);
 	}
-	UWeaponDataAsset* HeavyFeedbackData = DuplicateObject<UWeaponDataAsset>(Data, Player);
-	HeavyFeedbackData->WeaponType = EWeaponType::HeavyRanged;
-	URangedFireFeedbackData* RailFeedback = Player->GetRangedFireFeedback(HeavyFeedbackData);
-	TestNotNull(TEXT("Default railgun fire feedback is configured"), RailFeedback);
 	if (RailFeedback)
 	{
-		TestNotNull(TEXT("Railgun charge sound is configured"), RailFeedback->ChargeSound.Get());
-		TestTrue(TEXT("Local charge audio avoids camera-distance attenuation"), RailFeedback->bLocalChargeSound2D);
-		TestTrue(TEXT("Local charge volume is boosted"), RailFeedback->LocalChargeVolumeMultiplier > 1.0f);
+		TestNotNull(TEXT("Railgun charge sound migrated"), RailFeedback->ChargeSound.Get());
+		TestTrue(TEXT("Local charge audio avoids attenuation"), RailFeedback->bLocalChargeSound2D);
+		TestTrue(TEXT("Local charge volume multiplier supports user tuning"),
+			FMath::IsFinite(RailFeedback->LocalChargeSoundVolumeMultiplier) && RailFeedback->LocalChargeSoundVolumeMultiplier >= 0.0f);
 	}
-	HeavyFeedbackData->RangedFireFeedback = PlasmaFeedback;
-	TestEqual(TEXT("Weapon-specific feedback overrides the default"), Player->GetRangedFireFeedback(HeavyFeedbackData), PlasmaFeedback);
 	TestEqual(TEXT("Initial energy"), Energy->GetSharedEnergy(), 100.0f);
 	AEnemyBase* Enemy = World->SpawnActor<AEnemyBase>(FVector(300, 0, 200), FRotator::ZeroRotator);
 	Enemy->GetCharacterMovement()->DisableMovement();
@@ -143,17 +138,42 @@ bool FRangedWeaponTest::RunTest(const FString& Parameters)
 	FindFProperty<FFloatProperty>(APlayerBase::StaticClass(), TEXT("SharedEnergyRechargeRate"))->SetPropertyValue_InContainer(Player, 0.0f);
 	Data->MaxChargeTime = 0.2f;
 	Data->MaxChargeDamageMultiplier = 2;
+	Data->ChargeStartDelay = 0.1f;
 	FGameplayAbilitySpec* Spec = ASC->FindAbilitySpecFromClass(UGA_AttackPrimary::StaticClass());
 	Spec->InputPressed = true;
+	TestTrue(TEXT("Short press starts waiting for release"), ASC->TryActivateAbility(Spec->Handle));
+	Advance(0.05f);
+	TestFalse(TEXT("Short press does not show charge HUD"), Player->IsChargingWeapon());
+	TestEqual(TEXT("Short press has zero charge"), Player->GetWeaponChargeRatio(), 0.0f);
+	const float BeforeTapEnergy = Energy->GetSharedEnergy();
+	ASC->AbilitySpecInputReleased(*Spec);
+	TestEqual(TEXT("Tap consumes one normal shot cost"), Energy->GetSharedEnergy(), BeforeTapEnergy - Data->EnergyPerShot);
+	Advance(0.4f);
+	TestEqual(TEXT("Tap applies normal damage without partial charge bonus"), EnemyStats->GetHealth(), BeforeWallShot - 10.0f);
+	TestFalse(TEXT("Released tap cannot start delayed charge"), Player->IsChargingWeapon());
+	Spec->InputPressed = true;
+	const float BeforeFullChargeHealth = EnemyStats->GetHealth();
 	const float BeforeChargeEnergy = Energy->GetSharedEnergy();
 	TestTrue(TEXT("Charge starts"), ASC->TryActivateAbility(Spec->Handle));
+	TestFalse(TEXT("Charge presentation waits for hold threshold"), Player->IsChargingWeapon());
+	Advance(0.11f);
 	TestTrue(TEXT("Charge is exposed to HUD"), Player->IsChargingWeapon());
+	TestTrue(TEXT("Threshold waiting time is excluded from charge progress"), Player->GetWeaponChargeRatio() < 0.1f);
 	Advance(0.2f);
 	TestEqual(TEXT("Holding charge does not spend energy"), Energy->GetSharedEnergy(), BeforeChargeEnergy);
 	ASC->AbilitySpecInputReleased(*Spec);
 	TestFalse(TEXT("Released charge hides HUD presentation"), Player->IsChargingWeapon());
 	Advance(0.4f);
-	TestEqual(TEXT("Charged shot applies multiplier"), EnemyStats->GetHealth(), BeforeWallShot - 20.0f);
+	TestEqual(TEXT("Charged shot applies multiplier"), EnemyStats->GetHealth(), BeforeFullChargeHealth - 20.0f);
+	Spec->InputPressed = true;
+	TestTrue(TEXT("Cancelable precharge hold starts"), ASC->TryActivateAbility(Spec->Handle));
+	const float BeforePrechargeCancel = Energy->GetSharedEnergy();
+	ASC->CancelAbilityHandle(Spec->Handle);
+	Advance(0.2f);
+	TestFalse(TEXT("Cancel before threshold prevents late charge HUD/audio"), Player->IsChargingWeapon());
+	TestEqual(TEXT("Cancel before threshold does not consume energy"), Energy->GetSharedEnergy(), BeforePrechargeCancel);
+	// Legacy switching tests below explicitly exercise the zero-delay configuration.
+	Data->ChargeStartDelay = 0.0f;
 	Spec->InputPressed = true;
 	TestTrue(TEXT("Another charge starts"), ASC->TryActivateAbility(Spec->Handle));
 	// Audio playback is disabled in this world; inject a tracked component to verify cancellation cleanup.
@@ -179,6 +199,21 @@ bool FRangedWeaponTest::RunTest(const FString& Parameters)
 		FInputParameters Input{Tag, State, FVector(2000, 0, 200)};
 		Player->ProcessEvent(Player->FindFunctionChecked(TEXT("ServerAbilityInput")), &Input);
 	};
+	Data->ChargeStartDelay = 0.1f;
+	SendInput(WeaponGameplayTags::Input_Primary, 1);
+	Advance(0.03f);
+	SendInput(WeaponGameplayTags::Input_Secondary, 1);
+	TestFalse(TEXT("Opposite slot cancels previous hold before charge begins"), Spec->IsActive());
+	TestFalse(TEXT("New slot waits for its own hold threshold"), Player->IsChargingWeapon());
+	Advance(0.06f);
+	SendInput(WeaponGameplayTags::Input_Secondary, 1);
+	Advance(0.05f);
+	TestEqual(TEXT("Repeated same input does not restart hold threshold"), Player->GetChargingWeaponSlot(), EWeaponSlot::Secondary);
+	SendInput(WeaponGameplayTags::Input_Primary, 0);
+	FGameplayAbilitySpec* SecondarySpec = ASC->FindAbilitySpecFromClass(UGA_AttackSecondary::StaticClass());
+	ASC->CancelAbilityHandle(SecondarySpec->Handle);
+	SendInput(WeaponGameplayTags::Input_Secondary, 0);
+	Data->ChargeStartDelay = 0.0f;
 	const float PrimaryBeforeSwitch = Energy->GetSharedEnergy();
 	const float SecondaryBeforeSwitch = Energy->GetSharedEnergy();
 	SendInput(WeaponGameplayTags::Input_Primary, 1);

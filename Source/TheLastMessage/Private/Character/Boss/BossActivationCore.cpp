@@ -6,6 +6,8 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
 
 ABossActivationCore::ABossActivationCore()
 {
@@ -142,6 +144,12 @@ void ABossActivationCore::HandleMissileHit(AActor* Missile)
     bIsBroken = true;
     CollisionComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     CoreState = ECoreState::Breaking;
+
+    if (IsValid(BreakEffect.Get()) && GetNetMode() != NM_DedicatedServer)
+    {
+        UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+            this, BreakEffect.Get(), GetActorLocation(), GetActorRotation());
+    }
 
     PlayCoreMontage(BreakMontage.Get());
     SetActorTickEnabled(true);

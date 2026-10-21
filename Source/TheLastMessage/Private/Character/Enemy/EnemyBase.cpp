@@ -157,6 +157,46 @@ void AEnemyBase::ApplyEnemyDamage(AActor* Target, float Damage)
 	UGameplayStatics::ApplyDamage(Target, Damage, GetController(), this, nullptr);
 }
 
+void AEnemyBase::SetHomeLocation(const FVector& NewHome)
+{
+	HomeLocation = NewHome;
+
+	if (AEnemyAIController* AIC = Cast<AEnemyAIController>(GetController()))
+	{
+		AIC->RefreshHomeLocation();
+	}
+}
+
+void AEnemyBase::Landed(const FHitResult& Hit)
+{
+	Super::Landed(Hit);
+
+	if (IsDead() || bInPool)
+	{
+		return;
+	}
+
+	if (FMath::Abs(GetActorLocation().Z - HomeLocation.Z) > HomeReanchorHeight)
+	{
+		SetHomeLocation(GetActorLocation());
+	}
+}
+
+float AEnemyBase::ModifyIncomingDamage(float Damage, const FGameplayEffectSpec& Spec) const
+{
+	if (RangedDamageMultiplier < 1.f)
+	{
+		static const FName RangedTagName(TEXT("Damage.Category.Player.Ranged"));
+		const FGameplayTag RangedTag = FGameplayTag::RequestGameplayTag(RangedTagName, false);
+		if (RangedTag.IsValid() && Spec.GetDynamicAssetTags().HasTagExact(RangedTag))
+		{
+			return Damage * RangedDamageMultiplier;
+		}
+	}
+
+	return Damage;
+}
+
 void AEnemyBase::SetEnemyState(EEnemyState NewState)
 {
 	if (CurrentState == NewState || IsDead())
@@ -494,7 +534,18 @@ void AEnemyBase::HandleDeath()
 
 	AbilitySystemComponent->CancelAllAbilities();
 
-	GetCharacterMovement()->DisableMovement();
+	if (GetCharacterMovement()->IsFalling())
+	{
+		// 공중에서 죽으면 수평 이동만 멈추고 그대로 떨어지게 한다(허공에 멈춰 있지 않도록).
+		FVector FallVelocity = GetCharacterMovement()->Velocity;
+		FallVelocity.X = 0.f;
+		FallVelocity.Y = 0.f;
+		GetCharacterMovement()->Velocity = FallVelocity;
+	}
+	else
+	{
+		GetCharacterMovement()->DisableMovement();
+	}
 	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
 	if (DeathMontage)

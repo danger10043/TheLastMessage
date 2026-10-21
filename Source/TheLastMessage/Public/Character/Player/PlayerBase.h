@@ -21,10 +21,17 @@ class UWeaponBase;
 class UWeaponDataAsset;
 class UStaticMeshComponent;
 class UAnimMontage;
+class UAnimSequenceBase;
+class UAnimInstance;
+class UNiagaraSystem;
+class UNiagaraComponent;
+class USoundBase;
+class UAudioComponent;
 class UGrapplingHookComponent;
 class UCombatFeedbackComponent;
 class UGravityStateComponent;
 class APlayerBase;
+class AProjectileBase;
 struct FGameplayEffectContextHandle;
 struct FOnAttributeChangeData;
 
@@ -119,6 +126,18 @@ public:
 	void BeginWeaponCharge(EWeaponSlot Slot, float Duration);
 	void ClearWeaponCharge(EWeaponSlot Slot);
 	void NotifyWeaponEnergySpent();
+	void PlayRangedShotFeedback(EWeaponSlot Slot, const UWeaponDataAsset* Data, const FTransform& ShotTransform);
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastMeleeAttackFeedback(EWeaponSlot Slot, UWeaponDataAsset* Data);
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastStopMeleeAttackFeedback(EWeaponSlot Slot);
+	void BeginMeleeTrailWindow(const UAnimSequenceBase* Animation);
+	void EndMeleeTrailWindow(const UAnimSequenceBase* Animation);
+	UFUNCTION(NetMulticast, Unreliable)
+	void MulticastWeaponImpact(UWeaponDataAsset* Data, FVector_NetQuantize Location, FVector_NetQuantizeNormal Normal,
+		UNiagaraSystem* FallbackEffect, USoundBase* FallbackSound);
+
+	void ClearPendingAttack() { PendingAttackInput = FGameplayTag(); PendingAttackWeapon.Reset(); }
 
 	// 실제 공격 활성화에 성공한 슬롯의 외형을 표시한다.
 	void ShowWeaponInSlot(EWeaponSlot Slot);
@@ -167,6 +186,17 @@ public:
 	// 커서 광선과 캐릭터의 이동 평면이 만나는 지점. 무기/훅 발사 위치에서도 사용한다.
 	UFUNCTION(BlueprintPure, Category="Player|Aim")
 	FVector GetAimTargetLocation() const;
+	UFUNCTION(BlueprintPure, Category="Player|Weapon")
+	FVector GetWeaponMuzzleLocation(EWeaponSlot Slot) const;
+	UFUNCTION(BlueprintPure, Category="Player|Aim")
+	bool IsRangedAiming() const;
+	TSubclassOf<AProjectileBase> GetAttackProjectileClass(const UWeaponDataAsset* Data) const;
+	UPROPERTY(EditDefaultsOnly, Category="Player|Aim")
+	TSoftClassPtr<UAnimInstance> RangedAimPostProcessClass;
+	UPROPERTY(EditDefaultsOnly, Category="Player|Weapon|Projectile")
+	TSoftClassPtr<AProjectileBase> DefaultLightRangedProjectileClass;
+	UPROPERTY(EditDefaultsOnly, Category="Player|Weapon|Projectile")
+	TSoftClassPtr<AProjectileBase> DefaultHeavyRangedProjectileClass;
 
 	// 커스텀 카메라/입력에서도 같은 조준 계산을 사용할 수 있다. 실패 시 이전 조준 유지.
 	UFUNCTION(BlueprintCallable, Category="Player|Aim")
@@ -360,6 +390,32 @@ private:
 	bool bHasAimTarget = false;
 	float AimSendElapsed = 0.0f;
 	void AbilityInputPressed(FGameplayTag InputTag);
+	FGameplayTag PendingAttackInput;
+	UFUNCTION(NetMulticast, Unreliable)
+	void MulticastRangedShotFeedback(EWeaponSlot Slot, bool bHeavy, UWeaponDataAsset* Feedback, UNiagaraSystem* Effect, USoundBase* Sound, FTransform ShotTransform);
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastWeaponChargeSound(UWeaponDataAsset* Feedback, EWeaponSlot Slot, float Duration);
+	void StopWeaponChargeSound();
+	void StartMeleeAttackFeedback();
+	void StopMeleeAttackFeedback();
+	void StopMeleeTrail();
+	FTimerHandle MeleeFeedbackTimer;
+	FTimerHandle MeleeTrailTimer;
+	EWeaponSlot MeleeFeedbackSlot = EWeaponSlot::None;
+	UPROPERTY(Transient)
+	TObjectPtr<UWeaponDataAsset> MeleeFeedbackData;
+	UPROPERTY(Transient)
+	TObjectPtr<UNiagaraComponent> MeleeAttackEffect;
+	UPROPERTY(Transient)
+	TObjectPtr<UNiagaraComponent> MeleeTrailEffect;
+	UPROPERTY(Transient)
+	TObjectPtr<UAudioComponent> MeleeAttackAudio;
+	UPROPERTY(Transient)
+	TObjectPtr<UAudioComponent> WeaponChargeAudio;
+	void UpdateRangedFacing();
+	bool bRangedFacingOverride = false;
+	bool bRestoreOrientToMovement = true;
+	TWeakObjectPtr<UWeaponBase> PendingAttackWeapon;
 	void AbilityInputReleased(FGameplayTag InputTag);
 	void AbilityInputCanceled(FGameplayTag InputTag);
 	void RefreshPrimaryWeaponVisual();

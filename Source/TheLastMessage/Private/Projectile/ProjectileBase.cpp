@@ -5,10 +5,18 @@
 #include "GameFramework/ProjectileMovementComponent.h"
 #include "Character/CombatDamageLibrary.h"
 #include "Character/Enemy/EnemyBase.h"
+#include "Character/Player/PlayerBase.h"
+#include "Weapon/WeaponImpactFeedback.h"
 #include "Character/Boss/BossMonster.h"
 #include "GAS/WeaponGameplayTags.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Engine/StaticMesh.h"
+#include "DataAsset/WeaponDataAsset.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Net/UnrealNetwork.h"
+#include "NiagaraComponent.h"
+#include "NiagaraFunctionLibrary.h"
+#include "Kismet/GameplayStatics.h"
 
 AProjectileBase::AProjectileBase()
 {
@@ -32,7 +40,10 @@ AProjectileBase::AProjectileBase()
 	ProjectileMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> Sphere(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
 	ProjectileMesh->SetStaticMesh(Sphere.Object);
-	ProjectileMesh->SetRelativeScale3D(FVector(0.1f));
+	ProjectileMesh->SetRelativeScale3D(FVector(0.45f, 0.12f, 0.12f));
+	ProjectileMesh->SetCastShadow(false);
+	FlightEffect = CreateDefaultSubobject<UNiagaraComponent>(TEXT("FlightEffect"));
+	FlightEffect->SetupAttachment(RootComponent);
 
 	ProjectileMovement = CreateDefaultSubobject<UProjectileMovementComponent>(TEXT("ProjectileMovement"));
 	ProjectileMovement->UpdatedComponent = CollisionComponent;
@@ -46,6 +57,12 @@ AProjectileBase::AProjectileBase()
 void AProjectileBase::BeginPlay()
 {
 	Super::BeginPlay();
+	OnRep_VisualData();
+	if (!bUseWeaponVisualSettings)
+	{
+		if (UMaterialInstanceDynamic* Material = ProjectileMesh->CreateDynamicMaterialInstance(0))
+			Material->SetVectorParameterValue(TEXT("ProjectileColor"), ProjectileTint);
+	}
 	if (!HasAuthority())
 	{
 		CollisionComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -60,6 +77,37 @@ void AProjectileBase::BeginPlay()
 	}
 }
 
+void AProjectileBase::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	DOREPLIFETIME(AProjectileBase, VisualData);
+}
+
+void AProjectileBase::ConfigureVisuals(UWeaponDataAsset* Data)
+{
+	if (!HasAuthority()) return;
+	VisualData = Data;
+	OnRep_VisualData();
+}
+
+float AProjectileBase::GetProjectileCollisionRadius() const
+{
+	return CollisionComponent->GetScaledSphereRadius();
+}
+
+void AProjectileBase::OnRep_VisualData()
+{
+	if (!bUseWeaponVisualSettings || !VisualData || !ProjectileMesh) return;
+	const FVector Scale = VisualData->ProjectileVisualScale;
+	if (!Scale.ContainsNaN() && Scale.GetMin() > 0.0f) ProjectileMesh->SetRelativeScale3D(Scale);
+	if (VisualData->ProjectileMaterial)
+	{
+		UMaterialInstanceDynamic* Material = UMaterialInstanceDynamic::Create(VisualData->ProjectileMaterial, this);
+		Material->SetVectorParameterValue(TEXT("ProjectileColor"), VisualData->ProjectileColor);
+		ProjectileMesh->SetMaterial(0, Material);
+	}
+}
+
 bool AProjectileBase::InitializeProjectile(AActor* Source, TSubclassOf<UGameplayEffect> Effect, float InDamage, float Speed, float Range, float InFeedbackStrength)
 {
 	if (!HasAuthority() || !IsValid(Source) || !Effect || !FMath::IsFinite(InDamage) || InDamage <= 0.0f
@@ -70,7 +118,9 @@ bool AProjectileBase::InitializeProjectile(AActor* Source, TSubclassOf<UGameplay
 	FeedbackStrength = InFeedbackStrength;
 	ProjectileMovement->InitialSpeed = Speed;
 	ProjectileMovement->MaxSpeed = Speed;
-	MaxTravelTime = Range / Speed;
+	const float EffectiveRange = bOverrideWeaponRange ? TravelRange : Range;
+	if (!FMath::IsFinite(EffectiveRange) || EffectiveRange <= 0.0f) return false;
+	MaxTravelTime = EffectiveRange / Speed;
 	CollisionComponent->IgnoreActorWhenMoving(Source, true);
 	return true;
 }
@@ -94,7 +144,7 @@ void AProjectileBase::LaunchProjectile(const FVector& Direction)
 	for (AActor* Actor : Overlaps) HandleImpact(Actor, false);
 }
 
-void AProjectileBase::HandleImpact(AActor* OtherActor, bool bBlocking)
+void AProjectileBase::HandleImpact(AActor* OtherActor, bool bBlocking, const FHitResult* Hit)
 {
 	if (!HasAuthority() || !bLaunched || bImpactHandled || !IsValid(OtherActor)
 		|| OtherActor == this || OtherActor == GetOwner() || OtherActor == SourceActor.Get()) return;
@@ -102,6 +152,26 @@ void AProjectileBase::HandleImpact(AActor* OtherActor, bool bBlocking)
 	ABossMonster* Boss = Cast<ABossMonster>(OtherActor);
 	if (!Enemy && !Boss && !bBlocking) return;
 	bImpactHandled = true;
+	FVector ContactPoint = GetActorLocation();
+	FVector ContactNormal = -ProjectileMovement->Velocity.GetSafeNormal();
+	if (Hit && !Hit->bStartPenetrating)
+	{
+		ContactPoint = Hit->ImpactPoint;
+		ContactNormal = Hit->ImpactNormal;
+	}
+	else
+	{
+		if (UPrimitiveComponent* Component = Cast<UPrimitiveComponent>(OtherActor->GetRootComponent()))
+		{
+			FVector ClosestPoint;
+			if (Component->GetClosestPointOnCollision(ContactPoint, ClosestPoint) > 0.0f) ContactPoint = ClosestPoint;
+		}
+	}
+	if (ContactNormal.IsNearlyZero()) ContactNormal = -GetActorForwardVector();
+	// The player remains relevant after an immediate projectile hit, including hits before the projectile's first net update.
+	if (APlayerBase* Player = Cast<APlayerBase>(SourceActor.Get()))
+		Player->MulticastWeaponImpact(VisualData, ContactPoint, ContactNormal, ImpactEffect, ImpactSound);
+	else MulticastImpact(VisualData, ContactPoint, ContactNormal);
 	CollisionComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	ProjectileMovement->StopMovementImmediately();
 	if ((Enemy && !Enemy->IsDead()) || (Boss && Boss->GetBossState() != EBossState::Dead))
@@ -117,14 +187,20 @@ void AProjectileBase::DestroyProjectile()
 	Destroy();
 }
 
+void AProjectileBase::MulticastImpact_Implementation(UWeaponDataAsset* Data, FVector_NetQuantize Location, FVector_NetQuantizeNormal Normal)
+{
+	if (GetNetMode() == NM_DedicatedServer) return;
+	WeaponImpactFeedback::Play(this, Data, Location, Normal, ImpactEffect, ImpactSound);
+}
+
 void AProjectileBase::OnCollisionBeginOverlap(UPrimitiveComponent* OverlappedComp, AActor* OtherActor, UPrimitiveComponent* OtherComp,
 	int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
 {
-	HandleImpact(OtherActor, false);
+	HandleImpact(OtherActor, false, bFromSweep ? &SweepResult : nullptr);
 }
 
 void AProjectileBase::OnCollisionHit(UPrimitiveComponent* HitComp, AActor* OtherActor, UPrimitiveComponent* OtherComp,
 	FVector NormalImpulse, const FHitResult& Hit)
 {
-	HandleImpact(OtherActor, true);
+	HandleImpact(OtherActor, true, &Hit);
 }

@@ -87,6 +87,12 @@ private:
 
     FVector OriginalWorldScale = FVector::OneVector;
 
+    // 운반 전 점프 초기 속도
+    float OriginalJumpZVelocity = 0.0f;
+
+    // 점프 속도 변경을 적용했는지 확인
+    bool bHasJumpVelocityOverride = false;
+
     bool bWasSimulatingPhysics = false;
     bool bWasActorCollisionEnabled = true;
 

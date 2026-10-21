@@ -38,7 +38,6 @@ bool FWeaponAssignmentTest::RunTest(const FString& Parameters)
 	{
 		UWeaponDataAsset* Data = NewObject<UWeaponDataAsset>(Player);
 		Data->WeaponType = Index < 2 ? EWeaponType::LightMelee : EWeaponType::LightRanged;
-		Data->MaxEnergy = Index < 2 ? 0.0f : 100.0f;
 		Player->WeaponChoices[Index] = Data;
 	}
 	TestFalse(TEXT("Unowned weapon cannot be assigned"), Player->AssignWeaponChoice(0, EWeaponSlot::Primary));
@@ -71,9 +70,9 @@ bool FWeaponAssignmentTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("Assignment cannot replace an active attack"), Player->AssignWeaponChoice(0, EWeaponSlot::Primary));
 	Player->GetAbilitySystemComponent()->RemoveLooseGameplayTag(WeaponGameplayTags::State_Attacking);
 	UAbilitySystemComponent* ASC = Player->GetAbilitySystemComponent();
-	for (TSubclassOf<UGameplayEffect> CostClass : { TSubclassOf<UGameplayEffect>(UGE_WeaponPrimaryEnergyCost::StaticClass()), TSubclassOf<UGameplayEffect>(UGE_WeaponSecondaryEnergyCost::StaticClass()) })
+	for (int32 Attack = 0; Attack < 2; ++Attack)
 	{
-		FGameplayEffectSpecHandle Cost = ASC->MakeOutgoingSpec(CostClass, 1, ASC->MakeEffectContext());
+		FGameplayEffectSpecHandle Cost = ASC->MakeOutgoingSpec(UGE_WeaponEnergyCost::StaticClass(), 1, ASC->MakeEffectContext());
 		Cost.Data->SetSetByCallerMagnitude(WeaponGameplayTags::Data_EnergyCost, -10.0f);
 		ASC->ApplyGameplayEffectSpecToSelf(*Cost.Data.Get());
 	}

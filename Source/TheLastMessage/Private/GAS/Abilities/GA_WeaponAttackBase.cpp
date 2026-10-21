@@ -9,18 +9,17 @@
 #include "Character/CombatDamageLibrary.h"
 #include "Character/Player/PlayerBase.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/PrimitiveComponent.h"
 #include "DataAsset/WeaponDataAsset.h"
 #include "Engine/World.h"
+#include "TimerManager.h"
 #include "DrawDebugHelpers.h"
 #include "HAL/IConsoleManager.h"
 #include "GAS/CombatAttributeSet.h"
 #include "GAS/WeaponSlotAttributeSet.h"
 #include "GAS/Effects/GE_WeaponEnergyCost.h"
 #include "Projectile/ProjectileBase.h"
-#include "GAS/Effects/GE_WeaponPrimaryCooldown.h"
 #include "GAS/WeaponGameplayTags.h"
-#include "Kismet/GameplayStatics.h"
-#include "NiagaraFunctionLibrary.h"
 #include "Weapon/WeaponBase.h"
 
 #if ENABLE_DRAW_DEBUG
@@ -38,9 +37,7 @@ UGA_WeaponAttackBase::UGA_WeaponAttackBase()
 	ActivationBlockedTags.AddTag(WeaponGameplayTags::State_Dead);
 	ActivationBlockedTags.AddTag(WeaponGameplayTags::State_HitReacting);
 	ActivationBlockedTags.AddTag(WeaponGameplayTags::State_Grappling);
-	CooldownEffectClass = UGE_WeaponPrimaryCooldown::StaticClass();
-	CostEffectClass = UGE_WeaponPrimaryEnergyCost::StaticClass();
-	AttackCooldownTags.AddTag(WeaponGameplayTags::Cooldown_Primary);
+	CostEffectClass = UGE_WeaponEnergyCost::StaticClass();
 }
 
 bool UGA_WeaponAttackBase::CanActivateAbility(const FGameplayAbilitySpecHandle Handle,
@@ -52,12 +49,12 @@ bool UGA_WeaponAttackBase::CanActivateAbility(const FGameplayAbilitySpecHandle H
 	const UWeaponBase* Weapon = Player ? Player->GetWeaponInSlot(WeaponSlot) : nullptr;
 	const UWeaponDataAsset* Data = IsValid(Weapon) ? Weapon->WeaponData.Get() : nullptr;
 	if (!Player || Player->IsDead() || !IsValid(Data) || !FMath::IsFinite(Data->AttackPower) || Data->AttackPower <= 0.0f) return false;
-	if (Weapon->NextAttackAllowedTime > GetWorld()->GetTimeSeconds()) return false;
+	if (!Data->AttackMontage && Weapon->NextAttackAllowedTime > GetWorld()->GetTimeSeconds()) return false;
 	if (Data->AttackMontage && !Player->GetMesh()->GetAnimInstance()) return false;
 	if (Data->WeaponType == EWeaponType::LightRanged || Data->WeaponType == EWeaponType::HeavyRanged)
 	{
-		return Data->ProjectileClass && !Data->ProjectileClass->HasAnyClassFlags(CLASS_Abstract)
-			&& FMath::IsFinite(Data->RPM) && Data->RPM > 0.0f
+		const TSubclassOf<AProjectileBase> ProjectileClass = Player->GetAttackProjectileClass(Data);
+		return ProjectileClass && !ProjectileClass->HasAnyClassFlags(CLASS_Abstract)
 			&& FMath::IsFinite(Data->ProjectileSpeed) && Data->ProjectileSpeed > 0.0f
 			&& FMath::IsFinite(Data->Range) && Data->Range > 0.0f
 			&& FMath::IsFinite(Data->EnergyPerShot) && Data->EnergyPerShot >= 0.0f;
@@ -76,8 +73,8 @@ bool UGA_WeaponAttackBase::CheckCost(const FGameplayAbilitySpecHandle Handle, co
 	if (!Data) return false;
 	if (!FMath::IsFinite(Data->EnergyPerShot) || Data->EnergyPerShot < 0.0f) return false;
 	if (Data->EnergyPerShot == 0.0f) return true;
-	return CostEffectClass && FMath::IsFinite(Data->EnergyPerShot) && Data->EnergyPerShot >= 0.0f
-		&& Player->GetAbilitySystemComponent()->GetNumericAttribute(UWeaponSlotAttributeSet::EnergyAttribute(WeaponSlot)) >= Data->EnergyPerShot;
+	return CostEffectClass
+		&& Player->GetAbilitySystemComponent()->GetNumericAttribute(UWeaponSlotAttributeSet::GetSharedEnergyAttribute()) >= Data->EnergyPerShot;
 }
 
 void UGA_WeaponAttackBase::ApplyCost(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo,
@@ -101,33 +98,25 @@ void UGA_WeaponAttackBase::ApplyCost(const FGameplayAbilitySpecHandle Handle, co
 
 const FGameplayTagContainer* UGA_WeaponAttackBase::GetCooldownTags() const
 {
-	return &AttackCooldownTags;
+	return nullptr;
 }
 
 void UGA_WeaponAttackBase::ApplyCooldown(const FGameplayAbilitySpecHandle Handle,
-	const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo) const
+ const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo) const
 {
-	if (!SourceWeapon || !SourceWeapon->WeaponData || !CooldownEffectClass) return;
-	const UWeaponDataAsset* Data = SourceWeapon->WeaponData;
-	const bool bRanged = Data->WeaponType == EWeaponType::LightRanged || Data->WeaponType == EWeaponType::HeavyRanged;
-	const float Duration = bRanged ? 60.0f / Data->RPM : FMath::Max(0.0f, Data->AttackInterval);
-	if (Duration <= 0.0f) return;
-	FGameplayEffectSpecHandle Spec = MakeOutgoingGameplayEffectSpec(Handle, ActorInfo, ActivationInfo,
-		CooldownEffectClass, GetAbilityLevel(Handle, ActorInfo));
-	if (Spec.IsValid())
-	{
-		Spec.Data->SetDuration(Duration, true);
-		ApplyGameplayEffectSpecToOwner(Handle, ActorInfo, ActivationInfo, Spec);
-		SourceWeapon->NextAttackAllowedTime = GetWorld()->GetTimeSeconds() + Duration;
-	}
+ if (SourceWeapon && SourceWeapon->WeaponData && !SourceWeapon->WeaponData->AttackMontage)
+ {
+  // Only animationless weapons need a safety interval; preserve it across swaps.
+  SourceWeapon->NextAttackAllowedTime = GetWorld()->GetTimeSeconds() + 0.1;
+ }
 }
-
 void UGA_WeaponAttackBase::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
 	const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo,
 	const FGameplayEventData* TriggerEventData)
 {
 	bFinishingAttack = false;
 	bWaitingForRelease = false;
+	bChargeStarted = false;
 	bAttackExecuted = false;
 	ChargeDamageMultiplier = 1.0f;
 	CriticalHitDamageMultiplier = 1.0f;
@@ -157,9 +146,11 @@ void UGA_WeaponAttackBase::ActivateAbility(const FGameplayAbilitySpecHandle Hand
 		// 차지 시작 시 배율을 적용하고, 차지 비율 계산과 UI 게이지에 같은 시간을 사용한다.
 		const float ScaledChargeTime = Data->MaxChargeTime * Player->GetCombatAttributes()->GetChargeTimeMultiplier();
 		ChargeDuration = FMath::IsFinite(ScaledChargeTime) ? FMath::Max(0.01f, ScaledChargeTime) : Data->MaxChargeTime;
-		ChargeStartTime = GetWorld()->GetTimeSeconds();
 		bWaitingForRelease = true;
-		Player->BeginWeaponCharge(WeaponSlot, ChargeDuration);
+		const float Delay = FMath::IsFinite(Data->ChargeStartDelay) ? FMath::Max(0.0f, Data->ChargeStartDelay) : 0.2f;
+		if (Delay > 0.0f)
+			GetWorld()->GetTimerManager().SetTimer(ChargeStartTimer, this, &UGA_WeaponAttackBase::StartWeaponCharge, Delay, false);
+		else StartWeaponCharge();
 		// 빠른 클릭으로 활성화 전에 해제된 경우도 한 번만 공격한다.
 		const FGameplayAbilitySpec* Spec = GetAbilitySystemComponentFromActorInfo()->FindAbilitySpecFromHandle(Handle);
 		if (!Spec || !Spec->InputPressed) InputReleased(Handle, ActorInfo, ActivationInfo);
@@ -168,10 +159,19 @@ void UGA_WeaponAttackBase::ActivateAbility(const FGameplayAbilitySpecHandle Hand
 	ExecuteAttack();
 }
 
+void UGA_WeaponAttackBase::StartWeaponCharge()
+{
+	APlayerBase* Player = Cast<APlayerBase>(GetAvatarActorFromActorInfo());
+	if (!IsWaitingForAttackRelease() || !Player || Player->IsDead()) return;
+	bChargeStarted = true;
+	ChargeStartTime = GetWorld()->GetTimeSeconds();
+	Player->BeginWeaponCharge(WeaponSlot, ChargeDuration);
+}
+
 float UGA_WeaponAttackBase::GetChargeRatio() const
 {
 	const UWeaponDataAsset* Data = SourceWeapon ? SourceWeapon->WeaponData.Get() : nullptr;
-	if (!Data || !Data->bSupportsChargeAttack || ChargeDuration <= 0.0f) return 0.0f;
+	if (!Data || !Data->bSupportsChargeAttack || !bChargeStarted || ChargeDuration <= 0.0f) return 0.0f;
 	const float Elapsed = bWaitingForRelease ? float(GetWorld()->GetTimeSeconds() - ChargeStartTime) : ChargeElapsedTime;
 	return FMath::Clamp(Elapsed / ChargeDuration, 0.0f, 1.0f);
 }
@@ -181,6 +181,7 @@ void UGA_WeaponAttackBase::InputReleased(const FGameplayAbilitySpecHandle Handle
 {
 	Super::InputReleased(Handle, ActorInfo, ActivationInfo);
 	if (!IsActive() || bFinishingAttack || !bWaitingForRelease) return;
+	GetWorld()->GetTimerManager().ClearTimer(ChargeStartTimer);
 	const UWeaponDataAsset* Data = SourceWeapon ? SourceWeapon->WeaponData.Get() : nullptr;
 	const float Ratio = GetChargeRatio();
 	ChargeElapsedTime = Ratio * ChargeDuration;
@@ -242,8 +243,29 @@ void UGA_WeaponAttackBase::ExecuteAttack()
 	FVector ShotDirection = FVector::ZeroVector;
 	if (bRanged)
 	{
-		// Fire from the aim plane at capsule center; no offset may skip a nearby wall.
-		ShotDirection = (Player->GetAimTargetLocation() - Player->GetActorLocation()).GetSafeNormal();
+		FVector SpawnLocation = Player->GetWeaponMuzzleLocation(WeaponSlot);
+		const TSubclassOf<AProjectileBase> ProjectileClass = Player->GetAttackProjectileClass(Data);
+		if (!ProjectileClass || ProjectileClass->HasAnyClassFlags(CLASS_Abstract))
+		{
+			EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
+			return;
+		}
+		const float Radius = ProjectileClass->GetDefaultObject<AProjectileBase>()->GetProjectileCollisionRadius();
+		// Sweep the whole projectile from the body to the muzzle so a barrel cannot fire through a wall.
+		FCollisionQueryParams WallParams(SCENE_QUERY_STAT(MuzzleObstruction), false, Player);
+		FHitResult Obstruction;
+		if (!SpawnLocation.Equals(Player->GetActorLocation()) && GetWorld()->SweepSingleByChannel(Obstruction,
+			Player->GetActorLocation(), SpawnLocation, FQuat::Identity, ECC_Visibility,
+			FCollisionShape::MakeSphere(Radius), WallParams))
+		{
+			if (Obstruction.bStartPenetrating)
+			{
+				EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
+				return;
+			}
+			SpawnLocation = Obstruction.Location - (SpawnLocation - Player->GetActorLocation()).GetSafeNormal();
+		}
+		ShotDirection = (Player->GetAimTargetLocation() - SpawnLocation).GetSafeNormal();
 		float FinalDamage = Data->AttackPower * ChargeDamageMultiplier;
 		FinalDamage *= FMath::Max(0.0f, Player->GetCombatAttributes()->GetDamageDealtMultiplier());
 		FinalDamage *= GetHealthDamageMultiplier();
@@ -253,8 +275,8 @@ void UGA_WeaponAttackBase::ExecuteAttack()
 			EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
 			return;
 		}
-		SpawnTransform = FTransform(ShotDirection.Rotation(), Player->GetActorLocation());
-		Projectile = GetWorld()->SpawnActorDeferred<AProjectileBase>(Data->ProjectileClass, SpawnTransform,
+		SpawnTransform = FTransform(ShotDirection.Rotation(), SpawnLocation);
+		Projectile = GetWorld()->SpawnActorDeferred<AProjectileBase>(ProjectileClass, SpawnTransform,
 			Player, Player, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
 		if (!Projectile || !Projectile->InitializeProjectile(Player, DamageEffectClass, FinalDamage, Data->ProjectileSpeed, Data->Range, GetImpactFeedbackStrength()))
 		{
@@ -273,7 +295,9 @@ void UGA_WeaponAttackBase::ExecuteAttack()
 	if (Projectile)
 	{
 		SourceWeapon->LastSuccessfulFireTime = GetWorld()->GetTimeSeconds();
+		Projectile->ConfigureVisuals(SourceWeapon->WeaponData);
 		Projectile->FinishSpawning(SpawnTransform);
+		Player->PlayRangedShotFeedback(WeaponSlot, Data, SpawnTransform);
 		Projectile->LaunchProjectile(ShotDirection);
 		if (!IsActive() || bFinishingAttack) return;
 	}
@@ -308,14 +332,9 @@ void UGA_WeaponAttackBase::ExecuteAttack()
 		}
 	}
 
-	if (Data->AttackEffect)
+	if (!bRanged)
 	{
-		UNiagaraFunctionLibrary::SpawnSystemAtLocation(Player, Data->AttackEffect,
-			Player->GetActorLocation(), Player->GetActorRotation());
-	}
-	if (Data->AttackSound)
-	{
-		UGameplayStatics::PlaySoundAtLocation(Player, Data->AttackSound, Player->GetActorLocation());
+		Player->MulticastMeleeAttackFeedback(WeaponSlot, SourceWeapon->WeaponData);
 	}
 	if (!Data->AttackMontage) EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
 }
@@ -380,8 +399,24 @@ void UGA_WeaponAttackBase::HandleMeleeHit(FGameplayEventData Payload)
 		if (Player->GetWorld()->LineTraceSingleByChannel(WallHit, Start, Target->GetActorLocation(), ECC_Visibility, WallParams)) continue;
 		// 피해 이벤트가 재진입할 수 있으므로 호출 전에 이번 공격의 명중을 기록한다.
 		HitActorsThisAttack.Add(TargetKey);
+		// Initial overlaps have no useful sweep contact. Resolve a surface point before damage callbacks.
+		FVector ContactPoint = Hit.ImpactPoint;
+		FVector ContactNormal = Hit.ImpactNormal;
+		if (Hit.bStartPenetrating)
+		{
+			ContactPoint = Target->GetActorLocation();
+			if (UPrimitiveComponent* Component = Hit.GetComponent())
+			{
+				FVector ClosestPoint;
+				if (Component->GetClosestPointOnCollision(Start, ClosestPoint) > 0.0f) ContactPoint = ClosestPoint;
+			}
+			ContactNormal = (Start - ContactPoint).GetSafeNormal();
+		}
+		if (ContactNormal.IsNearlyZero()) ContactNormal = -Direction;
 		const bool bApplied = UCombatDamageLibrary::ApplyFinalDamageToTarget(
 			Player, Target, DamageEffectClass, FinalDamage, WeaponGameplayTags::Damage_PlayerMelee, GetImpactFeedbackStrength());
+		if (bApplied) Player->MulticastWeaponImpact(const_cast<UWeaponDataAsset*>(Data),
+			ContactPoint, ContactNormal, nullptr, nullptr);
 		// true는 GE 승인 여부이며, 면역으로 실제 체력이 줄지 않아도 이 공격에서는 다시 적용하지 않는다.
 		if (!bApplied && IsActive() && !bFinishingAttack) HitActorsThisAttack.Remove(TargetKey);
 		// 피해 이벤트가 플레이어 사망·공격 취소를 유발했을 수도 있다.
@@ -413,8 +448,20 @@ void UGA_WeaponAttackBase::EndAbility(const FGameplayAbilitySpecHandle Handle,
 {
 	if (bFinishingAttack || !IsEndAbilityValid(Handle, ActorInfo)) return;
 	bFinishingAttack = true;
-	if (APlayerBase* Player = ActorInfo ? Cast<APlayerBase>(ActorInfo->AvatarActor.Get()) : nullptr) Player->ClearWeaponCharge(WeaponSlot);
+	GetWorld()->GetTimerManager().ClearTimer(ChargeStartTimer);
+	if (bWasCancelled)
+	{
+		if (APlayerBase* Player = ActorInfo ? Cast<APlayerBase>(ActorInfo->AvatarActor.Get()) : nullptr) Player->ClearPendingAttack();
+	}
+	if (APlayerBase* Player = ActorInfo ? Cast<APlayerBase>(ActorInfo->AvatarActor.Get()) : nullptr)
+	{
+		Player->ClearWeaponCharge(WeaponSlot);
+		if (bAttackExecuted && SourceWeapon && SourceWeapon->WeaponData
+			&& (SourceWeapon->WeaponData->WeaponType == EWeaponType::LightMelee || SourceWeapon->WeaponData->WeaponType == EWeaponType::HeavyMelee))
+			Player->MulticastStopMeleeAttackFeedback(WeaponSlot);
+	}
 	bWaitingForRelease = false;
+	bChargeStarted = false;
 	bAttackExecuted = false;
 	ChargeStartTime = 0.0;
 	ChargeDuration = 0.0f;

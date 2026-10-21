@@ -21,6 +21,7 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Weapon|Charge")
 	float GetChargeRatio() const;
+	bool IsWaitingForAttackRelease() const { return bWaitingForRelease && IsActive() && !bFinishingAttack; }
 	virtual bool CanActivateAbility(const FGameplayAbilitySpecHandle Handle,
 		const FGameplayAbilityActorInfo* ActorInfo, const FGameplayTagContainer* SourceTags = nullptr,
 		const FGameplayTagContainer* TargetTags = nullptr, FGameplayTagContainer* OptionalRelevantTags = nullptr) const override;
@@ -72,12 +73,12 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Effects")
 	TSubclassOf<UGameplayEffect> CostEffectClass;
 
-	// 공격 간격을 관리하는 쿨다운 GE.
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Effects")
-	TSubclassOf<UGameplayEffect> CooldownEffectClass;
 
 private:
 	void ExecuteAttack();
+	void StartWeaponCharge();
+	FTimerHandle ChargeStartTimer;
+	bool bChargeStarted = false;
 	/** 현재 체력 비율에 따라 근접·원거리 공격에 적용할 피해 배율을 계산한다. */
 	float GetHealthDamageMultiplier() const;
 	/** 치명타 확률로 판정하고 이번 공격에 적용할 피해 배율을 반환한다. */
@@ -91,9 +92,6 @@ private:
 	float CriticalHitDamageMultiplier = 1.0f;
 	bool bWaitingForRelease = false;
 	bool bAttackExecuted = false;
-
-protected:
-	FGameplayTagContainer AttackCooldownTags;
 
 private:
 	// GAS 태그가 실제 공격 상태를 관리하며, 이 값은 종료 콜백 재진입만 방지한다.

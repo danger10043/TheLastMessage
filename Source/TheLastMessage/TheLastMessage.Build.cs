@@ -17,7 +17,7 @@ public class TheLastMessage : ModuleRules
         PrivateDependencyModuleNames.AddRange(new string[] { "SlateCore", "CableComponent" });
         if (Target.bBuildEditor)
         {
-            PrivateDependencyModuleNames.AddRange(new string[] { "UnrealEd", "UMGEditor", "AssetRegistry", "RenderCore", "RHI", "SlateRHIRenderer" });
+            PrivateDependencyModuleNames.AddRange(new string[] { "UnrealEd", "UMGEditor", "AssetRegistry", "RenderCore", "RHI", "SlateRHIRenderer", "NiagaraEditor" });
         }
 
         // Uncomment if you are using Slate UI

@@ -78,7 +78,7 @@ bool ACorePickup::TryAcquireFixedCore(UCoreComponent* InCoreComponent)
 	// 코어 획득 처리가 끝날 때까지 같은 보상의 추가 획득 요청을 막는다.
 	TGuardValue<bool> GrantingRewardGuard(bIsGrantingReward, true);
 	// 코어 획득을 시도하며, 실패하면 보상 액터를 유지하고 false를 반환한다.
-	if (!InCoreComponent->AcquireCore(CoreData))
+	if (!IsCoreAcquireSuccess(InCoreComponent->AcquireCore(CoreData)))
 	{
 		return false;
 	}
@@ -122,13 +122,13 @@ bool ACorePickup::TryOpenCoreChoice(APlayerBase* Player)
 		for (const FPrimaryAssetId& AssetId : CoreAssetIds)
 		{
 			UCoreDataAsset* Data = Cast<UCoreDataAsset>(AssetManager.GetPrimaryAssetPath(AssetId).TryLoad());
-			// 더블점프처럼 고정 보상으로만 지급할 코어는 후보에서 제외한다.
-			if (IsValid(Data) && Data->bIncludeInRandomPool)
+			// 등록된 정의를 모으고, 분류·무작위 보상 포함 여부·강화 가능 여부는 코어 컴포넌트에서 검사한다.
+			if (IsValid(Data))
 			{
 				Pool.Add(Data);
 			}
 		}
-		Choices = CoreComponent->GenerateCoreChoices(Pool);
+		Choices = CoreComponent->GenerateCoreChoices(Pool, ChoiceCategory);
 	}
 	if (Choices.IsEmpty()) return false;
 
@@ -184,7 +184,7 @@ void ACorePickup::HandleCoreSelected(UCoreDataAsset* SelectedCore)
 
 	// 획득 알림 중 다른 카드가 선택되더라도 한 보상은 한 번만 지급한다.
 	TGuardValue<bool> GrantingRewardGuard(bIsGrantingReward, true);
-	if (!CoreComponent->SelectCore(SelectedCore->CoreId))
+	if (!IsCoreAcquireSuccess(CoreComponent->SelectCore(SelectedCore->CoreId)))
 	{
 		// 실패하면 화면과 선택지를 유지하여 다른 코어를 선택하거나 취소할 수 있게 한다.
 		return;

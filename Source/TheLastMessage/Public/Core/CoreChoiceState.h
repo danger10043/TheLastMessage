@@ -11,7 +11,7 @@ struct THELASTMESSAGE_API FCoreChoiceState
 {
 	GENERATED_BODY()
 
-	/** 재추첨에 사용할 원본 후보 목록. */
+	/** 처음 선택한 보상 분류로 걸러 둔 후보 목록. 리롤과 재진입에서도 같은 풀을 사용한다. */
 	UPROPERTY()
 	TArray<TObjectPtr<UCoreDataAsset>> CandidatePool;
 

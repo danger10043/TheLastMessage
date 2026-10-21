@@ -67,7 +67,6 @@ bool FRangedWeaponTest::RunTest(const FString& Parameters)
 	Data->WeaponType = EWeaponType::LightRanged;
 	Data->AttackPower = 10;
 	Data->Range = 1000;
-	Data->MaxEnergy = 100;
 	Data->EnergyPerShot = 10;
 	FindFProperty<FFloatProperty>(APlayerBase::StaticClass(), TEXT("SharedEnergyRechargeDelay"))->SetPropertyValue_InContainer(Player, 0.5f);
 	FindFProperty<FFloatProperty>(APlayerBase::StaticClass(), TEXT("SharedEnergyRechargeRate"))->SetPropertyValue_InContainer(Player, 20.0f);

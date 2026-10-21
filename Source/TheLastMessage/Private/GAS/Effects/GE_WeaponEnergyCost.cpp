@@ -2,28 +2,15 @@
 #include "GAS/WeaponSlotAttributeSet.h"
 #include "GAS/WeaponGameplayTags.h"
 
-namespace
+UGE_WeaponEnergyCost::UGE_WeaponEnergyCost()
 {
-FGameplayModifierInfo EnergyCost(const FGameplayAttribute& Attribute)
-{
+	DurationPolicy = EGameplayEffectDurationType::Instant;
+
 	FGameplayModifierInfo Modifier;
-	Modifier.Attribute = Attribute;
+	Modifier.Attribute = UWeaponSlotAttributeSet::GetSharedEnergyAttribute();
 	Modifier.ModifierOp = EGameplayModOp::Additive;
 	FSetByCallerFloat Cost;
 	Cost.DataTag = WeaponGameplayTags::Data_EnergyCost;
 	Modifier.ModifierMagnitude = FGameplayEffectModifierMagnitude(Cost);
-	return Modifier;
-}
-}
-
-UGE_WeaponPrimaryEnergyCost::UGE_WeaponPrimaryEnergyCost()
-{
-	DurationPolicy = EGameplayEffectDurationType::Instant;
-	Modifiers.Add(EnergyCost(UWeaponSlotAttributeSet::GetSharedEnergyAttribute()));
-}
-
-UGE_WeaponSecondaryEnergyCost::UGE_WeaponSecondaryEnergyCost()
-{
-	DurationPolicy = EGameplayEffectDurationType::Instant;
-	Modifiers.Add(EnergyCost(UWeaponSlotAttributeSet::GetSharedEnergyAttribute()));
+	Modifiers.Add(Modifier);
 }

@@ -6,6 +6,14 @@
 #include "Character/Player/PlayerBase.h"
 #include "Character/Player/CombatFeedbackComponent.h"
 
+namespace
+{
+	// 코어 강화가 겹치거나 커브 데이터가 잘못되어도 전투가 깨지지 않도록 두는 안전 하한이다.
+	// 밸런스 수치가 아니라 데이터 실수에 대한 보호 장치이며, 기획 확정 시 함께 조정한다.
+	constexpr float MinDamageTakenMultiplier = 0.3f;	// 받는 피해는 최소 30%까지만 감소한다.
+	constexpr float MinChargeTimeMultiplier = 0.2f;		// 최대 차지 시간은 최소 20%까지만 단축한다.
+}
+
 UCombatAttributeSet::UCombatAttributeSet()
 {
 	// 효과가 없는 배율은 1. 실제 시작 스탯은 초기화 GE에서 설정한다.
@@ -36,6 +44,35 @@ void UCombatAttributeSet::PreAttributeChange(const FGameplayAttribute& Attribute
 	else if (Attribute == GetHealthAttribute())
 	{
 		NewValue = FMath::Clamp(NewValue, 0.0f, GetMaxHealth());
+	}
+	else if (Attribute == GetDamageTakenMultiplierAttribute())
+	{
+		NewValue = FMath::Max(MinDamageTakenMultiplier, NewValue);
+	}
+	else if (Attribute == GetChargeTimeMultiplierAttribute())
+	{
+		NewValue = FMath::Max(MinChargeTimeMultiplier, NewValue);
+	}
+	else if (Attribute == GetCriticalChanceAttribute()
+		|| Attribute == GetHighHealthThresholdRatioAttribute()
+		|| Attribute == GetLowHealthThresholdRatioAttribute())
+	{
+		// 확률과 체력 비율은 0~1 범위만 의미가 있다.
+		NewValue = FMath::Clamp(NewValue, 0.0f, 1.0f);
+	}
+	else if (Attribute == GetDamageDealtMultiplierAttribute()
+		|| Attribute == GetMeleeDamageMultiplierAttribute()
+		|| Attribute == GetCriticalDamageMultiplierAttribute()
+		|| Attribute == GetHighHealthDamageMultiplierAttribute()
+		|| Attribute == GetLowHealthDamageMultiplierAttribute()
+		|| Attribute == GetEnergyRechargeRateMultiplierAttribute()
+		|| Attribute == GetMoveSpeedMultiplierAttribute()
+		|| Attribute == GetLifeStealRatioAttribute()
+		|| Attribute == GetKillHealAmountAttribute()
+		|| Attribute == GetAssistStrikeDamageRatioAttribute())
+	{
+		// 음수 배율·회복량은 피해 회복이나 역방향 이동 같은 의도하지 않은 동작을 만든다.
+		NewValue = FMath::Max(0.0f, NewValue);
 	}
 }
 

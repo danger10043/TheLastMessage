@@ -37,7 +37,7 @@ UGA_WeaponAttackBase::UGA_WeaponAttackBase()
 	ActivationBlockedTags.AddTag(WeaponGameplayTags::State_Dead);
 	ActivationBlockedTags.AddTag(WeaponGameplayTags::State_HitReacting);
 	ActivationBlockedTags.AddTag(WeaponGameplayTags::State_Grappling);
-	CostEffectClass = UGE_WeaponPrimaryEnergyCost::StaticClass();
+	CostEffectClass = UGE_WeaponEnergyCost::StaticClass();
 }
 
 bool UGA_WeaponAttackBase::CanActivateAbility(const FGameplayAbilitySpecHandle Handle,
@@ -73,8 +73,8 @@ bool UGA_WeaponAttackBase::CheckCost(const FGameplayAbilitySpecHandle Handle, co
 	if (!Data) return false;
 	if (!FMath::IsFinite(Data->EnergyPerShot) || Data->EnergyPerShot < 0.0f) return false;
 	if (Data->EnergyPerShot == 0.0f) return true;
-	return CostEffectClass && FMath::IsFinite(Data->EnergyPerShot) && Data->EnergyPerShot >= 0.0f
-		&& Player->GetAbilitySystemComponent()->GetNumericAttribute(UWeaponSlotAttributeSet::EnergyAttribute(WeaponSlot)) >= Data->EnergyPerShot;
+	return CostEffectClass
+		&& Player->GetAbilitySystemComponent()->GetNumericAttribute(UWeaponSlotAttributeSet::GetSharedEnergyAttribute()) >= Data->EnergyPerShot;
 }
 
 void UGA_WeaponAttackBase::ApplyCost(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo,

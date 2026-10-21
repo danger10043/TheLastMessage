@@ -446,4 +446,76 @@ bool FGrapplingCooldownTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Normal release also starts full cooldown"), Grapple->GetCooldownRemaining() > 0.99f);
 	return !HasAnyErrors();
 }
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGrapplingDecorationTest, "TheLastMessage.Grappling.UntaggedDecorationMeshes",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FGrapplingDecorationTest::RunTest(const FString& Parameters)
+{
+	GrapplingProbeTest::FWorld Fixture;
+	APlayerBase* Player = Fixture.SpawnPlayer();
+	UGrapplingHookComponent* Grapple = Player->FindComponentByClass<UGrapplingHookComponent>();
+	UStaticMeshComponent* Decoration = Fixture.MakeSurface(400);
+	Decoration->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	Decoration->SetCollisionResponseToAllChannels(ECR_Ignore);
+	UStaticMeshComponent* HiddenWall = Fixture.MakeSurface(200);
+	HiddenWall->SetHiddenInGame(true);
+	HiddenWall->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	APawn* Enemy = Fixture.World->SpawnActor<APawn>();
+	UStaticMeshComponent* EnemyMesh = Fixture.MakeSurface(300, Enemy);
+	EnemyMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	Grapple->RequestGrapple(FVector(800,0,0));
+	TestTrue(TEXT("Untagged NoCollision decoration attaches without editor setup"), Grapple->HasGrappleAnchor()
+		&& Grapple->ProbeState.AnchorPoint.Equals(FVector(375,0,0), 0.1f));
+	TestTrue(TEXT("Decoration only participates in queries"), Decoration->GetCollisionEnabled() == ECollisionEnabled::QueryOnly);
+	TestTrue(TEXT("Decoration still ignores movement and weapon visibility traces"),
+		Decoration->GetCollisionResponseToChannel(ECC_Pawn) == ECR_Ignore
+		&& Decoration->GetCollisionResponseToChannel(ECC_Visibility) == ECR_Ignore
+		&& Decoration->GetCollisionResponseToChannel(ECC_GameTraceChannel3) == ECR_Ignore);
+	TestTrue(TEXT("Hidden wall stays disabled"), HiddenWall->GetCollisionEnabled() == ECollisionEnabled::NoCollision);
+	TestTrue(TEXT("Enemy mesh stays disabled"), EnemyMesh->GetCollisionEnabled() == ECollisionEnabled::NoCollision);
+	Grapple->ReleaseGrapple();
+	Decoration->SetCollisionResponseToChannel(ECC_GameTraceChannel4, ECR_Ignore);
+	Decoration->SetCollisionResponseToChannel(ECC_Pawn, ECR_Block);
+	Grapple->RequestGrapple(FVector(800,0,0));
+	TestTrue(TEXT("Existing mesh with ignored grapple channel also attaches"), Grapple->HasGrappleAnchor());
+	TestTrue(TEXT("Existing movement response is preserved"), Decoration->GetCollisionResponseToChannel(ECC_Pawn) == ECR_Block);
+	return !HasAnyErrors();
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGrapplingTerrainTest, "TheLastMessage.Grappling.FloorAndLintelSurfaces",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FGrapplingTerrainTest::RunTest(const FString& Parameters)
+{
+	GrapplingProbeTest::FWorld Fixture;
+	APlayerBase* Player = Fixture.SpawnPlayer();
+	UGrapplingHookComponent* Grapple = Player->FindComponentByClass<UGrapplingHookComponent>();
+	UStaticMeshComponent* Floor = Fixture.MakeSurface(0);
+	Floor->SetCollisionProfileName(TEXT("GrappleTerrain"));
+	Floor->SetWorldScale3D(FVector(8,4,1));
+	Floor->GetOwner()->SetActorLocation(FVector(0,0,-150));
+	Floor->SetVisibility(false);
+	Floor->GetOwner()->SetActorHiddenInGame(true);
+	Grapple->RequestGrapple(FVector(0,0,-800));
+	TestTrue(TEXT("Hidden floor collision surface attaches without a tag"), Grapple->HasGrappleAnchor()
+		&& Grapple->ProbeState.AnchorPoint.Equals(FVector(0,0,-100), 0.1f));
+	Grapple->ReleaseGrapple();
+	UStaticMeshComponent* Lintel = Fixture.MakeSurface(400);
+	Lintel->SetCollisionProfileName(TEXT("GrappleTerrain"));
+	Lintel->SetWorldScale3D(FVector(0.5,4,3));
+	Lintel->GetOwner()->SetActorLocation(FVector(400,0,150));
+	Lintel->SetVisibility(false);
+	Lintel->GetOwner()->SetActorHiddenInGame(true);
+	UStaticMeshComponent* Boundary = Fixture.MakeSurface(200);
+	Boundary->SetCollisionProfileName(TEXT("InvisibleWall"));
+	Boundary->SetWorldScale3D(FVector(0.5,4,8));
+	Boundary->GetOwner()->SetActorHiddenInGame(true);
+	Grapple->RequestGrapple(FVector(800,0,300));
+	TestTrue(TEXT("Lintel surface attaches while transparent boundary is excluded"), Grapple->HasGrappleAnchor()
+		&& FMath::IsNearlyEqual(Grapple->ProbeState.AnchorPoint.X, 375.0, 0.1));
+	Grapple->ReleaseGrapple();
+	Lintel->SetCollisionProfileName(TEXT("BlockAll"));
+	Grapple->RequestGrapple(FVector(800,0,300));
+	TestFalse(TEXT("Ordinary hidden blockers remain excluded"), Grapple->HasGrappleAnchor());
+	return !HasAnyErrors();
+}
 #endif

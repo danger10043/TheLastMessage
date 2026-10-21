@@ -18,17 +18,21 @@
 #include "Materials/MaterialInterface.h"
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/GameStateBase.h"
+#include "UObject/UObjectIterator.h"
 
 namespace
 {
-bool IsGrappleMesh(const FHitResult& Hit)
+bool IsGrappleMesh(const UPrimitiveComponent* Component)
 {
-	const UMeshComponent* Mesh = Cast<UMeshComponent>(Hit.GetComponent());
-	if (!Mesh || !Mesh->IsVisible() || Mesh->bHiddenInGame) return false;
+	const UMeshComponent* Mesh = Cast<UMeshComponent>(Component);
+	if (!Mesh) return false;
 	const FName Profile = Mesh->GetCollisionProfileName();
 	if (Profile == TEXT("InvisibleWall") || Profile == TEXT("InvisibleWallDynamic")) return false;
-	const AActor* Actor = Hit.GetActor();
-	if (!Actor || Actor->IsHidden()) return false;
+	const AActor* Actor = Mesh->GetOwner();
+	if (!Actor) return false;
+	// 외형과 분리된 바닥이나 문 위 구조물의 충돌 표면은 실제 지형으로 취급
+	const bool bTerrainSurface = Profile == TEXT("GrappleTerrain");
+	if (!bTerrainSurface && (!Mesh->IsVisible() || Mesh->bHiddenInGame || Actor->IsHidden())) return false;
 	// 캐릭터가 소유하거나 부착한 장비도 제외
 	for (const AActor* Owner = Actor; Owner; Owner = Owner->GetOwner())
 	{
@@ -41,6 +45,28 @@ bool IsGrappleMesh(const FHitResult& Hit)
 	if (const UStaticMeshComponent* StaticMesh = Cast<UStaticMeshComponent>(Mesh)) return StaticMesh->GetStaticMesh() != nullptr;
 	if (const USkeletalMeshComponent* SkeletalMesh = Cast<USkeletalMeshComponent>(Mesh)) return SkeletalMesh->GetSkeletalMeshAsset() != nullptr;
 	return false;
+}
+
+void PrepareGrappleMeshes(UWorld* World)
+{
+	// 장식 메시도 태그나 에디터 충돌 설정 없이 훅 전용 검사에 참여
+	for (TObjectIterator<UMeshComponent> It; It; ++It)
+	{
+		UMeshComponent* Mesh = *It;
+		if (Mesh->GetWorld() != World || !Mesh->IsRegistered() || !IsGrappleMesh(Mesh)) continue;
+		if (Mesh->GetCollisionEnabled() == ECollisionEnabled::NoCollision)
+		{
+			// 원래 없던 이동 충돌이나 무기 판정이 생기지 않도록 훅 채널만 활성화
+			Mesh->SetCollisionResponseToAllChannels(ECR_Ignore);
+			Mesh->SetGenerateOverlapEvents(false);
+			Mesh->SetCollisionResponseToChannel(ECC_GameTraceChannel4, ECR_Block);
+			Mesh->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+		}
+		else if (Mesh->GetCollisionResponseToChannel(ECC_GameTraceChannel4) != ECR_Block)
+		{
+			Mesh->SetCollisionResponseToChannel(ECC_GameTraceChannel4, ECR_Block);
+		}
+	}
 }
 }
 
@@ -62,6 +88,7 @@ UGrapplingHookComponent::UGrapplingHookComponent()
 void UGrapplingHookComponent::BeginPlay()
 {
 	Super::BeginPlay();
+	TraceChannel = ECC_GameTraceChannel4;
 	CreateCable();
 	if (APlayerBase* Player = Cast<APlayerBase>(GetOwner()))
 	{
@@ -251,6 +278,7 @@ void UGrapplingHookComponent::ProbeForAnchor(FVector WorldAimPoint)
 	}
 	if (Direction.ContainsNaN() || !Direction.Normalize() || !FMath::IsFinite(MaxGrappleDistance) || MaxGrappleDistance <= 0.0f) return;
 	const FVector End = Start + Direction * MaxGrappleDistance;
+	PrepareGrappleMeshes(GetWorld());
 	FHitResult Hit;
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(GrapplingProbe), true, Player);
 	// Ignore anything attached to the character, including future weapon actors.
@@ -261,7 +289,7 @@ void UGrapplingHookComponent::ProbeForAnchor(FVector WorldAimPoint)
 	// 숨겨진 충돌 프록시와 적을 건너뛰고 실제 메시 검사
 	while (GetWorld()->LineTraceSingleByChannel(Hit, Start, End, TraceChannel, Params))
 	{
-		if (IsGrappleMesh(Hit))
+		if (IsGrappleMesh(Hit.GetComponent()))
 		{
 			bHit = true;
 			break;

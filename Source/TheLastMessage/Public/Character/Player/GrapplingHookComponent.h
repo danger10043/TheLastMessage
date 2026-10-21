@@ -138,7 +138,7 @@ public:
 	float ReleaseVelocityValue = 0.75f;
 
 	/** 보이는 메시만 훅 대상으로 검사하며 숨겨진 충돌 벽과 캐릭터는 제외 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Player|Grappling", meta=(ToolTip="보이는 메시만 훅 대상으로 검사하며 숨겨진 충돌 벽과 캐릭터는 제외"))
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Player|Grappling", meta=(ToolTip="보이는 메시만 훅 대상으로 검사하며 숨겨진 충돌 벽과 캐릭터는 제외"))
 	TEnumAsByte<ECollisionChannel> TraceChannel = ECC_GameTraceChannel4;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Player|Grappling|Debug")

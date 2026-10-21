@@ -280,26 +280,21 @@ FReply UCoreChoiceWidget::NativeOnKeyDown(const FGeometry& Geometry, const FKeyE
 {
 	if (bClosing) return FReply::Handled();
 	const FKey Key = Event.GetKey();
-	if (Key == EKeys::Escape || Key == EKeys::Gamepad_FaceButton_Right)
+	if (Key == EKeys::Escape)
 	{
 		HandleCancel();
 		// Handled는 이 입력을 UI가 처리했음을 뜻한다. Unhandled는 다른 처리 경로로 넘길 수 있다.
 		return FReply::Handled();
 	}
 	// 나머지 연산(%)으로 처음과 마지막 카드 사이를 순환한다.
-	if (Key == EKeys::Left || Key == EKeys::Gamepad_DPad_Left || (Key == EKeys::Tab && Event.IsShiftDown()))
+	if (Key == EKeys::Left || (Key == EKeys::Tab && Event.IsShiftDown()))
 	{
 		if (!Cards.IsEmpty()) SetActiveCardIndex((ActiveCardIndex + Cards.Num() - 1) % Cards.Num());
 		return FReply::Handled();
 	}
-	if (Key == EKeys::Right || Key == EKeys::Gamepad_DPad_Right || Key == EKeys::Tab)
+	if (Key == EKeys::Right || Key == EKeys::Tab)
 	{
 		if (!Cards.IsEmpty()) SetActiveCardIndex((ActiveCardIndex + 1) % Cards.Num());
-		return FReply::Handled();
-	}
-	if (Key == EKeys::Gamepad_FaceButton_Bottom)
-	{
-		if (DisplayedChoices.IsValidIndex(ActiveCardIndex)) HandleCardChosen(DisplayedChoices[ActiveCardIndex]);
 		return FReply::Handled();
 	}
 	return Super::NativeOnKeyDown(Geometry, Event);

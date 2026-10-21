@@ -69,7 +69,7 @@ protected:
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 	/** Space·Enter 입력을 자식 버튼보다 먼저 차단하여 키보드 확인 키로 버튼이 실행되지 않게 한다. */
 	virtual FReply NativeOnPreviewKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
-	/** 방향키·확인·취소 키 입력을 화면 동작으로 바꾼다. */
+	/** 방향키·Tab으로 강조 카드를 옮기고 Esc로 취소한다. 선택은 마우스로만 한다. */
 	virtual FReply NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
 
 	/** 후보를 표시할 카드 WBP 클래스. 카드의 모양은 해당 WBP에서 편집한다. */
@@ -156,7 +156,7 @@ private:
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UCoreChoiceCardWidget>> Cards;
 
-	/** 방향키 또는 마우스로 가리킨 카드의 위치. 확인 키를 누르면 이 위치의 코어를 선택한다. */
+	/** 방향키 또는 마우스로 가리킨 카드의 위치. 강조 표시와 카드 순번 표시에 사용한다. */
 	int32 ActiveCardIndex = 0;
 	/** 이 화면이 플레이어 입력을 UI로 전환했는지 기록한다. 중복 복구를 막는 데 사용한다. */
 	bool bCapturedInput = false;

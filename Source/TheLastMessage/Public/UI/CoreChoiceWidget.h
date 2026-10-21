@@ -4,6 +4,7 @@
 #include "Blueprint/UserWidget.h"
 #include "Core/GameCoreTypes.h"
 #include "Layout/Margin.h"
+#include "UI/CoreUIInputState.h"
 #include "CoreChoiceWidget.generated.h"
 
 class APlayerController;
@@ -125,7 +126,7 @@ private:
 	void HandleCardChosen(UCoreDataAsset* CoreData);
 	/** 게임을 일시정지하고 입력을 UI로 옮긴다. 일시정지에 실패하면 화면을 열지 않는다. */
 	bool CapturePlayerInput();
-	/** 화면 입력 관리가 끝나면 게임 전용 입력으로 바꾸고 이전 커서 표시 상태를 복구한다. */
+	/** 화면 입력 관리가 끝나면 이전 입력 설정·포커스·커서를 복구한다. */
 	void RestorePlayerInput();
 	/** 선택 화면이 열려 있는 동안 다른 곳에서 일시정지를 풀지 못하게 한다. */
 	bool CanUnpauseAfterClose() const;
@@ -170,8 +171,7 @@ private:
 	TWeakObjectPtr<UWorld> InputWorld;
 	/** 이미 멈춰 있던 게임은 화면 종료 시에도 멈춘 상태를 유지한다. */
 	bool bPausedByThisScreen = false;
-	/** 화면을 열기 전 마우스 커서 표시 상태. */
-	bool bPreviousMouseCursorVisible = false;
+	FCoreUIInputState PreviousInput;
 	/** 화면을 닫는 중인지 나타낸다. 종료 중 추가 선택·리롤 요청을 막는다. */
 	bool bClosing = false;
 	/** 페이드 경과 시간과 시작 투명도. 현재 투명도에서 자연스럽게 사라지도록 계산한다. */

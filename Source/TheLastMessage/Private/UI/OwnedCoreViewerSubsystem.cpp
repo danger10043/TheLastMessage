@@ -69,14 +69,7 @@ bool UOwnedCoreViewerSubsystem::OpenViewer()
 	bOwnsPause = Controller->SetPause(true, FCanUnpause::CreateUObject(this, &ThisClass::CanUnpause));
 	if (!bOwnsPause) { Screen->ReleaseSources(); Viewer = nullptr; return false; }
 	InputWorld = World;
-	bPreviousCursor = Controller->bShowMouseCursor;
-	if (UGameViewportClient* Viewport = World->GetGameViewport())
-	{
-		PreviousCaptureMode = Viewport->GetMouseCaptureMode();
-		PreviousLockMode = Viewport->GetMouseLockMode();
-		bPreviousGameAndUI = PreviousCaptureMode == EMouseCaptureMode::CaptureDuringMouseDown;
-		bPreviousHideCursorDuringCapture = Viewport->HideCursorDuringCapture();
-	}
+	PreviousInput.Capture(*Controller);
 	SourcePawn = Pawn;
 	Pawn->OnEndPlay.AddDynamic(this, &ThisClass::HandleSourceEndPlay);
 	Screen->OnClosed.AddUObject(this, &ThisClass::HandleClosed);
@@ -125,21 +118,7 @@ void UOwnedCoreViewerSubsystem::HandleClosed()
 	}
 	// 맵 전환 뒤 새 월드의 입력이나 일시정지를 변경하지 않는다.
 	if (!IsValid(Controller) || Controller->GetWorld() != World) return;
-	if (bPreviousGameAndUI)
-	{
-		FInputModeGameAndUI Mode;
-		Mode.SetLockMouseToViewportBehavior(PreviousLockMode).SetHideCursorDuringCapture(bPreviousHideCursorDuringCapture);
-		Controller->SetInputMode(Mode);
-	}
-	else Controller->SetInputMode(FInputModeGameOnly());
-	Controller->SetShowMouseCursor(bPreviousCursor);
-	Controller->FlushPressedKeys();
-	if (UGameViewportClient* Viewport = World->GetGameViewport())
-	{
-		Viewport->SetMouseCaptureMode(PreviousCaptureMode);
-		Viewport->SetMouseLockMode(PreviousLockMode);
-		Viewport->SetHideCursorDuringCapture(bPreviousHideCursorDuringCapture);
-	}
+	PreviousInput.Restore(*Controller);
 }
 
 void UOwnedCoreViewerSubsystem::HandlePawnChanged(APawn* OldPawn, APawn* NewPawn)

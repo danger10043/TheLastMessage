@@ -13,6 +13,7 @@
 #include "Core/CorePickup.h"
 #include "DataAsset/CoreDataAsset.h"
 #include "Editor.h"
+#include "Engine/GameViewportClient.h"
 #include "Engine/AssetManager.h"
 #include "Engine/World.h"
 #include "GameFramework/GameModeBase.h"
@@ -105,6 +106,10 @@ namespace
 				APawn* PreviousPawn = Controller->GetPawn();
 				Controller->Possess(Player.Get());
 				if (PreviousPawn) PreviousPawn->Destroy();
+				FInputModeGameAndUI PriorMode;
+				PriorMode.SetHideCursorDuringCapture(false).SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+				Controller->SetInputMode(PriorMode);
+				World->GetGameViewport()->SetMouseCaptureMode(EMouseCaptureMode::CaptureDuringRightMouseDown);
 				PreviousCursor = Controller->bShowMouseCursor;
 				UClass* ScreenClass = LoadClass<UCoreChoiceWidget>(nullptr, TEXT("/Game/Test_Jihun/Core/WBP/WBP_CoreChoice.WBP_CoreChoice_C"));
 				Pickup = World->SpawnActor<ACorePickup>(FVector(10000, 0, 10000), FRotator::ZeroRotator);
@@ -179,6 +184,12 @@ namespace
 				return true;
 			}
 			Test->TestEqual(TEXT("Original cursor visibility is restored"), Controller->bShowMouseCursor, PreviousCursor);
+			Test->TestEqual(TEXT("Choice close restores the original key-flush policy"), Controller->ShouldFlushKeysWhenViewportFocusChanges(), Phase == 5);
+			Test->TestEqual(TEXT("Choice close restores whether game input was blocked"), World->GetGameViewport()->IgnoreInput(), Phase == 5);
+			Test->TestTrue(TEXT("Choice close restores custom mouse capture"), World->GetGameViewport()->GetMouseCaptureMode()
+				== (Phase == 5 ? EMouseCaptureMode::NoCapture : EMouseCaptureMode::CaptureDuringRightMouseDown));
+			Test->TestFalse(TEXT("Choice close restores cursor capture visibility"), World->GetGameViewport()->HideCursorDuringCapture());
+			Test->TestTrue(TEXT("Choice close restores mouse lock"), World->GetGameViewport()->GetMouseLockMode() == EMouseLockMode::DoNotLock);
 			if (Phase == 1)
 			{
 				// 새 픽업으로 외부 화면 제거와 기존 일시정지 보존을 검사한다. 이후 단계는 흡수 연출 없이 바로 연다.
@@ -227,6 +238,9 @@ namespace
 			if (Phase == 4)
 			{
 				Test->TestTrue(TEXT("External pause begins"), UGameplayStatics::SetGamePaused(World, true));
+				FInputModeUIOnly OtherUI;
+				OtherUI.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+				Controller->SetInputMode(OtherUI);
 				if (!OpenScreen(World)) return true;
 				Screen->CloseChoiceUI(false);
 				Advance(5);
@@ -235,6 +249,10 @@ namespace
 			if (Phase == 5)
 			{
 				Test->TestTrue(TEXT("Pause owned by another caller is preserved"), bPaused);
+				FInputModeGameAndUI PriorMode;
+				PriorMode.SetHideCursorDuringCapture(false);
+				Controller->SetInputMode(PriorMode);
+				World->GetGameViewport()->SetMouseCaptureMode(EMouseCaptureMode::CaptureDuringRightMouseDown);
 				UGameplayStatics::SetGamePaused(World, false);
 				if (!OpenScreen(World)) return true;
 				Player->HandleDeath();

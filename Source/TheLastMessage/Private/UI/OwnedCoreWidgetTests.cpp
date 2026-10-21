@@ -17,6 +17,7 @@
 #include "Core/CoreComponent.h"
 #include "DataAsset/CoreDataAsset.h"
 #include "Editor.h"
+#include "Engine/GameViewportClient.h"
 #include "Engine/LocalPlayer.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Engine/World.h"
@@ -38,6 +39,7 @@
 #include "UI/OwnedCoreViewerSubsystem.h"
 #include "UObject/StrongObjectPtr.h"
 #include "Widgets/SWidget.h"
+#include "Widgets/SViewport.h"
 
 namespace
 {
@@ -68,9 +70,14 @@ public:
 		ASC->SetNumericAttributeBase(UCombatAttributeSet::GetMaxHealthAttribute(), 100);
 		ASC->SetNumericAttributeBase(UCombatAttributeSet::GetHealthAttribute(), 100);
 		Core->ResetOwnedCores();
+		UGameViewportClient* Viewport = World->GetGameViewport();
+		if (!Test->TestNotNull(TEXT("Game viewport exists"), Viewport)) return true;
+		const TSharedPtr<SWidget> PreviousFocus = Viewport->GetGameViewportWidget();
 		FInputModeGameAndUI PriorMode;
-		PriorMode.SetHideCursorDuringCapture(false);
+		PriorMode.SetHideCursorDuringCapture(false).SetLockMouseToViewportBehavior(EMouseLockMode::LockAlways).SetWidgetToFocus(PreviousFocus);
 		PC->SetInputMode(PriorMode);
+		// 캡처 설정을 별도로 바꿔도 GameAndUI의 포커스 정책은 보존되어야 한다.
+		Viewport->SetMouseCaptureMode(EMouseCaptureMode::CapturePermanently_IncludingInitialMouseDown);
 		const bool PreviousCursor = PC->bShowMouseCursor;
 		bool bInvokedInput = false;
 		TInlineComponentArray<UInputComponent*> Inputs(PC);
@@ -232,6 +239,23 @@ public:
 		Test->TestFalse(TEXT("I closes the menu"), Menu->IsViewerOpen());
 		Test->TestFalse(TEXT("Closing resumes gameplay"), World->IsPaused());
 		Test->TestEqual(TEXT("Closing restores the prior cursor visibility"), PC->bShowMouseCursor, PreviousCursor);
+		Test->TestFalse(TEXT("GameAndUI retains its key-flush policy with a custom capture mode"), PC->ShouldFlushKeysWhenViewportFocusChanges());
+		Test->TestTrue(TEXT("Closing restores the custom permanent capture mode"), Viewport->GetMouseCaptureMode() == EMouseCaptureMode::CapturePermanently_IncludingInitialMouseDown);
+		Test->TestTrue(TEXT("Closing restores the mouse lock mode"), Viewport->GetMouseLockMode() == EMouseLockMode::LockAlways);
+		Test->TestFalse(TEXT("Closing restores hide-cursor-during-capture"), Viewport->HideCursorDuringCapture());
+		Test->TestFalse(TEXT("Closing enables the original game input"), Viewport->IgnoreInput());
+		Test->TestTrue(TEXT("Closing requests the original focus target"), LocalPlayer->GetSlateOperations().GetUserFocusRecepient() == PreviousFocus);
+
+		PC->SetInputMode(FInputModeGameOnly());
+		Viewport->SetMouseCaptureMode(EMouseCaptureMode::CaptureDuringMouseDown);
+		Viewport->SetMouseLockMode(EMouseLockMode::DoNotLock);
+		Viewport->SetHideCursorDuringCapture(true);
+		Test->TestTrue(TEXT("Viewer opens from GameOnly with temporary mouse capture"), Menu->OpenViewer());
+		Menu->CloseViewer();
+		Test->TestTrue(TEXT("GameOnly retains its key-flush policy with a custom capture mode"), PC->ShouldFlushKeysWhenViewportFocusChanges());
+		Test->TestTrue(TEXT("GameOnly restores its custom temporary capture mode"), Viewport->GetMouseCaptureMode() == EMouseCaptureMode::CaptureDuringMouseDown);
+		Test->TestTrue(TEXT("GameOnly restores its cursor-capture setting"), Viewport->HideCursorDuringCapture());
+		PC->SetInputMode(PriorMode);
 		Test->TestTrue(TEXT("Menu can reopen"), Menu->OpenViewer());
 		Screen = FindScreen(PC);
 		if (!Screen) return true;
@@ -254,9 +278,24 @@ public:
 		Test->TestTrue(TEXT("Menu can open before forced removal"), Menu->OpenViewer());
 		if (UOwnedCoreWidget* Forced = FindScreen(PC)) Forced->RemoveFromParent();
 		Test->TestFalse(TEXT("External removal also releases the menu pause"), World->IsPaused());
+		FInputModeUIOnly OtherUI;
+		OtherUI.SetWidgetToFocus(PreviousFocus);
+		PC->SetInputMode(OtherUI);
+		Test->TestFalse(TEXT("An existing UIOnly screen prevents opening"), Menu->OpenViewer());
+		Test->TestTrue(TEXT("Rejected opening preserves UIOnly input"), Viewport->IgnoreInput());
+		PC->SetInputMode(PriorMode);
 		PC->SetPause(true);
 		Test->TestFalse(TEXT("Another pause screen prevents this menu from opening"), Menu->OpenViewer());
 		Test->TestTrue(TEXT("An existing pause is preserved"), World->IsPaused());
+		PC->SetPause(false);
+		Test->TestTrue(TEXT("Viewer opens before another caller pauses"), Menu->OpenViewer());
+		bool bOtherCallerCanUnpause = false;
+		// 이미 멈춘 월드에 별도 해제 조건을 등록할 때는 GameMode의 일시정지 목록을 사용한다.
+		Test->TestTrue(TEXT("Another caller registers its own pause condition"), World->GetAuthGameMode()->SetPause(PC,
+			FCanUnpause::CreateLambda([&bOtherCallerCanUnpause]() { return bOtherCallerCanUnpause; })));
+		Menu->CloseViewer();
+		Test->TestTrue(TEXT("Closing preserves another caller's guarded pause"), World->IsPaused());
+		bOtherCallerCanUnpause = true;
 		PC->SetPause(false);
 		Test->TestTrue(TEXT("Viewer opens before a pawn change"), Menu->OpenViewer());
 		APawn* Replacement = World->SpawnActor<APawn>();

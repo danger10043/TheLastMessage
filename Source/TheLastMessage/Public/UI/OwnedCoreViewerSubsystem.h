@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Subsystems/LocalPlayerSubsystem.h"
 #include "InputCoreTypes.h"
+#include "UI/CoreUIInputState.h"
 #include "OwnedCoreViewerSubsystem.generated.h"
 
 class UInputComponent;
@@ -40,9 +41,5 @@ private:
 	UPROPERTY(Transient) TWeakObjectPtr<APawn> SourcePawn;
 	UPROPERTY(Transient) TWeakObjectPtr<UWorld> InputWorld;
 	bool bOwnsPause = false;
-	bool bPreviousCursor = false;
-	bool bPreviousGameAndUI = false;
-	bool bPreviousHideCursorDuringCapture = true;
-	EMouseCaptureMode PreviousCaptureMode = EMouseCaptureMode::CapturePermanently_IncludingInitialMouseDown;
-	EMouseLockMode PreviousLockMode = EMouseLockMode::DoNotLock;
+	FCoreUIInputState PreviousInput;
 };

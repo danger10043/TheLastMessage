@@ -236,7 +236,7 @@ bool UCoreChoiceWidget::CapturePlayerInput()
 	{
 		InputOwner = Player;
 		InputWorld = Player->GetWorld();
-		bPreviousMouseCursorVisible = Player->bShowMouseCursor;
+		PreviousInput.Capture(*Player);
 		bCapturedInput = true;
 		if (!UGameplayStatics::IsGamePaused(Player))
 		{
@@ -277,9 +277,7 @@ void UCoreChoiceWidget::RestorePlayerInput()
 	if (APlayerController* Player = InputOwner.Get(); IsValid(Player) && IsValid(World)
 		&& !World->bIsTearingDown && Player->GetWorld() == World)
 	{
-		Player->SetInputMode(FInputModeGameOnly());
-		Player->SetShowMouseCursor(bPreviousMouseCursorVisible);
-		Player->FlushPressedKeys();
+		PreviousInput.Restore(*Player);
 	}
 	if (bPausedByThisScreen)
 	{

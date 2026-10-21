@@ -16,6 +16,33 @@
 #include "UObject/ConstructorHelpers.h"
 #include "CableComponent.h"
 #include "Materials/MaterialInterface.h"
+#include "Components/StaticMeshComponent.h"
+#include "GameFramework/GameStateBase.h"
+
+namespace
+{
+bool IsGrappleMesh(const FHitResult& Hit)
+{
+	const UMeshComponent* Mesh = Cast<UMeshComponent>(Hit.GetComponent());
+	if (!Mesh || !Mesh->IsVisible() || Mesh->bHiddenInGame) return false;
+	const FName Profile = Mesh->GetCollisionProfileName();
+	if (Profile == TEXT("InvisibleWall") || Profile == TEXT("InvisibleWallDynamic")) return false;
+	const AActor* Actor = Hit.GetActor();
+	if (!Actor || Actor->IsHidden()) return false;
+	// 캐릭터가 소유하거나 부착한 장비도 제외
+	for (const AActor* Owner = Actor; Owner; Owner = Owner->GetOwner())
+	{
+		if (Owner->IsA<APawn>()) return false;
+	}
+	for (const AActor* Parent = Actor->GetAttachParentActor(); Parent; Parent = Parent->GetAttachParentActor())
+	{
+		if (Parent->IsA<APawn>()) return false;
+	}
+	if (const UStaticMeshComponent* StaticMesh = Cast<UStaticMeshComponent>(Mesh)) return StaticMesh->GetStaticMesh() != nullptr;
+	if (const USkeletalMeshComponent* SkeletalMesh = Cast<USkeletalMeshComponent>(Mesh)) return SkeletalMesh->GetSkeletalMeshAsset() != nullptr;
+	return false;
+}
+}
 
 UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_GrapplingHookUnlock, "Unlock.GrapplingHook");
 
@@ -64,14 +91,47 @@ void UGrapplingHookComponent::GetLifetimeReplicatedProps(TArray<FLifetimePropert
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(UGrapplingHookComponent, ProbeState);
+	DOREPLIFETIME_CONDITION(UGrapplingHookComponent, CooldownState, COND_OwnerOnly);
+}
+
+float UGrapplingHookComponent::GetCooldownTime() const
+{
+	const UWorld* World = GetWorld();
+	if (!World) return 0;
+	const AGameStateBase* State = World->GetGameState();
+	return State ? State->GetServerWorldTimeSeconds() : World->GetTimeSeconds();
+}
+
+float UGrapplingHookComponent::GetCooldownRemaining() const
+{
+	return FMath::Max(0.0f, CooldownState.EndTime - GetCooldownTime());
+}
+
+float UGrapplingHookComponent::GetCooldownProgress() const
+{
+	return CooldownState.Duration > 0 ? 1.0f - FMath::Clamp(GetCooldownRemaining() / CooldownState.Duration, 0.0f, 1.0f) : 1.0f;
+}
+
+bool UGrapplingHookComponent::IsGrappleUnlocked() const
+{
+	const APlayerBase* Player = Cast<APlayerBase>(GetOwner());
+	const UAbilitySystemComponent* ASC = Player ? Player->GetAbilitySystemComponent() : nullptr;
+	return ASC && ASC->HasMatchingGameplayTag(TAG_GrapplingHookUnlock);
+}
+
+void UGrapplingHookComponent::StartCooldown(float Duration)
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority()) return;
+	CooldownState.Duration = FMath::IsFinite(Duration) ? FMath::Max(0.0f, Duration) : 0.0f;
+	CooldownState.EndTime = GetCooldownTime() + CooldownState.Duration;
+	GetOwner()->ForceNetUpdate();
 }
 
 void UGrapplingHookComponent::RequestGrapple(FVector WorldAimPoint)
 {
 	const APlayerBase* Player = Cast<APlayerBase>(GetOwner());
-	const UAbilitySystemComponent* ASC = Player ? Player->GetAbilitySystemComponent() : nullptr;
 	// 그래플링 훅 코어의 GE가 부여한 사용 권한이 있어야 훅을 요청할 수 있다.
-	if (!IsValid(ASC) || !ASC->HasMatchingGameplayTag(TAG_GrapplingHookUnlock)) return;
+	if (!IsGrappleUnlocked() || GetCooldownRemaining() > 0 || HasGrappleAnchor()) return;
 	bPullRequested = true;
 	if (Player->HasAuthority())
 	{
@@ -165,6 +225,7 @@ void UGrapplingHookComponent::ClearAnchor()
 {
 	if (GetOwner() && GetOwner()->HasAuthority())
 	{
+		if (HasGrappleAnchor() || bMovementOverrideActive) StartCooldown(CooldownDuration);
 		EndPull();
 		MulticastFinishPresentation(bCompletedPull);
 		bCompletedPull = false;
@@ -191,23 +252,37 @@ void UGrapplingHookComponent::ProbeForAnchor(FVector WorldAimPoint)
 	if (Direction.ContainsNaN() || !Direction.Normalize() || !FMath::IsFinite(MaxGrappleDistance) || MaxGrappleDistance <= 0.0f) return;
 	const FVector End = Start + Direction * MaxGrappleDistance;
 	FHitResult Hit;
-	FCollisionQueryParams Params(SCENE_QUERY_STAT(GrapplingProbe), false, Player);
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(GrapplingProbe), true, Player);
 	// Ignore anything attached to the character, including future weapon actors.
 	TArray<AActor*> AttachedActors;
 	Player->GetAttachedActors(AttachedActors, true, true);
 	Params.AddIgnoredActors(AttachedActors);
-	const bool bHit = GetWorld()->LineTraceSingleByChannel(Hit, Start, End, TraceChannel, Params);
+	bool bHit = false;
+	// 숨겨진 충돌 프록시와 적을 건너뛰고 실제 메시 검사
+	while (GetWorld()->LineTraceSingleByChannel(Hit, Start, End, TraceChannel, Params))
+	{
+		if (IsGrappleMesh(Hit))
+		{
+			bHit = true;
+			break;
+		}
+		if (!Hit.GetComponent()) break;
+		Params.AddIgnoredComponent(Hit.GetComponent());
+	}
 	ProbeState.TraceStart = Start;
 	ProbeState.TraceEnd = bHit ? Hit.ImpactPoint : End;
 	ProbeState.Result = bHit ? EGrapplingProbeResult::Blocked : EGrapplingProbeResult::Miss;
-	if (bHit && !Hit.bStartPenetrating && !GrappleableTag.IsNone()
-		&& ((Hit.GetActor() && Hit.GetActor()->ActorHasTag(GrappleableTag))
-			|| (Hit.GetComponent() && Hit.GetComponent()->ComponentHasTag(GrappleableTag))))
+	if (bHit && !Hit.bStartPenetrating)
 	{
 		ProbeState.Result = EGrapplingProbeResult::Connected;
 		ProbeState.AnchorPoint = Hit.ImpactPoint;
 		ProbeState.SurfaceNormal = Hit.ImpactNormal;
 		BeginPull();
+	}
+	else
+	{
+		bPullRequested = false;
+		StartCooldown(FailedCooldownDuration);
 	}
 	UpdateCable();
 	GetOwner()->ForceNetUpdate();

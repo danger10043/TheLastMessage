@@ -69,11 +69,11 @@ FText CoreDescriptionFormatter::MakeLevelText(const UCoreDataAsset& Data, int32 
 	return Stage;
 }
 
-FText CoreDescriptionFormatter::MakeDescription(const UCoreDataAsset& Data, int32 CurrentLevel)
+namespace
+{
+FText MakeDescriptionForLevels(const UCoreDataAsset& Data, int32 CurrentLevel, int32 PreviewLevel)
 {
 	if (Data.DescriptionValues.IsEmpty()) return Data.CoreDescription;
-	CurrentLevel = FMath::Max(0, CurrentLevel);
-	const int32 PreviewLevel = GetPreviewLevel(Data, CurrentLevel);
 	FFormatNamedArguments Arguments;
 	for (const FCoreDescriptionValueBinding& Binding : Data.DescriptionValues)
 	{
@@ -94,6 +94,20 @@ FText CoreDescriptionFormatter::MakeDescription(const UCoreDataAsset& Data, int3
 		Arguments.Add(Binding.Token.ToString(), ValueText);
 	}
 	return FText::Format(Data.CoreDescription, Arguments);
+}
+}
+
+FText CoreDescriptionFormatter::MakeDescription(const UCoreDataAsset& Data, int32 CurrentLevel)
+{
+	CurrentLevel = FMath::Max(0, CurrentLevel);
+	return MakeDescriptionForLevels(Data, CurrentLevel, GetPreviewLevel(Data, CurrentLevel));
+}
+
+FText CoreDescriptionFormatter::MakeDescriptionAtLevel(const UCoreDataAsset& Data, int32 Level)
+{
+	Level = FMath::Max(1, Level);
+	if (Data.UpgradeLimitType == ECoreUpgradeLimitType::Custom) Level = FMath::Min(Level, FMath::Max(1, Data.MaxLevel));
+	return MakeDescriptionForLevels(Data, Level, Level);
 }
 
 #undef LOCTEXT_NAMESPACE

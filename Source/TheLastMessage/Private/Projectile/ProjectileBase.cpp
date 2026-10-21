@@ -5,6 +5,8 @@
 #include "GameFramework/ProjectileMovementComponent.h"
 #include "Character/CombatDamageLibrary.h"
 #include "Character/Enemy/EnemyBase.h"
+#include "Character/Player/PlayerBase.h"
+#include "Weapon/WeaponImpactFeedback.h"
 #include "Character/Boss/BossMonster.h"
 #include "GAS/WeaponGameplayTags.h"
 #include "UObject/ConstructorHelpers.h"
@@ -142,7 +144,7 @@ void AProjectileBase::LaunchProjectile(const FVector& Direction)
 	for (AActor* Actor : Overlaps) HandleImpact(Actor, false);
 }
 
-void AProjectileBase::HandleImpact(AActor* OtherActor, bool bBlocking)
+void AProjectileBase::HandleImpact(AActor* OtherActor, bool bBlocking, const FHitResult* Hit)
 {
 	if (!HasAuthority() || !bLaunched || bImpactHandled || !IsValid(OtherActor)
 		|| OtherActor == this || OtherActor == GetOwner() || OtherActor == SourceActor.Get()) return;
@@ -150,7 +152,26 @@ void AProjectileBase::HandleImpact(AActor* OtherActor, bool bBlocking)
 	ABossMonster* Boss = Cast<ABossMonster>(OtherActor);
 	if (!Enemy && !Boss && !bBlocking) return;
 	bImpactHandled = true;
-	MulticastImpact(GetActorLocation());
+	FVector ContactPoint = GetActorLocation();
+	FVector ContactNormal = -ProjectileMovement->Velocity.GetSafeNormal();
+	if (Hit && !Hit->bStartPenetrating)
+	{
+		ContactPoint = Hit->ImpactPoint;
+		ContactNormal = Hit->ImpactNormal;
+	}
+	else
+	{
+		if (UPrimitiveComponent* Component = Cast<UPrimitiveComponent>(OtherActor->GetRootComponent()))
+		{
+			FVector ClosestPoint;
+			if (Component->GetClosestPointOnCollision(ContactPoint, ClosestPoint) > 0.0f) ContactPoint = ClosestPoint;
+		}
+	}
+	if (ContactNormal.IsNearlyZero()) ContactNormal = -GetActorForwardVector();
+	// The player remains relevant after an immediate projectile hit, including hits before the projectile's first net update.
+	if (APlayerBase* Player = Cast<APlayerBase>(SourceActor.Get()))
+		Player->MulticastWeaponImpact(VisualData, ContactPoint, ContactNormal, ImpactEffect, ImpactSound);
+	else MulticastImpact(VisualData, ContactPoint, ContactNormal);
 	CollisionComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	ProjectileMovement->StopMovementImmediately();
 	if ((Enemy && !Enemy->IsDead()) || (Boss && Boss->GetBossState() != EBossState::Dead))
@@ -166,21 +187,20 @@ void AProjectileBase::DestroyProjectile()
 	Destroy();
 }
 
-void AProjectileBase::MulticastImpact_Implementation(FVector_NetQuantize Location)
+void AProjectileBase::MulticastImpact_Implementation(UWeaponDataAsset* Data, FVector_NetQuantize Location, FVector_NetQuantizeNormal Normal)
 {
 	if (GetNetMode() == NM_DedicatedServer) return;
-	if (ImpactEffect) UNiagaraFunctionLibrary::SpawnSystemAtLocation(this, ImpactEffect, Location, GetActorRotation());
-	if (ImpactSound) UGameplayStatics::PlaySoundAtLocation(this, ImpactSound, Location);
+	WeaponImpactFeedback::Play(this, Data, Location, Normal, ImpactEffect, ImpactSound);
 }
 
 void AProjectileBase::OnCollisionBeginOverlap(UPrimitiveComponent* OverlappedComp, AActor* OtherActor, UPrimitiveComponent* OtherComp,
 	int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
 {
-	HandleImpact(OtherActor, false);
+	HandleImpact(OtherActor, false, bFromSweep ? &SweepResult : nullptr);
 }
 
 void AProjectileBase::OnCollisionHit(UPrimitiveComponent* HitComp, AActor* OtherActor, UPrimitiveComponent* OtherComp,
 	FVector NormalImpulse, const FHitResult& Hit)
 {
-	HandleImpact(OtherActor, true);
+	HandleImpact(OtherActor, true, &Hit);
 }

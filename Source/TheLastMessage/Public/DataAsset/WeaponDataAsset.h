@@ -116,6 +116,18 @@ public:
 	TObjectPtr<UNiagaraSystem> AttackEffect;
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Effect")
 	TObjectPtr<USoundBase> AttackSound;
+	// Contact feedback, separate from the swing/muzzle and the victim's damage reaction.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Impact")
+	TObjectPtr<UNiagaraSystem> ImpactEffect;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Impact")
+	TObjectPtr<USoundBase> ImpactSound;
+	// Local X points along the surface normal, away from the hit surface.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Impact")
+	FTransform ImpactEffectOffset = FTransform::Identity;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Impact", meta=(ClampMin="0"))
+	float ImpactVolume = 1.0f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Impact", meta=(ClampMin="0.1"))
+	float ImpactPitch = 1.0f;
 
 	// Melee swing presentation is attached to the equipped weapon, relative to this socket.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Melee")

@@ -130,6 +130,9 @@ public:
 	void MulticastMeleeAttackFeedback(EWeaponSlot Slot, UWeaponDataAsset* Data);
 	UFUNCTION(NetMulticast, Reliable)
 	void MulticastStopMeleeAttackFeedback(EWeaponSlot Slot);
+	UFUNCTION(NetMulticast, Unreliable)
+	void MulticastWeaponImpact(UWeaponDataAsset* Data, FVector_NetQuantize Location, FVector_NetQuantizeNormal Normal,
+		UNiagaraSystem* FallbackEffect, USoundBase* FallbackSound);
 
 	void ClearPendingAttack() { PendingAttackInput = FGameplayTag(); PendingAttackWeapon.Reset(); }
 

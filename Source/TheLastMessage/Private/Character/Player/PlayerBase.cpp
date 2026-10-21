@@ -16,6 +16,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "DataAsset/WeaponDataAsset.h"
 #include "Weapon/MeleeWeaponBase.h"
+#include "Weapon/WeaponImpactFeedback.h"
 #include "Weapon/RangedWeaponBase.h"
 #include "NativeGameplayTags.h"
 #include "TimerManager.h"
@@ -841,6 +842,13 @@ void APlayerBase::StopWeaponChargeSound()
 {
 	if (IsValid(WeaponChargeAudio)) WeaponChargeAudio->Stop();
 	WeaponChargeAudio = nullptr;
+}
+
+void APlayerBase::MulticastWeaponImpact_Implementation(UWeaponDataAsset* Data, FVector_NetQuantize Location,
+	FVector_NetQuantizeNormal Normal, UNiagaraSystem* FallbackEffect, USoundBase* FallbackSound)
+{
+	if (GetNetMode() != NM_DedicatedServer)
+		WeaponImpactFeedback::Play(this, Data, Location, Normal, FallbackEffect, FallbackSound);
 }
 
 void APlayerBase::MulticastMeleeAttackFeedback_Implementation(EWeaponSlot Slot, UWeaponDataAsset* Data)

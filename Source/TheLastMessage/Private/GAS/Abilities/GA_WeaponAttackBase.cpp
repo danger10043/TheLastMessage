@@ -9,6 +9,7 @@
 #include "Character/CombatDamageLibrary.h"
 #include "Character/Player/PlayerBase.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/PrimitiveComponent.h"
 #include "DataAsset/WeaponDataAsset.h"
 #include "Engine/World.h"
 #include "DrawDebugHelpers.h"
@@ -384,8 +385,24 @@ void UGA_WeaponAttackBase::HandleMeleeHit(FGameplayEventData Payload)
 		if (Player->GetWorld()->LineTraceSingleByChannel(WallHit, Start, Target->GetActorLocation(), ECC_Visibility, WallParams)) continue;
 		// 피해 이벤트가 재진입할 수 있으므로 호출 전에 이번 공격의 명중을 기록한다.
 		HitActorsThisAttack.Add(TargetKey);
+		// Initial overlaps have no useful sweep contact. Resolve a surface point before damage callbacks.
+		FVector ContactPoint = Hit.ImpactPoint;
+		FVector ContactNormal = Hit.ImpactNormal;
+		if (Hit.bStartPenetrating)
+		{
+			ContactPoint = Target->GetActorLocation();
+			if (UPrimitiveComponent* Component = Hit.GetComponent())
+			{
+				FVector ClosestPoint;
+				if (Component->GetClosestPointOnCollision(Start, ClosestPoint) > 0.0f) ContactPoint = ClosestPoint;
+			}
+			ContactNormal = (Start - ContactPoint).GetSafeNormal();
+		}
+		if (ContactNormal.IsNearlyZero()) ContactNormal = -Direction;
 		const bool bApplied = UCombatDamageLibrary::ApplyFinalDamageToTarget(
 			Player, Target, DamageEffectClass, FinalDamage, WeaponGameplayTags::Damage_PlayerMelee, GetImpactFeedbackStrength());
+		if (bApplied) Player->MulticastWeaponImpact(const_cast<UWeaponDataAsset*>(Data),
+			ContactPoint, ContactNormal, nullptr, nullptr);
 		// true는 GE 승인 여부이며, 면역으로 실제 체력이 줄지 않아도 이 공격에서는 다시 적용하지 않는다.
 		if (!bApplied && IsActive() && !bFinishingAttack) HitActorsThisAttack.Remove(TargetKey);
 		// 피해 이벤트가 플레이어 사망·공격 취소를 유발했을 수도 있다.

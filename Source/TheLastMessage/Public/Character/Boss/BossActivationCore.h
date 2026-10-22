@@ -9,6 +9,7 @@ class USphereComponent;
 class UAnimMontage;
 class UMaterialInstanceDynamic;
 class UBossCorePuzzleComponent;
+class UNiagaraSystem;
 
 UCLASS()
 class THELASTMESSAGE_API ABossActivationCore : public AActor
@@ -48,6 +49,9 @@ protected:
 
     UPROPERTY(EditDefaultsOnly, Category = "Boss|Core|Animation")
     TObjectPtr<UAnimMontage> BreakMontage;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|Core|Effects")
+    TObjectPtr<UNiagaraSystem> BreakEffect;
 
 private:
     enum class ECoreState : uint8

@@ -1570,3 +1570,19 @@ void ABossMonster::PlayDeathMontage()
             DeathMontage->GetSectionName(Index), NextSection, DeathMontage.Get());
     }
 }
+
+
+void ABossMonster::MulticastGunBurstMuzzle_Implementation(
+    UNiagaraSystem* Effect, FName SocketName)
+{
+    if (GetNetMode() == NM_DedicatedServer || !IsValid(Effect)
+        || !IsValid(GunMesh.Get()) || !GunMesh->DoesSocketExist(SocketName))
+    {
+        return;
+    }
+
+    UNiagaraFunctionLibrary::SpawnSystemAttached(
+        Effect, GunMesh.Get(), SocketName,
+        FVector::ZeroVector, FRotator::ZeroRotator,
+        EAttachLocation::SnapToTarget, true);
+}

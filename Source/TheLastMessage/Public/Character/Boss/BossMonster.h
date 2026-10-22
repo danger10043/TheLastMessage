@@ -48,6 +48,17 @@ public:
     ABossMonster();
     virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
 
+    UPROPERTY(BlueprintReadOnly, Transient, Category = "Boss|GunBurst")
+    bool bGunBurstAiming = false;
+
+    UPROPERTY(BlueprintReadOnly, Transient, Category = "Boss|GunBurst")
+    float GunBurstAimAngle = 0.f;
+
+    UFUNCTION(NetMulticast, Unreliable)
+    void MulticastGunBurstMuzzle(UNiagaraSystem* Effect, FName SocketName);
+
+    UStaticMeshComponent* GetGunMesh() const { return GunMesh.Get(); }
+
     void InitializeBoss();
 
     UFUNCTION(BlueprintPure, Category = "Boss|Phase")

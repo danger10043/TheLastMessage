@@ -9,6 +9,10 @@
 #include "NiagaraComponent.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
+#include "Components/StaticMeshComponent.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Components/CapsuleComponent.h"
+#include "EngineUtils.h"
 
 ALaserEmitter::ALaserEmitter()
 {
@@ -19,15 +23,36 @@ ALaserEmitter::ALaserEmitter()
 	// 발신기는 다른 장치의 활성 신호로 작동
 	bSupportsInteraction = false;
 
+	EmitterMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("EmitterMesh"));
+
+	EmitterMesh->SetupAttachment(SceneRoot);
+	EmitterMesh->SetMobility(EComponentMobility::Movable);
+	EmitterMesh->SetCollisionProfileName(TEXT("BlockAllDynamic"));
+
 	LaserOrigin = CreateDefaultSubobject<USceneComponent>(TEXT("LaserOrigin"));
 
-	LaserOrigin->SetupAttachment(SceneRoot);
+	// 발사 기준점이 발신기 메시를 따라가도록 연결
+	LaserOrigin->SetupAttachment(EmitterMesh);
 	LaserOrigin->SetMobility(EComponentMobility::Movable);
 
-	// 기본 발사 위치를 바닥에서 100cm 위로 설정
-	LaserOrigin->SetRelativeLocation(
-		FVector(0.0f, 0.0f, 100.0f)
-	);
+	// 정확한 발사구 위치는 블루프린트에서 조정
+	LaserOrigin->SetRelativeLocation(FVector::ZeroVector);
+}
+
+void ALaserEmitter::ApplyActiveState(bool bNewActive)
+{
+	Super::ApplyActiveState(bNewActive && bIsEnabled);
+	SetActorTickEnabled(bIsEnabled && bIsActive);
+
+	if (!bIsActive)
+	{
+		LaserSegments.Reset();
+		CurrentReceivers.Reset();
+		UpdateReceiverContacts();
+		UpdateLaserVisuals();
+	}
+
+	UpdateEmitterIndicator();
 }
 
 bool ALaserEmitter::LoadLaserConfig()
@@ -48,15 +73,27 @@ bool ALaserEmitter::LoadLaserConfig()
 		return false;
 	}
 
-	if (!FMath::IsFinite(LoadedRow->MaxLaserDistance)|| LoadedRow->MaxLaserDistance <= 0.0f)
+	if (!FMath::IsFinite(LoadedRow->MaxLaserDistance)
+		|| LoadedRow->MaxLaserDistance <= 0.0f)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("%s: MaxLaserDistance는 0보다 큰 유한한 값이어야 합니다."), *GetName());
 
 		return false;
 	}
 
-	LaserConfig = *LoadedRow;
+	if (!FMath::IsFinite(LoadedRow->PlayerHitRadiusScale)
+		|| LoadedRow->PlayerHitRadiusScale <= 0.0f
+		|| LoadedRow->PlayerHitRadiusScale > 1.0f
+		|| !FMath::IsFinite(LoadedRow->PlayerHitHeightScale)
+		|| LoadedRow->PlayerHitHeightScale <= 0.0f
+		|| LoadedRow->PlayerHitHeightScale > 1.0f)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("%s: 플레이어 판정 비율은 0보다 크고 1 이하여야 합니다."), *GetName());
 
+		return false;
+	}
+
+	LaserConfig = *LoadedRow;
 	bHasValidLaserConfig = true;
 
 	return true;
@@ -66,16 +103,21 @@ void ALaserEmitter::BeginPlay()
 {
 	Super::BeginPlay();
 
+	EmitterIndicatorMaterial = Cast<UMaterialInstanceDynamic>(EmitterMesh->GetMaterial(IndicatorMaterialIndex));
+
+	if (!IsValid(EmitterIndicatorMaterial))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("%s: EmitterMesh와 표시등 재질 슬롯을 확인해주세요."), *GetName());
+	}
+
 	if (!LoadLaserConfig())
 	{
+		ApplyActiveState(false);
 		return;
 	}
 
-	// 자동 발사가 설정된 발신기는 시작부터 활성화
-	if (bStartActive && bIsEnabled)
-	{
-		ApplyActiveState(true);
-	}
+	// 시작 전에 받은 활성 신호와 자동 발사 설정을 함께 반영
+	ApplyActiveState(bIsActive || bStartActive);
 }
 
 void ALaserEmitter::Tick(float DeltaTime)
@@ -109,8 +151,6 @@ void ALaserEmitter::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
 	Super::EndPlay(EndPlayReason);
 }
-
-
 
 void ALaserEmitter::UpdateLaserPath()
 {
@@ -161,11 +201,15 @@ void ALaserEmitter::UpdateLaserPath()
 			break;
 		}
 
-		// 수신기에 도착하면 접촉 기록 후 경로 종료
+		// 수신기 입구에 맞았을 때만 접촉 등록
 		if (ALaserReceiver* Receiver = Cast<ALaserReceiver>(Hit.GetActor()))
 		{
-			CurrentReceivers.AddUnique(TWeakObjectPtr<ALaserReceiver>(Receiver));
+			if (Receiver->CanReceiveLaserHit(Hit))
+			{
+				CurrentReceivers.AddUnique(TWeakObjectPtr<ALaserReceiver>(Receiver));
+			}
 
+			// 몸체에 맞은 경우에도 레이저는 여기서 멈춤
 			break;
 		}
 
@@ -326,13 +370,166 @@ bool ALaserEmitter::TraceLaserSegment(const FVector& Start, const FVector& Direc
 		return false;
 	}
 
-	// 복잡한 충돌을 사용해 메시 표면의 법선 확인
-	// 발신기 자기 자신은 충돌 검사에서 제외
+	const FVector TraceDirection = Direction.GetSafeNormal();
+	const FVector End = Start + TraceDirection * Distance;
+
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(LaserTrace), true, this);
 
-	const FVector End = Start + Direction.GetSafeNormal() * Distance;
+	TArray<APlayerBase*> Players;
 
-	return World->LineTraceSingleByChannel(OutHit, Start, End, LaserTraceChannel.GetValue(), QueryParams);
+	for (TActorIterator<APlayerBase> It(World); It; ++It)
+	{
+		APlayerBase* Player = *It;
+
+		if (!IsValid(Player))
+		{
+			continue;
+		}
+
+		// 기존 이동용 캡슐과 플레이어 메시를 경로 검사에서 제외
+		QueryParams.AddIgnoredActor(Player);
+
+		if (!Player->IsDead())
+		{
+			Players.Add(Player);
+		}
+	}
+
+	// 플레이어를 제외하고 벽, 반사판, 수신기 등을 검사
+	const bool bWorldHit = World->LineTraceSingleByChannel(OutHit, Start, End, LaserTraceChannel.GetValue(), QueryParams);
+
+	// 장애물 뒤의 플레이어는 검사하지 않음
+	const FVector PlayerCheckEnd = bWorldHit ? OutHit.ImpactPoint : End;
+
+	FHitResult PlayerHit;
+
+	if (FindPlayerHitOnSegment(Start, PlayerCheckEnd, Players, PlayerHit))
+	{
+		// 장애물보다 앞에서 플레이어에 닿았을 때 결과 교체
+		if (!bWorldHit || PlayerHit.Distance < OutHit.Distance)
+		{
+			OutHit = PlayerHit;
+			return true;
+		}
+	}
+
+	return bWorldHit;
+}
+
+bool ALaserEmitter::FindPlayerHitOnSegment(const FVector& Start, const FVector& End, const TArray<APlayerBase*>& Players, FHitResult& OutHit) const
+{
+	OutHit = FHitResult();
+
+	const double SegmentLength = FVector::Distance(Start, End);
+
+	if (SegmentLength <= KINDA_SMALL_NUMBER)
+	{
+		return false;
+	}
+
+	const FVector Direction = (End - Start) / SegmentLength;
+
+	double NearestHitDistance = SegmentLength;
+	bool bFoundHit = false;
+
+	for (APlayerBase* Player : Players)
+	{
+		if (!IsValid(Player) || Player->IsDead())
+		{
+			continue;
+		}
+
+		const UCapsuleComponent* Capsule = Player->GetCapsuleComponent();
+
+		if (!IsValid(Capsule))
+		{
+			continue;
+		}
+
+		float OriginalRadius = 0.0f;
+		float OriginalHalfHeight = 0.0f;
+
+		Capsule->GetScaledCapsuleSize(OriginalRadius, OriginalHalfHeight);
+
+		// 실제 이동용 캡슐은 변경하지 않고 판정 크기만 계산
+		const double HitHalfHeight = OriginalHalfHeight * LaserConfig.PlayerHitHeightScale;
+
+		const double HitRadius = FMath::Min(static_cast<double>(OriginalRadius * LaserConfig.PlayerHitRadiusScale), HitHalfHeight);
+
+		if (HitRadius <= KINDA_SMALL_NUMBER)
+		{
+			continue;
+		}
+
+		const FVector Center = Capsule->GetComponentLocation();
+
+		// 중력 반전 시에도 현재 캡슐 방향을 따라감
+		const FVector CapsuleUp = Capsule->GetUpVector();
+
+		// 캡슐 양 끝의 반구 중심을 연결하는 선분
+		const double AxisHalfLength = FMath::Max(0.0, HitHalfHeight - HitRadius);
+
+		const FVector AxisStart = Center - CapsuleUp * AxisHalfLength;
+
+		const FVector AxisEnd = Center + CapsuleUp * AxisHalfLength;
+
+		FVector ClosestOnLaser;
+		FVector ClosestOnAxis;
+
+		FMath::SegmentDistToSegmentSafe(Start, End, AxisStart, AxisEnd, ClosestOnLaser, ClosestOnAxis);
+
+		const double RadiusSquared = HitRadius * HitRadius;
+
+		// 레이저와 캡슐 중심선의 거리가 반지름보다 멀면 미접촉
+		if (FVector::DistSquared(ClosestOnLaser, ClosestOnAxis) > RadiusSquared)
+		{
+			continue;
+		}
+
+		// 레이저가 작은 캡슐 안으로 처음 들어오는 위치 탐색
+		double OutsideDistance = 0.0;
+		double InsideDistance = FVector::Distance(Start, ClosestOnLaser);
+
+		for (int32 Step = 0; Step < 20; ++Step)
+		{
+			const double MiddleDistance = (OutsideDistance + InsideDistance) * 0.5;
+
+			const FVector MiddlePoint = Start + Direction * MiddleDistance;
+
+			const double DistanceSquared = FMath::PointDistToSegmentSquared(MiddlePoint, AxisStart, AxisEnd);
+
+			if (DistanceSquared <= RadiusSquared)
+			{
+				InsideDistance = MiddleDistance;
+			}
+			else
+			{
+				OutsideDistance = MiddleDistance;
+			}
+		}
+
+		if (bFoundHit && InsideDistance >= NearestHitDistance)
+		{
+			continue;
+		}
+
+		NearestHitDistance = InsideDistance;
+
+		const FVector HitLocation = Start + Direction * InsideDistance;
+
+		// 기존 UpdateLaserPath가 플레이어 충돌로 처리하도록 전달
+		OutHit = FHitResult(Player, Player->GetCapsuleComponent(), HitLocation, -Direction);
+
+		OutHit.bBlockingHit = true;
+		OutHit.Distance = static_cast<float>(InsideDistance);
+		OutHit.Time = static_cast<float>(InsideDistance / SegmentLength);
+		OutHit.TraceStart = Start;
+		OutHit.TraceEnd = End;
+
+		bFoundHit = true;
+	}
+
+	return bFoundHit;
 }
 
 void ALaserEmitter::KillPlayerImmediately(ACharacter* Player)
@@ -348,16 +545,29 @@ void ALaserEmitter::KillPlayerImmediately(ACharacter* Player)
 	PlayerBase->HandleDeath();
 }
 
-void ALaserEmitter::ApplyActiveState(bool bNewActive)
+void ALaserEmitter::UpdateEmitterIndicator()
 {
-	Super::ApplyActiveState(bNewActive && bIsEnabled);
-	SetActorTickEnabled(bIsEnabled && bIsActive);
-
-	if (!bIsActive)
+	if (!IsValid(EmitterMesh))
 	{
-		LaserSegments.Reset();
-		CurrentReceivers.Reset();
-		UpdateReceiverContacts();
-		UpdateLaserVisuals();
+		return;
+	}
+
+	const bool bLightOn = bIsEnabled && bIsActive && bHasValidLaserConfig;
+
+	// 켜지면 빨강, 꺼지면 검정
+	const FLinearColor LightColor = bLightOn ? FLinearColor::Red : FLinearColor::Black;
+
+	// 표시등 재질 갱신
+	if (IsValid(EmitterIndicatorMaterial))
+	{
+		EmitterIndicatorMaterial->SetVectorParameterValue(TEXT("EmissiveColor"), LightColor);
+	}
+
+	// 현재 발신기 에셋의 렌즈 재질은 1번 슬롯
+	UMaterialInstanceDynamic* LensMaterial = Cast<UMaterialInstanceDynamic>(EmitterMesh->GetMaterial(1));
+
+	if (IsValid(LensMaterial))
+	{
+		LensMaterial->SetVectorParameterValue(TEXT("EmissiveColor"), LightColor);
 	}
 }

@@ -14,4 +14,21 @@ UCLASS(Blueprintable)
 class THELASTMESSAGE_API AFuseItem : public ACarryableGimmick
 {
     GENERATED_BODY()
+
+public:
+    // 장착된 퓨즈는 다시 집을 수 없음
+    virtual bool CanBePickedUp(ACharacter* Player) const override;
+
+    // 회로로 전달되면 장착 상태로 전환
+    virtual void OnTransferred() override;
+
+    UFUNCTION(BlueprintPure, Category = "Gimmick|Fuse")
+    bool IsInstalled() const
+    {
+        return bIsInstalled;
+    }
+
+protected:
+    UPROPERTY(Transient, VisibleInstanceOnly, BlueprintReadOnly, Category = "Gimmick|Fuse")
+    bool bIsInstalled = false;
 };

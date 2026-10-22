@@ -6,6 +6,8 @@
 
 #include "Components/StaticMeshComponent.h"
 #include "Gimmick/Laser/LaserEmitter.h"
+#include "Components/BoxComponent.h"
+#include "Materials/MaterialInstanceDynamic.h"
 
 ALaserReceiver::ALaserReceiver()
 {
@@ -28,13 +30,75 @@ ALaserReceiver::ALaserReceiver()
 	ReceiverMesh->SetCollisionProfileName(TEXT("BlockAllDynamic"));
 
 	ReceiverMesh->SetGenerateOverlapEvents(false);
+
+	// 입구 판정 범위는 블루프린트에서 조절
+	ReceiverInputArea = CreateDefaultSubobject<UBoxComponent>(TEXT("ReceiverInputArea"));
+
+	ReceiverInputArea->SetupAttachment(ReceiverMesh);
+	ReceiverInputArea->SetMobility(EComponentMobility::Movable);
+
+	ReceiverInputArea->SetBoxExtent(FVector(5.0f, 20.0f, 20.0f));
+
+	// 박스 자체는 레이저나 플레이어를 막지 않음
+	ReceiverInputArea->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+	ReceiverInputArea->SetCollisionResponseToAllChannels(ECR_Ignore);
+
+	ReceiverInputArea->SetGenerateOverlapEvents(false);
+	ReceiverInputArea->SetCanEverAffectNavigation(false);
+	ReceiverInputArea->SetHiddenInGame(true);
+}
+
+void ALaserReceiver::ApplyActiveState(bool bNewActive)
+{
+	const bool bPreviousActive = bIsActive;
+
+	Super::ApplyActiveState(bNewActive && bIsEnabled);
+
+	// 상태가 바뀌었을 때만 표시등 갱신
+	if (bPreviousActive != bIsActive)
+	{
+		UpdateReceiverIndicator();
+	}
+}
+
+bool ALaserReceiver::CanReceiveLaserHit(const FHitResult& Hit) const
+{
+	if (!bIsEnabled || !IsValid(ReceiverMesh) || !IsValid(ReceiverInputArea))
+	{
+		return false;
+	}
+
+	// 수신기 몸체 메시와 부딪힌 결과만 사용
+	if (Hit.GetComponent() != ReceiverMesh.Get())
+	{
+		return false;
+	}
+
+	// 충돌 위치를 입구 판정 박스의 로컬 좌표로 변환
+	const FVector LocalHit = ReceiverInputArea->GetComponentTransform() .InverseTransformPosition(Hit.ImpactPoint);
+
+	const FVector Extent = ReceiverInputArea->GetUnscaledBoxExtent();
+
+	// 충돌 위치가 박스 안에 들어왔는지 확인
+	return FMath::Abs(LocalHit.X) <= Extent.X && FMath::Abs(LocalHit.Y) <= Extent.Y && FMath::Abs(LocalHit.Z) <= Extent.Z;
 }
 
 void ALaserReceiver::BeginPlay()
 {
 	Super::BeginPlay();
 
+	ReceiverIndicatorMaterial = Cast<UMaterialInstanceDynamic>(ReceiverMesh->GetMaterial(IndicatorMaterialIndex));
+
+	if (!IsValid(ReceiverIndicatorMaterial))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("%s: ReceiverMesh의 표시등 머티리얼 슬롯을 확인해주세요."), *GetName());
+	}
+
 	UpdateReceiverState();
+
+	// 초기 활성 상태와 관계없이 표시등 색상을 한 번 반영
+	UpdateReceiverIndicator();
 }
 
 void ALaserReceiver::Tick(float DeltaTime)
@@ -101,4 +165,16 @@ bool ALaserReceiver::HasLaserContactFrom(const ALaserEmitter* Emitter) const
 		{
 			return Entry.Get() == Emitter;
 		});
+}
+
+void ALaserReceiver::UpdateReceiverIndicator()
+{
+	if (!IsValid(ReceiverIndicatorMaterial))
+	{
+		return;
+	}
+
+	const FLinearColor LightColor = bIsEnabled && bIsActive ? FLinearColor::Green : FLinearColor::Black;
+
+	ReceiverIndicatorMaterial->SetVectorParameterValue(TEXT("EmissiveColor"), LightColor);
 }

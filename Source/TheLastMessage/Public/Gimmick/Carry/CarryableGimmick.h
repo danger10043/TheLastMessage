@@ -40,6 +40,9 @@ public:
     // CarryComponent가 운반 종료 시 호출
     virtual void OnDropped();
 
+    // 다른 장착 지점으로 전달되어 운반이 끝났을 때 호출
+    virtual void OnTransferred();
+
     // 내려놓을 위치를 아이템의 최초 Y 좌표에 맞게 보정
     virtual FVector ConstrainDropLocation(const FVector& WorldLocation) const;
 

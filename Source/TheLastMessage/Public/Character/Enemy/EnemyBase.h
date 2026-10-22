@@ -57,20 +57,21 @@ public:
 	void SetCurrentTarget(AActor* NewTarget);
 
 	UFUNCTION(BlueprintCallable, Category = "Enemy")
-	void OnPlayerDetected(AActor* Player);
+	virtual void OnPlayerDetected(AActor* Player);
 
 	UFUNCTION(BlueprintCallable, Category = "Enemy")
-	void OnPlayerLost();
+	virtual void OnPlayerLost();
 
 	/** 플레이어 사망 시 타겟 해제 후 정찰 복귀 */
 	UFUNCTION(BlueprintCallable, Category = "Enemy")
-	void OnTargetDied();
+	virtual void OnTargetDied();
 
 	UFUNCTION(BlueprintPure, Category = "Enemy")
 	float GetDistanceToTarget() const;
 
+	/** 지금 공격을 시작할 수 있는지. 몬스터마다 조건이 다르면 오버라이드한다(예: Junker의 돌격 단계). */
 	UFUNCTION(BlueprintPure, Category = "Enemy")
-	bool CanAttackTarget() const;
+	virtual bool CanAttackTarget() const;
 
 	UFUNCTION(BlueprintPure, Category = "Enemy")
 	FVector GetHomeLocation() const { return HomeLocation; }

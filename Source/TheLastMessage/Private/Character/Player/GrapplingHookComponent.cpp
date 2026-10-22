@@ -19,9 +19,24 @@
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/GameStateBase.h"
 #include "UObject/UObjectIterator.h"
+#include "Gimmick/SideScrollingSoftPlatform.h"
 
 namespace
 {
+bool IsAuthoredGrappleTerrain(const UMeshComponent* Mesh, const AActor* Actor)
+{
+	if (Mesh->GetCollisionProfileName() == TEXT("GrappleTerrain")
+		|| Actor->ActorHasTag(TEXT("GrappleTerrain"))) return true;
+	// Named wall proxies represent solid terrain even when a separate kit mesh
+	// supplies the art. Editor labels are unavailable in cooked builds; the editor
+	// repair script persists the profile/tag for those builds.
+	if (Actor->GetName().StartsWith(TEXT("Wall_"))) return true;
+#if WITH_EDITOR
+	if (Actor->GetActorLabel().StartsWith(TEXT("Wall_"))) return true;
+#endif
+	return false;
+}
+
 bool IsGrappleMesh(const UPrimitiveComponent* Component)
 {
 	const UMeshComponent* Mesh = Cast<UMeshComponent>(Component);
@@ -31,7 +46,9 @@ bool IsGrappleMesh(const UPrimitiveComponent* Component)
 	const AActor* Actor = Mesh->GetOwner();
 	if (!Actor) return false;
 	// 외형과 분리된 바닥이나 문 위 구조물의 충돌 표면은 실제 지형으로 취급
-	const bool bTerrainSurface = Profile == TEXT("GrappleTerrain");
+	// One-way platform art can be a single-sided top surface. Its hidden collision
+	// mesh supplies the underside, so allow that mesh as a grapple target too.
+	const bool bTerrainSurface = IsAuthoredGrappleTerrain(Mesh, Actor) || Actor->IsA<ASideScrollingSoftPlatform>();
 	if (!bTerrainSurface && (!Mesh->IsVisible() || Mesh->bHiddenInGame || Actor->IsHidden())) return false;
 	// 캐릭터가 소유하거나 부착한 장비도 제외
 	for (const AActor* Owner = Actor; Owner; Owner = Owner->GetOwner())

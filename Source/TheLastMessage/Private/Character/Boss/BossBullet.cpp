@@ -22,12 +22,12 @@ ABossBullet::ABossBullet()
     Collision = CreateDefaultSubobject<USphereComponent>(TEXT("Collision"));
     Collision->InitSphereRadius(10.f);
     Collision->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-    Collision->SetCollisionObjectType(ECC_GameTraceChannel4);
+    Collision->SetCollisionObjectType(ECC_GameTraceChannel5);
     Collision->SetCollisionResponseToAllChannels(ECR_Ignore);
     Collision->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Block);
     Collision->SetCollisionResponseToChannel(ECC_WorldDynamic, ECR_Block);
     Collision->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
-    Collision->SetCollisionResponseToChannel(ECC_GameTraceChannel4, ECR_Ignore);
+    Collision->SetCollisionResponseToChannel(ECC_GameTraceChannel5, ECR_Ignore);
     Collision->SetGenerateOverlapEvents(true);
     SetRootComponent(Collision);
 

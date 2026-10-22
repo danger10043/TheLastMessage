@@ -13,6 +13,8 @@
 #include "Gimmick/GAS/GA_InteractGimmick.h"
 #include "NativeGameplayTags.h"
 #include "Gimmick/Component/CarryComponent.h"
+#include "Gimmick/Carry/FuseItem.h"
+#include "Gimmick/FuseCircuit/FuseCircuitSocket.h"
 
 UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_EventGimmickInteract, "Event.Gimmick.Interact");
 
@@ -34,17 +36,23 @@ void UInteractionComponent::RequestInteract()
 
     UCarryComponent* CarryComponent = Player->FindComponentByClass<UCarryComponent>();
 
-    // 물체를 들고 있으면 내려놓기만 시도
-    if (IsValid(CarryComponent) && CarryComponent->HasCarriedObject())
-    {
-        CarryComponent->DropCarriedObject();
-        return;
-    }
-
-    // 빈손일 때 주변 상호작용 대상 확인
+    // 입력한 순간의 주변 대상과 삽입 가능 여부 확인
     UpdateInteractionTarget();
 
     AActor* Target = FocusedActor.Get();
+
+    // 물체를 들고 있으면 내려놓기만 시도
+    if (IsValid(CarryComponent) && CarryComponent->HasCarriedObject())
+    {
+        const bool bHasFuseSocketTarget = IsValid(Target) && Target->IsA<AFuseCircuitSocket>();
+
+        // 삽입할 회로가 없다면 기존처럼 내려놓기
+        if (!bHasFuseSocketTarget)
+        {
+            CarryComponent->DropCarriedObject();
+            return;
+        }
+    }
 
     if (!IsValid(Target) || !CanUseInteractionAbility())
     {
@@ -68,7 +76,7 @@ void UInteractionComponent::RequestInteract()
     EventData.Instigator = OwnerActor;
     EventData.Target = Target;
 
-    // 플레이어의 ASC에 대상이 담긴 이벤트 전달
+    // 기존 상호작용 능력을 통해 회로의 삽입 함수 실행
     ASC->HandleGameplayEvent(TAG_EventGimmickInteract, &EventData);
 }
 
@@ -86,6 +94,10 @@ void UInteractionComponent::UpdateInteractionTarget()
         return;
     }
 
+    const UCarryComponent* CarryComponent = OwnerActor->FindComponentByClass<UCarryComponent>();
+
+    const bool bHasCarriedObject = IsValid(CarryComponent) && CarryComponent->HasCarriedObject();
+
     const FVector SearchOrigin = OwnerActor->GetActorLocation();
 
     FCollisionObjectQueryParams ObjectParams;
@@ -94,9 +106,15 @@ void UInteractionComponent::UpdateInteractionTarget()
     ObjectParams.AddObjectTypesToQuery(ECC_Pawn);
 
     FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(GimmickInteraction), false, OwnerActor);
+
+    // 들고 있는 물체가 회로까지의 시야 검사를 막지 않도록 제외
+    if (bHasCarriedObject)
+    {
+        QueryParams.AddIgnoredActor(CarryComponent->GetCarriedObject());
+    }
+
     TArray<FOverlapResult> Overlaps;
 
-    // 플레이어 주변 구형 범위에서 액터 수집
     World->OverlapMultiByObjectType(
         Overlaps, 
         SearchOrigin, 
@@ -107,7 +125,9 @@ void UInteractionComponent::UpdateInteractionTarget()
     );
 
     AActor* BestTarget = nullptr;
+
     float BestDistanceSquared = FMath::Square(InteractionDistance);
+
     TSet<AActor*> CheckedActors;
 
     for (const FOverlapResult& Overlap : Overlaps)
@@ -121,6 +141,12 @@ void UInteractionComponent::UpdateInteractionTarget()
 
         CheckedActors.Add(Candidate);
 
+        // 운반 중에는 퓨즈 회로만 대상으로 허용
+        if (bHasCarriedObject && !Candidate->IsA<AFuseCircuitSocket>())
+        {
+            continue;
+        }
+
         const float DistanceSquared = FVector::DistSquared(SearchOrigin, Candidate->GetActorLocation());
 
         if (DistanceSquared >= BestDistanceSquared)
@@ -128,22 +154,22 @@ void UInteractionComponent::UpdateInteractionTarget()
             continue;
         }
 
-        // Blueprint에서 BPI 구현 여부와 CanInteract 확인
+        // 회로의 경우 퓨즈 삽입 가능 여부까지 확인
         if (!QueryCanInteract(Candidate, OwnerActor))
         {
             continue;
         }
 
-        // 벽을 사이에 둔 대상은 선택하지 않음
         FHitResult ObstructionHit;
 
         const bool bBlocked = World->LineTraceSingleByChannel(
-            ObstructionHit,
-            SearchOrigin,
-            Candidate->GetActorLocation(),
-            InteractionTraceChannel,
-            QueryParams);
+                                                ObstructionHit,
+                                                SearchOrigin,
+                                                Candidate->GetActorLocation(),
+                                                InteractionTraceChannel,
+                                                QueryParams);
 
+        // 벽을 사이에 둔 대상은 선택하지 않음
         if (bBlocked && ObstructionHit.GetActor() != Candidate)
         {
             continue;
@@ -182,7 +208,6 @@ void UInteractionComponent::UpdateInteractionHighlight()
     }
 }
 
-
 void UInteractionComponent::BeginPlay()
 {
 	Super::BeginPlay();
@@ -212,7 +237,6 @@ void UInteractionComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 	UpdateInteractionTarget();
 }
 
-
 void UInteractionComponent::CacheOwnerASC()
 {
 	if (!OwnerASC.IsValid())
@@ -236,9 +260,15 @@ bool UInteractionComponent::CanUseInteractionAbility() const
     // 운반 중에는 일반 상호작용 차단
     const UCarryComponent* CarryComponent = Player->FindComponentByClass<UCarryComponent>();
 
+    // 운반 중에는 정상적으로 들고 있는 퓨즈만 예외 허용
     if (IsValid(CarryComponent) && CarryComponent->HasCarriedObject())
     {
-        return false;
+        const AFuseItem* Fuse = Cast<AFuseItem>(CarryComponent->GetCarriedObject());
+
+        if (!IsValid(Fuse) || Fuse->IsInstalled() || Fuse->GetCarrier() != Player)
+        {
+            return false;
+        }
     }
 
     FGameplayAbilitySpec* AbilitySpec = ASC->FindAbilitySpecFromClass(InteractionAbilityClass);
@@ -257,4 +287,3 @@ bool UInteractionComponent::CanUseInteractionAbility() const
 
     return IsValid(Ability) && Ability->CanActivateAbility(AbilitySpec->Handle, ASC->AbilityActorInfo.Get());
 }
-

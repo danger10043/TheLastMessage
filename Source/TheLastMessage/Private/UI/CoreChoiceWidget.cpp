@@ -1,6 +1,7 @@
 #include "UI/CoreChoiceWidget.h"
 
 #include "Blueprint/WidgetBlueprintLibrary.h"
+#include "Character/Player/PlayerBase.h"
 #include "Components/Button.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
@@ -249,6 +250,8 @@ bool UCoreChoiceWidget::CapturePlayerInput()
 				return false;
 			}
 		}
+		// 키 초기화만으로는 UI가 가져간 release 이벤트를 기다리는 공격이 끝나지 않는다.
+		if (APlayerBase* Pawn = Cast<APlayerBase>(Player->GetPawn())) Pawn->CancelWeaponInputsForUI();
 		// UIOnly는 입력을 UI에만 전달한다. TakeWidget은 이 UMG 위젯의 내부 Slate 위젯을 가져온다.
 		FInputModeUIOnly InputMode;
 		InputMode.SetWidgetToFocus(TakeWidget());

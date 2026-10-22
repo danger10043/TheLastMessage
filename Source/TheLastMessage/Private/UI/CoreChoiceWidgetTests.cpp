@@ -4,6 +4,13 @@
 #include "Tests/AutomationEditorCommon.h"
 #include "Blueprint/WidgetBlueprintLibrary.h"
 #include "Character/Player/PlayerBase.h"
+#include "AbilitySystemComponent.h"
+#include "DataAsset/WeaponDataAsset.h"
+#include "GAS/Abilities/GA_AttackPrimary.h"
+#include "GAS/WeaponGameplayTags.h"
+#include "GAS/WeaponSlotAttributeSet.h"
+#include "GameplayEffect.h"
+#include "Projectile/ProjectileBase.h"
 #include "Components/Button.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
@@ -118,6 +125,27 @@ namespace
 				Mode->GetUnderlyingProperty()->SetIntPropertyValue(Mode->ContainerPtrToValuePtr<void>(Pickup.Get()), static_cast<int64>(ECoreRewardMode::Choice));
 				FindFProperty<FClassProperty>(ACorePickup::StaticClass(), TEXT("ChoiceWidgetClass"))->SetObjectPropertyValue_InContainer(Pickup.Get(), ScreenClass);
 
+				// 차지 중 보상창이 열려 release가 UI로 전달되는 상황을 재현한다.
+				UWeaponDataAsset* Weapon = NewObject<UWeaponDataAsset>(Player.Get());
+				Weapon->WeaponType = EWeaponType::LightRanged;
+				Weapon->AttackPower = 10.0f;
+				Weapon->Range = 1000.0f;
+				Weapon->ProjectileSpeed = 1000.0f;
+				Weapon->ProjectileClass = AProjectileBase::StaticClass();
+				Weapon->EnergyPerShot = 0.0f;
+				Weapon->bSupportsChargeAttack = true;
+				Weapon->MaxChargeTime = 1.0f;
+				Weapon->ChargeStartDelay = 0.0f;
+				FindFProperty<FClassProperty>(APlayerBase::StaticClass(), TEXT("WeaponDamageEffectClass"))
+					->SetObjectPropertyValue_InContainer(Player.Get(), UGameplayEffect::StaticClass());
+				Test->TestTrue(TEXT("Equip charge weapon before core selection"), Player->EquipWeapon(EWeaponSlot::Primary, Weapon));
+				UAbilitySystemComponent* ASC = Player->GetAbilitySystemComponent();
+				FGameplayAbilitySpec* Attack = ASC->FindAbilitySpecFromClass(UGA_AttackPrimary::StaticClass());
+				if (!Test->TestNotNull(TEXT("Primary attack exists"), Attack)) return true;
+				Attack->InputPressed = true;
+				Test->TestTrue(TEXT("Charge starts before core selection"), ASC->TryActivateAbility(Attack->Handle));
+				Test->TestTrue(TEXT("Charge is active before core selection"), Player->IsChargingWeapon());
+				Player->SetWeaponChoiceHeld(0, true);
 				// 코어가 먼저 빨려 들어가고, 도착한 뒤에 선택 화면이 열린다.
 				Test->TestTrue(TEXT("Pickup starts its absorb effect"), Pickup->TryOpenCoreChoice(Player.Get()));
 				Test->TestNull(TEXT("Choice screen waits for the absorb effect"), FindScreen(World));
@@ -134,6 +162,9 @@ namespace
 					Test->AddError(TEXT("Choice screen did not open after the absorb effect"));
 					return true;
 				}
+				Test->TestFalse(TEXT("Core selection cancels charge"), Player->IsChargingWeapon());
+				Test->TestFalse(TEXT("Core selection clears attack lock"), Player->GetAbilitySystemComponent()->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking));
+				Test->TestEqual(TEXT("Core selection clears held weapon choice"), Player->GetHeldWeaponChoice(), INDEX_NONE);
 				const FBoolProperty* Consumed = FindFProperty<FBoolProperty>(ACorePickup::StaticClass(), TEXT("bConsumed"));
 				Test->TestTrue(TEXT("Absorbed pickup stays hidden while choosing"), Pickup.IsValid() && Pickup->IsHidden());
 				Test->TestFalse(TEXT("Absorbed pickup is not consumed before selection"), Pickup.IsValid() && Consumed->GetPropertyValue_InContainer(Pickup.Get()));

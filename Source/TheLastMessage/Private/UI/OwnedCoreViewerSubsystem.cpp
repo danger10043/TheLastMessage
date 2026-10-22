@@ -2,6 +2,7 @@
 
 #include "AbilitySystemGlobals.h"
 #include "AbilitySystemComponent.h"
+#include "Character/Player/PlayerBase.h"
 #include "Components/InputComponent.h"
 #include "Core/CoreComponent.h"
 #include "Engine/GameViewportClient.h"
@@ -75,6 +76,7 @@ bool UOwnedCoreViewerSubsystem::OpenViewer()
 	Screen->OnClosed.AddUObject(this, &ThisClass::HandleClosed);
 	Screen->AddToPlayerScreen(110);
 	if (!Screen->IsInViewport()) { Screen->ReleaseSources(); HandleClosed(); return false; }
+	if (APlayerBase* Player = Cast<APlayerBase>(Pawn)) Player->CancelWeaponInputsForUI();
 	FInputModeUIOnly Mode;
 	Mode.SetWidgetToFocus(Screen->TakeWidget());
 	Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);

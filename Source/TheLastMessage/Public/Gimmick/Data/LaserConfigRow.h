@@ -23,5 +23,13 @@ struct THELASTMESSAGE_API FLaserConfigRow : public FTableRowBase
 	// 레이저를 표시할 Niagara 시스템
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Laser")
 	TObjectPtr<UNiagaraSystem> LaserEffect = nullptr;
+
+	// 플레이어 캡슐 반지름에 곱할 사망 판정 비율
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Laser|PlayerHit", meta = (ClampMin = "0.01", ClampMax = "1.0"))
+	float PlayerHitRadiusScale = 1.0f;
+
+	// 플레이어 캡슐 반높이에 곱할 사망 판정 비율
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Laser|PlayerHit", meta = (ClampMin = "0.01", ClampMax = "1.0"))
+	float PlayerHitHeightScale = 1.0f;
 	
 };

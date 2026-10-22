@@ -132,6 +132,9 @@ void ACarryableGimmick::OnPickedUp(ACharacter* Player)
 
     Carrier = Player;
 
+    // 운반을 시작하면 일반 위치 관리 재개
+    SetActorTickEnabled(true);
+
     // 집은 물체의 상호작용 강조 해제
     UpdateInteractionHighlight(false);
 }
@@ -142,6 +145,23 @@ void ACarryableGimmick::OnDropped()
 
     // 내려놓은 뒤 물리 시뮬레이션의 Y축 제한 다시 적용
     ApplyYLock();
+
+    UpdateInteractionHighlight(false);
+}
+
+void ACarryableGimmick::OnTransferred()
+{
+    Carrier.Reset();
+
+    // 장착 후에는 최초 Y 좌표로 되돌리는 갱신 중지
+    SetActorTickEnabled(false);
+
+    if (IsValid(ObjectMesh))
+    {
+        // 장착 위치를 유지하도록 기존 Y축 물리 제한 해제
+        ObjectMesh->BodyInstance.bLockYTranslation = false;
+        ObjectMesh->BodyInstance.SetDOFLock(EDOFMode::SixDOF);
+    }
 
     UpdateInteractionHighlight(false);
 }

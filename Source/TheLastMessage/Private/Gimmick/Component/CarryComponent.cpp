@@ -236,7 +236,7 @@ bool UCarryComponent::TransferCarriedObject(USceneComponent* TargetParent)
 
     // 소켓에 전달한 물체는 부착 상태를 유지하도록 물리 시뮬레이션 중지
     RestoreObjectState(Target, false);
-    Target->OnDropped();
+    Target->OnTransferred();
 
     FinishCarryState();
 

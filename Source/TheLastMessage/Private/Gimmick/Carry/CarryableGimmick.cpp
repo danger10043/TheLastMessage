@@ -8,9 +8,16 @@
 #include "Components/StaticMeshComponent.h"
 #include "Gimmick/Component/CarryComponent.h"
 #include "GameplayEffect.h"
+#include "PhysicsEngine/BodyInstance.h"
 
 ACarryableGimmick::ACarryableGimmick()
 {
+    PrimaryActorTick.bCanEverTick = true;
+    PrimaryActorTick.bStartWithTickEnabled = true;
+
+    // 물리 이동이 끝난 뒤 위치 보정
+    PrimaryActorTick.TickGroup = TG_PostPhysics;
+
     bSupportsInteraction = true;
 
     ObjectMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ObjectMesh"));
@@ -133,7 +140,22 @@ void ACarryableGimmick::OnDropped()
 {
     Carrier.Reset();
 
+    // 내려놓은 뒤 물리 시뮬레이션의 Y축 제한 다시 적용
+    ApplyYLock();
+
     UpdateInteractionHighlight(false);
+}
+
+FVector ACarryableGimmick::ConstrainDropLocation(const FVector& WorldLocation) const
+{
+    FVector Result = WorldLocation;
+
+    if (bHasInitialWorldY)
+    {
+        Result.Y = InitialWorldY;
+    }
+
+    return Result;
 }
 
 UStaticMeshComponent* ACarryableGimmick::GetObjectMesh() const
@@ -148,7 +170,54 @@ ACharacter* ACarryableGimmick::GetCarrier() const
 
 void ACarryableGimmick::BeginPlay()
 {
+    // 부모의 시작 처리 전에 최초 월드 Y 좌표 기록
+    InitialWorldY = GetActorLocation().Y;
+    bHasInitialWorldY = true;
+
     Super::BeginPlay();
 
     LoadCarryConfig();
+
+    ApplyYLock();
+    SetActorTickEnabled(true);
+}
+
+void ACarryableGimmick::Tick(float DeltaSeconds)
+{
+    Super::Tick(DeltaSeconds);
+
+    UpdateYLockedLocation();
+}
+
+void ACarryableGimmick::ApplyYLock()
+{
+    if (!bHasInitialWorldY || !IsValid(ObjectMesh))
+    {
+        return;
+    }
+
+    UpdateYLockedLocation();
+
+    // 물리 시뮬레이션 중 월드 Y축 방향 이동 제한
+    ObjectMesh->BodyInstance.bLockYTranslation = true;
+    ObjectMesh->BodyInstance.SetDOFLock(EDOFMode::SixDOF);
+}
+
+void ACarryableGimmick::UpdateYLockedLocation()
+{
+    // 기준 좌표가 없거나 플레이어가 들고 있으면 보정하지 않음
+    if (!bHasInitialWorldY || Carrier.IsValid())
+    {
+        return;
+    }
+
+    const FVector CurrentLocation = GetActorLocation();
+
+    // 들고 있지 않을 때만 기준 Y 좌표로 보정
+    const FVector DesiredLocation = ConstrainDropLocation(CurrentLocation);
+
+    if (!CurrentLocation.Equals(DesiredLocation, 0.01))
+    {
+        SetActorLocation(DesiredLocation, false, nullptr, ETeleportType::TeleportPhysics);
+    }
 }

@@ -37,7 +37,9 @@ void UPlayerAimAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 	RangedReadyAlpha = FMath::FInterpTo(RangedReadyAlpha, ReadyWeight, DeltaSeconds, ReadyInterpolationSpeed);
 	const bool bAiming = Player && Player->IsRangedAiming();
 	const FVector Aim = Player ? Player->GetAimTargetLocation() - Player->GetActorLocation() : FVector::ForwardVector;
-	const float Pitch = FMath::RadiansToDegrees(FMath::Atan2(Aim.Z, FVector2D(Aim.X, Aim.Y).Size()));
+	const FVector Up = Player ? Player->GetActorUpVector() : FVector::UpVector;
+	const float Pitch = FMath::RadiansToDegrees(FMath::Atan2(FVector::DotProduct(Aim, Up),
+		FVector::VectorPlaneProject(Aim, Up).Size()));
 	SmoothedPitch = FMath::FInterpTo(SmoothedPitch, bAiming ? FMath::Clamp(Pitch, -MaximumAimPitch, MaximumAimPitch) : 0.0f,
 		DeltaSeconds, AimInterpolationSpeed);
 	RangedAimAlpha = FMath::FInterpTo(RangedAimAlpha, bAiming ? 1.0f : 0.0f, DeltaSeconds, AimInterpolationSpeed);

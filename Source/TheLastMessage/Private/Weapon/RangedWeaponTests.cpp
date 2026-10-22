@@ -2,6 +2,7 @@
 #include "Misc/AutomationTest.h"
 #include "Character/Player/PlayerBase.h"
 #include "Character/Player/PlayerAimAnimInstance.h"
+#include "Gimmick/Component/GravityStateComponent.h"
 #include "Animation/AnimSequence.h"
 #include "Animation/AnimMontage.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -317,6 +318,30 @@ bool FRangedWeaponTest::RunTest(const FString& Parameters)
 			TestTrue(TEXT("Canceled charge restores neutral upper-body blend"), AimAnim->RangedAimAlpha < 0.05f);
 			TestTrue(TEXT("After charge cancellation gun stays raised in idle"), AimAnim->RangedReadyAlpha > 0.9f);
 			TestTrue(TEXT("Movement-facing behavior is restored"), Player->GetCharacterMovement()->bOrientRotationToMovement);
+			UGravityStateComponent* Gravity = Player->FindComponentByClass<UGravityStateComponent>();
+			Gravity->ToggleGravityState();
+			Advance(0.5f);
+			Energy->SetSharedEnergy(100);
+			SendInput(WeaponGameplayTags::Input_Primary, 0);
+			SendInput(WeaponGameplayTags::Input_Primary, 1);
+			for (const float Direction : {-1.0f, 1.0f})
+			{
+				const FVector Target = Player->GetActorLocation() + FVector(Direction * 1000, 0, 600);
+				Player->UpdateAimFromWorldRay(Target + FVector(0, 500, 0), -FVector::YAxisVector);
+				Advance(0.2f);
+				TestTrue(TEXT("Inverted ranged aim preserves gravity alignment"), Player->GetActorUpVector().Z < -0.99f);
+				TestTrue(TEXT("Inverted ranged aim faces cursor on either side"), Player->GetActorForwardVector().X * Direction > 0.99f);
+				const FVector Axis = Player->GetMesh()->GetComponentTransform().InverseTransformVectorNoScale(Player->GetActorRightVector()).GetSafeNormal();
+				const FQuat AimRotation = AimAnim->RangedAimRotation.Quaternion();
+				TestTrue(TEXT("Inverted upward aim uses body-relative pitch"), FVector::DotProduct(
+					FVector(AimRotation.X, AimRotation.Y, AimRotation.Z) * FMath::Sign(AimRotation.W), Axis) > 0.05f);
+			}
+			SendInput(WeaponGameplayTags::Input_Primary, 0);
+			Advance(0.1f);
+			TestTrue(TEXT("Released inverted shot preserves gravity alignment"), Player->GetActorUpVector().Z < -0.99f);
+			ASC->CancelAbilityHandle(Spec->Handle);
+			Gravity->ToggleGravityState();
+			Advance(0.5f);
 			Data->AttackMontage = LoadObject<UAnimMontage>(nullptr, TEXT("/Game/Test_Jihong/Animations/LightRange/AM_PlayerAttack_LightRange"));
 			TestTrue(TEXT("Firing montage can start from ready idle"), Player->GetMesh()->GetAnimInstance()->Montage_Play(Data->AttackMontage) > 0.0f);
 			Advance(0.3f);

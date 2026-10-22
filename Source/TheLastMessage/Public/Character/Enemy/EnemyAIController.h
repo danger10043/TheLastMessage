@@ -36,8 +36,17 @@ public:
 	void StartEnemyAI();
 	void StopEnemyAI();
 
+	/** 이동을 멈추고 BT 실행을 일시정지한다(돌진처럼 몬스터가 직접 움직임을 제어하는 동안). */
+	void PauseEnemyAI();
+
+	/** PauseEnemyAI로 멈춘 BT를 다시 실행한다. 일시정지 상태가 아니면 아무것도 하지 않는다. */
+	void ResumeEnemyAI();
+
 	/** AI를 멈추고 Blackboard의 타겟·조사 위치를 비운 뒤 처음부터 다시 시작한다(풀에서 재사용할 때). */
 	void RestartEnemyAI();
+
+	/** 몬스터의 현재 홈 위치를 Blackboard의 HomeLocation에 다시 써 넣는다. */
+	void RefreshHomeLocation();
 
 	UFUNCTION()
 	void OnTargetPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus);
@@ -64,4 +73,6 @@ private:
 	void UpdateBlackboardTargetInfo();
 
 	FTimerHandle BlackboardUpdateTimer;
+
+	bool bAIPaused = false;
 };

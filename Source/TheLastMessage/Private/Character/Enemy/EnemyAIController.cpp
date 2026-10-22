@@ -108,10 +108,53 @@ void AEnemyAIController::RestartEnemyAI()
 	StartEnemyAI();
 }
 
+void AEnemyAIController::RefreshHomeLocation()
+{
+	if (ControlledEnemy)
+	{
+		if (UBlackboardComponent* BB = GetBlackboardComponent())
+		{
+			BB->SetValueAsVector(EnemyBB::HomeLocation, ControlledEnemy->GetHomeLocation());
+		}
+	}
+}
+
+void AEnemyAIController::PauseEnemyAI()
+{
+	if (bAIPaused)
+	{
+		return;
+	}
+
+	StopMovement();
+
+	if (UBrainComponent* Brain = GetBrainComponent())
+	{
+		Brain->PauseLogic(TEXT("EnemyCustomMovement"));
+		bAIPaused = true;
+	}
+}
+
+void AEnemyAIController::ResumeEnemyAI()
+{
+	if (!bAIPaused)
+	{
+		return;
+	}
+
+	bAIPaused = false;
+
+	if (UBrainComponent* Brain = GetBrainComponent())
+	{
+		Brain->ResumeLogic(TEXT("EnemyCustomMovement"));
+	}
+}
+
 void AEnemyAIController::StopEnemyAI()
 {
 	GetWorldTimerManager().ClearTimer(BlackboardUpdateTimer);
 	StopMovement();
+	bAIPaused = false; // 로직을 완전히 멈추므로 일시정지 상태도 함께 해제한다.
 
 	if (UBrainComponent* Brain = GetBrainComponent())
 	{

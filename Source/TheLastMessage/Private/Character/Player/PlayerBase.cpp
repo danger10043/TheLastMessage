@@ -1,5 +1,6 @@
 #include "Character/Player/PlayerBase.h"
 #include "Character/Player/GrapplingHookComponent.h"
+#include "Map/AreaMapComponent.h"
 #include "Character/Player/CombatFeedbackComponent.h"
 #include "AbilitySystemComponent.h"
 #include "Abilities/GameplayAbility.h"
@@ -82,6 +83,7 @@ APlayerBase::APlayerBase()
 	GravityStateComponent = CreateDefaultSubobject<UGravityStateComponent>(TEXT("GravityStateComponent"));
 	CombatFeedbackComponent = CreateDefaultSubobject<UCombatFeedbackComponent>(TEXT("CombatFeedbackComponent"));
 	GrapplingHookComponent = CreateDefaultSubobject<UGrapplingHookComponent>(TEXT("GrapplingHookComponent"));
+	AreaMapComponent = CreateDefaultSubobject<UAreaMapComponent>(TEXT("AreaMapComponent"));
 	static ConstructorHelpers::FObjectFinder<UInputAction> GrappleAction(TEXT("/Game/Main/Inputs/Actions/IA_GrapplingHook.IA_GrapplingHook"));
 	GrapplingHookAction = GrappleAction.Object;
 	AbilitySystemComponent = CreateDefaultSubobject<UAbilitySystemComponent>(TEXT("AbilitySystemComponent"));
@@ -224,7 +226,13 @@ void APlayerBase::UpdateRangedFacing()
 		bRangedFacingOverride = true;
 		Movement->bOrientRotationToMovement = false;
 		const FVector Aim = GetAimTargetLocation() - GetActorLocation();
-		if (FMath::Abs(Aim.X) > 5.0f) SetActorRotation(FRotator(0.0f, Aim.X > 0.0f ? 0.0f : 180.0f, 0.0f));
+		if (FMath::Abs(Aim.X) > 5.0f)
+		{
+			const FVector Up = -Movement->GetGravityDirection();
+			const FVector Forward = FVector::VectorPlaneProject(
+				Aim.X > 0.0f ? FVector::ForwardVector : -FVector::ForwardVector, Up).GetSafeNormal();
+			if (!Forward.IsNearlyZero()) SetActorRotation(FRotationMatrix::MakeFromXZ(Forward, Up).ToQuat());
+		}
 	}
 	else if (bRangedFacingOverride)
 	{
@@ -503,6 +511,15 @@ void APlayerBase::SetupPlayerInputComponent(UInputComponent* PlayerInputComponen
 	};
 	BindDefaultMouse(WeaponGameplayTags::Input_Primary, EKeys::LeftMouseButton);
 	BindDefaultMouse(WeaponGameplayTags::Input_Secondary, EKeys::RightMouseButton);
+}
+
+void APlayerBase::CancelWeaponInputsForUI()
+{
+	ClearPendingAttack();
+	AbilityInputCanceled(WeaponGameplayTags::Input_Primary);
+	AbilityInputCanceled(WeaponGameplayTags::Input_Secondary);
+	for (int32 Index=0;Index<4;++Index) SetWeaponChoiceHeld(Index,false);
+	StopJumping();ConsumeMovementInputVector();
 }
 
 void APlayerBase::AbilityInputPressed(FGameplayTag InputTag)

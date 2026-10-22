@@ -35,6 +35,12 @@ void UEnemyAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCallb
 		Damage = FMath::Max(GetIncomingDamage(), 0.f);
 		SetIncomingDamage(0.f);
 
+		// 몬스터 특성에 따른 피해 조정(예: Juggernaut의 원거리 피해 감소)
+		if (Enemy)
+		{
+			Damage = Enemy->ModifyIncomingDamage(Damage, Data.EffectSpec);
+		}
+
 		if (Enemy && Enemy->IsDead())
 		{
 			return;

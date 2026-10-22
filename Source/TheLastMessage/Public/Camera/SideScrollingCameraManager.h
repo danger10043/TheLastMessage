@@ -35,7 +35,7 @@ public:
 
 	/** Maximum camera scrolling bounds in world space */
 	UPROPERTY(EditAnywhere, Category="Side Scrolling Camera", meta=(ClampMin=-100000, ClampMax=100000, Units="cm"))
-	float CameraXMaxBounds = 10000.0f;
+	float CameraXMaxBounds = 30000.0f;
 
 protected:
 	// Follow the stable camera position, never the previous frame's shake offset.

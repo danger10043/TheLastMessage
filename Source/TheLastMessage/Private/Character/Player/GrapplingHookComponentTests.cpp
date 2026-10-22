@@ -21,6 +21,7 @@
 #include "Engine/SkeletalMesh.h"
 #include "CableComponent.h"
 #include "Materials/MaterialInterface.h"
+#include "Gimmick/SideScrollingSoftPlatform.h"
 
 namespace GrapplingProbeTest
 {
@@ -516,6 +517,74 @@ bool FGrapplingTerrainTest::RunTest(const FString& Parameters)
 	Lintel->SetCollisionProfileName(TEXT("BlockAll"));
 	Grapple->RequestGrapple(FVector(800,0,300));
 	TestFalse(TEXT("Ordinary hidden blockers remain excluded"), Grapple->HasGrappleAnchor());
+	return !HasAnyErrors();
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGrapplingSoftPlatformFacesTest, "TheLastMessage.Grappling.SoftPlatformBothFaces",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FGrapplingSoftPlatformFacesTest::RunTest(const FString& Parameters)
+{
+	GrapplingProbeTest::FWorld Fixture;
+	APlayerBase* Player = Fixture.SpawnPlayer();
+	UGrapplingHookComponent* Grapple = Player->FindComponentByClass<UGrapplingHookComponent>();
+	UClass* PlatformClass = LoadClass<ASideScrollingSoftPlatform>(nullptr,
+		TEXT("/Game/Test_Jihong/Blueprints/BP_SoftPlatform_Metroidvania.BP_SoftPlatform_Metroidvania_C"));
+	if (!TestNotNull(TEXT("Metroidvania platform class exists"), PlatformClass)) return false;
+	ASideScrollingSoftPlatform* Platform = Fixture.World->SpawnActor<ASideScrollingSoftPlatform>(
+		PlatformClass, FVector(0,0,500), FRotator::ZeroRotator);
+	if (!TestNotNull(TEXT("Platform spawned"), Platform)) return false;
+	// Reproduce separate art plus a hidden movement collider. Disable kit art so
+	// the test must use the collider, independent of art triangle sidedness.
+	TArray<UStaticMeshComponent*> Meshes;
+	Platform->GetComponents(Meshes);
+	UStaticMeshComponent* Collider = Platform->FindComponentByClass<UStaticMeshComponent>();
+	for (UStaticMeshComponent* Mesh : Meshes)
+	{
+		Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		if (Mesh != Collider) Mesh->SetStaticMesh(nullptr);
+	}
+	Collider->SetStaticMesh(LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube")));
+	Collider->SetRelativeLocation(FVector::ZeroVector);
+	Collider->SetRelativeRotation(FRotator::ZeroRotator);
+	Collider->SetRelativeScale3D(FVector(4,4,0.5));
+	Collider->SetVisibility(false);
+	Collider->SetHiddenInGame(true);
+	Collider->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	Collider->SetCollisionObjectType(ECC_GameTraceChannel1);
+	Collider->SetCollisionResponseToChannel(ECC_GameTraceChannel4, ECR_Ignore);
+	Grapple->RequestGrapple(FVector(0,0,1000));
+	TestTrue(TEXT("Upward hook connects to hidden platform underside"), Grapple->HasGrappleAnchor()
+		&& Grapple->ProbeState.SurfaceNormal.Z < -0.9 && FMath::IsNearlyEqual(Grapple->ProbeState.AnchorPoint.Z, 475., 1.));
+	Grapple->ReleaseGrapple();
+	Player->SetActorLocation(FVector(0,0,1000));
+	Grapple->RequestGrapple(FVector(0,0,0));
+	TestTrue(TEXT("Downward hook still connects to platform top"), Grapple->HasGrappleAnchor()
+		&& Grapple->ProbeState.SurfaceNormal.Z > 0.9);
+	return !HasAnyErrors();
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGrapplingNamedWallTest, "TheLastMessage.Grappling.NamedWallProxy",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FGrapplingNamedWallTest::RunTest(const FString& Parameters)
+{
+	GrapplingProbeTest::FWorld Fixture;
+	APlayerBase* Player = Fixture.SpawnPlayer();
+	UGrapplingHookComponent* Grapple = Player->FindComponentByClass<UGrapplingHookComponent>();
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.Name = TEXT("Wall_GrappleRegression");
+	AActor* Wall = Fixture.World->SpawnActor<AActor>(SpawnParams);
+	UStaticMeshComponent* Mesh = Fixture.MakeSurface(400, Wall);
+	Mesh->SetVisibility(false);
+	Mesh->SetHiddenInGame(true);
+	Wall->SetActorHiddenInGame(true);
+	Grapple->RequestGrapple(FVector(800,0,0));
+	TestTrue(TEXT("Wall_ terrain proxy connects despite hidden art proxy"), Grapple->HasGrappleAnchor()
+		&& FMath::IsNearlyEqual(Grapple->ProbeState.AnchorPoint.X,375.,1.));
+	Grapple->ReleaseGrapple();
+	Mesh->SetCollisionProfileName(TEXT("InvisibleWall"));
+	Grapple->RequestGrapple(FVector(800,0,0));
+	TestFalse(TEXT("Explicit invisible boundary remains excluded even with Wall_ name"), Grapple->HasGrappleAnchor());
 	return !HasAnyErrors();
 }
 #endif

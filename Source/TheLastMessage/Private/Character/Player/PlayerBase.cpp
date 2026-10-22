@@ -226,7 +226,13 @@ void APlayerBase::UpdateRangedFacing()
 		bRangedFacingOverride = true;
 		Movement->bOrientRotationToMovement = false;
 		const FVector Aim = GetAimTargetLocation() - GetActorLocation();
-		if (FMath::Abs(Aim.X) > 5.0f) SetActorRotation(FRotator(0.0f, Aim.X > 0.0f ? 0.0f : 180.0f, 0.0f));
+		if (FMath::Abs(Aim.X) > 5.0f)
+		{
+			const FVector Up = -Movement->GetGravityDirection();
+			const FVector Forward = FVector::VectorPlaneProject(
+				Aim.X > 0.0f ? FVector::ForwardVector : -FVector::ForwardVector, Up).GetSafeNormal();
+			if (!Forward.IsNearlyZero()) SetActorRotation(FRotationMatrix::MakeFromXZ(Forward, Up).ToQuat());
+		}
 	}
 	else if (bRangedFacingOverride)
 	{

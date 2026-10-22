@@ -22,7 +22,7 @@ bool FPlayerGravityTest::RunTest(const FString& Parameters)
 	World->InitializeActorsForPlay(FURL());
 	World->BeginPlay();
 	World->GetWorldSettings()->NotifyBeginPlay();
-	UClass* PlayerBP = LoadClass<APlayerBase>(nullptr, TEXT("/Game/Test_Jihong/BP_TestPlayer.BP_TestPlayer_C"));
+	UClass* PlayerBP = LoadClass<APlayerBase>(nullptr, TEXT("/Game/Test_Jihong/Blueprints/Player/BP_TestPlayer.BP_TestPlayer_C"));
 	TestNotNull(TEXT("Actual player BP loads"), PlayerBP);
 	const FGameplayTag Reversed = FGameplayTag::RequestGameplayTag(TEXT("State.Gravity.Reversed"));
 	int32 Index = 0;

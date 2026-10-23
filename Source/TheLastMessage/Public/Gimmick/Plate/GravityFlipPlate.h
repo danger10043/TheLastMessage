@@ -9,6 +9,7 @@
 class ACharacter;
 class UBoxComponent;
 class UPrimitiveComponent;
+class UNiagaraComponent;
 struct FHitResult;
 /**
  * 
@@ -36,6 +37,10 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Gimmick|Components")
 	TObjectPtr<UBoxComponent> PlateTrigger;
+
+	// 중력 반전 발판의 시각 효과
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Gimmick|Components")
+	TObjectPtr<UNiagaraComponent> GravityEffect;
 
 	// 현재 발판 안에 있는 플레이어 목록
 	UPROPERTY(Transient, VisibleInstanceOnly, Category = "Gimmick|GravityPlate")

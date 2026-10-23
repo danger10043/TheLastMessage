@@ -1322,10 +1322,23 @@ bool APlayerBase::RespawnAtCheckpoint()
 	if (!HasAuthority() || !DeathState.bDead || !bHasCheckpoint || CombatAttributes->GetMaxHealth() <= 0.0f) return false;
 	const UCapsuleComponent* Capsule = GetCapsuleComponent();
 	FCollisionQueryParams Query(SCENE_QUERY_STAT(CheckpointRespawn), false, this);
-	if (GetWorld()->OverlapBlockingTestByProfile(CheckpointTransform.GetLocation(), CheckpointTransform.GetRotation(),
-		Capsule->GetCollisionProfileName(), FCollisionShape::MakeCapsule(
-			Capsule->GetScaledCapsuleRadius(), Capsule->GetScaledCapsuleHalfHeight()), Query)) return false;
-	if (!TeleportTo(CheckpointTransform.GetLocation(), CheckpointTransform.Rotator())) return false;
+	const FCollisionShape SpawnShape = FCollisionShape::MakeCapsule(
+		Capsule->GetScaledCapsuleRadius(), Capsule->GetScaledCapsuleHalfHeight());
+	const FVector SpawnUp = -CheckpointGravity.GetSafeNormal(SMALL_NUMBER, FVector(0, 0, -1));
+	bool bPlaced = false;
+	// Search above an occupied checkpoint without reviving inside another actor.
+	for (float Height = 0.0f; Height <= 2000.0f; Height += 50.0f)
+	{
+		const FVector Candidate = CheckpointTransform.GetLocation() + SpawnUp * Height;
+		if (GetWorld()->OverlapBlockingTestByProfile(Candidate, CheckpointTransform.GetRotation(),
+			Capsule->GetCollisionProfileName(), SpawnShape, Query)) continue;
+		if (TeleportTo(Candidate, CheckpointTransform.Rotator()))
+		{
+			bPlaced = true;
+			break;
+		}
+	}
+	if (!bPlaced) return false;
 	GetWorldTimerManager().ClearTimer(RespawnTimer);
 	// Keep equipment, core grants and permanent effects on the existing ASC.
 	const bool bGravityReversed = AbilitySystemComponent->HasMatchingGameplayTag(

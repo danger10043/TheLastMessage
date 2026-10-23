@@ -96,8 +96,14 @@ bool FPlayerCheckpointTest::RunTest(const FString& Parameters)
 	Obstacle->SetActorLocation(FVector(2000, 0, 200));
 	Player->SetActorLocation(FVector(3500, 0, 200));
 	Player->HandleDeath();
-	TestFalse(TEXT("Blocked checkpoint cannot revive inside geometry"), Player->RespawnAtCheckpoint());
-	TestTrue(TEXT("Blocked respawn remains dead"), Player->IsDead());
+	TestTrue(TEXT("Occupied checkpoint respawns above obstruction"), Player->RespawnAtCheckpoint());
+	TestFalse(TEXT("Raised respawn restores living state"), Player->IsDead());
+	TestTrue(TEXT("Raised respawn clears obstruction"), Player->GetActorLocation().Z > 700.0f);
+	Box->SetBoxExtent(FVector(5000));
+	Player->SetActorLocation(FVector(8000, 0, 200));
+	Player->HandleDeath();
+	TestFalse(TEXT("Fully blocked search cannot revive inside geometry"), Player->RespawnAtCheckpoint());
+	TestTrue(TEXT("Fully blocked respawn remains dead"), Player->IsDead());
 	Obstacle->Destroy();
 	TestTrue(TEXT("Respawn succeeds once obstruction clears"), Player->RespawnAtCheckpoint());
 	World->EndPlay(EEndPlayReason::Quit);

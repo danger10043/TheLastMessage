@@ -30,7 +30,8 @@ AToggleSwitch::AToggleSwitch()
 void AToggleSwitch::ToggleSwitch()
 {
 	// 사용 불가능한 스위치는 상태를 바꾸지 않음
-	if (!bIsEnabled)
+	// 실패 연출 중 직접 호출되는 입력도 차단
+	if (!bIsEnabled || bLeverInputLocked)
 	{
 		return;
 	}
@@ -152,6 +153,45 @@ void AToggleSwitch::ApplyActiveState(bool bNewActive)
 	{
 		LeverTimeline->Reverse();
 	}
+}
+
+bool AToggleSwitch::CanInteractInternal(ACharacter* Player) const
+{
+	return !bLeverInputLocked && Super::CanInteractInternal(Player);
+}
+
+void AToggleSwitch::SetLeverInputLocked(bool bLocked)
+{
+	bLeverInputLocked = bLocked;
+
+	if (bLocked)
+	{
+		UpdateInteractionHighlight(false);
+	}
+}
+
+float AToggleSwitch::GetRemainingLeverAnimationTime() const
+{
+	if (!bTimelineConfigured || !IsValid(LeverTimeline))
+	{
+		return 0.0f;
+	}
+
+	const float PlayRate = FMath::Abs(LeverTimeline->GetPlayRate());
+
+	if (PlayRate <= KINDA_SMALL_NUMBER)
+	{
+		return 0.0f;
+	}
+
+	const float TimelineLength = LeverTimeline->GetTimelineLength();
+
+	const float Position = FMath::Clamp(LeverTimeline->GetPlaybackPosition(), 0.0f, TimelineLength);
+
+	// 켜지는 중이면 끝까지, 꺼지는 중이면 시작까지의 시간
+	const float RemainingLength = bIsActive ? TimelineLength - Position : Position;
+
+	return RemainingLength / PlayRate;
 }
 
 void AToggleSwitch::SetTimerGlow(bool bEnabled, float Alpha)

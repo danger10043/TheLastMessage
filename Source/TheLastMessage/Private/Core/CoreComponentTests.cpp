@@ -587,10 +587,55 @@ bool FCoreDataValidationTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Matching setup has no errors"), Errors, 0);
 	TestEqual(TEXT("Matching setup has no warnings"), Warnings, 0);
 	float Value = 0.0f;
+	constexpr float CurveTolerance = UE_KINDA_SMALL_NUMBER;
 	TestTrue(TEXT("Auto-searched binding reads level two"), Data->TryGetDescriptionValue(Binding, 2, Value) && FMath::IsNearlyEqual(Value, 1.20f));
 
 	Data->MaxLevel = 4;
-	TestTrue(TEXT("Curve shorter than MaxLevel is invalid"), Validate(Errors, Warnings) == EDataValidationResult::Invalid);
+	TestTrue(TEXT("Constant tail is valid with a warning instead of a missing-key error"),
+		Validate(Errors, Warnings) == EDataValidationResult::Valid && Errors == 0 && Warnings > 0);
+	TestTrue(TEXT("Constant tail preserves the final key value"),
+		Data->TryGetDescriptionValue(Binding, 4, Value) && FMath::IsNearlyEqual(Value, 1.30f, CurveTolerance));
+
+	Curve.PostInfinityExtrap = RCCE_Linear;
+	TestTrue(TEXT("Linear tail is valid beyond the last key without warnings"),
+		Validate(Errors, Warnings) == EDataValidationResult::Valid && Errors == 0 && Warnings == 0);
+	TestTrue(TEXT("Description reads the extrapolated value"),
+		Data->TryGetDescriptionValue(Binding, 4, Value) && FMath::IsNearlyEqual(Value, 1.40f, CurveTolerance));
+	{
+		FCoreTestFixture Fixture(true);
+		for (int32 Level = 1; Level <= Data->MaxLevel; ++Level)
+		{
+			TestTrue(TEXT("A core can upgrade beyond the final curve key"), IsCoreAcquireSuccess(Fixture.Core->AcquireCore(Data)));
+		}
+		TestTrue(TEXT("The active GE uses the extrapolated level-four magnitude"),
+			FMath::IsNearlyEqual(Fixture.Attributes->GetDamageDealtMultiplier(), 1.40f, CurveTolerance));
+		AddInfo(FString::Printf(TEXT("Linear Lv.4: description=%.9f, active GE=%.9f, expected=1.400000000"),
+			Value, Fixture.Attributes->GetDamageDealtMultiplier()));
+		TestTrue(TEXT("Extrapolation does not bypass the maximum upgrade level"),
+			Fixture.Core->AcquireCore(Data) == ECoreAcquireResult::MaxLevel);
+	}
+
+	Data->MaxLevel = 10;
+	TestTrue(TEXT("Raising MaxLevel needs no additional keys for a linear tail"),
+		Validate(Errors, Warnings) == EDataValidationResult::Valid && Warnings == 0);
+	TestTrue(TEXT("The linear tail reaches the configured maximum level"),
+		Data->TryGetDescriptionValue(Binding, 10, Value) && FMath::IsNearlyEqual(Value, 2.0f, CurveTolerance));
+	AddInfo(FString::Printf(TEXT("Linear Lv.10: description=%.9f, expected=2.000000000"), Value));
+
+	const FRichCurve CompleteCurve = Curve;
+	Curve.Reset();
+	Curve.AddKey(1.0f, 1.10f);
+	TestTrue(TEXT("A single-key linear tail warns because it has no slope"),
+		Validate(Errors, Warnings) == EDataValidationResult::Valid && Warnings > 0);
+	TestTrue(TEXT("A single-key linear tail keeps its sole value"),
+		Data->TryGetDescriptionValue(Binding, 10, Value) && FMath::IsNearlyEqual(Value, 1.10f, CurveTolerance));
+	Curve.Reset();
+	TestTrue(TEXT("An empty curve still fails validation"), Validate(Errors, Warnings) == EDataValidationResult::Invalid);
+	Curve = CompleteCurve;
+	Curve.PostInfinityExtrap = RCCE_Cycle;
+	TestTrue(TEXT("A repeating tail remains valid but requests a review"),
+		Validate(Errors, Warnings) == EDataValidationResult::Valid && Warnings > 0);
+	Curve.PostInfinityExtrap = RCCE_Linear;
 
 	Data->MaxLevel = 2;
 	TestTrue(TEXT("Curve longer than MaxLevel only warns"), Validate(Errors, Warnings) == EDataValidationResult::Valid && Warnings > 0);
@@ -616,6 +661,92 @@ bool FCoreDataValidationTest::RunTest(const FString& Parameters)
 
 	Effect->DurationPolicy = EGameplayEffectDurationType::Instant;
 	TestTrue(TEXT("Non-infinite effect is invalid"), Validate(Errors, Warnings) == EDataValidationResult::Invalid);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCoreDescriptionLimitsTest, "TheLastMessage.Core.DescriptionLimits",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCoreDescriptionLimitsTest::RunTest(const FString& Parameters)
+{
+	UGameplayEffect* Effect = GetMutableDefault<UGameplayEffect>();
+	TGuardValue<EGameplayEffectDurationType> DurationGuard(Effect->DurationPolicy, EGameplayEffectDurationType::Infinite);
+	TGuardValue<TArray<FGameplayModifierInfo>> ModifiersGuard(Effect->Modifiers, {});
+	Effect->Modifiers.AddDefaulted();
+	UCoreDataAsset* Data = NewObject<UCoreDataAsset>();
+	Data->CoreId = TEXT("Test_DescriptionLimits");
+	Data->CoreName = FText::FromString(TEXT("Description limits"));
+	Data->CoreDescription = FText::FromString(TEXT("효과 {Value}"));
+	Data->GrantedEffects.Add(UGameplayEffect::StaticClass());
+	auto Configure = [Effect, Data](const FGameplayAttribute& Attribute, float Value,
+		EGameplayModOp::Type Operation, ECoreDescriptionValueFormat Format)
+	{
+		Effect->Modifiers[0].Attribute = Attribute;
+		Effect->Modifiers[0].ModifierOp = Operation;
+		Effect->Modifiers[0].ModifierMagnitude = FGameplayEffectModifierMagnitude(FScalableFloat(Value));
+		FCoreDescriptionValueBinding Binding;
+		Binding.Token = TEXT("Value");
+		Binding.Attribute = Attribute;
+		Binding.Format = Format;
+		Data->DescriptionValues = { Binding };
+	};
+	auto CheckWarnings = [this, Data](const TCHAR* Case, int32 ExpectedWarnings)
+	{
+		FDataValidationContext Context;
+		TestTrue(FString::Printf(TEXT("%s remains valid"), Case), Data->IsDataValid(Context) == EDataValidationResult::Valid);
+		TestEqual(FString::Printf(TEXT("%s warning count"), Case), static_cast<int32>(Context.GetNumWarnings()), ExpectedWarnings);
+	};
+
+	Configure(UCombatAttributeSet::GetDamageTakenMultiplierAttribute(), .3f,
+		EGameplayModOp::MultiplyAdditive, ECoreDescriptionValueFormat::ReductionPercent);
+	UCurveTable* Table = NewObject<UCurveTable>();
+	FRichCurve& Curve = Table->AddRichCurve(TEXT("Reduction"));
+	Curve.AddKey(1.f, .5f);
+	Curve.AddKey(2.f, .4f);
+	Curve.PostInfinityExtrap = RCCE_Linear;
+	FScalableFloat Scaling;
+	Scaling.SetScalingValue(1.f, TEXT("Reduction"), Table);
+	Effect->Modifiers[0].ModifierMagnitude = FGameplayEffectModifierMagnitude(Scaling);
+	Data->MaxLevel = 3;
+	CheckWarnings(TEXT("Damage multiplier at its runtime floor"), 0);
+	Data->MaxLevel = 6;
+	CheckWarnings(TEXT("Several extrapolated levels below the floor produce one warning"), 1);
+	Data->MaxLevel = 4;
+	{
+		FCoreTestFixture Fixture(true);
+		for (int32 Level = 1; Level <= Data->MaxLevel; ++Level)
+			TestTrue(TEXT("A warning does not prevent acquisition"), IsCoreAcquireSuccess(Fixture.Core->AcquireCore(Data)));
+		float DescriptionValue = 0.f;
+		TestTrue(TEXT("The description still reads the configured magnitude"),
+			Data->TryGetDescriptionValue(Data->DescriptionValues[0], 4, DescriptionValue)
+			&& FMath::IsNearlyEqual(DescriptionValue, .2f, UE_KINDA_SMALL_NUMBER));
+		TestTrue(TEXT("The actual effect retains its runtime floor"),
+			FMath::IsNearlyEqual(Fixture.Attributes->GetDamageTakenMultiplier(), .3f, UE_KINDA_SMALL_NUMBER));
+	}
+	Configure(UCombatAttributeSet::GetChargeTimeMultiplierAttribute(), .1f,
+		EGameplayModOp::MultiplyAdditive, ECoreDescriptionValueFormat::ReductionPercent);
+	CheckWarnings(TEXT("Charge time below its runtime floor"), 1);
+	Configure(UCombatAttributeSet::GetChargeTimeMultiplierAttribute(), .2f,
+		EGameplayModOp::MultiplyAdditive, ECoreDescriptionValueFormat::ReductionPercent);
+	CheckWarnings(TEXT("Charge time at its runtime floor"), 0);
+	Configure(UCombatAttributeSet::GetCriticalChanceAttribute(), 1.2f,
+		EGameplayModOp::Override, ECoreDescriptionValueFormat::Percent);
+	CheckWarnings(TEXT("Critical chance override above one"), 1);
+	Configure(UCombatAttributeSet::GetCriticalChanceAttribute(), 1.2f,
+		EGameplayModOp::Additive, ECoreDescriptionValueFormat::Percent);
+	CheckWarnings(TEXT("Critical chance contribution above one"), 1);
+	Configure(UCombatAttributeSet::GetCriticalChanceAttribute(), .05f,
+		EGameplayModOp::Additive, ECoreDescriptionValueFormat::Percent);
+	CheckWarnings(TEXT("A normal critical chance contribution"), 0);
+	Configure(UCombatAttributeSet::GetCriticalChanceAttribute(), -.1f,
+		EGameplayModOp::Additive, ECoreDescriptionValueFormat::Percent);
+	CheckWarnings(TEXT("A negative contribution requires the player's existing stats"), 0);
+	Configure(UCombatAttributeSet::GetCriticalChanceAttribute(), 2.f,
+		EGameplayModOp::MultiplyAdditive, ECoreDescriptionValueFormat::IncreasePercent);
+	CheckWarnings(TEXT("A multiplier is not itself an absolute critical chance"), 0);
+	Configure(UCombatAttributeSet::GetHealthAttribute(), 50.f,
+		EGameplayModOp::Override, ECoreDescriptionValueFormat::Number);
+	CheckWarnings(TEXT("Current health requires the player's maximum health"), 0);
 	return true;
 }
 #endif

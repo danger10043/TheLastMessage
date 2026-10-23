@@ -67,7 +67,7 @@ public:
 
 	/**
 	 * Custom에서만 사용하는 최대 단계. 1이면 최초 한 번만 획득한다. Infinite에서는 무시한다.
-	 * GE 커브의 키도 이 단계까지 입력해야 하며, 맞지 않으면 데이터 검증에서 알린다.
+	 * 마지막 키 이후 단계의 GE 수치는 커브의 Post-Infinity 외삽 설정을 따른다.
 	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Core|Upgrade",
 		meta = (ClampMin = "1", UIMin = "1", EditCondition = "UpgradeLimitType == ECoreUpgradeLimitType::Custom", EditConditionHides))

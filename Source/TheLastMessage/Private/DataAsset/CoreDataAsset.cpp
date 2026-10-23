@@ -4,7 +4,9 @@
 #include "Engine/CurveTable.h"
 #include "GameplayEffect.h"
 #if WITH_EDITOR
+#include "GAS/CombatAttributeSet.h"
 #include "Misc/DataValidation.h"
+#include "UObject/StrongObjectPtr.h"
 #endif
 
 #define LOCTEXT_NAMESPACE "CoreDataAsset"
@@ -30,6 +32,23 @@ namespace CoreDataAssetPrivate
 			FGameplayEffectModifierMagnitude::StaticStruct(), TEXT("ScalableFloatMagnitude"));
 		if (!Property || Property->Struct != FScalableFloat::StaticStruct()) return nullptr;
 		return Property->ContainerPtrToValuePtr<FScalableFloat>(&Magnitude);
+	}
+
+	/** 기본 스탯이나 다른 효과를 알아야 하는 값은 설명의 Modifier 값만으로 판정하지 않는다. */
+	bool CanCheckAttributeLimit(const FGameplayModifierInfo& Modifier, const UCombatAttributeSet& Attributes, float Value)
+	{
+		if (Modifier.Attribute.GetAttributeSetClass() != UCombatAttributeSet::StaticClass()
+			|| Modifier.Attribute == UCombatAttributeSet::GetHealthAttribute()) return false;
+
+		if (Modifier.ModifierOp == EGameplayModOp::Override) return true;
+		const float DefaultValue = Modifier.Attribute.GetNumericValue(&Attributes);
+		if (Modifier.ModifierOp == EGameplayModOp::MultiplyAdditive)
+		{
+			return FMath::IsNearlyEqual(DefaultValue, 1.f)
+				|| Modifier.Attribute == UCombatAttributeSet::GetMaxHealthAttribute();
+		}
+		// 기본 스탯을 모르는 음수 가산값은 유효한 감소 효과일 수 있다.
+		return Modifier.ModifierOp == EGameplayModOp::Additive && Value >= 0.f && FMath::IsNearlyZero(DefaultValue);
 	}
 #endif
 }
@@ -190,7 +209,7 @@ EDataValidationResult UCoreDataAsset::IsDataValid(FDataValidationContext& Contex
 		AddError(GrantReason);
 	}
 
-	// 커브 키와 강화 단계: Custom은 MaxLevel까지 키가 있어야 하고, Infinite는 마지막 키 이후 값이 변하지 않아야 안전하다.
+	// 키 범위 밖의 강화 단계는 커브의 외삽 설정으로 계산한다.
 	for (const TSubclassOf<UGameplayEffect>& EffectClass : GrantedEffects)
 	{
 		const UGameplayEffect* Definition = EffectClass ? EffectClass.GetDefaultObject() : nullptr;
@@ -226,14 +245,19 @@ EDataValidationResult UCoreDataAsset::IsDataValid(FDataValidationContext& Contex
 			{
 				if (MaxTime + KINDA_SMALL_NUMBER < MaxLevel)
 				{
-					AddError(FText::Format(LOCTEXT("CurveShorterThanMaxLevel",
-						"커브 행 '{0}'의 마지막 키는 Lv.{1}인데 MaxLevel은 {2}입니다. Lv.{1} 이후 단계의 키를 입력하거나 MaxLevel을 줄이세요."),
-						RowName, FText::AsNumber(FMath::RoundToInt(MaxTime)), FText::AsNumber(MaxLevel)));
+					// Linear 외삽은 두 개 이상의 키로 마지막 구간의 기울기를 계산한다.
+					const bool bHasLinearTail = Curve->PostInfinityExtrap == RCCE_Linear && Curve->GetNumKeys() >= 2;
+					if (!bHasLinearTail)
+					{
+						AddWarning(FText::Format(LOCTEXT("CurveTailExtrapolation",
+							"커브 행 '{0}'의 마지막 키는 Lv.{1}입니다. 이후 MaxLevel({2})까지의 값은 외삽 설정과 키 수에 따라 계산됩니다. 의도한 수치인지 확인하세요."),
+							RowName, FText::AsNumber(MaxTime), FText::AsNumber(MaxLevel)));
+					}
 				}
 				else if (MaxTime > MaxLevel + KINDA_SMALL_NUMBER)
 				{
 					AddWarning(FText::Format(LOCTEXT("CurveLongerThanMaxLevel",
-						"커브 행 '{0}'에 MaxLevel({1}) 이후의 키가 있습니다. 해당 키는 사용되지 않습니다."),
+						"커브 행 '{0}'에 MaxLevel({1}) 이후의 키가 있습니다. 이후 키도 보간에 영향을 줄 수 있으므로 의도한 설정인지 확인하세요."),
 						RowName, FText::AsNumber(MaxLevel)));
 				}
 			}
@@ -251,6 +275,7 @@ EDataValidationResult UCoreDataAsset::IsDataValid(FDataValidationContext& Contex
 	FText::GetFormatPatternParameters(FTextFormat(CoreDescription), DescriptionTokens);
 
 	TSet<FString> BoundTokens;
+	TStrongObjectPtr<UCombatAttributeSet> ValidationAttributes;
 	const int32 LastCheckedLevel = bCustomLimit ? FMath::Max(1, MaxLevel) : 2;
 	for (const FCoreDescriptionValueBinding& Binding : DescriptionValues)
 	{
@@ -281,10 +306,15 @@ EDataValidationResult UCoreDataAsset::IsDataValid(FDataValidationContext& Contex
 			AddError(FText::Format(LOCTEXT("BindingInvalid", "설명 바인딩 {0}: {1}"), TokenText, Reason));
 			continue;
 		}
+		if (!ValidationAttributes.IsValid() && Binding.Attribute.GetAttributeSetClass() == UCombatAttributeSet::StaticClass())
+		{
+			ValidationAttributes.Reset(NewObject<UCombatAttributeSet>());
+		}
 
 		// 표시할 모든 단계에서 값을 읽을 수 있는지, 표시 형식이 실제 연산과 맞는지 확인한다.
 		bool bAnyBelowOne = false;
 		bool bAnyAboveOne = false;
+		bool bLimitWarningReported = false;
 		for (int32 Level = 1; Level <= LastCheckedLevel; ++Level)
 		{
 			float Value = 0.0f;
@@ -295,6 +325,21 @@ EDataValidationResult UCoreDataAsset::IsDataValid(FDataValidationContext& Contex
 			}
 			bAnyBelowOne |= Value < 1.0f - KINDA_SMALL_NUMBER;
 			bAnyAboveOne |= Value > 1.0f + KINDA_SMALL_NUMBER;
+			if (!bLimitWarningReported && ValidationAttributes.IsValid()
+				&& CoreDataAssetPrivate::CanCheckAttributeLimit(*Modifier, *ValidationAttributes, Value))
+			{
+				// 런타임과 같은 제한을 사용하되 실제 플레이어의 스탯은 변경하지 않는다.
+				float LimitedValue = Value;
+				ValidationAttributes->PreAttributeChange(Binding.Attribute, LimitedValue);
+				if (!FMath::IsNearlyEqual(Value, LimitedValue, UE_KINDA_SMALL_NUMBER))
+				{
+					AddWarning(FText::Format(LOCTEXT("DescriptionAttributeLimit",
+						"설명 바인딩 {0}: Lv.{1}의 {2} 설정값 {3}은 Attribute 제한 적용 시 {4}가 됩니다. 기본 스탯과 다른 효과의 조합에 따라 설명과 실제 효과가 달라질 수 있으므로 GE·커브 또는 MaxLevel을 확인하세요."),
+						TokenText, FText::AsNumber(Level), FText::FromString(Binding.Attribute.GetName()),
+						FText::AsNumber(Value), FText::AsNumber(LimitedValue)));
+					bLimitWarningReported = true;
+				}
+			}
 		}
 
 		const bool bMultiplyModifier = Modifier->ModifierOp == EGameplayModOp::MultiplyAdditive;

@@ -1,4 +1,4 @@
-#pragma once
+    #pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
@@ -250,6 +250,15 @@ private:
     FDelegateHandle HealthChangedDelegateHandle;
     FTimerHandle HitFlashTimerHandle;
     bool bHitFlashActive = false;
+
+public:
+    /** Suppress boss UI during intros, including UI created after this call. */
+    UFUNCTION(BlueprintCallable, Category = "Boss|UI")
+    void SetBossUIVisible(bool bVisible);
+
+protected:
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Boss|UI")
+    bool bBossUIVisible = true;
 
     void UpdateBossUI();
     void RemoveBossUI();

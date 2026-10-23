@@ -136,8 +136,8 @@ void UOwnedCoreWidget::SelectCore(FName CoreId)
 	if (Data.CoreIcon) DetailIcon->SetBrushFromTexture(Data.CoreIcon, false);
 	else DetailIcon->SetBrush(DefaultIcon);
 	// 다른 코어의 설명은 처음부터 읽을 수 있도록 스크롤 위치를 초기화한다.
-	if (UScrollBox* Scroll = Cast<UScrollBox>(GetWidgetFromName(TEXT("EffectScroll")))) Scroll->ScrollToStart();
-	if (UScrollBox* Scroll = Cast<UScrollBox>(GetWidgetFromName(TEXT("NextScroll")))) Scroll->ScrollToStart();
+	if (EffectScroll) EffectScroll->ScrollToStart();
+	if (NextScroll) NextScroll->ScrollToStart();
 }
 
 void UOwnedCoreWidget::HandleCoreChanged(FName CoreId, int32 OldLevel, int32 NewLevel)

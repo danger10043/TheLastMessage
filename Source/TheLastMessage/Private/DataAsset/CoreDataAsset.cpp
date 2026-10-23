@@ -22,6 +22,9 @@ namespace CoreDataAssetPrivate
 	}
 
 #if WITH_EDITOR
+	// 설명 바인딩 하나를 검사할 때 연속으로 확인하는 단계 수. 게임의 강화 상한과는 무관하다.
+	constexpr int32 MaxSequentialValidationLevels = 1024;
+
 	/**
 	 * Modifier가 Scalable Float이면 그 값을 반환한다.
 	 * FGameplayEffectModifierMagnitude는 Scalable Float를 꺼내는 공개 함수가 없어 리플렉션으로 커브 정보를 읽는다.
@@ -346,12 +349,26 @@ EDataValidationResult UCoreDataAsset::IsDataValid(FDataValidationContext& Contex
 			ValidationAttributes.Reset(NewObject<UCombatAttributeSet>());
 		}
 
-		// 표시할 모든 단계에서 값을 읽을 수 있는지, 표시 형식이 실제 연산과 맞는지 확인한다.
+		const FScalableFloat* Scaling = CoreDataAssetPrivate::GetScalableFloat(Modifier->ModifierMagnitude);
+		const bool bConstantMagnitude = Scaling && Scaling->IsStatic();
+		const int32 SequentialLevelCount = bConstantMagnitude ? 1
+			: FMath::Min(LastCheckedLevel, CoreDataAssetPrivate::MaxSequentialValidationLevels);
+		const bool bPartialValidation = !bConstantMagnitude && LastCheckedLevel > SequentialLevelCount;
+		if (bPartialValidation)
+		{
+			AddWarning(FText::Format(LOCTEXT("DescriptionValidationBudget",
+				"설명 바인딩 {0}: MaxLevel({1})이 커서 1~{2}단계와 최대 단계만 검사했습니다. 중간 구간은 일부만 확인했으므로 커브 수치를 별도로 확인하세요. 강화 상한은 변경하지 않습니다."),
+				TokenText, FText::AsNumber(LastCheckedLevel), FText::AsNumber(SequentialLevelCount)));
+		}
+
+		// 고정값은 한 번, 커브는 정해진 범위와 최대 단계에서 값·표시 형식·Attribute 제한을 확인한다.
 		bool bAnyBelowOne = false;
 		bool bAnyAboveOne = false;
 		bool bLimitWarningReported = false;
-		for (int32 Level = 1; Level <= LastCheckedLevel; ++Level)
+		const int32 CheckCount = SequentialLevelCount + (bPartialValidation ? 1 : 0);
+		for (int32 CheckIndex = 1; CheckIndex <= CheckCount; ++CheckIndex)
 		{
+			const int32 Level = CheckIndex <= SequentialLevelCount ? CheckIndex : LastCheckedLevel;
 			float Value = 0.0f;
 			if (!TryGetDescriptionValue(Binding, Level, Value, &Reason))
 			{

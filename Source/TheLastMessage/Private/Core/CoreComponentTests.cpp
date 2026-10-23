@@ -668,6 +668,81 @@ bool FCoreDataValidationTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCoreValidationBudgetTest, "TheLastMessage.Core.ValidationBudget",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCoreValidationBudgetTest::RunTest(const FString& Parameters)
+{
+	UGameplayEffect* Effect = GetMutableDefault<UGameplayEffect>();
+	TGuardValue<EGameplayEffectDurationType> DurationGuard(Effect->DurationPolicy, EGameplayEffectDurationType::Infinite);
+	TGuardValue<TArray<FGameplayModifierInfo>> ModifiersGuard(Effect->Modifiers, {});
+	FGameplayModifierInfo& Modifier = Effect->Modifiers.AddDefaulted_GetRef();
+	Modifier.Attribute = UCombatAttributeSet::GetDamageDealtMultiplierAttribute();
+	Modifier.ModifierOp = EGameplayModOp::MultiplyAdditive;
+	Modifier.ModifierMagnitude = FGameplayEffectModifierMagnitude(FScalableFloat(1.25f));
+	UCoreDataAsset* Data = NewObject<UCoreDataAsset>();
+	Data->CoreId = TEXT("Test_ValidationBudget");
+	Data->CoreName = FText::FromString(TEXT("Validation budget"));
+	Data->CoreDescription = FText::FromString(TEXT("피해 {Damage}% 증가"));
+	Data->GrantedEffects.Add(UGameplayEffect::StaticClass());
+	FCoreDescriptionValueBinding Binding;
+	Binding.Token = TEXT("Damage");
+	Binding.Attribute = Modifier.Attribute;
+	Binding.Format = ECoreDescriptionValueFormat::IncreasePercent;
+	Data->DescriptionValues.Add(Binding);
+	auto Check = [this, Data](const TCHAR* Case, int32 ExpectedErrors, int32 ExpectedWarnings)
+	{
+		FDataValidationContext Context;
+		const EDataValidationResult Result = Data->IsDataValid(Context);
+		TestTrue(Case, Result == (ExpectedErrors ? EDataValidationResult::Invalid : EDataValidationResult::Valid));
+		TestEqual(FString::Printf(TEXT("%s error count"), Case), static_cast<int32>(Context.GetNumErrors()), ExpectedErrors);
+		TestEqual(FString::Printf(TEXT("%s warning count"), Case), static_cast<int32>(Context.GetNumWarnings()), ExpectedWarnings);
+	};
+	const double StartedAt = FPlatformTime::Seconds();
+	Data->MaxLevel = MAX_int32;
+	Check(TEXT("A fixed magnitude needs no partial-validation warning even at MAX_int32"), 0, 0);
+
+	UCurveTable* Table = NewObject<UCurveTable>();
+	FRichCurve& Curve = Table->AddRichCurve(TEXT("Scaling"));
+	Curve.AddKey(1.f, 1.f);
+	Curve.AddKey(2.f, 2.f);
+	Curve.PostInfinityExtrap = RCCE_Linear;
+	FScalableFloat Scaling;
+	Scaling.SetScalingValue(1.f, TEXT("Scaling"), Table);
+	Modifier.ModifierMagnitude = FGameplayEffectModifierMagnitude(Scaling);
+	Data->MaxLevel = 1024;
+	Check(TEXT("Levels within the validation budget are checked without a partial warning"), 0, 0);
+	Data->MaxLevel = 1025;
+	Check(TEXT("Exceeding the validation budget warns once"), 0, 1);
+	Data->MaxLevel = MAX_int32;
+	Check(TEXT("A huge maximum finishes without an overflowing loop"), 0, 1);
+	TestEqual(TEXT("Validation preserves the configured upgrade limit"), Data->MaxLevel, MAX_int32);
+	float Value = 0.f;
+	TestTrue(TEXT("The actual high-level curve value remains readable"),
+		Data->TryGetDescriptionValue(Binding, Data->MaxLevel, Value) && Value > 1.e9f);
+
+	// 초반 검사 범위는 유한하지만 최대 단계에서 넘치는 수치도 오류로 잡아야 한다.
+	Scaling.SetScalingValue(MAX_flt / 2048.f, TEXT("Scaling"), Table);
+	Modifier.ModifierMagnitude = FGameplayEffectModifierMagnitude(Scaling);
+	Check(TEXT("A non-finite magnitude at the final level is still rejected"), 1, 1);
+	Scaling.SetScalingValue(1.f, TEXT("Scaling"), Table);
+	Modifier.ModifierMagnitude = FGameplayEffectModifierMagnitude(Scaling);
+	Curve.UpdateOrAddKey(1024.f, .5f);
+	Data->MaxLevel = 1024;
+	Check(TEXT("The final level of the full-check range still validates its format"), 0, 1);
+	Curve.Reset();
+	Curve.DefaultValue = 1.f;
+	Check(TEXT("An empty curve remains an error"), 1, 0);
+	Curve.AddKey(1.f, 1.f);
+	Curve.AddKey(2.f, 2.f);
+	Curve.PostInfinityExtrap = RCCE_Constant;
+	Data->UpgradeLimitType = ECoreUpgradeLimitType::Infinite;
+	Check(TEXT("Infinite ignores MaxLevel and retains its existing checks"), 0, 0);
+	AddInfo(FString::Printf(TEXT("Validation budget boundary cases completed in %.3f ms; MaxLevel=%d was preserved."),
+		(FPlatformTime::Seconds() - StartedAt) * 1000., Data->MaxLevel));
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCoreIdValidationTest, "TheLastMessage.Core.UniqueIds",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 

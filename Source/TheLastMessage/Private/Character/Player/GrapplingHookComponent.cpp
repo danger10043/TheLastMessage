@@ -23,33 +23,11 @@
 
 namespace
 {
-bool IsAuthoredGrappleTerrain(const UMeshComponent* Mesh, const AActor* Actor)
-{
-	if (Mesh->GetCollisionProfileName() == TEXT("GrappleTerrain")
-		|| Actor->ActorHasTag(TEXT("GrappleTerrain"))) return true;
-	// Named wall proxies represent solid terrain even when a separate kit mesh
-	// supplies the art. Editor labels are unavailable in cooked builds; the editor
-	// repair script persists the profile/tag for those builds.
-	if (Actor->GetName().StartsWith(TEXT("Wall_"))) return true;
-#if WITH_EDITOR
-	if (Actor->GetActorLabel().StartsWith(TEXT("Wall_"))) return true;
-#endif
-	return false;
-}
-
 bool IsGrappleMesh(const UPrimitiveComponent* Component)
 {
-	const UMeshComponent* Mesh = Cast<UMeshComponent>(Component);
-	if (!Mesh) return false;
-	const FName Profile = Mesh->GetCollisionProfileName();
-	if (Profile == TEXT("InvisibleWall") || Profile == TEXT("InvisibleWallDynamic")) return false;
-	const AActor* Actor = Mesh->GetOwner();
+	if (!Component) return false;
+	const AActor* Actor = Component->GetOwner();
 	if (!Actor) return false;
-	// 외형과 분리된 바닥이나 문 위 구조물의 충돌 표면은 실제 지형으로 취급
-	// One-way platform art can be a single-sided top surface. Its hidden collision
-	// mesh supplies the underside, so allow that mesh as a grapple target too.
-	const bool bTerrainSurface = IsAuthoredGrappleTerrain(Mesh, Actor) || Actor->IsA<ASideScrollingSoftPlatform>();
-	if (!bTerrainSurface && (!Mesh->IsVisible() || Mesh->bHiddenInGame || Actor->IsHidden())) return false;
 	// 캐릭터가 소유하거나 부착한 장비도 제외
 	for (const AActor* Owner = Actor; Owner; Owner = Owner->GetOwner())
 	{
@@ -59,17 +37,17 @@ bool IsGrappleMesh(const UPrimitiveComponent* Component)
 	{
 		if (Parent->IsA<APawn>()) return false;
 	}
-	if (const UStaticMeshComponent* StaticMesh = Cast<UStaticMeshComponent>(Mesh)) return StaticMesh->GetStaticMesh() != nullptr;
-	if (const USkeletalMeshComponent* SkeletalMesh = Cast<USkeletalMeshComponent>(Mesh)) return SkeletalMesh->GetSkeletalMeshAsset() != nullptr;
-	return false;
+	if (const UStaticMeshComponent* StaticMesh = Cast<UStaticMeshComponent>(Component)) return StaticMesh->GetStaticMesh() != nullptr;
+	if (const USkeletalMeshComponent* SkeletalMesh = Cast<USkeletalMeshComponent>(Component)) return SkeletalMesh->GetSkeletalMeshAsset() != nullptr;
+	return true;
 }
 
 void PrepareGrappleMeshes(UWorld* World)
 {
 	// 장식 메시도 태그나 에디터 충돌 설정 없이 훅 전용 검사에 참여
-	for (TObjectIterator<UMeshComponent> It; It; ++It)
+	for (TObjectIterator<UPrimitiveComponent> It; It; ++It)
 	{
-		UMeshComponent* Mesh = *It;
+		UPrimitiveComponent* Mesh = *It;
 		if (Mesh->GetWorld() != World || !Mesh->IsRegistered() || !IsGrappleMesh(Mesh)) continue;
 		if (Mesh->GetCollisionEnabled() == ECollisionEnabled::NoCollision)
 		{

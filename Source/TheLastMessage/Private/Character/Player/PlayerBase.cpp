@@ -377,6 +377,11 @@ void APlayerBase::BeginPlay()
 	{
 		GetMesh()->SetOverridePostProcessAnimBP(AimClass);
 	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("Failed to load ranged aim animation class: %s"),
+			*RangedAimPostProcessClass.ToSoftObjectPath().ToString());
+	}
 	InitializePlayer();
 	if (HasAuthority() && !bHasCheckpoint) SetCheckpoint(GetActorTransform());
 }

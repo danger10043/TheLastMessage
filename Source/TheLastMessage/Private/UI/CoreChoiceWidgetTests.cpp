@@ -15,6 +15,7 @@
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
 #include "Components/Image.h"
+#include "Components/SphereComponent.h"
 #include "Components/TextBlock.h"
 #include "Core/CoreComponent.h"
 #include "Core/CorePickup.h"
@@ -31,11 +32,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Engine/Texture2D.h"
-#include "ImageUtils.h"
-#include "Misc/FileHelper.h"
-#include "Misc/Paths.h"
 #include "RenderingThread.h"
-#include "Serialization/BufferArchive.h"
 #include "Slate/WidgetRenderer.h"
 #include "TextureCompiler.h"
 #include "UI/CoreChoiceCardWidget.h"
@@ -224,11 +221,16 @@ namespace
 			if (Phase == 1)
 			{
 				// 새 픽업으로 외부 화면 제거와 기존 일시정지 보존을 검사한다. 이후 단계는 흡수 연출 없이 바로 연다.
-				Pickup = World->SpawnActor<ACorePickup>(FVector(11000, 0, 10000), FRotator::ZeroRotator);
+				const FTransform Placement(FRotator::ZeroRotator, FVector(11000, 0, 10000), FVector(1.25, .75, 1.5));
+				Pickup = World->SpawnActorDeferred<ACorePickup>(ACorePickup::StaticClass(), Placement);
 				FEnumProperty* Mode = FindFProperty<FEnumProperty>(ACorePickup::StaticClass(), TEXT("RewardMode"));
 				Mode->GetUnderlyingProperty()->SetIntPropertyValue(Mode->ContainerPtrToValuePtr<void>(Pickup.Get()), static_cast<int64>(ECoreRewardMode::Choice));
 				FindFProperty<FClassProperty>(ACorePickup::StaticClass(), TEXT("ChoiceWidgetClass"))->SetObjectPropertyValue_InContainer(Pickup.Get(), LoadClass<UCoreChoiceWidget>(nullptr, TEXT("/Game/Test_Jihun/Core/WBP/WBP_CoreChoice.WBP_CoreChoice_C")));
 				FindFProperty<FFloatProperty>(ACorePickup::StaticClass(), TEXT("AbsorbDuration"))->SetPropertyValue_InContainer(Pickup.Get(), 0.0f);
+				// 복구 직후와 다음 프레임의 배치값을 비교할 때 대기 연출의 변화를 제외한다.
+				for (const TCHAR* Property : {TEXT("BobHeight"), TEXT("PulseScale"), TEXT("SpinSpeed")})
+					FindFProperty<FFloatProperty>(ACorePickup::StaticClass(), Property)->SetPropertyValue_InContainer(Pickup.Get(), 0.f);
+				Pickup->FinishSpawning(Placement);
 				if (!OpenScreen(World)) return true;
 				Screen->RemoveFromParent();
 				Advance(2);
@@ -236,6 +238,7 @@ namespace
 			}
 			if (Phase == 2)
 			{
+				CheckRestored(TEXT("External screen removal"));
 				{
 					FCorePoolOverride EmptyPool(false);
 					Test->TestFalse(TEXT("An empty pool never opens its screen"), Pickup->TryOpenCoreChoice(Player.Get()));
@@ -253,6 +256,7 @@ namespace
 			}
 			if (Phase == 3)
 			{
+				CheckRestored(TEXT("Reset while choosing"));
 				if (!OpenScreen(World)) return true;
 				{
 					FCorePoolOverride InvalidGrants(true);
@@ -268,6 +272,7 @@ namespace
 			}
 			if (Phase == 4)
 			{
+				CheckRestored(TEXT("Exhausted choices after a failed selection"));
 				Test->TestTrue(TEXT("External pause begins"), UGameplayStatics::SetGamePaused(World, true));
 				FInputModeUIOnly OtherUI;
 				OtherUI.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
@@ -290,10 +295,110 @@ namespace
 				Advance(6);
 				return false;
 			}
+			if (Phase == 6)
+			{
+				CheckRestored(TEXT("Death while choosing"));
+				if (!ReplacePlayer(World)) return true;
+				const FFloatProperty* Duration = FindFProperty<FFloatProperty>(ACorePickup::StaticClass(), TEXT("AbsorbDuration"));
+				Duration->SetPropertyValue_InContainer(Pickup.Get(), .4f);
+				Test->TestTrue(TEXT("Choice absorption begins before death"), Pickup->TryOpenCoreChoice(Player.Get()));
+				Pickup->Tick(.2f);
+				Test->TestFalse(TEXT("Absorption moves the pickup away from its placed position"),
+					Pickup->GetActorLocation().Equals(FVector(11000, 0, 10000)));
+				Test->TestTrue(TEXT("Absorption disables pickup collision"),
+					Pickup->FindComponentByClass<USphereComponent>()->GetCollisionEnabled() == ECollisionEnabled::NoCollision);
+				Player->HandleDeath();
+				CheckRestored(TEXT("Death during choice absorption"));
+				Pickup->Tick(.5f);
+				Test->TestTrue(TEXT("A restored pickup survives the old absorption deadline"),
+					Pickup.IsValid() && !Pickup->IsActorBeingDestroyed());
+				Test->TestNull(TEXT("Death during absorption never opens its choice screen"), FindScreen(World));
+
+				if (!ReplacePlayer(World)) return true;
+				Test->TestTrue(TEXT("Choice absorption begins before target destruction"), Pickup->TryOpenCoreChoice(Player.Get()));
+				Pickup->Tick(.2f);
+				Player->Destroy();
+				CheckRestored(TEXT("Target destruction during absorption"));
+				if (!ReplacePlayer(World)) return true;
+
+				// 카드 배치가 없는 기본 클래스로 화면 생성 실패를 재현한다.
+				const FClassProperty* ScreenProperty = FindFProperty<FClassProperty>(ACorePickup::StaticClass(), TEXT("ChoiceWidgetClass"));
+				ScreenProperty->SetObjectPropertyValue_InContainer(Pickup.Get(), UCoreChoiceWidget::StaticClass());
+				Test->TestTrue(TEXT("Candidates can be reserved before an unbuildable screen"), Pickup->TryOpenCoreChoice(Player.Get()));
+				Pickup->Tick(.5f);
+				CheckRestored(TEXT("Screen creation failure after absorption"));
+				Test->TestNull(TEXT("Failed screen creation leaves no visible screen"), FindScreen(World));
+				Test->TestFalse(TEXT("Failed screen creation leaves gameplay unpaused"), UGameplayStatics::IsGamePaused(World));
+				ScreenProperty->SetObjectPropertyValue_InContainer(Pickup.Get(),
+					LoadClass<UCoreChoiceWidget>(nullptr, TEXT("/Game/Test_Jihun/Core/WBP/WBP_CoreChoice.WBP_CoreChoice_C")));
+				Test->TestTrue(TEXT("A failed screen releases the reward reservation for retry"), Pickup->TryOpenCoreChoice(Player.Get()));
+				Player->GetCoreComponent()->ResetOwnedCores();
+				CheckRestored(TEXT("Reset during choice absorption"));
+
+				// 고정 보상은 흡수 시작 시 지급하므로 연출 종료나 사망으로 재지급되지 않아야 한다.
+				UCoreDataAsset* FixedCore = NewObject<UCoreDataAsset>(Player.Get());
+				FixedCore->CoreId = TEXT("Test_FixedPickupLifecycle");
+				FixedCore->MaxLevel = 0;
+				FEnumProperty* Mode = FindFProperty<FEnumProperty>(ACorePickup::StaticClass(), TEXT("RewardMode"));
+				Mode->GetUnderlyingProperty()->SetIntPropertyValue(Mode->ContainerPtrToValuePtr<void>(Pickup.Get()), static_cast<int64>(ECoreRewardMode::Fixed));
+				const FObjectProperty* CoreProperty = FindFProperty<FObjectProperty>(ACorePickup::StaticClass(), TEXT("CoreData"));
+				CoreProperty->SetObjectPropertyValue_InContainer(Pickup.Get(), FixedCore);
+				Test->TestFalse(TEXT("An invalid fixed reward is rejected"), Pickup->TryAcquireFixedCore(Player->GetCoreComponent()));
+				CheckRestored(TEXT("Failed fixed reward"));
+				FixedCore->MaxLevel = 5;
+				Test->TestTrue(TEXT("A corrected fixed reward is granted"), Pickup->TryAcquireFixedCore(Player->GetCoreComponent()));
+				Test->TestEqual(TEXT("Fixed reward is granted before absorption completes"), Player->GetCoreComponent()->GetCoreLevel(FixedCore->CoreId), 1);
+				Test->TestFalse(TEXT("A consumed pickup cannot grant twice during absorption"), Pickup->TryAcquireFixedCore(Player->GetCoreComponent()));
+				Pickup->Tick(.5f);
+				Test->TestTrue(TEXT("Fixed reward is removed after absorption"), !Pickup.IsValid() || Pickup->IsActorBeingDestroyed());
+				Test->TestEqual(TEXT("Finishing absorption does not grant again"), Player->GetCoreComponent()->GetCoreLevel(FixedCore->CoreId), 1);
+				for (const float AbsorbSeconds : {0.f, .4f})
+				{
+					Pickup = World->SpawnActor<ACorePickup>(FVector(12000, 0, 10000), FRotator::ZeroRotator);
+					Duration->SetPropertyValue_InContainer(Pickup.Get(), AbsorbSeconds);
+					CoreProperty->SetObjectPropertyValue_InContainer(Pickup.Get(), FixedCore);
+					Test->TestTrue(TEXT("Another fixed pickup upgrades the same core once"), Pickup->TryAcquireFixedCore(Player->GetCoreComponent()));
+					if (AbsorbSeconds > 0.f)
+					{
+						Player->HandleDeath();
+						Pickup->Tick(.5f);
+					}
+					Test->TestTrue(TEXT("A fixed reward with no animation or a dead target is removed"), !Pickup.IsValid() || Pickup->IsActorBeingDestroyed());
+				}
+				Test->TestEqual(TEXT("Three fixed pickups grant exactly three levels, including the one interrupted by death"),
+					Player->GetCoreComponent()->GetCoreLevel(FixedCore->CoreId), 3);
+				Test->TestNull(TEXT("Fixed rewards never open the choice screen"), FindScreen(World));
+				Test->TestFalse(TEXT("Pickup exception cases leave no owned pause"), UGameplayStatics::IsGamePaused(World));
+			}
 			return true;
 		}
 
 	private:
+		void CheckRestored(const TCHAR* Case)
+		{
+			Test->AddInfo(FString::Printf(TEXT("Pickup restoration: %s"), Case));
+			if (!Test->TestTrue(TEXT("Unconsumed pickup is still available"), Pickup.IsValid() && !Pickup->IsActorBeingDestroyed())) return;
+			Test->TestFalse(TEXT("Restored pickup is visible"), Pickup->IsHidden());
+			Test->TestTrue(TEXT("Restored pickup resumes its tick"), Pickup->IsActorTickEnabled());
+			Test->TestTrue(TEXT("Restored pickup returns to its placed position"), Pickup->GetActorLocation().Equals(FVector(11000, 0, 10000), .01));
+			Test->TestTrue(TEXT("Restored pickup retains its placed scale"), Pickup->GetActorScale3D().Equals(FVector(1.25, .75, 1.5), .01));
+			Test->TestTrue(TEXT("Restored pickup enables overlap queries"),
+				Pickup->FindComponentByClass<USphereComponent>()->GetCollisionEnabled() == ECollisionEnabled::QueryOnly);
+			Test->TestFalse(TEXT("Failed or interrupted choices do not consume the pickup"),
+				FindFProperty<FBoolProperty>(ACorePickup::StaticClass(), TEXT("bConsumed"))->GetPropertyValue_InContainer(Pickup.Get()));
+			Test->TestNull(TEXT("Restored pickup has no active reward session"),
+				FindFProperty<FObjectProperty>(ACorePickup::StaticClass(), TEXT("ActiveRewardSession"))->GetObjectPropertyValue_InContainer(Pickup.Get()));
+		}
+		bool ReplacePlayer(UWorld* World)
+		{
+			APlayerBase* Previous = Player.Get();
+			Player = World->SpawnActor<APlayerBase>(FVector(0, 0, 1000), FRotator::ZeroRotator);
+			if (!Test->TestNotNull(TEXT("A fresh player exists for the next exception case"), Player.Get())) return false;
+			FindFProperty<FBoolProperty>(APlayerBase::StaticClass(), TEXT("bAutoRespawn"))->SetPropertyValue_InContainer(Player.Get(), false);
+			Controller->Possess(Player.Get());
+			if (IsValid(Previous)) Previous->Destroy();
+			return true;
+		}
 		bool OpenScreen(UWorld* World)
 		{
 			if (!Test->TestTrue(TEXT("Pickup opens a choice screen"), Pickup->TryOpenCoreChoice(Player.Get()))) return false;
@@ -377,7 +482,7 @@ bool FCoreCardLayoutTest::RunTest(const FString& Parameters)
 		UTextureRenderTarget2D* Target = Renderer.DrawWidget(SlateCard, FVector2D(350, 510));
 		if (TestNotNull(TEXT("Layout test requires rendering (do not use -NullRHI)"), Target))
 		{
-			auto Render = [&](const TCHAR* Filename)
+			auto Render = [&]()
 			{
 				for (int32 Frame = 0; Frame < 3; ++Frame)
 				{
@@ -385,25 +490,19 @@ bool FCoreCardLayoutTest::RunTest(const FString& Parameters)
 					Renderer.DrawWidget(Target, SlateCard, FVector2D(350, 510), 0.016f);
 					FlushRenderingCommands();
 				}
-				FBufferArchive PNG;
-				const FString Path = FPaths::ProjectSavedDir() / TEXT("Automation/CoreCardLayout") / Filename;
-				IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true);
-				TestTrue(TEXT("Layout preview is exported"), FImageUtils::ExportRenderTarget2DAsPNG(Target, PNG)
-					&& FFileHelper::SaveArrayToFile(PNG, *Path));
 			};
 			auto Top = [](UWidget* Widget) { return Widget->GetCachedGeometry().GetAbsolutePosition().Y; };
 			auto Bottom = [&](UWidget* Widget) { return Top(Widget) + Widget->GetCachedGeometry().GetLocalSize().Y; };
-			Render(TEXT("Short.png"));
+			Render();
 			const double LevelTop = Top(Level), DividerTop = Top(Divider), ActionTop = Top(Action);
 			Data->CoreName = FText::FromString(TEXT("고성능 복합 장갑\n출력 증폭 장치"));
 			Data->CoreDescription = FText::FromString(TEXT("체력이 30% 이하일 때 피해량이 30% → 40% 증가합니다. 긴 설명과 NoSpacesABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZ를 함께 표시합니다."));
 			Card->SetCoreData(Data, 0, 2);
-			Render(TEXT("Long.png"));
-			AddInfo(FString::Printf(TEXT("Two-line name: desired %.1f, allocated %.1f"), Name->GetDesiredSize().Y, Name->GetCachedGeometry().GetLocalSize().Y));
+			Render();
 			TestTrue(TEXT("Two name lines fit the reserved height"), Name->GetDesiredSize().Y <= Name->GetCachedGeometry().GetLocalSize().Y + 1.0);
 			Data->CoreName = FText::FromString(TEXT("고성능\n복합 장갑\n출력 증폭\n초장문 이름"));
 			Card->SetCoreData(Data, 0, 2);
-			Render(TEXT("Overflow.png"));
+			Render();
 			TestTrue(TEXT("Name does not push level text"), FMath::IsNearlyEqual(Top(Level), LevelTop, 0.1));
 			TestTrue(TEXT("Description does not push divider"), FMath::IsNearlyEqual(Top(Divider), DividerTop, 0.1));
 			TestTrue(TEXT("Selection action stays at the same position"), FMath::IsNearlyEqual(Top(Action), ActionTop, 0.1));
@@ -439,9 +538,6 @@ bool FCoreCardLayoutTest::RunTest(const FString& Parameters)
 					const FVector2D FooterBottom = Footer->GetCachedGeometry().LocalToAbsolute(Footer->GetCachedGeometry().GetLocalSize());
 					const FVector2D LayoutBottom = Layout->GetCachedGeometry().LocalToAbsolute(Layout->GetCachedGeometry().GetLocalSize());
 					TestTrue(TEXT("Footer stays inside the screen layout"), FooterBottom.Y <= LayoutBottom.Y + 0.1);
-					FBufferArchive PNG;
-					TestTrue(TEXT("Screen preview is exported"), FImageUtils::ExportRenderTarget2DAsPNG(ScreenTarget, PNG)
-						&& FFileHelper::SaveArrayToFile(PNG, *(FPaths::ProjectSavedDir() / TEXT("Automation/CoreCardLayout/Screen.png"))));
 				}
 				Screen->ReleaseSlateResources(true);
 			}

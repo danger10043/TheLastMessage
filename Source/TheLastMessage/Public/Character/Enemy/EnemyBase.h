@@ -83,7 +83,7 @@ public:
 	virtual void Landed(const FHitResult& Hit) override;
 
 	UFUNCTION(BlueprintCallable, Category = "Enemy")
-	void HandleDeath();
+	virtual void HandleDeath();
 
 	UFUNCTION(BlueprintPure, Category = "Enemy")
 	bool IsDead() const { return CurrentState == EEnemyState::Dead; }
@@ -106,8 +106,9 @@ public:
 	/**
 	 * 대상에게 피해를 준다. Damage에는 GetScaledDamage가 적용된 최종 피해량을 넘긴다.
 	 * DamageEffectClass가 있고 대상에 ASC가 있으면 GE를 적용하고, 아니면 엔진 기본 피해로 대신한다.
+	 * DamageTypeTag가 지정되면 이 피해에 동적 에셋 태그로 붙인다(예: Damage.Type.Explosion).
 	 */
-	void ApplyEnemyDamage(AActor* Target, float Damage);
+	void ApplyEnemyDamage(AActor* Target, float Damage, FGameplayTag DamageTypeTag = FGameplayTag());
 
 	/**
 	 * 받는 피해를 몬스터 특성에 맞게 조정한다(예: 플레이어 원거리 피해 감소).

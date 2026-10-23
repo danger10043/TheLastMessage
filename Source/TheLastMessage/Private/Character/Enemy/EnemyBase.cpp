@@ -129,7 +129,7 @@ float AEnemyBase::GetScaledDamage(float BaseDamage) const
 	return BaseDamage * (Multiplier > 0.f ? Multiplier : 1.f);
 }
 
-void AEnemyBase::ApplyEnemyDamage(AActor* Target, float Damage)
+void AEnemyBase::ApplyEnemyDamage(AActor* Target, float Damage, FGameplayTag DamageTypeTag)
 {
 	if (!Target || Damage <= 0.f)
 	{
@@ -151,6 +151,11 @@ void AEnemyBase::ApplyEnemyDamage(AActor* Target, float Damage)
 			if (DamageSetByCallerTag.IsValid())
 			{
 				SpecHandle.Data->SetSetByCallerMagnitude(DamageSetByCallerTag, Damage);
+			}
+
+			if (DamageTypeTag.IsValid())
+			{
+				SpecHandle.Data->AddDynamicAssetTag(DamageTypeTag);
 			}
 
 			AbilitySystemComponent->ApplyGameplayEffectSpecToTarget(*SpecHandle.Data.Get(), TargetASC);

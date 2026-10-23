@@ -35,7 +35,7 @@ void APlayerHUD::EnsureWidgets()
 		if (StatusWidget)
 		{
 			StatusWidget->SetObservedPlayer(Cast<APlayerBase>(PC->GetPawn()));
-			StatusWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
+			StatusWidget->SetVisibility(bShowHUD ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 			StatusWidget->AddToPlayerScreen(10);
 		}
 	}
@@ -181,6 +181,12 @@ void APlayerHUD::UpdatePlayerUI()
 void APlayerHUD::ShowHUD()
 {
 	Super::ShowHUD();
+	UpdatePlayerUI();
+}
+
+void APlayerHUD::SetPlayerUIVisible(bool bVisible)
+{
+	bShowHUD = bVisible;
 	UpdatePlayerUI();
 }
 

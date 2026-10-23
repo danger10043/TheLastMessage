@@ -1377,8 +1377,23 @@ void ABossMonster::RemoveBossUI()
     BossUIWidget = nullptr;
 }
 
+void ABossMonster::SetBossUIVisible(bool bVisible)
+{
+    bBossUIVisible = bVisible;
+    UpdateBossUI();
+}
+
 void ABossMonster::UpdateBossUI()
 {
+    if (!bBossUIVisible)
+    {
+        if (IsValid(BossUIWidget.Get()))
+        {
+            BossUIWidget->SetVisibility(ESlateVisibility::Collapsed);
+        }
+        return;
+    }
+
     APawn* TargetPawn = Cast<APawn>(GetCurrentTarget());
     APlayerController* PC = IsValid(TargetPawn)
         ? Cast<APlayerController>(TargetPawn->GetController()) : nullptr;

@@ -69,7 +69,7 @@ protected:
     TWeakObjectPtr<ACharacter> Carrier;
 
     // 사용할 운반 데이터 테이블과 행
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Carry")
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Config")
     FDataTableRowHandle CarryConfigRow;
 
     // 데이터 테이블에서 읽은 설정

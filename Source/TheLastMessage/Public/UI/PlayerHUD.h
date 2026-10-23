@@ -17,6 +17,9 @@ public:
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void DrawHUD() override;
 	virtual void ShowHUD() override;
+	/** Explicit visibility control for cinematics; also applies to widgets created later. */
+	UFUNCTION(BlueprintCallable, Category="Player UI")
+	void SetPlayerUIVisible(bool bVisible);
 	UFUNCTION(BlueprintPure, Category="Player UI") UPlayerStatusWidget* GetStatusWidget() const { return StatusWidget; }
 	UFUNCTION(BlueprintPure, Category="Player UI") UWeaponChargeWidget* GetChargeWidget() const { return ChargeWidget; }
 protected:

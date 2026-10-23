@@ -28,6 +28,11 @@ AEnemyBase::AEnemyBase()
 	AIControllerClass = AEnemyAIController::StaticClass();
 	AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
 
+	// 사이드뷰라 몬스터는 Y(깊이) 축으로 움직이지 않는다. 장애물이나 다른 몬스터에 밀려도 Y가 벗어나지 않게 평면에 고정한다.
+	UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
+	MovementComponent->bConstrainToPlane = true;
+	MovementComponent->SetPlaneConstraintNormal(FVector(0.f, 1.f, 0.f));
+
 	// 머리 위 체력바: 화면에 항상 정면으로 보이는 스크린 스페이스 위젯. 위치는 BP에서 조정한다.
 	HealthBarComponent = CreateDefaultSubobject<UWidgetComponent>(TEXT("HealthBar"));
 	HealthBarComponent->SetupAttachment(GetCapsuleComponent());

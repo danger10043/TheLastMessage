@@ -1,6 +1,7 @@
 #include "UI/CoreChoiceWidget.h"
 
 #include "Blueprint/WidgetBlueprintLibrary.h"
+#include "Character/Player/PlayerBase.h"
 #include "Components/Button.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
@@ -66,6 +67,7 @@ void UCoreChoiceWidget::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
 	SetIsFocusable(true);
+	if (HintText) DefaultStatusMessage = HintText->GetText();
 	// WBP에서 만든 버튼에 동작을 연결한다. 배치와 색상은 디자이너에서 관리한다.
 	if (FirstRerollButton) FirstRerollButton->OnClicked.AddDynamic(this, &UCoreChoiceWidget::HandleFirstReroll);
 	if (SecondRerollButton) SecondRerollButton->OnClicked.AddDynamic(this, &UCoreChoiceWidget::HandleSecondReroll);
@@ -179,6 +181,11 @@ void UCoreChoiceWidget::SetStatusMessage(const FText& Message)
 	if (HintText) HintText->SetText(Message);
 }
 
+void UCoreChoiceWidget::ResetStatusMessage()
+{
+	SetStatusMessage(DefaultStatusMessage);
+}
+
 void UCoreChoiceWidget::MoveActiveCard(int32 Offset)
 {
 	for (int32 Step = 1; Step <= Cards.Num(); ++Step)
@@ -230,7 +237,7 @@ bool UCoreChoiceWidget::CapturePlayerInput()
 	{
 		InputOwner = Player;
 		InputWorld = Player->GetWorld();
-		bPreviousMouseCursorVisible = Player->bShowMouseCursor;
+		PreviousInput.Capture(*Player);
 		bCapturedInput = true;
 		if (!UGameplayStatics::IsGamePaused(Player))
 		{
@@ -243,6 +250,8 @@ bool UCoreChoiceWidget::CapturePlayerInput()
 				return false;
 			}
 		}
+		// 키 초기화만으로는 UI가 가져간 release 이벤트를 기다리는 공격이 끝나지 않는다.
+		if (APlayerBase* Pawn = Cast<APlayerBase>(Player->GetPawn())) Pawn->CancelWeaponInputsForUI();
 		// UIOnly는 입력을 UI에만 전달한다. TakeWidget은 이 UMG 위젯의 내부 Slate 위젯을 가져온다.
 		FInputModeUIOnly InputMode;
 		InputMode.SetWidgetToFocus(TakeWidget());
@@ -271,9 +280,7 @@ void UCoreChoiceWidget::RestorePlayerInput()
 	if (APlayerController* Player = InputOwner.Get(); IsValid(Player) && IsValid(World)
 		&& !World->bIsTearingDown && Player->GetWorld() == World)
 	{
-		Player->SetInputMode(FInputModeGameOnly());
-		Player->SetShowMouseCursor(bPreviousMouseCursorVisible);
-		Player->FlushPressedKeys();
+		PreviousInput.Restore(*Player);
 	}
 	if (bPausedByThisScreen)
 	{

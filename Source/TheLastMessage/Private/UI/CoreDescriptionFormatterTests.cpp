@@ -42,6 +42,8 @@ bool FCoreDescriptionTest::RunTest(const FString& Parameters)
 
 	TestEqual(TEXT("New core shows only its first-level benefit"), CoreDescriptionFormatter::MakeDescription(*Data, 0).ToString(), FString(TEXT("최대 체력 증가: 15%")));
 	TestEqual(TEXT("Owned core compares current and next levels"), CoreDescriptionFormatter::MakeDescription(*Data, 2).ToString(), FString(TEXT("최대 체력 증가: 30 → 45%")));
+	TestEqual(TEXT("Owned viewer shows the current benefit without a preview"), CoreDescriptionFormatter::MakeDescriptionAtLevel(*Data, 2).ToString(), FString(TEXT("최대 체력 증가: 30%")));
+	TestEqual(TEXT("Owned viewer can request the next level separately"), CoreDescriptionFormatter::MakeDescriptionAtLevel(*Data, 3).ToString(), FString(TEXT("최대 체력 증가: 45%")));
 	TestTrue(TEXT("New core is labelled new"), CoreDescriptionFormatter::MakeLevelText(*Data, 0).ToString().Contains(TEXT("신규")));
 	TestTrue(TEXT("Level comparison uses the actual owned level"), CoreDescriptionFormatter::MakeLevelText(*Data, 2).ToString().Contains(TEXT("Lv.2 → Lv.3")));
 	TestEqual(TEXT("Maxed core never previews level six"), CoreDescriptionFormatter::MakeDescription(*Data, 5).ToString(), FString(TEXT("최대 체력 증가: 75%")));

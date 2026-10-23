@@ -6,6 +6,19 @@
 
 class UCoreDataAsset;
 
+/** 보유 목록을 읽기 위한 값 복사본. 효과·능력 핸들은 외부에 노출하지 않는다. */
+USTRUCT(BlueprintType)
+struct FOwnedCoreEntry
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "Core")
+	TObjectPtr<UCoreDataAsset> CoreData = nullptr;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Core")
+	int32 Level = 0;
+};
+
 namespace CoreRewardRules
 {
 	inline constexpr int32 MaxChoices = 3;

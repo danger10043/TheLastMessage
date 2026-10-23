@@ -40,6 +40,22 @@ int32 UCoreComponent::GetCoreLevel(FName CoreId) const
 }
 
 
+TArray<FOwnedCoreEntry> UCoreComponent::GetOwnedCores() const
+{
+	TArray<FOwnedCoreEntry> Entries;
+	Entries.Reserve(AppliedCoreHandles.Num());
+	for (const FCoreGrantRecord& Record : AppliedCoreHandles)
+	{
+		if (IsValid(Record.CoreData) && Record.Level > 0)
+		{
+			FOwnedCoreEntry& Entry = Entries.AddDefaulted_GetRef();
+			Entry.CoreData = Record.CoreData;
+			Entry.Level = Record.Level;
+		}
+	}
+	return Entries;
+}
+
 ECoreAcquireResult UCoreComponent::CheckAcquire(const UCoreDataAsset* CoreData) const
 {
 	if (bIsChangingCoreGrants) return ECoreAcquireResult::Busy;
@@ -182,6 +198,7 @@ ECoreAcquireResult UCoreComponent::AcquireCore(UCoreDataAsset* CoreData)
 		{
 			FCoreGrantRecord Record;
 			Record.CoreId = CoreData->CoreId;
+			Record.CoreData = CoreData;
 
 			// 효과와 능력의 출처를 이 코어 데이터로 남긴다.
 			FGameplayEffectContextHandle EffectContext = ASC->MakeEffectContext();

@@ -107,6 +107,11 @@ bool FCoreUpgradeTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("Empty ID is not owned"), Core->HasCore(NAME_None));
 	TestTrue(TEXT("First acquisition succeeds"), Core->AcquireCore(Data) == ECoreAcquireResult::Acquired);
 	TestEqual(TEXT("First acquisition is level one"), Core->GetCoreLevel(Data->CoreId), 1);
+	TArray<FOwnedCoreEntry> Owned = Core->GetOwnedCores();
+	TestEqual(TEXT("Ownership query lists acquired definitions only"), Owned.Num(), 1);
+	TestTrue(TEXT("Ownership query retains the acquired DA"), !Owned.IsEmpty() && Owned[0].CoreData == Data);
+	if (!Owned.IsEmpty()) Owned[0].Level = 99;
+	TestEqual(TEXT("Editing a UI snapshot cannot change real ownership"), Core->GetCoreLevel(Data->CoreId), 1);
 	TestTrue(TEXT("Level-one curve is applied"), FMath::IsNearlyEqual(Attributes->GetDamageDealtMultiplier(), 1.15f));
 	TArray<FActiveGameplayEffectHandle> Handles = ASC->GetActiveEffects(FGameplayEffectQuery());
 	TestEqual(TEXT("One GE is applied"), Handles.Num(), 1);
@@ -119,6 +124,8 @@ bool FCoreUpgradeTest::RunTest(const FString& Parameters)
 	Fixture.Reward->Cancel();
 	TestTrue(TEXT("Reacquisition upgrades"), Core->AcquireCore(Data) == ECoreAcquireResult::Upgraded);
 	TestEqual(TEXT("Reacquisition is level two"), Core->GetCoreLevel(Data->CoreId), 2);
+	TestEqual(TEXT("Upgrade updates the existing list entry"), Core->GetOwnedCores().Num(), 1);
+	TestEqual(TEXT("Ownership query returns the upgraded level"), Core->GetOwnedCores()[0].Level, 2);
 	TestTrue(TEXT("Curve replaces the old magnitude instead of stacking"), FMath::IsNearlyEqual(Attributes->GetDamageDealtMultiplier(), 1.30f));
 	Handles = ASC->GetActiveEffects(FGameplayEffectQuery());
 	TestTrue(TEXT("The same effect handle is retained"), Handles.Num() == 1 && Handles[0] == FirstHandle);
@@ -137,6 +144,7 @@ bool FCoreUpgradeTest::RunTest(const FString& Parameters)
 
 	Core->ResetOwnedCores();
 	TestEqual(TEXT("Reset clears levels"), Core->GetCoreLevel(Data->CoreId), 0);
+	TestTrue(TEXT("Reset empties the owned list"), Core->GetOwnedCores().IsEmpty());
 	TestFalse(TEXT("Reset clears ownership"), Core->HasCore(Data->CoreId));
 	TestTrue(TEXT("Reset removes upgraded effects"), ASC->GetActiveEffects(FGameplayEffectQuery()).IsEmpty());
 	TestTrue(TEXT("Reset restores the base attribute"), FMath::IsNearlyEqual(Attributes->GetDamageDealtMultiplier(), 1.0f));

@@ -24,6 +24,10 @@ struct THELASTMESSAGE_API FCoreGrantRecord
 	UPROPERTY()
 	FName CoreId = NAME_None;
 
+	/** 획득한 정의를 보관해 보유 목록에서 이름·아이콘·효과를 다시 로드하지 않고 조회한다. */
+	UPROPERTY(Transient)
+	TObjectPtr<class UCoreDataAsset> CoreData = nullptr;
+
 	/** 처음 획득하면 1단계이며, 재획득에 성공할 때마다 1씩 증가한다. 태그 카운트와 별도로 관리한다. */
 	UPROPERTY()
 	int32 Level = 1;

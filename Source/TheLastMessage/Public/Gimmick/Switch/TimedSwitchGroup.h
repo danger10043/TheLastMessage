@@ -52,7 +52,7 @@ protected:
 
 protected:
 	// 사용할 데이터 테이블과 행 이름
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|TimedSwitchGroup")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Config")
 	FDataTableRowHandle TimedSwitchConfigRow;
 
 	// 읽어온 제한 시간 설정

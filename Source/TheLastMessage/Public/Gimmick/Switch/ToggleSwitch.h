@@ -59,7 +59,7 @@ protected:
 	TObjectPtr<UTimelineComponent> LeverTimeline;
 
 	// 사용할 데이터 테이블과 행
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Switch")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Config")
 	FDataTableRowHandle ToggleSwitchConfigRow;
 
 	// 데이터 테이블에서 읽은 설정

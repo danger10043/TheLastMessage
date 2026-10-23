@@ -8,6 +8,7 @@
 #include "Components/CapsuleComponent.h"
 #include "Components/SceneComponent.h"
 #include "Gimmick/Component/GravityStateComponent.h"
+#include "NiagaraComponent.h"
 
 AGravityFlipPlate::AGravityFlipPlate()
 {
@@ -18,11 +19,23 @@ AGravityFlipPlate::AGravityFlipPlate()
 	PlateTrigger->SetupAttachment(SceneRoot);
 	PlateTrigger->SetBoxExtent(FVector(100.0f, 100.0f, 30.0f));
 	PlateTrigger->SetRelativeLocation(FVector(0.0f, 0.0f, 30.0f));
+
 	PlateTrigger->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 	PlateTrigger->SetCollisionObjectType(ECC_WorldDynamic);
 	PlateTrigger->SetCollisionResponseToAllChannels(ECR_Ignore);
 	PlateTrigger->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
 	PlateTrigger->SetGenerateOverlapEvents(true);
+
+	GravityEffect = CreateDefaultSubobject<UNiagaraComponent>(TEXT("GravityEffect"));
+
+	// 액터의 위치와 회전을 따라가도록 루트에 부착
+	GravityEffect->SetupAttachment(SceneRoot);
+
+	GravityEffect->SetRelativeLocation(FVector::ZeroVector);
+	GravityEffect->SetRelativeRotation(FRotator::ZeroRotator);
+
+	// 게임에서 자동으로 효과 재생
+	GravityEffect->SetAutoActivate(true);
 }
 
 void AGravityFlipPlate::BeginPlay()

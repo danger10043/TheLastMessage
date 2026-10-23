@@ -37,6 +37,15 @@ public:
 
 	virtual void ApplyActiveState(bool bNewActive) override;
 
+	// 실패 연출 중에는 플레이어 상호작용 차단
+	virtual bool CanInteractInternal(ACharacter* Player) const override;
+
+	// 레버 입력만 잠그거나 해제
+	void SetLeverInputLocked(bool bLocked);
+
+	// 현재 목표 각도까지 움직이는 데 남은 시간
+	float GetRemainingLeverAnimationTime() const;
+
 	// 그룹의 C++ 코드에서 현재 상태를 읽는 보조 함수
 	bool IsSwitchActive() const { return bIsActive; }
 
@@ -79,5 +88,8 @@ private:
 	bool bIsTimerGlowActive = false;
 
 	float TimerGlowAlpha = 0.0f;
+
+	// 그룹의 실패 연출 중 입력 잠금
+	bool bLeverInputLocked = false;
 
 };

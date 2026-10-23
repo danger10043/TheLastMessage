@@ -18,7 +18,6 @@
 UOwnedCoreViewerSubsystem::UOwnedCoreViewerSubsystem()
 {
 	ToggleKey = EKeys::I;
-	ViewerClass = TSoftClassPtr<UOwnedCoreWidget>(FSoftObjectPath(TEXT("/Game/Test_Jihun/Core/WBP/WBP_OwnedCore.WBP_OwnedCore_C")));
 }
 
 void UOwnedCoreViewerSubsystem::Initialize(FSubsystemCollectionBase& Collection)

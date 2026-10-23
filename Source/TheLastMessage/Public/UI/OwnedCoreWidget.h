@@ -12,6 +12,7 @@ class UButton;
 class UCoreComponent;
 class UImage;
 class UOwnedCoreItemWidget;
+class UScrollBox;
 class UTextBlock;
 class UWrapBox;
 class UWidgetSwitcher;
@@ -47,6 +48,8 @@ protected:
 	UPROPERTY(meta = (BindWidget)) TObjectPtr<UTextBlock> CoreLevel;
 	UPROPERTY(meta = (BindWidget)) TObjectPtr<UTextBlock> CurrentEffect;
 	UPROPERTY(meta = (BindWidget)) TObjectPtr<UTextBlock> NextEffect;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UScrollBox> EffectScroll;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UScrollBox> NextScroll;
 	UPROPERTY(meta = (BindWidget)) TObjectPtr<UButton> CloseButton;
 	UPROPERTY(meta = (BindWidget)) TObjectPtr<UTextBlock> MaxHealthValue;
 	UPROPERTY(meta = (BindWidget)) TObjectPtr<UTextBlock> CriticalChanceValue;

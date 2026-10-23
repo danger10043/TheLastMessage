@@ -76,7 +76,7 @@ protected:
 	TEnumAsByte<ECollisionChannel> LaserTraceChannel = ECC_GameTraceChannel3;
 
 	// 사용할 데이터 테이블과 행
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Laser")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Config")
 	FDataTableRowHandle LaserConfigRow;
 
 	// 데이터 테이블에서 읽은 설정

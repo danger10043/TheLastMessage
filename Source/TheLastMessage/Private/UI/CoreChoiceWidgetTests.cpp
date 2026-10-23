@@ -32,11 +32,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Engine/Texture2D.h"
-#include "ImageUtils.h"
-#include "Misc/FileHelper.h"
-#include "Misc/Paths.h"
 #include "RenderingThread.h"
-#include "Serialization/BufferArchive.h"
 #include "Slate/WidgetRenderer.h"
 #include "TextureCompiler.h"
 #include "UI/CoreChoiceCardWidget.h"
@@ -486,7 +482,7 @@ bool FCoreCardLayoutTest::RunTest(const FString& Parameters)
 		UTextureRenderTarget2D* Target = Renderer.DrawWidget(SlateCard, FVector2D(350, 510));
 		if (TestNotNull(TEXT("Layout test requires rendering (do not use -NullRHI)"), Target))
 		{
-			auto Render = [&](const TCHAR* Filename)
+			auto Render = [&]()
 			{
 				for (int32 Frame = 0; Frame < 3; ++Frame)
 				{
@@ -494,25 +490,19 @@ bool FCoreCardLayoutTest::RunTest(const FString& Parameters)
 					Renderer.DrawWidget(Target, SlateCard, FVector2D(350, 510), 0.016f);
 					FlushRenderingCommands();
 				}
-				FBufferArchive PNG;
-				const FString Path = FPaths::ProjectSavedDir() / TEXT("Automation/CoreCardLayout") / Filename;
-				IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true);
-				TestTrue(TEXT("Layout preview is exported"), FImageUtils::ExportRenderTarget2DAsPNG(Target, PNG)
-					&& FFileHelper::SaveArrayToFile(PNG, *Path));
 			};
 			auto Top = [](UWidget* Widget) { return Widget->GetCachedGeometry().GetAbsolutePosition().Y; };
 			auto Bottom = [&](UWidget* Widget) { return Top(Widget) + Widget->GetCachedGeometry().GetLocalSize().Y; };
-			Render(TEXT("Short.png"));
+			Render();
 			const double LevelTop = Top(Level), DividerTop = Top(Divider), ActionTop = Top(Action);
 			Data->CoreName = FText::FromString(TEXT("고성능 복합 장갑\n출력 증폭 장치"));
 			Data->CoreDescription = FText::FromString(TEXT("체력이 30% 이하일 때 피해량이 30% → 40% 증가합니다. 긴 설명과 NoSpacesABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZ를 함께 표시합니다."));
 			Card->SetCoreData(Data, 0, 2);
-			Render(TEXT("Long.png"));
-			AddInfo(FString::Printf(TEXT("Two-line name: desired %.1f, allocated %.1f"), Name->GetDesiredSize().Y, Name->GetCachedGeometry().GetLocalSize().Y));
+			Render();
 			TestTrue(TEXT("Two name lines fit the reserved height"), Name->GetDesiredSize().Y <= Name->GetCachedGeometry().GetLocalSize().Y + 1.0);
 			Data->CoreName = FText::FromString(TEXT("고성능\n복합 장갑\n출력 증폭\n초장문 이름"));
 			Card->SetCoreData(Data, 0, 2);
-			Render(TEXT("Overflow.png"));
+			Render();
 			TestTrue(TEXT("Name does not push level text"), FMath::IsNearlyEqual(Top(Level), LevelTop, 0.1));
 			TestTrue(TEXT("Description does not push divider"), FMath::IsNearlyEqual(Top(Divider), DividerTop, 0.1));
 			TestTrue(TEXT("Selection action stays at the same position"), FMath::IsNearlyEqual(Top(Action), ActionTop, 0.1));
@@ -548,9 +538,6 @@ bool FCoreCardLayoutTest::RunTest(const FString& Parameters)
 					const FVector2D FooterBottom = Footer->GetCachedGeometry().LocalToAbsolute(Footer->GetCachedGeometry().GetLocalSize());
 					const FVector2D LayoutBottom = Layout->GetCachedGeometry().LocalToAbsolute(Layout->GetCachedGeometry().GetLocalSize());
 					TestTrue(TEXT("Footer stays inside the screen layout"), FooterBottom.Y <= LayoutBottom.Y + 0.1);
-					FBufferArchive PNG;
-					TestTrue(TEXT("Screen preview is exported"), FImageUtils::ExportRenderTarget2DAsPNG(ScreenTarget, PNG)
-						&& FFileHelper::SaveArrayToFile(PNG, *(FPaths::ProjectSavedDir() / TEXT("Automation/CoreCardLayout/Screen.png"))));
 				}
 				Screen->ReleaseSlateResources(true);
 			}

@@ -26,13 +26,9 @@
 #include "GameFramework/WorldSettings.h"
 #include "GAS/CombatAttributeSet.h"
 #include "GAS/WeaponSlotAttributeSet.h"
-#include "ImageUtils.h"
 #include "Input/Events.h"
 #include "Kismet/GameplayStatics.h"
-#include "Misc/FileHelper.h"
-#include "Misc/Paths.h"
 #include "RenderingThread.h"
-#include "Serialization/BufferArchive.h"
 #include "Slate/WidgetRenderer.h"
 #include "TextureCompiler.h"
 #include "UI/OwnedCoreWidget.h"
@@ -153,7 +149,7 @@ public:
 				CastChecked<UTextBlock>(Screen->GetWidgetFromName(Expected.Key))->GetText().ToString(), Expected.Value);
 
 		FWidgetRenderer Renderer(true);
-		auto Render = [&](const FString& Filename, FVector2D Size)
+		auto Render = [&](FVector2D Size)
 		{
 			TSharedRef<SWidget> Slate = Screen->TakeWidget();
 			UTextureRenderTarget2D* Target = Renderer.DrawWidget(Slate, Size);
@@ -164,10 +160,6 @@ public:
 				Renderer.DrawWidget(Target, Slate, Size, .016f);
 				FlushRenderingCommands();
 			}
-			const FString Path = FPaths::ProjectSavedDir() / TEXT("Automation/OwnedCore") / Filename;
-			IFileManager::Get().MakeDirectory(*FPaths::GetPath(Path), true);
-			FBufferArchive PNG;
-			Test->TestTrue(TEXT("Menu screenshot is saved"), FImageUtils::ExportRenderTarget2DAsPNG(Target, PNG) && FFileHelper::SaveArrayToFile(PNG, *Path));
 		};
 		TArray<UTexture*> Textures;
 		for (const TCHAR* Name : {TEXT("DetailIcon"), TEXT("DetailGrid"), TEXT("ScreenGrid")})
@@ -176,7 +168,7 @@ public:
 				if (UTexture* Texture = Cast<UTexture>(Image->GetBrush().GetResourceObject())) Textures.AddUnique(Texture);
 		}
 		FTextureCompilingManager::Get().FinishCompilation(Textures);
-		Render(TEXT("Owned.png"), FVector2D(1920, 1080));
+		Render(FVector2D(1920, 1080));
 		const auto CheckLayout = [&](FVector2D Size)
 		{
 			for (const TCHAR* Name : {TEXT("HeaderLineSize"), TEXT("StatsLineSize"), TEXT("FooterLineSize"), TEXT("StatTabIndicatorSize")})
@@ -198,7 +190,7 @@ public:
 			Test->TestTrue(TEXT("The stat summary fits above the footer"), Stats.LocalToAbsolute(Stats.GetLocalSize()).Y <= Footer.GetAbsolutePosition().Y + .1f);
 		};
 		CheckLayout(FVector2D(1920, 1080));
-		Render(TEXT("Compact.png"), FVector2D(960, 540));
+		Render(FVector2D(960, 540));
 		CheckLayout(FVector2D(960, 540));
 
 		// 긴 설명 데이터는 테스트 메모리에만 만들고 저장하지 않는다.
@@ -216,7 +208,7 @@ public:
 		CastChecked<UButton>(Screen->GetWidgetFromName(TEXT("AbilityTab")))->OnClicked.Broadcast();
 		CastChecked<UButton>(Screen->GetWidgetFromName(TEXT("StatTab")))->OnClicked.Broadcast();
 		Test->TestEqual(TEXT("Returning to a tab restores its selected core"), CastChecked<UTextBlock>(Screen->GetWidgetFromName(TEXT("CoreName")))->GetText().ToString(), LongCore->CoreName.ToString());
-		Render(TEXT("LongEffect.png"), FVector2D(1920, 1080));
+		Render(FVector2D(1920, 1080));
 		UScrollBox* Effect = CastChecked<UScrollBox>(Screen->GetWidgetFromName(TEXT("EffectScroll")));
 		Test->TestTrue(TEXT("Long effects have a real scroll extent"), Effect->GetScrollOffsetOfEnd() > 0);
 		const auto Bottom = [](UWidget* W) { return W->GetCachedGeometry().LocalToAbsolute(W->GetCachedGeometry().GetLocalSize()).Y; };
@@ -225,12 +217,12 @@ public:
 		Test->TestTrue(TEXT("Long effects stay above the stat summary"), Bottom(Detail) <= Stats->GetCachedGeometry().GetAbsolutePosition().Y);
 		Test->TestTrue(TEXT("Drawing retains its design height"), Screen->GetWidgetFromName(TEXT("DrawingMinimum"))->GetCachedGeometry().GetLocalSize().Y >= 399);
 		Effect->SetScrollOffset(200);
-		Render(TEXT("LongEffectScrolled.png"), FVector2D(1920, 1080));
+		Render(FVector2D(1920, 1080));
 		Test->TestTrue(TEXT("Overflow text can actually be scrolled"), Effect->GetScrollOffset() > 0);
-		Render(TEXT("Small.png"), FVector2D(1280, 720));
+		Render(FVector2D(1280, 720));
 		CheckLayout(FVector2D(1280, 720));
 		Test->TestTrue(TEXT("Scaled menu still fits vertically"), Bottom(Detail) <= Stats->GetCachedGeometry().GetAbsolutePosition().Y + .1);
-		Render(TEXT("Ultrawide.png"), FVector2D(2560, 1080));
+		Render(FVector2D(2560, 1080));
 		CheckLayout(FVector2D(2560, 1080));
 		Test->TestTrue(TEXT("Long core can reach its cap"), Core->AcquireCore(LongCore.Get()) == ECoreAcquireResult::Upgraded);
 		Test->TestTrue(TEXT("Capped core displays no nonexistent next upgrade"), CastChecked<UTextBlock>(Screen->GetWidgetFromName(TEXT("NextEffect")))->GetText().ToString().Contains(TEXT("최대 단계")));
@@ -268,7 +260,7 @@ public:
 		Test->TestFalse(TEXT("Reset hides the previous description"), Screen->GetWidgetFromName(TEXT("CoreDetails"))->IsVisible());
 		for (const TCHAR* Name : {TEXT("CoreName"), TEXT("CoreLevel"), TEXT("CurrentEffect"), TEXT("NextEffect")})
 			Test->TestTrue(FString::Printf(TEXT("Reset clears %s"), Name), CastChecked<UTextBlock>(Screen->GetWidgetFromName(Name))->GetText().IsEmpty());
-		Render(TEXT("Empty.png"), FVector2D(1280, 720));
+		Render(FVector2D(1280, 720));
 		CheckLayout(FVector2D(1280, 720));
 		CastChecked<UButton>(Screen->GetWidgetFromName(TEXT("StatTab")))->OnClicked.Broadcast();
 		Test->TestTrue(TEXT("Empty tabs still switch after reset"), Screen->GetWidgetFromName(TEXT("StatTabIndicator"))->IsVisible());

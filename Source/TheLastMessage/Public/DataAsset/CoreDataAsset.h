@@ -40,7 +40,8 @@ class THELASTMESSAGE_API UCoreDataAsset : public UPrimaryDataAsset
 	GENERATED_BODY()
 
 public:
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Core")
+	/** 보유·강화 기록을 구분하는 ID. 서로 다른 코어 에셋은 같은 값을 사용할 수 없다. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, AssetRegistrySearchable, Category = "Core")
 	FName CoreId;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Core")
@@ -103,7 +104,7 @@ public:
 		float& OutValue, FText* OutReason = nullptr) const;
 
 #if WITH_EDITOR
-	/** 저장·데이터 검증 시 GE 설정, 커브 키와 MaxLevel, 설명 바인딩을 검사한다. */
+	/** 저장·데이터 검증 시 CoreId 중복, GE 설정, 커브와 강화 단계, 설명 바인딩을 검사한다. */
 	virtual EDataValidationResult IsDataValid(FDataValidationContext& Context) const override;
 #endif
 };

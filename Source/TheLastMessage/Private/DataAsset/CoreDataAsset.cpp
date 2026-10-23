@@ -4,6 +4,7 @@
 #include "Engine/CurveTable.h"
 #include "GameplayEffect.h"
 #if WITH_EDITOR
+#include "AssetRegistry/AssetRegistryModule.h"
 #include "GAS/CombatAttributeSet.h"
 #include "Misc/DataValidation.h"
 #include "UObject/StrongObjectPtr.h"
@@ -191,6 +192,40 @@ EDataValidationResult UCoreDataAsset::IsDataValid(FDataValidationContext& Contex
 	if (CoreId.IsNone())
 	{
 		AddError(LOCTEXT("NoCoreId", "CoreId가 비어 있습니다."));
+	}
+	else if (IsAsset())
+	{
+		IAssetRegistry& Registry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+		Registry.WaitForCompletion();
+		TArray<FAssetData> CoreAssets;
+		Registry.GetAssetsByClass(StaticClass()->GetClassPathName(), CoreAssets, true);
+		for (const FAssetData& Asset : CoreAssets)
+		{
+			if (Asset.GetSoftObjectPath() == FSoftObjectPath(this)) continue;
+			FName OtherId;
+			// 열린 에셋은 저장 전 변경값을 우선하고, 닫힌 에셋은 검색용 태그를 사용한다.
+			if (const UCoreDataAsset* Other = Cast<UCoreDataAsset>(Asset.FastGetAsset()))
+			{
+				OtherId = Other->CoreId;
+			}
+			else if (!Asset.GetTagValue(GET_MEMBER_NAME_CHECKED(UCoreDataAsset, CoreId), OtherId))
+			{
+				// 검색용 태그가 없는 기존 에셋도 다시 저장할 필요 없이 검사한다.
+				const UCoreDataAsset* LoadedCore = Cast<UCoreDataAsset>(Asset.GetAsset());
+				if (!LoadedCore)
+				{
+					AddWarning(FText::Format(LOCTEXT("CoreIdAssetUnreadable",
+						"{0}을 읽지 못해 CoreId 중복 검사를 완료할 수 없습니다."), FText::FromString(Asset.GetObjectPathString())));
+					continue;
+				}
+				OtherId = LoadedCore->CoreId;
+			}
+			if (OtherId == CoreId)
+			{
+				AddError(FText::Format(LOCTEXT("DuplicateCoreId", "CoreId '{0}'가 다른 코어 에셋 {1}과 중복됩니다. 서로 다른 ID를 지정하세요."),
+					FText::FromName(CoreId), FText::FromString(Asset.GetObjectPathString())));
+			}
+		}
 	}
 	if (CoreName.IsEmpty())
 	{

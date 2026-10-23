@@ -14,6 +14,10 @@
 #include "Misc/DataValidation.h"
 #include "Templates/UnrealTemplate.h"
 #include "UObject/StrongObjectPtr.h"
+#if WITH_EDITOR
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "UObject/Package.h"
+#endif
 
 namespace
 {
@@ -661,6 +665,70 @@ bool FCoreDataValidationTest::RunTest(const FString& Parameters)
 
 	Effect->DurationPolicy = EGameplayEffectDurationType::Instant;
 	TestTrue(TEXT("Non-infinite effect is invalid"), Validate(Errors, Warnings) == EDataValidationResult::Invalid);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCoreIdValidationTest, "TheLastMessage.Core.UniqueIds",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCoreIdValidationTest::RunTest(const FString& Parameters)
+{
+	// 서로 다른 패키지의 에셋을 메모리에서만 등록하고 테스트 종료 시 등록을 해제한다.
+	struct FRegisteredCore
+	{
+		TStrongObjectPtr<UCoreDataAsset> Data;
+		explicit FRegisteredCore(FName CoreId)
+		{
+			const FString AssetName = TEXT("CoreId_") + FGuid::NewGuid().ToString(EGuidFormats::Digits);
+			const FString PackageName = TEXT("/Game/__Automation__/") + AssetName;
+			UPackage* Package = CreatePackage(*PackageName);
+			Package->MarkAsFullyLoaded();
+			Data.Reset(NewObject<UCoreDataAsset>(Package, FName(*AssetName), RF_Public | RF_Standalone));
+			Data->CoreId = CoreId;
+			Data->CoreName = FText::FromString(TEXT("ID validation"));
+			FAssetRegistryModule::AssetCreated(Data.Get());
+		}
+		~FRegisteredCore()
+		{
+			FAssetRegistryModule::AssetDeleted(Data.Get());
+			Data->ClearFlags(RF_Public | RF_Standalone);
+			Data->SetFlags(RF_Transient);
+		}
+	};
+	const FName SharedId(*(TEXT("Test_Unique_") + FGuid::NewGuid().ToString(EGuidFormats::Digits)));
+	const FName SeparateId(*(SharedId.ToString() + TEXT("_Separate")));
+	FRegisteredCore First(SharedId);
+	FRegisteredCore Second(SeparateId);
+	auto Check = [this](const TCHAR* Case, const UCoreDataAsset* Data, int32 ExpectedErrors)
+	{
+		FDataValidationContext Context;
+		const EDataValidationResult Result = Data->IsDataValid(Context);
+		TestTrue(Case, Result == (ExpectedErrors ? EDataValidationResult::Invalid : EDataValidationResult::Valid));
+		TestEqual(FString::Printf(TEXT("%s error count"), Case), static_cast<int32>(Context.GetNumErrors()), ExpectedErrors);
+		return Context.GetNumErrors() ? Context.GetIssues()[0].Message.ToString() : FString();
+	};
+	Check(TEXT("An asset does not conflict with itself or a different ID"), First.Data.Get(), 0);
+	Second.Data->CoreId = SharedId;
+	const FString Message = Check(TEXT("An unsaved ID change on another asset is detected"), First.Data.Get(), 1);
+	TestTrue(TEXT("The error identifies the duplicated ID and the other asset"),
+		Message.Contains(SharedId.ToString()) && Message.Contains(Second.Data->GetPathName()));
+	Check(TEXT("Both assets report a duplicate"), Second.Data.Get(), 1);
+	Second.Data->CoreId = FName(*SharedId.ToString().ToLower());
+	Check(TEXT("IDs follow FName's case-insensitive identity"), First.Data.Get(), 1);
+	Second.Data->CoreId = SeparateId;
+	Check(TEXT("Correcting the ID restores valid data without saving"), First.Data.Get(), 0);
+	{
+		FRegisteredCore Third(SeparateId);
+		Check(TEXT("Duplicates of an unrelated ID do not invalidate this asset"), First.Data.Get(), 0);
+		Check(TEXT("The unrelated duplicate is still detected on its owner"), Second.Data.Get(), 1);
+	}
+	Check(TEXT("Removing an asset clears its duplicate registration"), Second.Data.Get(), 0);
+	Second.Data->CoreId = NAME_None;
+	Check(TEXT("An empty ID remains an error"), Second.Data.Get(), 1);
+	UCoreDataAsset* Transient = NewObject<UCoreDataAsset>();
+	Transient->CoreId = SharedId;
+	Transient->CoreName = First.Data->CoreName;
+	Check(TEXT("A temporary runtime definition is not a separate project asset"), Transient, 0);
 	return true;
 }
 

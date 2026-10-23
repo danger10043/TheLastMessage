@@ -16,6 +16,11 @@
 #include "UObject/StrongObjectPtr.h"
 #if WITH_EDITOR
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "Character/CombatDamageLibrary.h"
+#include "Character/Enemy/EnemyBase.h"
+#include "Character/Enemy/EnemyAttributeSet.h"
+#include "Character/Boss/BossMonster.h"
+#include "Character/Boss/BossAttributeSet.h"
 #include "UObject/Package.h"
 #endif
 
@@ -542,6 +547,57 @@ bool FCoreGrantValidationTest::RunTest(const FString& Parameters)
 }
 
 #if WITH_EDITOR
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCoreDamageHandoffTest, "TheLastMessage.Core.DamageHandoff",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCoreDamageHandoffTest::RunTest(const FString& Parameters)
+{
+	FCoreTestFixture Fixture(true);
+	Fixture.Attributes->SetDamageDealtMultiplier(2.f);
+	Fixture.Attributes->SetMeleeDamageMultiplier(3.f);
+	Fixture.Attributes->SetHighHealthDamageMultiplier(4.f);
+	Fixture.Attributes->SetLowHealthDamageMultiplier(5.f);
+	Fixture.Attributes->SetCriticalChance(1.f);
+	Fixture.Attributes->SetCriticalDamageMultiplier(2.f);
+	UClass* Effect = LoadClass<UGameplayEffect>(nullptr,
+		TEXT("/Game/Test_Inhyeok/GAS/Effect/GE_BP_CommonIncomingDamage.GE_BP_CommonIncomingDamage_C"));
+	if (!TestNotNull(TEXT("The actual common incoming damage GE exists"), Effect)) return false;
+	ABossMonster* Boss = Fixture.World->SpawnActorDeferred<ABossMonster>(ABossMonster::StaticClass(), FTransform::Identity);
+	if (!TestNotNull(TEXT("Boss target exists"), Boss)) return false;
+	// 피해 전달 검증에는 보스의 AI 자동 실행이 필요하지 않다.
+	Boss->AutoPossessAI = EAutoPossessAI::Disabled;
+	Boss->FinishSpawning(FTransform::Identity);
+	AActor* Targets[] = {Fixture.World->SpawnActor<AEnemyBase>(), Boss};
+	for (AActor* Target : Targets)
+	{
+		if (!TestNotNull(TEXT("Damage target exists"), Target)) return false;
+		const bool bBoss = Target->IsA<ABossMonster>();
+		UAbilitySystemComponent* ASC = bBoss ? CastChecked<ABossMonster>(Target)->GetAbilitySystemComponent()
+			: CastChecked<AEnemyBase>(Target)->GetAbilitySystemComponent();
+		ASC->InitAbilityActorInfo(Target, Target);
+		const FGameplayAttribute Health = bBoss ? UBossAttributeSet::GetHealthAttribute() : UEnemyAttributeSet::GetHealthAttribute();
+		const FGameplayAttribute MaxHealth = bBoss ? UBossAttributeSet::GetMaxHealthAttribute() : UEnemyAttributeSet::GetMaxHealthAttribute();
+		if (!ASC->HasAttributeSetForAttribute(Health))
+		{
+			// 대상이 소유한 기본 AttributeSet을 등록하여 내부 체력 조회와 같은 객체를 사용한다.
+			ASC->AddAttributeSetSubobject(CastChecked<UAttributeSet>(Target->GetDefaultSubobjectByName(TEXT("AttributeSet"))));
+		}
+		for (const TCHAR* CategoryName : {TEXT("Damage.Category.Player.Melee"), TEXT("Damage.Category.Player.Ranged")})
+		{
+			ASC->SetNumericAttributeBase(MaxHealth, 1000.f);
+			ASC->SetNumericAttributeBase(Health, 1000.f);
+			// 전달값은 이미 공격자 배율을 반영한 결과이므로, 대상 처리에서는 다시 계산하지 않는다.
+			TestTrue(TEXT("Final damage is accepted"), UCombatDamageLibrary::ApplyFinalDamageToTarget(
+				Fixture.Owner, Target, Effect, 125.f, FGameplayTag::RequestGameplayTag(FName(CategoryName))));
+			const float ActualLoss = 1000.f - ASC->GetNumericAttribute(Health);
+			TestTrue(TEXT("Final damage reaches health without reapplying attacker multipliers"), FMath::IsNearlyEqual(ActualLoss, 125.f));
+			AddInfo(FString::Printf(TEXT("%s / %s: final damage 125 -> actual HP loss %.3f"),
+				bBoss ? TEXT("Boss") : TEXT("Enemy"), CategoryName, ActualLoss));
+		}
+	}
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCoreDataValidationTest, "TheLastMessage.Core.DataValidation",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 

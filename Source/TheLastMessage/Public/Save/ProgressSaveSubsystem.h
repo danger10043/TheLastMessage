@@ -13,6 +13,7 @@ struct FProgressSlotInfo
 	GENERATED_BODY()
 	UPROPERTY(BlueprintReadOnly) bool bExists = false;
 	UPROPERTY(BlueprintReadOnly) bool bCanLoad = false;
+	UPROPERTY(BlueprintReadOnly) bool bHasCheckpoint = false;
 	UPROPERTY(BlueprintReadOnly) FDateTime SavedAt;
 	UPROPERTY(BlueprintReadOnly) FString MapPackage;
 };
@@ -27,6 +28,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Save") bool StartNewGame(int32 SlotId, bool bOverwriteExisting = false);
 	UFUNCTION(BlueprintPure, Category="Save") FProgressSlotInfo GetSlotInfo(int32 SlotId) const;
 	UFUNCTION(BlueprintCallable, Category="Save") bool ContinueGame(int32 SlotId);
+	/** Re-read the current slot without permitting a slot switch; failure preserves the session. */
+	UFUNCTION(BlueprintCallable, Category="Save") bool ReloadActiveProgress();
 	/** Explicitly return to menu before selecting another playthrough. Fails during a write. */
 	UFUNCTION(BlueprintCallable, Category="Save") bool EndSession();
 	/** Both checkpoint and autosave must call this, after updating the checkpoint snapshot. */
@@ -36,7 +39,7 @@ public:
 	void ApplyCheckpointState(APlayerCheckpoint* Checkpoint) const;
 	bool IsRestoringProgress() const { return bRestorePending || bRestoring; }
 	UFUNCTION(BlueprintPure, Category="Save") int32 GetActiveSlot() const { return ActiveSlot; }
-	UFUNCTION(BlueprintPure, Category="Save") bool IsSaving() const { return bSaving; }
+	UFUNCTION(BlueprintPure, Category="Save") bool IsSaving() const { return bSaving || PendingCheckpointSnapshot != nullptr; }
 	UFUNCTION(BlueprintPure, Category="Save") bool HasSave(int32 SlotId) const;
 	UFUNCTION(BlueprintPure, Category="Save") FString GetSaveDirectory() const;
 	UPROPERTY(BlueprintAssignable, Category="Save") FProgressSaveFinished OnSaveFinished;

@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerController.h"
 #include "EnhancedInput/Public/InputAction.h"
+#include "UI/PauseMenuWidget.h"
 #include "SideScrollingPlayerController.generated.h"
 
 class ASideScrollingCharacter;
@@ -23,6 +24,10 @@ class ASideScrollingPlayerController : public APlayerController
 public:
 	ASideScrollingPlayerController();
 	UFUNCTION(BlueprintCallable, Category="Area Map") void ToggleAreaMap();
+	UFUNCTION(BlueprintCallable, Category="Pause Menu") void TogglePauseMenu();
+	UFUNCTION(BlueprintPure, Category="Pause Menu") UPauseMenuWidget* GetPauseMenu() const { return PauseMenuWidget; }
+	UPROPERTY(EditDefaultsOnly, Config, Category="Pause Menu") TSoftClassPtr<UPauseMenuWidget> PauseMenuClass;
+	UPROPERTY(EditDefaultsOnly, Category="Pause Menu") TSoftObjectPtr<UWorld> MainMenuMap;
 	/** 구역 지도를 열고 닫는 입력 액션 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Input|Area Map", meta=(ToolTip="구역 지도를 열고 닫는 입력 액션"))
 	TObjectPtr<UInputAction> MapAction;
@@ -74,5 +79,17 @@ protected:
 
 	/** Returns true if the player should use UMG touch controls */
 	bool ShouldUseTouchControls() const;
+
+private:
+	void ClosePauseMenu();
+	void ExecutePauseAction(EPauseMenuAction Action);
+	UFUNCTION() void HandlePauseAction(EPauseMenuAction Action);
+	UFUNCTION() void PauseSaveFinished(bool bSuccess);
+	UFUNCTION() void PauseMenuRemoved();
+	UPROPERTY(Transient) TObjectPtr<UPauseMenuWidget> PauseMenuWidget;
+	bool bPausedByMenu = false;
+	bool bPausePreviousCursor = false;
+	bool bWaitingForPauseSave = false;
+	EPauseMenuAction PendingPauseAction = EPauseMenuAction::Resume;
 
 };

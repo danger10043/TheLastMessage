@@ -60,6 +60,7 @@ FProgressSlotInfo UProgressSaveSubsystem::GetSlotInfo(int32 SlotId) const
 	if (const UProgressSaveGame* Save = ReadSlot(SlotId))
 	{
 		Info.bCanLoad = true;
+		Info.bHasCheckpoint = Save->CheckpointId.IsValid();
 		Info.SavedAt = Save->SavedAt;
 		Info.MapPackage = Save->MapPackage;
 	}
@@ -89,11 +90,21 @@ bool UProgressSaveSubsystem::ContinueGame(int32 SlotId)
 
 bool UProgressSaveSubsystem::EndSession()
 {
-	if (bSaving) return false;
+	if (IsSaving()) return false;
 	PendingCheckpointSnapshot = nullptr;
 	bRestorePending = false;
 	WorkingProgress = nullptr;
 	ActiveSlot = 0;
+	return true;
+}
+
+bool UProgressSaveSubsystem::ReloadActiveProgress()
+{
+	if (IsSaving() || ActiveSlot < 1 || ActiveSlot > 3) return false;
+	UProgressSaveGame* Loaded = ReadSlot(ActiveSlot);
+	if (!Loaded || !Loaded->CheckpointId.IsValid()) return false;
+	WorkingProgress = Loaded;
+	bRestorePending = true;
 	return true;
 }
 

@@ -8,6 +8,7 @@
 #include "UI/StartMenuWidget.h"
 #include "UI/StartMenuHUD.h"
 #include "UI/SaveNotificationWidget.h"
+#include "UI/PauseMenuWidget.h"
 #include "Components/Button.h"
 #include "Components/WidgetSwitcher.h"
 #include "Character/Player/PlayerBase.h"
@@ -328,6 +329,16 @@ bool BuildSaveNotification()
 	return HUD->Status != BS_Error && Save(HUD);
 }
 
+bool BuildPauseMenu()
+{
+	const TCHAR* Path = TEXT("/Game/Main/UI/Menu/WBP_PauseMenu");
+	if (LoadObject<UWidgetBlueprint>(nullptr, Path)) return true;
+	UWidgetBlueprint* BP = Blueprint(Path, UPauseMenuWidget::StaticClass());
+	UPauseMenuWidget::BuildDefaultLayout(BP->WidgetTree);
+	BP->WidgetTree->ForEachWidget([](UWidget* Control) { Control->bIsVariable = true; });
+	return CompileSave(BP);
+}
+
 bool BuildMenuScaffold(bool bPreview)
 {
 	const TCHAR* Path = TEXT("/Game/Main/UI/Menu/WBP_StartMenu");
@@ -517,6 +528,7 @@ UIntegratePlayerUICommandlet::UIntegratePlayerUICommandlet()
 int32 UIntegratePlayerUICommandlet::Main(const FString& Params)
 {
 #if WITH_EDITOR
+	if (FParse::Param(*Params, TEXT("PauseMenu"))) return PlayerUIBuild::BuildPauseMenu() ? 0 : 1;
 	if (FParse::Param(*Params, TEXT("CheckpointPopup"))) return PlayerUIBuild::BuildSaveNotification() ? 0 : 1;
 	if (FParse::Param(*Params, TEXT("MenuScaffold")))
 		return PlayerUIBuild::BuildMenuScaffold(FParse::Param(*Params, TEXT("Preview"))) ? 0 : 1;

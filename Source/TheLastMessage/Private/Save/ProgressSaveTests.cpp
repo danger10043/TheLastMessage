@@ -63,6 +63,10 @@ bool FProgressSlotFlowTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Continue keeps selected slot"), Saves->GetActiveSlot(), 2);
 	TestTrue(TEXT("Playthrough preserved"), Saves->GetWorkingProgress()->PlaythroughId == FirstId);
 	TestTrue(TEXT("Exploration survives disk round trip"), Saves->GetWorkingProgress()->Maps.FindChecked(TEXT("Factory")).ExploredRooms.Contains(TEXT("RoomA")));
+	Saves->GetWorkingProgress()->Maps.FindChecked(TEXT("Factory")).ExploredRooms.Add(TEXT("UnsavedRoom"));
+	TestTrue(TEXT("Reload reads the active slot"), Saves->ReloadActiveProgress());
+	TestEqual(TEXT("Reload never changes slots"), Saves->GetActiveSlot(), 2);
+	TestFalse(TEXT("Reload discards unsaved exploration"), Saves->GetWorkingProgress()->Maps.FindChecked(TEXT("Factory")).ExploredRooms.Contains(TEXT("UnsavedRoom")));
 	Saves->EndSession();
 	TestFalse(TEXT("Overwrite needs confirmation"), Saves->StartNewGame(2));
 	TestTrue(TEXT("Confirmed replacement accepted"), Saves->StartNewGame(2, true));

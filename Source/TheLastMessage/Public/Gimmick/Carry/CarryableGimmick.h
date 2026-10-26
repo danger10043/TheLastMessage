@@ -90,4 +90,17 @@ private:
 
     // 최초 Y 좌표 기록 여부
     bool bHasInitialWorldY = false;
+
+    // 내려놓은 아이템의 수직 낙하 갱신
+    void UpdateDropFall(float DeltaSeconds);
+
+    // 현재 내려놓기로 인한 낙하 중인지
+    bool bIsDropFalling = false;
+
+    // 현재 아래쪽으로 떨어지는 속도
+    float DropFallSpeed = 0.0f;
+
+    // 낙하 검사에서 방금 아이템을 내려놓은 플레이어 제외
+    TWeakObjectPtr<ACharacter> DropIgnoredPlayer;
+
 };

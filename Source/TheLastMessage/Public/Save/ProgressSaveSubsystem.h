@@ -31,16 +31,23 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Save") bool EndSession();
 	/** Both checkpoint and autosave must call this, after updating the checkpoint snapshot. */
 	UFUNCTION(BlueprintCallable, Category="Save") bool SaveActiveProgress();
+	bool SaveCheckpoint(class APlayerBase* Player, class APlayerCheckpoint* Checkpoint);
+	bool RestorePlayerIfPending(APlayerBase* Player);
+	void ApplyCheckpointState(APlayerCheckpoint* Checkpoint) const;
+	bool IsRestoringProgress() const { return bRestorePending || bRestoring; }
 	UFUNCTION(BlueprintPure, Category="Save") int32 GetActiveSlot() const { return ActiveSlot; }
 	UFUNCTION(BlueprintPure, Category="Save") bool IsSaving() const { return bSaving; }
 	UFUNCTION(BlueprintPure, Category="Save") bool HasSave(int32 SlotId) const;
 	UFUNCTION(BlueprintPure, Category="Save") FString GetSaveDirectory() const;
 	UPROPERTY(BlueprintAssignable, Category="Save") FProgressSaveFinished OnSaveFinished;
+	UPROPERTY(BlueprintAssignable, Category="Save") FProgressSaveFinished OnCheckpointSaveFinished;
 	// Mutable working state only. Disk writes take an independent serialized snapshot.
 	UProgressSaveGame* GetWorkingProgress() const { return WorkingProgress; }
 private:
 #if WITH_DEV_AUTOMATION_TESTS
 	friend class FProgressSlotFlowTest;
+	friend class FCheckpointSaveFlowTest;
+	friend class FCheckpointRestoreStartupTest;
 	FString AutomationSaveDirectory;
 #endif
 	UProgressSaveGame* ReadSlot(int32 SlotId) const;
@@ -48,4 +55,9 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UProgressSaveGame> WorkingProgress;
 	int32 ActiveSlot = 0;
 	bool bSaving = false;
+	bool bCheckpointWrite = false;
+	bool bRestorePending = false;
+	bool bRestoring = false;
+	UPROPERTY(Transient) TObjectPtr<UProgressSaveGame> PendingCheckpointSnapshot;
+	void WriteCheckpointSnapshot(UProgressSaveGame* Snapshot);
 };

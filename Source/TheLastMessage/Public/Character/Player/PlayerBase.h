@@ -33,6 +33,7 @@ class UCombatFeedbackComponent;
 class UGravityStateComponent;
 class APlayerBase;
 class AProjectileBase;
+class UProgressSaveGame;
 struct FGameplayEffectContextHandle;
 struct FOnAttributeChangeData;
 
@@ -164,6 +165,7 @@ public:
 
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category="Player|Checkpoint")
 	bool RespawnAtCheckpoint();
+	bool RestoreCheckpointProgress(const UProgressSaveGame* Save);
 
 	virtual void FellOutOfWorld(const UDamageType& DamageType) override;
 
@@ -344,6 +346,7 @@ protected:
 	FTimerHandle EnergyRechargeTimerHandle;
 
 private:
+	void ScheduleProgressRestore();
 	UFUNCTION(Server, Reliable)
 	void ServerAssignWeaponChoice(int32 Index, EWeaponSlot Slot);
 	UPROPERTY(Transient)

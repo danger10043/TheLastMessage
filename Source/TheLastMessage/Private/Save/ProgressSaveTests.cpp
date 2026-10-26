@@ -48,6 +48,7 @@ bool FProgressSlotFlowTest::RunTest(const FString& Parameters)
 	UProgressSaveGame* Progress = Saves->GetWorkingProgress();
 	Progress->MapPackage = TEXT("/Game/Test_Jihong/Prototype/Lv_Factory_Metroidvania");
 	Progress->Maps.FindOrAdd(TEXT("Factory")).ExploredRooms.Add(TEXT("RoomA"));
+	Progress->CheckpointId = FGuid::NewGuid();
 	const FGuid FirstId = Progress->PlaythroughId;
 	TestTrue(TEXT("Initial save accepted"), Saves->SaveActiveProgress());
 	TestFalse(TEXT("Duplicate save rejected"), Saves->SaveActiveProgress());
@@ -58,6 +59,7 @@ bool FProgressSlotFlowTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("Unsupported version cannot be loaded"), Saves->GetSlotInfo(1).bCanLoad);
 	TestTrue(TEXT("End session"), Saves->EndSession());
 	TestTrue(TEXT("Continue selected slot"), Saves->ContinueGame(2));
+	TestTrue(TEXT("Continue arms checkpoint restoration"), Saves->IsRestoringProgress());
 	TestEqual(TEXT("Continue keeps selected slot"), Saves->GetActiveSlot(), 2);
 	TestTrue(TEXT("Playthrough preserved"), Saves->GetWorkingProgress()->PlaythroughId == FirstId);
 	TestTrue(TEXT("Exploration survives disk round trip"), Saves->GetWorkingProgress()->Maps.FindChecked(TEXT("Factory")).ExploredRooms.Contains(TEXT("RoomA")));

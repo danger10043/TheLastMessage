@@ -32,6 +32,11 @@ struct FProgressPlayerState
 	UPROPERTY(SaveGame, BlueprintReadWrite) FSoftObjectPath SecondaryWeapon;
 	UPROPERTY(SaveGame, BlueprintReadWrite) TMap<FSoftObjectPath, int32> CoreLevels;
 	UPROPERTY(SaveGame, BlueprintReadWrite) TMap<FName, float> PermanentUpgrades;
+	/** Captured values, not permanent bonuses; restore must not reapply these as core modifiers. */
+	UPROPERTY(SaveGame, BlueprintReadWrite) float Health = 0;
+	UPROPERTY(SaveGame, BlueprintReadWrite) float MaxHealth = 0;
+	UPROPERTY(SaveGame, BlueprintReadWrite) float Energy = 0;
+	UPROPERTY(SaveGame, BlueprintReadWrite) float MaxEnergy = 0;
 };
 
 /** One complete checkpoint snapshot per playthrough slot, including map exploration. */
@@ -48,6 +53,7 @@ public:
 	UPROPERTY(SaveGame) FString MapPackage;
 	UPROPERTY(SaveGame) FGuid CheckpointId;
 	UPROPERTY(SaveGame) FTransform RespawnTransform;
+	UPROPERTY(SaveGame) FVector RespawnGravity = FVector(0, 0, -1);
 	UPROPERTY(SaveGame) FProgressPlayerState Player;
 	UPROPERTY(SaveGame) TMap<FName, FProgressMapState> Maps;
 };

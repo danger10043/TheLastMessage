@@ -384,12 +384,14 @@ void APlayerBase::BeginPlay()
 	}
 	InitializePlayer();
 	if (HasAuthority() && !bHasCheckpoint) SetCheckpoint(GetActorTransform());
+	ScheduleProgressRestore();
 }
 
 void APlayerBase::PossessedBy(AController* NewController)
 {
 	Super::PossessedBy(NewController);
 	InitializePlayer();
+	if (HasActorBegunPlay()) ScheduleProgressRestore();
 }
 
 void APlayerBase::OnRep_Controller()

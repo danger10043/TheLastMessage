@@ -88,6 +88,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category="Checkpoint")
 	bool ActivateCheckpoint(APlayerBase* Player);
+	/** Set explicitly when renaming a placed checkpoint must preserve its save identity. */
+	UPROPERTY(EditInstanceOnly, Category="Checkpoint|Save") FGuid PersistentId;
+	FGuid GetPersistentId() const;
 
 	void SetInteractionHighlight(bool bVisible);
 

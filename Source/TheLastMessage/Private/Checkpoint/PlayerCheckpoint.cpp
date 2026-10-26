@@ -11,6 +11,9 @@
 #include "EngineUtils.h"
 #include "Net/UnrealNetwork.h"
 #include "UObject/ConstructorHelpers.h"
+#include "Save/ProgressSaveSubsystem.h"
+#include "Engine/GameInstance.h"
+#include "Misc/SecureHash.h"
 
 APlayerCheckpoint::APlayerCheckpoint()
 {
@@ -83,6 +86,7 @@ void APlayerCheckpoint::BeginPlay()
 {
 	Super::BeginPlay();
 	SetInteractionHighlight(false);
+	if (GetGameInstance()) GetGameInstance()->GetSubsystem<UProgressSaveSubsystem>()->ApplyCheckpointState(this);
 	RefreshTerminalVisuals();
 }
 
@@ -124,6 +128,7 @@ void APlayerCheckpoint::RefreshTerminalVisuals()
 
 bool APlayerCheckpoint::ActivateCheckpoint(APlayerBase* Player)
 {
+	if (GetGameInstance() && GetGameInstance()->GetSubsystem<UProgressSaveSubsystem>()->IsRestoringProgress()) return false;
 	if (!HasAuthority() || !IsValid(Player) || Player->GetWorld() != GetWorld() || !Player->IsPlayerControlled()) return false;
 	if (!Player->SetCheckpoint(RespawnPoint->GetComponentTransform())) return false;
 	// The shared world display has one current respawn beacon; earlier visits stay blue.
@@ -134,7 +139,18 @@ bool APlayerCheckpoint::ActivateCheckpoint(APlayerBase* Player)
 	}
 	SetCheckpointVisualState(ECheckpointVisualState::Current);
 	OnCheckpointActivated.Broadcast(Player);
+	if (UGameInstance* Instance = GetGameInstance())
+		Instance->GetSubsystem<UProgressSaveSubsystem>()->SaveCheckpoint(Player, this);
 	return true;
+}
+
+FGuid APlayerCheckpoint::GetPersistentId() const
+{
+	if (PersistentId.IsValid()) return PersistentId;
+	// Placed actor paths are stable across sessions. Strip the editor's PIE prefix.
+	FGuid Result;
+	FGuid::ParseExact(FMD5::HashAnsiString(*UWorld::RemovePIEPrefix(GetPathName())), EGuidFormats::Digits, Result);
+	return Result;
 }
 
 void APlayerCheckpoint::OnTriggerOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor,

@@ -7,6 +7,7 @@
 #include "UI/PlayerHUD.h"
 #include "UI/StartMenuWidget.h"
 #include "UI/StartMenuHUD.h"
+#include "UI/SaveNotificationWidget.h"
 #include "Components/Button.h"
 #include "Components/WidgetSwitcher.h"
 #include "Character/Player/PlayerBase.h"
@@ -308,6 +309,25 @@ bool ResizeExisting()
 	return true;
 }
 
+bool BuildSaveNotification()
+{
+	const TCHAR* Path = TEXT("/Game/Main/UI/Save/WBP_SaveNotification");
+	UWidgetBlueprint* BP = LoadObject<UWidgetBlueprint>(nullptr, Path);
+	if (!BP)
+	{
+		BP = Blueprint(Path, USaveNotificationWidget::StaticClass());
+		USaveNotificationWidget::BuildDefaultLayout(BP->WidgetTree);
+		BP->WidgetTree->ForEachWidget([](UWidget* Control) { Control->bIsVariable = true; });
+		if (!CompileSave(BP)) return false;
+	}
+	UBlueprint* HUD = LoadObject<UBlueprint>(nullptr, TEXT("/Game/Test_Jihong/UI/BP_PlayerHUD"));
+	if (!HUD || !HUD->GeneratedClass) return false;
+	FindFProperty<FClassProperty>(APlayerHUD::StaticClass(), TEXT("SaveNotificationClass"))->SetObjectPropertyValue_InContainer(
+		HUD->GeneratedClass->GetDefaultObject(), BP->GeneratedClass);
+	FKismetEditorUtilities::CompileBlueprint(HUD);
+	return HUD->Status != BS_Error && Save(HUD);
+}
+
 bool BuildMenuScaffold(bool bPreview)
 {
 	const TCHAR* Path = TEXT("/Game/Main/UI/Menu/WBP_StartMenu");
@@ -497,6 +517,7 @@ UIntegratePlayerUICommandlet::UIntegratePlayerUICommandlet()
 int32 UIntegratePlayerUICommandlet::Main(const FString& Params)
 {
 #if WITH_EDITOR
+	if (FParse::Param(*Params, TEXT("CheckpointPopup"))) return PlayerUIBuild::BuildSaveNotification() ? 0 : 1;
 	if (FParse::Param(*Params, TEXT("MenuScaffold")))
 		return PlayerUIBuild::BuildMenuScaffold(FParse::Param(*Params, TEXT("Preview"))) ? 0 : 1;
 	if (FParse::Param(*Params, TEXT("Resize")))

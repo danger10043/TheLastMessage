@@ -6,6 +6,17 @@
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Misc/PackageName.h"
+#include "Character/Player/PlayerBase.h"
+#include "Checkpoint/PlayerCheckpoint.h"
+#include "Core/CoreComponent.h"
+#include "DataAsset/CoreDataAsset.h"
+#include "DataAsset/WeaponDataAsset.h"
+#include "GAS/CombatAttributeSet.h"
+#include "GAS/WeaponSlotAttributeSet.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "Map/AreaMapComponent.h"
+#include "Components/SceneComponent.h"
+#include "EngineUtils.h"
 
 FString UProgressSaveSubsystem::GetSaveDirectory() const
 {
@@ -71,6 +82,7 @@ bool UProgressSaveSubsystem::ContinueGame(int32 SlotId)
 	UProgressSaveGame* Loaded = ReadSlot(SlotId);
 	if (!Loaded) return false;
 	WorkingProgress = Loaded;
+	bRestorePending = Loaded->CheckpointId.IsValid();
 	ActiveSlot = SlotId;
 	return true;
 }
@@ -78,9 +90,99 @@ bool UProgressSaveSubsystem::ContinueGame(int32 SlotId)
 bool UProgressSaveSubsystem::EndSession()
 {
 	if (bSaving) return false;
+	PendingCheckpointSnapshot = nullptr;
+	bRestorePending = false;
 	WorkingProgress = nullptr;
 	ActiveSlot = 0;
 	return true;
+}
+
+bool UProgressSaveSubsystem::SaveCheckpoint(APlayerBase* Player, APlayerCheckpoint* Checkpoint)
+{
+	if (IsRestoringProgress()) return false;
+	if (!WorkingProgress || !IsValid(Player) || !IsValid(Checkpoint) || !Player->HasAuthority()
+		|| Player->IsDead() || Player->GetWorld() != Checkpoint->GetWorld())
+	{
+		OnCheckpointSaveFinished.Broadcast(false);
+		return false;
+	}
+	if (UAreaMapComponent* Map = Player->FindComponentByClass<UAreaMapComponent>())
+	{
+		Map->ExploreAt(Player->GetActorLocation());
+		Map->SaveExploration();
+	}
+	UProgressSaveGame* Snapshot = DuplicateObject<UProgressSaveGame>(WorkingProgress, this);
+	Snapshot->MapPackage = UWorld::RemovePIEPrefix(Player->GetWorld()->GetOutermost()->GetName());
+	Snapshot->CheckpointId = Checkpoint->GetPersistentId();
+	Snapshot->RespawnTransform = Checkpoint->RespawnPoint->GetComponentTransform();
+	Snapshot->RespawnGravity = Player->GetCharacterMovement()->GetGravityDirection();
+	FProgressPlayerState& State = Snapshot->Player;
+	State.OwnedWeapons.Reset(); State.CoreLevels.Reset();
+	for (int32 Index = 0; Index < Player->WeaponChoices.Num(); ++Index)
+		if (Player->HasWeaponChoice(Index) && Player->GetWeaponChoice(Index))
+			State.OwnedWeapons.AddUnique(FSoftObjectPath(Player->GetWeaponChoice(Index)));
+	State.PrimaryWeapon = FSoftObjectPath(Player->GetWeaponDataInSlot(EWeaponSlot::Primary));
+	State.SecondaryWeapon = FSoftObjectPath(Player->GetWeaponDataInSlot(EWeaponSlot::Secondary));
+	if (UCoreComponent* Cores = Player->GetCoreComponent())
+		for (const FOwnedCoreEntry& Entry : Cores->GetOwnedCores())
+			if (Entry.CoreData) State.CoreLevels.Add(FSoftObjectPath(Entry.CoreData.Get()), Entry.Level);
+	if (const UCombatAttributeSet* Stats = Player->GetCombatAttributes())
+	{
+		State.Health = Stats->GetHealth(); State.MaxHealth = Stats->GetMaxHealth();
+	}
+	if (const UWeaponSlotAttributeSet* Stats = Player->GetWeaponSlotAttributes())
+	{
+		State.Energy = Stats->GetSharedEnergy(); State.MaxEnergy = Stats->GetSharedMaxEnergy();
+	}
+	FProgressMapState& Map = Snapshot->Maps.FindOrAdd(FName(*UGameplayStatics::GetCurrentLevelName(Player, true)));
+	Map.VisitedCheckpoints.Add(Snapshot->CheckpointId);
+	for (TActorIterator<APlayerCheckpoint> It(Player->GetWorld()); It; ++It)
+		if (It->CheckpointVisualState != ECheckpointVisualState::Inactive)
+			Map.VisitedCheckpoints.Add(It->GetPersistentId());
+	if (bSaving) PendingCheckpointSnapshot = Snapshot; // Coalesce rapid contacts to the latest snapshot.
+	else WriteCheckpointSnapshot(Snapshot);
+	return true;
+}
+
+bool UProgressSaveSubsystem::RestorePlayerIfPending(APlayerBase* Player)
+{
+	if (bRestorePending && IsValid(Player))
+		UE_LOG(LogTemp, Verbose, TEXT("Checkpoint restore: authority=%d controlled=%d begun=%d map=%s saved=%s"),
+			Player->HasAuthority(), Player->IsPlayerControlled(), Player->HasActorBegunPlay(),
+			*UWorld::RemovePIEPrefix(Player->GetWorld()->GetOutermost()->GetName()), WorkingProgress ? *WorkingProgress->MapPackage : TEXT("none"));
+	if (!bRestorePending || bRestoring || !WorkingProgress || !IsValid(Player) || !Player->HasAuthority()
+		|| !Player->IsPlayerControlled() || !Player->HasActorBegunPlay()) return false;
+	if (UWorld::RemovePIEPrefix(Player->GetWorld()->GetOutermost()->GetName()) != WorkingProgress->MapPackage) return false;
+	TGuardValue<bool> Guard(bRestoring, true);
+	if (!Player->RestoreCheckpointProgress(WorkingProgress))
+	{
+		UE_LOG(LogTemp, Error, TEXT("Failed to restore checkpoint progress for slot %d"), ActiveSlot);
+		return false;
+	}
+	bRestorePending = false;
+	for (TActorIterator<APlayerCheckpoint> It(Player->GetWorld()); It; ++It) ApplyCheckpointState(*It);
+	return true;
+}
+
+void UProgressSaveSubsystem::ApplyCheckpointState(APlayerCheckpoint* Checkpoint) const
+{
+	if (!WorkingProgress || !IsValid(Checkpoint) || !Checkpoint->HasAuthority()
+		|| UWorld::RemovePIEPrefix(Checkpoint->GetWorld()->GetOutermost()->GetName()) != WorkingProgress->MapPackage) return;
+	const FProgressMapState* Map = WorkingProgress->Maps.Find(FName(*UGameplayStatics::GetCurrentLevelName(Checkpoint, true)));
+	const FGuid Id = Checkpoint->GetPersistentId();
+	Checkpoint->SetCheckpointVisualState(Id == WorkingProgress->CheckpointId ? ECheckpointVisualState::Current
+		: Map && Map->VisitedCheckpoints.Contains(Id) ? ECheckpointVisualState::Visited : ECheckpointVisualState::Inactive);
+}
+
+void UProgressSaveSubsystem::WriteCheckpointSnapshot(UProgressSaveGame* Snapshot)
+{
+	WorkingProgress = Snapshot;
+	bCheckpointWrite = true;
+	if (!SaveActiveProgress())
+	{
+		bCheckpointWrite = false;
+		OnCheckpointSaveFinished.Broadcast(false);
+	}
 }
 
 bool UProgressSaveSubsystem::SaveActiveProgress()
@@ -106,7 +208,16 @@ bool UProgressSaveSubsystem::SaveActiveProgress()
 			if (UProgressSaveSubsystem* Self = WeakThis.Get())
 			{
 				Self->bSaving = false;
+				const bool bWasCheckpoint = Self->bCheckpointWrite;
+				Self->bCheckpointWrite = false;
 				Self->OnSaveFinished.Broadcast(bSuccess);
+				if (bWasCheckpoint) Self->OnCheckpointSaveFinished.Broadcast(bSuccess);
+				if (Self->PendingCheckpointSnapshot)
+				{
+					UProgressSaveGame* Pending = Self->PendingCheckpointSnapshot;
+					Self->PendingCheckpointSnapshot = nullptr;
+					Self->WriteCheckpointSnapshot(Pending);
+				}
 			}
 		});
 	});

@@ -55,29 +55,30 @@ public:
 	void OnFired();
 
 protected:
+	virtual void ApplyEnemyData(const UEnemyDataAsset* Data) override;
+
 	virtual void BeginPlay() override;
 
 	/** 느리고 강력한 투사체 설정 (피해량 높게, 속도 느리게) */
+	/** 발사할 투사체 블루프린트. 속도·수명은 데이터 에셋에서 정한다. */
 	UPROPERTY(EditDefaultsOnly, Category = "Sentry")
+	TSubclassOf<AEnemyProjectile> ProjectileClass;
+
+	/** 투사체 설정(클래스는 위 ProjectileClass, 속도·수명은 데이터 에셋에서 복사된다) */
 	FEnemyProjectileConfig ProjectileConfig;
 
 	/** 발사 전 충전 시간(초) */
-	UPROPERTY(EditDefaultsOnly, Category = "Sentry")
 	float ChargeTime = 1.2f;
 
 	/** 조준 회전 속도(도/초) */
-	UPROPERTY(EditDefaultsOnly, Category = "Sentry|Aim")
 	float RotationSpeed = 120.f;
 
 	/** 조준 상하 각도 범위(도) */
-	UPROPERTY(EditDefaultsOnly, Category = "Sentry|Aim")
 	float MinAimPitch = -20.f;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Sentry|Aim")
 	float MaxAimPitch = 70.f;
 
 	/** 총이 정면이 아닌 쪽을 보면 이 값으로 좌우 기준을 보정한다(도). */
-	UPROPERTY(EditDefaultsOnly, Category = "Sentry|Aim")
 	float AimYawOffset = 0.f;
 
 	/** 조준 중심으로 쓸 본 이름(총 상하 회전축) */
@@ -97,7 +98,6 @@ protected:
 	TObjectPtr<UNiagaraSystem> MuzzleFlashEffect;
 
 	/** 총구 소켓이 없을 때 쓰는 발사 위치(포탑 기준 로컬 좌표) */
-	UPROPERTY(EditDefaultsOnly, Category = "Sentry")
 	FVector MuzzleOffset = FVector(120.f, 0.f, 0.f);
 
 	UPROPERTY(VisibleInstanceOnly, Category = "Sentry")

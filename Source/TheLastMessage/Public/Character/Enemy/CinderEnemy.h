@@ -58,67 +58,60 @@ public:
 	bool HasFallen() const { return Mode == ECinderMode::Fallen; }
 
 protected:
+	virtual void ApplyEnemyData(const UEnemyDataAsset* Data) override;
+
 	virtual void BeginPlay() override;
 
 	// ---- 표면 이동 ----
 
 	/** 몸 중심이 표면에서 떨어져 있는 거리. 캡슐/메시 크기에 맞춰 조정한다. */
-	UPROPERTY(EditDefaultsOnly, Category = "Cinder|Surface", meta = (ClampMin = "0.0"))
 	float SurfaceOffset = 60.f;
 
 	/** 표면을 찾을 때 SurfaceOffset 외에 더 확인하는 거리 */
-	UPROPERTY(EditDefaultsOnly, Category = "Cinder|Surface", meta = (ClampMin = "0.0"))
 	float SurfaceSnapDistance = 40.f;
 
 	/** 앞쪽 장애물(오목한 모서리)을 미리 확인하는 거리 */
-	UPROPERTY(EditDefaultsOnly, Category = "Cinder|Surface", meta = (ClampMin = "0.0"))
 	float CornerCheckDistance = 40.f;
 
 	/** 스폰될 때 가장 가까운 표면을 찾는 최대 거리 */
-	UPROPERTY(EditDefaultsOnly, Category = "Cinder|Surface", meta = (ClampMin = "0.0"))
 	float SpawnSnapDistance = 300.f;
 
 	/** 켜면 움직이는 물체(월드 다이나믹)도 기어갈 표면으로 인식한다. 끄면 고정된 지형(월드 스태틱)만 인식한다. */
-	UPROPERTY(EditDefaultsOnly, Category = "Cinder|Surface")
 	bool bUseWorldDynamicSurfaces = false;
 
 	/** 몸이 표면 방향으로 돌아가는 속도(클수록 빠름, 0이면 즉시) */
-	UPROPERTY(EditDefaultsOnly, Category = "Cinder|Surface", meta = (ClampMin = "0.0"))
 	float RotationInterpSpeed = 12.f;
 
 	/** 모서리를 돌 때 몸이 위치를 따라가는 속도(클수록 빠름, 0이면 즉시). 낮추면 모서리에서 부드럽게 넘어간다. */
-	UPROPERTY(EditDefaultsOnly, Category = "Cinder|Surface", meta = (ClampMin = "0.0"))
 	float PositionInterpSpeed = 15.f;
 
 	// ---- 정찰 ----
 
 	/** 한 번 이동하는 거리의 최솟값·최댓값 */
-	UPROPERTY(EditDefaultsOnly, Category = "Cinder|Patrol", meta = (ClampMin = "0.0"))
 	float PatrolMinDistance = 300.f;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Cinder|Patrol", meta = (ClampMin = "0.0"))
 	float PatrolMaxDistance = 800.f;
 
 	/** 이동 사이에 멈춰 있는 시간의 최솟값·최댓값(초) */
-	UPROPERTY(EditDefaultsOnly, Category = "Cinder|Patrol", meta = (ClampMin = "0.0"))
 	float PatrolWaitMin = 1.f;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Cinder|Patrol", meta = (ClampMin = "0.0"))
 	float PatrolWaitMax = 2.5f;
 
 	// ---- 원거리 ----
 
+	/** 발사할 투사체 블루프린트. 속도·수명은 데이터 에셋에서 정한다. */
 	UPROPERTY(EditDefaultsOnly, Category = "Cinder|Ranged")
+	TSubclassOf<AEnemyProjectile> ProjectileClass;
+
+	/** 투사체 설정(클래스는 위 ProjectileClass, 속도·수명은 데이터 에셋에서 복사된다) */
 	FEnemyProjectileConfig ProjectileConfig;
 
 	/** 공격 시작부터 발사까지의 지연(초). 애님 노티파이 도입 전까지 사용하는 임시 값. */
-	UPROPERTY(EditDefaultsOnly, Category = "Cinder|Ranged", meta = (ClampMin = "0.0"))
 	float FireDelay = 0.3f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Cinder|Ranged")
 	FName MuzzleSocketName = TEXT("Fire");
 
-	UPROPERTY(EditDefaultsOnly, Category = "Cinder|Ranged")
 	FVector MuzzleOffset = FVector(80.f, 0.f, 30.f);
 
 	UPROPERTY(EditDefaultsOnly, Category = "Cinder|Ranged")
@@ -127,27 +120,18 @@ protected:
 	// ---- 낙하·자폭 ----
 
 	/** 체력 비율이 이 값 이하가 되면 바닥으로 떨어진다 (0.5 = 50%) */
-	UPROPERTY(EditDefaultsOnly, Category = "Cinder|Fall", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float FallHealthRatio = 0.5f;
 
 	/** 착지 후 플레이어에게 달려가는 속도 */
-	UPROPERTY(EditDefaultsOnly, Category = "Cinder|Explosion", meta = (ClampMin = "0.0"))
 	float FallenMoveSpeed = 700.f;
 
 	/** 플레이어와 몸 가장자리 사이 거리가 이 값 이하가 되면 자폭 준비를 시작한다. */
-	UPROPERTY(EditDefaultsOnly, Category = "Cinder|Explosion", meta = (ClampMin = "0.0"))
 	float ExplosionTriggerRange = 150.f;
 
 	/** 자폭 준비를 시작하고 폭발할 때까지의 시간(초). 이 동안 멈춰서 예고한다. */
-	UPROPERTY(EditDefaultsOnly, Category = "Cinder|Explosion", meta = (ClampMin = "0.0"))
 	float ExplosionFuseTime = 0.4f;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Cinder|Explosion", meta = (ClampMin = "0.0"))
 	float ExplosionRadius = 250.f;
-
-	/** 자폭 피해량(레벨 배율 적용 전) */
-	UPROPERTY(EditDefaultsOnly, Category = "Cinder|Explosion")
-	float ExplosionDamage = 40.f;
 
 	/** 자폭 피해에 붙일 피해 유형 태그(예: Damage.Type.Explosion). 비워 두면 붙이지 않는다. */
 	UPROPERTY(EditDefaultsOnly, Category = "Cinder|Explosion")
@@ -166,6 +150,12 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Cinder|Explosion")
 	TObjectPtr<UNiagaraSystem> ExplosionEffect;
+
+	/** 폭발 이펙트 크기 배율. 이펙트가 너무 크거나 작으면 이 값으로 조절한다(1 = 원래 크기). */
+	float ExplosionEffectScale = 1.f;
+
+	/** 자폭 준비 이펙트 크기 배율 (1 = 원래 크기) */
+	float FuseEffectScale = 1.f;
 
 private:
 	/** 체력이 줄 때마다 낙하 조건을 확인한다. */

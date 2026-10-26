@@ -19,6 +19,7 @@ class UMaterialInterface;
 struct FGameplayEffectSpec;
 class UWidgetComponent;
 class UEnemyHealthBarWidget;
+class APlayerBase;
 class AEnemyBase;
 class AEnemyProjectile;
 
@@ -158,8 +159,15 @@ public:
 	FOnEnemyDiedSignature OnEnemyDied;
 
 protected:
+	virtual void PostInitializeComponents() override;
 	virtual void BeginPlay() override;
 	virtual void Destroyed() override;
+
+	/**
+	 * 데이터 에셋의 수치를 이 몬스터의 멤버에 복사한다. 몬스터 생성 직후(BeginPlay 전)에 한 번 호출된다.
+	 * 서브클래스는 Super를 먼저 부르고 데이터 에셋의 자기 몬스터 항목을 복사한다. Data가 없으면 코드 기본값을 그대로 쓴다.
+	 */
+	virtual void ApplyEnemyData(const UEnemyDataAsset* Data);
 
 	/** 공격 쿨다운(초). 서브클래스가 다른 값을 쓰려면 오버라이드한다. */
 	virtual float GetAttackCooldown() const { return GetStatConfig().AttackCooldown; }
@@ -181,6 +189,20 @@ protected:
 	/** 피해를 받았을 때 피격 이펙트를 재생한다. */
 	UFUNCTION()
 	void HandleDamagedEffect(float Damage);
+
+	/** 현재 타겟이 플레이어일 때, 그 플레이어의 사망과 부활 이벤트를 받도록 연결한다. */
+	void BindTargetPlayerEvents(AActor* Target);
+
+	/** 연결해 둔 플레이어 이벤트를 모두 해제한다. */
+	void UnbindTargetPlayerEvents();
+
+	/** 타겟 플레이어가 죽으면 타겟을 해제하고 정찰로 복귀한다. */
+	UFUNCTION()
+	void HandleTargetPlayerDied(APlayerBase* Player);
+
+	/** 죽었던 플레이어가 부활했을 때, 아직 시야 안에 있으면 다시 추격한다. */
+	UFUNCTION()
+	void HandleTargetPlayerRespawned(APlayerBase* Player);
 
 	/** 머리 위 체력바를 갱신한다. bInstant가 true면 지연 바도 즉시 맞춘다. */
 	void UpdateHealthBar(bool bInstant);
@@ -207,8 +229,14 @@ protected:
 	/** 타겟 방향(수평)으로 몸을 돌린다 */
 	void FaceTarget();
 
-	/** 투사체 1발을 생성해 현재 타겟 방향으로 발사한다 */
-	AEnemyProjectile* SpawnEnemyProjectile(const FEnemyProjectileConfig& Config, const FVector& MuzzleLocation);
+	/** 총구에서 현재 타겟까지의 조준 방향(단위 벡터, Y 평면 고정이라 Y는 0). 타겟이 없으면 ZeroVector. */
+	FVector ComputeAimDirection(const FVector& MuzzleLocation) const;
+
+	/**
+	 * 투사체 1발을 생성해 발사한다.
+	 * FixedDirection이 ZeroVector면 지금 타겟 방향으로 쏘고, 값이 있으면 그 방향으로 쏜다(연발 조준 고정용).
+	 */
+	AEnemyProjectile* SpawnEnemyProjectile(const FEnemyProjectileConfig& Config, const FVector& MuzzleLocation, const FVector& FixedDirection = FVector::ZeroVector);
 
 	bool bIsAttacking = false;
 
@@ -221,12 +249,11 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Enemy")
 	EEnemyType EnemyType = EEnemyType::Flea;
 
-	/** 몬스터 설정 데이터. 지정하면 StatConfig 대신 이 에셋의 값을 쓴다. */
+	/** 몬스터 설정 데이터. 이 몬스터의 모든 수치(능력치, 공격 수치, 타이밍 등)가 들어 있다. 몬스터마다 에셋을 하나씩 만들고, 에셋 안에서 자기 몬스터 항목을 채운다. */
 	UPROPERTY(EditDefaultsOnly, Category = "Enemy")
 	TObjectPtr<UEnemyDataAsset> EnemyData;
 
-	/** 데이터 에셋이 없을 때 쓰는 기본 능력치 */
-	UPROPERTY(EditDefaultsOnly, Category = "Enemy")
+	/** 데이터 에셋이 없을 때 쓰는 기본 능력치(생성자의 코드 기본값). 수치는 데이터 에셋에서 편집한다. */
 	FEnemyStatConfig StatConfig;
 
 	/** 공격 시작 시 재생할 몽타주 (애니메이션 블루프린트에 DefaultSlot이 있어야 한다) */
@@ -246,19 +273,15 @@ protected:
 	TObjectPtr<UWidgetComponent> HealthBarComponent;
 
 	/** 켜면 체력바를 항상 표시하고, 끄면 맞은 뒤 HealthBarVisibleTime 동안만 표시한다. */
-	UPROPERTY(EditDefaultsOnly, Category = "Enemy|UI")
 	bool bAlwaysShowHealthBar = false;
 
 	/** 맞은 뒤 체력바가 유지되는 시간(초) */
-	UPROPERTY(EditDefaultsOnly, Category = "Enemy|UI", meta = (ClampMin = "0.1", EditCondition = "!bAlwaysShowHealthBar"))
 	float HealthBarVisibleTime = 3.f;
 
 	/** 피격 몽타주를 다시 재생할 수 있기까지의 최소 간격(초). 연속 피격 때 계속 끊기는 것을 막는다. */
-	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Animation", meta = (ClampMin = "0.0"))
 	float HitReactionCooldown = 0.4f;
 
 	/** 켜면 공격 중에 맞아도 피격 몽타주가 재생되고 공격이 취소된다. 끄면 공격 중에는 피격 몽타주를 재생하지 않는다. */
-	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Animation")
 	bool bHitReactionInterruptsAttack = false;
 
 	/**
@@ -269,7 +292,6 @@ protected:
 	TObjectPtr<UMaterialInterface> HitFlashMaterial;
 
 	/** 번쩍임이 유지되는 시간(초) */
-	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Effects", meta = (ClampMin = "0.01"))
 	float HitFlashDuration = 0.08f;
 
 	/** 피해를 받을 때 재생할 이펙트 */
@@ -277,7 +299,6 @@ protected:
 	TObjectPtr<UNiagaraSystem> HitEffect;
 
 	/** 사망 후 시체가 남아 있는 시간(초). 이 시간이 지나면 몬스터가 풀로 돌아간다. 0 이하이면 계속 남긴다. */
-	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Death", meta = (ClampMin = "0.0"))
 	float CorpseLifeSpan = 5.f;
 
 	/** 사망할 때 재생할 이펙트 */
@@ -288,7 +309,6 @@ protected:
 	 * 착지한 높이가 홈과 이 값보다 많이 다르면(낭떠러지에서 떨어진 경우 등) 착지한 자리를 새 홈으로 삼는다.
 	 * 다른 층에 떨어진 몬스터가 원래 홈으로 돌아가려다 막히는 것을 막는다.
 	 */
-	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Patrol", meta = (ClampMin = "0.0"))
 	float HomeReanchorHeight = 150.f;
 
 	/** 플레이어에게 피해를 줄 때 적용할 GameplayEffect (IncomingDamage를 올리는 GE) */
@@ -306,18 +326,15 @@ protected:
 	 * 플레이어 원거리 피해(Damage.Category.Player.Ranged)에 곱할 배율. 1이면 그대로, 0.5면 절반으로 줄어든다.
 	 * 근접 피해에는 적용되지 않는다.
 	 */
-	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Damage", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float RangedDamageMultiplier = 1.f;
 
 	/** 몬스터 레벨. 후반 지역일수록 높게 배치해 체력·공격력을 키운다. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Enemy|Level", meta = (ClampMin = "1", ExposeOnSpawn = "true"))
 	int32 EnemyLevel = 1;
 
-	UPROPERTY(EditAnywhere, Category = "Enemy")
 	float PatrolRadius = 600.f;
 
 	/** 정찰 이동 축(월드 기준). 사이드뷰 기본은 X축 왕복. 벽·천장 이동형은 (0,0,1)로 설정. */
-	UPROPERTY(EditAnywhere, Category = "Enemy")
 	FVector PatrolAxis = FVector(1.f, 0.f, 0.f);
 
 	UPROPERTY(EditDefaultsOnly, Category = "Enemy")
@@ -346,6 +363,10 @@ private:
 	FTimerHandle HitFlashTimerHandle;
 
 	FTimerHandle HealthBarTimerHandle;
+
+	/** 사망·부활 이벤트를 연결해 둔 플레이어 */
+	TWeakObjectPtr<APlayerBase> BoundPlayer;
+	TWeakObjectPtr<APlayerBase> DeadPlayer;
 
 	/** 풀에 보관 중인지 */
 	bool bInPool = false;

@@ -23,7 +23,7 @@ class THELASTMESSAGE_API UProgressSaveSubsystem : public UGameInstanceSubsystem
 {
 	GENERATED_BODY()
 public:
-	/** Begin only from the title/menu. Existing files are never overwritten by StartNewGame. */
+	/** Begin only from the title/menu. Replacing an occupied slot requires explicit confirmation. */
 	UFUNCTION(BlueprintCallable, Category="Save") bool StartNewGame(int32 SlotId, bool bOverwriteExisting = false);
 	UFUNCTION(BlueprintPure, Category="Save") FProgressSlotInfo GetSlotInfo(int32 SlotId) const;
 	UFUNCTION(BlueprintCallable, Category="Save") bool ContinueGame(int32 SlotId);
@@ -39,6 +39,10 @@ public:
 	// Mutable working state only. Disk writes take an independent serialized snapshot.
 	UProgressSaveGame* GetWorkingProgress() const { return WorkingProgress; }
 private:
+#if WITH_DEV_AUTOMATION_TESTS
+	friend class FProgressSlotFlowTest;
+	FString AutomationSaveDirectory;
+#endif
 	UProgressSaveGame* ReadSlot(int32 SlotId) const;
 	FString GetSlotPath(int32 SlotId) const;
 	UPROPERTY(Transient) TObjectPtr<UProgressSaveGame> WorkingProgress;

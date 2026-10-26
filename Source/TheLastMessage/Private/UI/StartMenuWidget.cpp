@@ -188,10 +188,10 @@ void UStartMenuWidget::RequestExit() { if (!bWorking) OnExitRequested.Broadcast(
 void UStartMenuWidget::ConfirmOverwrite()
 {
 	if (bWorking || PendingSlot < 1 || PendingSlot > 3) return;
-	const int32 Slot = PendingSlot;
+	const int32 SelectedSlot = PendingSlot;
 	PendingSlot = 0;
 	if (Pages) Pages->SetActiveWidgetIndex(1);
-	OnSlotSelected.Broadcast(Slot, true);
+	OnSlotSelected.Broadcast(SelectedSlot, true);
 }
 
 void UStartMenuWidget::CancelOverwrite()

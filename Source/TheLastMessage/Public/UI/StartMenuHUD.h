@@ -18,7 +18,14 @@ protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	UPROPERTY(EditDefaultsOnly, Category="Menu") TSubclassOf<UStartMenuWidget> MenuClass;
 	UPROPERTY(Transient, BlueprintReadOnly, Category="Menu") TObjectPtr<UStartMenuWidget> Menu;
+	UPROPERTY(EditDefaultsOnly, Category="Menu") TSoftObjectPtr<UWorld> NewGameMap;
 private:
+	void RefreshSlots();
+	void TravelToProgress();
+	bool bStartingGame = false;
+	bool SlotExists[3] = {false, false, false};
+	UFUNCTION() void SelectSlot(int32 SlotId, bool bNewGame);
+	UFUNCTION() void InitialSaveFinished(bool bSuccess);
 	UFUNCTION() void ExitGame();
 };
 

@@ -9,6 +9,9 @@
 
 FString UProgressSaveSubsystem::GetSaveDirectory() const
 {
+#if WITH_DEV_AUTOMATION_TESTS
+	if (!AutomationSaveDirectory.IsEmpty()) return AutomationSaveDirectory;
+#endif
 #if WITH_EDITOR
 	return FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("SaveGames/Development"));
 #else

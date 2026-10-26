@@ -319,6 +319,20 @@ bool BuildMenuScaffold(bool bPreview)
 		BP->WidgetTree->ForEachWidget([](UWidget* Control) { Control->bIsVariable = true; });
 		if (!CompileSave(BP)) return false;
 	}
+	else
+	{
+		bool bChanged = UStartMenuWidget::AddConfirmationLayout(BP->WidgetTree);
+		BP->WidgetTree->ForEachWidget([&](UWidget* Control)
+		{
+			Control->bIsVariable = true;
+			if (!BP->WidgetVariableNameToGuidMap.Contains(Control->GetFName()))
+			{
+				BP->WidgetVariableNameToGuidMap.Add(Control->GetFName(), FGuid::NewGuid());
+				bChanged = true;
+			}
+		});
+		if (bChanged && !CompileSave(BP)) return false;
+	}
 	const TCHAR* MapPath = TEXT("/Game/Main/Maps/Lv_MainMenu");
 	if (!FPackageName::DoesPackageExist(MapPath))
 	{
@@ -376,6 +390,18 @@ bool BuildMenuScaffold(bool bPreview)
 	bOK = Pages->GetActiveWidgetIndex() == 1 && !Slot1->GetIsEnabled() && Render(TEXT("LoadSlots.png")) && bOK;
 	Panel->SetSlotPresentation(1, true, FText::FromString(TEXT("Saved game")));
 	bOK = Slot1->GetIsEnabled() && bOK;
+	Panel->ShowNewGameSlots();
+	Slot1->OnClicked.Broadcast();
+	bOK = Pages->GetActiveWidgetIndex() == 2 && Render(TEXT("OverwriteConfirm.png")) && bOK;
+	CastChecked<UButton>(Panel->WidgetTree->FindWidget(TEXT("CancelButton")))->OnClicked.Broadcast();
+	bOK = Pages->GetActiveWidgetIndex() == 1 && bOK;
+	Slot1->OnClicked.Broadcast();
+	CastChecked<UButton>(Panel->WidgetTree->FindWidget(TEXT("ConfirmButton")))->OnClicked.Broadcast();
+	bOK = Pages->GetActiveWidgetIndex() == 1 && bOK;
+	Panel->SetBusy(true);
+	Slot1->OnClicked.Broadcast();
+	bOK = Pages->GetActiveWidgetIndex() == 1 && !Slot1->GetIsEnabled() && bOK;
+	Panel->SetBusy(false);
 	Panel->RemoveFromParent();
 	World->DestroyWorld(false); GEngine->DestroyWorldContext(World);
 	UE_LOG(LogTemp, Display, TEXT("START_MENU_SCAFFOLD: editable widget, menu map, navigation/selection/empty-slot checks: %s"), bOK ? TEXT("PASS") : TEXT("FAIL"));

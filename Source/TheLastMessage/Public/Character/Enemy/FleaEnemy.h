@@ -24,13 +24,10 @@ public:
 	void SpawnShockwaveEffect();
 
 protected:
-	/** 범위 공격 반경 */
-	UPROPERTY(EditDefaultsOnly, Category = "Flea")
-	float AreaAttackRadius = 250.f;
+	virtual void ApplyEnemyData(const UEnemyDataAsset* Data) override;
 
-	/** 범위 공격 피해량 */
-	UPROPERTY(EditDefaultsOnly, Category = "Flea")
-	float AreaAttackDamage = 15.f;
+	/** 범위 공격 반경 */
+	float AreaAttackRadius = 250.f;
 
 	/**
 	 * 충전 이펙트. 공격 시작부터 판정이 터지기 전(Area Attack Windup 동안)까지 재생된다.
@@ -44,11 +41,9 @@ protected:
 	FName ChargeEffectSocketName;
 
 	/** 소켓이 없을 때 충전 이펙트를 붙일 위치(몬스터 기준 로컬 좌표) */
-	UPROPERTY(EditDefaultsOnly, Category = "Flea|Effects")
 	FVector ChargeEffectOffset = FVector::ZeroVector;
 
 	/** 켜면 충전 이펙트 크기를 범위 공격 반경에 맞춰 키운다(위험 범위 표시용). 기준 반경은 Shockwave Effect Base Radius를 쓴다. */
-	UPROPERTY(EditDefaultsOnly, Category = "Flea|Effects")
 	bool bScaleChargeEffectToAttackRadius = false;
 
 	/** 범위 공격 충격파 이펙트 (발밑에서 재생) */
@@ -56,11 +51,9 @@ protected:
 	TObjectPtr<UNiagaraSystem> ShockwaveEffect;
 
 	/** 충격파 이펙트가 원래 만들어진 반경. 실제 반경(AreaAttackRadius)에 맞춰 크기를 조절하는 기준이다. */
-	UPROPERTY(EditDefaultsOnly, Category = "Flea|Effects", meta = (ClampMin = "1.0"))
 	float ShockwaveEffectBaseRadius = 250.f;
 
 	/** 공격 시작부터 판정까지의 지연(초). 애님 노티파이 도입 전까지 사용하는 임시 값. */
-	UPROPERTY(EditDefaultsOnly, Category = "Flea")
 	float AreaAttackWindup = 0.4f;
 
 private:

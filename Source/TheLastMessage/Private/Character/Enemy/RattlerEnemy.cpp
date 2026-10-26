@@ -7,9 +7,29 @@ ARattlerEnemy::ARattlerEnemy()
 
 	// 기본값(임시). 블루프린트에서 조정한다.
 	StatConfig.MaxHealth = 120.f;
+	StatConfig.AttackDamage = 10.f;
 	StatConfig.MoveSpeed = 250.f;
 	StatConfig.AttackRange = 900.f;
 	StatConfig.ChaseAcceptableRadius = 700.f;
+}
+
+void ARattlerEnemy::ApplyEnemyData(const UEnemyDataAsset* Data)
+{
+	Super::ApplyEnemyData(Data);
+	ProjectileConfig.ProjectileClass = ProjectileClass;
+
+	if (!Data)
+	{
+		return;
+	}
+
+	const FRattlerSettings& S = Data->Rattler;
+	BurstCount = S.BurstCount;
+	FireInterval = S.FireInterval;
+	BurstCooldown = S.BurstCooldown;
+	MuzzleOffset = S.MuzzleOffset;
+	ProjectileConfig.Speed = S.ProjectileSpeed;
+	ProjectileConfig.Lifetime = S.ProjectileLifetime;
 }
 
 void ARattlerEnemy::StartAttack()
@@ -26,6 +46,7 @@ void ARattlerEnemy::StartBurst()
 {
 	bIsAttacking = true;
 	RemainingBurst = BurstCount;
+	bAimLocked = false;
 	FaceTarget();
 	PlayAttackMontage();
 
@@ -48,13 +69,16 @@ void ARattlerEnemy::FireOnce()
 
 	const FVector Muzzle = GetMuzzleLocation(MuzzleSocketName, MuzzleOffset);
 
-	FRotator FlashRotation = GetActorRotation();
-	if (const AActor* Target = GetCurrentTarget())
+	// 연발의 첫 발을 쏘는 순간의 플레이어 위치로 조준 방향을 고정한다. 나머지 발도 같은 방향이라 일자로 날아간다.
+	if (!bAimLocked)
 	{
-		FlashRotation = (Target->GetActorLocation() - Muzzle).Rotation();
+		LockedAimDirection = ComputeAimDirection(Muzzle);
+		bAimLocked = !LockedAimDirection.IsNearlyZero();
 	}
 
-	SpawnEnemyProjectile(ProjectileConfig, Muzzle);
+	const FRotator FlashRotation = bAimLocked ? LockedAimDirection.Rotation() : GetActorRotation();
+
+	SpawnEnemyProjectile(ProjectileConfig, Muzzle, LockedAimDirection);
 	SpawnEffectAtSocket(MuzzleFlashEffect, MuzzleSocketName, MuzzleOffset, FlashRotation);
 
 	--RemainingBurst;
@@ -68,6 +92,7 @@ void ARattlerEnemy::EndBurst()
 {
 	GetWorldTimerManager().ClearTimer(BurstTimerHandle);
 	RemainingBurst = 0;
+	bAimLocked = false;
 
 	if (bIsAttacking)
 	{
@@ -79,5 +104,6 @@ void ARattlerEnemy::CancelAttack()
 {
 	GetWorldTimerManager().ClearTimer(BurstTimerHandle);
 	RemainingBurst = 0;
+	bAimLocked = false;
 	Super::CancelAttack();
 }

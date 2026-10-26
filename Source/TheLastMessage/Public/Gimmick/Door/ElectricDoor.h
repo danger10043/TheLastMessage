@@ -52,7 +52,7 @@ protected:
     UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Gimmick|Door", meta = (MakeEditWidget = true))
     FTransform OpenTransform = FTransform::Identity;
 
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Door")
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Config")
     FDataTableRowHandle DoorConfigRow;
 
     UPROPERTY(Transient, VisibleInstanceOnly, BlueprintReadOnly, Category = "Gimmick|Door")

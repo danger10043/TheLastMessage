@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Gimmick/Switch/SwitchGroupBase.h"
+#include "TimerManager.h"
 #include "SequentialSwitchGroup.generated.h"
 
 class AToggleSwitch;
@@ -32,11 +33,34 @@ public:
 	virtual void ResetGroup() override;
 
 protected:
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
 	// 부모에서 구독한 스위치 상태 변경 이벤트 수신
 	virtual void HandleSwitchStateChanged(AGimmickBase* Source, bool bActive) override;
 
 	// 다음에 켜야 할 스위치의 배열 인덱스
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Gimmick|SequentialSwitchGroup")
 	int32 NextSwitchIndex = 0;
+
+	// 잘못된 레버가 끝까지 넘어간 뒤 유지할 시간
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|SequentialSwitchGroup", meta = (ClampMin = "0.0", Units = "s"))
+	float FailureHoldTime = 0.1f;
+
+private:
+	// 오입력 레버의 움직임이 끝나기를 기다림
+	void BeginFailureAnimation(AToggleSwitch* Switch);
+
+	// 모든 레버를 원위치로 복귀
+	void PlayFailureReturn();
+
+	// 복귀가 끝나면 입력 잠금 해제
+	void FinishFailureAnimation();
+
+	void SetGroupLeverInputLocked(bool bLocked);
+
+	bool bIsFailureAnimating = false;
+
+	FTimerHandle FailureReturnTimerHandle;
+	FTimerHandle FailureUnlockTimerHandle;
 
 };

@@ -8,9 +8,12 @@
 #include "LaserEmitter.generated.h"
 
 class ACharacter;
+class APlayerBase;
 class ALaserReceiver;
 class USceneComponent;
 class UNiagaraComponent;
+class UStaticMeshComponent;
+class UMaterialInstanceDynamic;
 
 // 레이저 경로, 수신기 접촉, 시각 효과는 이후 구현한다.
 UCLASS(Blueprintable)
@@ -46,12 +49,23 @@ protected:
 	// 레이저 한 구간의 충돌 판정
 	bool TraceLaserSegment(const FVector& Start, const FVector& Direction, float Distance, FHitResult& OutHit) const;
 
+	// 레이저 구간과 축소한 플레이어 캡슐의 접촉 검사
+	bool FindPlayerHitOnSegment(const FVector& Start, const FVector& End, const TArray<APlayerBase*>& Players, FHitResult& OutHit) const;
+
 	// 일반 피해 계산을 거치지 않고 플레이어 사망 처리
 	void KillPlayerImmediately(ACharacter* Player);
 
 	// 레이저 발사 위치와 방향
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Gimmick|Components")
 	TObjectPtr<USceneComponent> LaserOrigin;
+
+	// 발신기의 몸체와 표시등 메시
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Gimmick|Components")
+	TObjectPtr<UStaticMeshComponent> EmitterMesh;
+
+	// 표시등 재질이 들어 있는 슬롯 번호
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Laser|Appearance", meta = (ClampMin = "0"))
+	int32 IndicatorMaterialIndex = 2;
 
 	// 게임 시작 시 자동으로 레이저를 켤지 여부
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Laser")
@@ -62,7 +76,7 @@ protected:
 	TEnumAsByte<ECollisionChannel> LaserTraceChannel = ECC_GameTraceChannel3;
 
 	// 사용할 데이터 테이블과 행
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Laser")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Config")
 	FDataTableRowHandle LaserConfigRow;
 
 	// 데이터 테이블에서 읽은 설정
@@ -87,4 +101,11 @@ private:
 	TArray<TWeakObjectPtr<ALaserReceiver>> CurrentReceivers;
 
 	bool bHasValidLaserConfig = false;
+
+	// 레이저 활성 상태를 표시등에 반영
+	void UpdateEmitterIndicator();
+
+	// 부모가 생성한 동적 머티리얼을 보관해서 재사용
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> EmitterIndicatorMaterial;
 };

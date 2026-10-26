@@ -319,7 +319,8 @@ void UGA_WeaponAttackBase::ExecuteAttack()
 			AttackSection = Data->AttackMontage->GetSectionName(SectionIndex);
 		}
 		UAbilityTask_PlayMontageAndWait* MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
-			this, NAME_None, Data->AttackMontage, 1.0f, AttackSection);
+			this, NAME_None, Data->AttackMontage, 1.0f, AttackSection, true, 1.0f, 0.0f, true);
+		// 블렌드아웃 도중 중단돼도 OnInterrupted로 공격 상태를 정리한다.
 		MontageTask->OnCompleted.AddDynamic(this, &UGA_WeaponAttackBase::HandleMontageCompleted);
 		MontageTask->OnInterrupted.AddDynamic(this, &UGA_WeaponAttackBase::HandleMontageCancelled);
 		MontageTask->OnCancelled.AddDynamic(this, &UGA_WeaponAttackBase::HandleMontageCancelled);

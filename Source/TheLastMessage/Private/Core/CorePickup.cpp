@@ -287,8 +287,8 @@ void ACorePickup::HandleCoreReroll(int32 ChoiceIndex)
 	if (!Session) return;
 
 	TGuardValue<bool> GrantingRewardGuard(bIsGrantingReward, true);
-	Session->RerollCoreChoice(ChoiceIndex);
-	RefreshChoiceScreen();
+	const bool bRerolled = Session->RerollCoreChoice(ChoiceIndex) != nullptr;
+	if (RefreshChoiceScreen() && bRerolled) ActiveChoiceWidget->ResetStatusMessage();
 }
 
 void ACorePickup::HandleChoiceClosed()

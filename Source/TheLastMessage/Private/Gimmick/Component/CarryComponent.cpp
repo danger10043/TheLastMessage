@@ -181,23 +181,18 @@ bool UCarryComponent::DropCarriedObject()
         return false;
     }
 
-    // 위치 검사가 성공하기 전에는 운반 상태를 바꾸지 않음
-    FTransform DropTransform;
-
-    if (!FindDropTransform(DropTransform))
-    {
-        return false;
-    }
-
     TGuardValue<bool> ChangingGuard(bIsChangingCarryState, true);
 
+    // 현재 들고 있던 월드 위치와 회전을 유지하며 부착 해제
     Target->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
 
-    Target->SetActorTransform(DropTransform, false, nullptr, ETeleportType::TeleportPhysics);
+    // 크기와 충돌 상태를 복구하되 물리 시뮬레이션은 끔
+    RestoreObjectState(Target, false);
 
-    RestoreObjectState(Target, true);
+    // 아이템 자체의 수직 낙하 시작
     Target->OnDropped();
 
+    // 플레이어의 운반 참조와 효과 정리
     FinishCarryState();
 
     return true;
@@ -236,7 +231,7 @@ bool UCarryComponent::TransferCarriedObject(USceneComponent* TargetParent)
 
     // 소켓에 전달한 물체는 부착 상태를 유지하도록 물리 시뮬레이션 중지
     RestoreObjectState(Target, false);
-    Target->OnDropped();
+    Target->OnTransferred();
 
     FinishCarryState();
 
@@ -256,19 +251,14 @@ void UCarryComponent::ClearCarryState()
 
     if (IsValid(Target))
     {
-        FTransform DropTransform;
-        const bool bFoundDropPosition = FindDropTransform(DropTransform);
+        // 사망해도 아이템의 현재 월드 위치 유지
+        Target->DetachFromActor(
+            FDetachmentTransformRules::KeepWorldTransform);
 
-        Target->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+        // 물리 시뮬레이션 없이 기존 크기와 충돌 상태 복구
+        RestoreObjectState(Target, false);
 
-        // 강제 정리에서도 안전한 위치를 찾았다면 그곳에 내려놓음
-        // 찾지 못하면 현재 월드 위치에서 부착만 해제
-        if (bFoundDropPosition)
-        {
-            Target->SetActorTransform(DropTransform, false, nullptr, ETeleportType::TeleportPhysics);
-        }
-
-        RestoreObjectState(Target, true);
+        // 아이템 자체의 수직 낙하 시작
         Target->OnDropped();
     }
 
@@ -309,143 +299,6 @@ void UCarryComponent::CacheOwner()
 
     OwnerPlayer = Player;
     OwnerASC = IsValid(Player) ? Player->GetAbilitySystemComponent() : nullptr;
-}
-
-bool UCarryComponent::FindDropTransform(FTransform& OutTransform) const
-{
-    APlayerBase* Player = OwnerPlayer.Get();
-    ACarryableGimmick* Target = CarriedObject.Get();
-    UWorld* World = GetWorld();
-
-    if (!IsValid(Player) || !IsValid(Target) || !World)
-    {
-        return false;
-    }
-
-    UStaticMeshComponent* ObjectMesh = Target->GetObjectMesh();
-    UCharacterMovementComponent* Movement = Player->GetCharacterMovement();
-    UCapsuleComponent* Capsule = Player->GetCapsuleComponent();
-
-    if (!IsValid(ObjectMesh) || !IsValid(Movement) || !IsValid(Capsule))
-    {
-        return false;
-    }
-
-    const float DropDistance = Target->GetCarryConfig().DropDistance;
-
-    if (!FMath::IsFinite(DropDistance) || DropDistance <= 0.0f)
-    {
-        return false;
-    }
-
-    FVector GravityDirection = Movement->GetGravityDirection().GetSafeNormal();
-
-    if (GravityDirection.IsNearlyZero())
-    {
-        GravityDirection = -Player->GetActorUpVector();
-    }
-
-    const FVector UpDirection = -GravityDirection;
-
-    const FVector ForwardDirection = FVector::VectorPlaneProject(Player->GetActorForwardVector(), UpDirection).GetSafeNormal();
-
-    if (ForwardDirection.IsNearlyZero())
-    {
-        return false;
-    }
-
-    FVector LocalMin;
-    FVector LocalMax;
-    ObjectMesh->GetLocalBounds(LocalMin, LocalMax);
-
-    const FVector LocalCenter = (LocalMin + LocalMax) * 0.5;
-    const FVector ScaledHalfSize = (LocalMax - LocalMin) * 0.5 * OriginalWorldScale.GetAbs();
-
-    // 얇은 메시도 검사할 수 있도록 최소 두께 확보
-    const FVector HalfSize(FMath::Max(ScaledHalfSize.X, 1.0), FMath::Max(ScaledHalfSize.Y, 1.0), FMath::Max(ScaledHalfSize.Z, 1.0));
-
-    const FQuat DropRotation = Target->GetActorQuat().GetNormalized();
-
-    // 기존 함수 끝부분에 있던 중심 보정 계산을 여기로 이동
-    const FVector CenterOffset = DropRotation.RotateVector(LocalCenter * OriginalWorldScale);
-
-    const auto GetExtentAlong = [&HalfSize, &DropRotation](const FVector& Direction)
-        {
-            return
-                FMath::Abs(FVector::DotProduct(Direction, DropRotation.GetAxisX())) * HalfSize.X
-                + FMath::Abs(FVector::DotProduct(Direction, DropRotation.GetAxisY())) * HalfSize.Y
-                + FMath::Abs(FVector::DotProduct(Direction, DropRotation.GetAxisZ())) * HalfSize.Z;
-        };
-
-    const double CapsuleHalfHeight = Capsule->GetScaledCapsuleHalfHeight();
-
-    // 아이템 원점의 Y 좌표를 먼저 고정하고 검사할 중심 위치 계산
-    const FVector DesiredActorLocation = Target->ConstrainDropLocation(Player->GetActorLocation() + ForwardDirection * DropDistance - CenterOffset);
-
-    const FVector DesiredCenter = DesiredActorLocation + CenterOffset;
-
-    FCollisionQueryParams PathParams(SCENE_QUERY_STAT(CarryDropPath), false, Player);
-
-    PathParams.AddIgnoredActor(Target);
-
-    // 현재 중력 방향으로 바닥 찾기
-    FHitResult FloorHit;
-
-    const bool bFoundFloor = World->LineTraceSingleByChannel(
-        FloorHit,
-        DesiredCenter + UpDirection * CapsuleHalfHeight,
-        DesiredCenter + GravityDirection * (CapsuleHalfHeight + DropDistance),
-        ECC_WorldDynamic,
-        PathParams);
-
-    if (!bFoundFloor || FloorHit.bStartPenetrating)
-    {
-        return false;
-    }
-
-    const FVector FloorNormal = FloorHit.ImpactNormal.GetSafeNormal();
-
-    // 옆으로 향한 벽을 바닥으로 취급하지 않음
-    if (FVector::DotProduct(FloorNormal, UpDirection) < 0.5)
-    {
-        return false;
-    }
-
-    constexpr double SurfaceClearance = 2.0;
-
-    const FVector RawBoxCenter = FloorHit.ImpactPoint + FloorNormal * (GetExtentAlong(FloorNormal) + SurfaceClearance);
-
-    // 최종 배치 위치도 최초 Y 좌표에 맞게 보정
-    const FVector DropActorLocation = Target->ConstrainDropLocation(RawBoxCenter - CenterOffset);
-
-    const FVector BoxCenter = DropActorLocation + CenterOffset;
-
-    const FCollisionShape BoxShape = FCollisionShape::MakeBox(HalfSize);
-
-    // 목적지가 플레이어 자신이나 다른 장애물과 겹치는지 확인
-    FCollisionQueryParams SpaceParams(SCENE_QUERY_STAT(CarryDropSpace), false);
-
-    SpaceParams.AddIgnoredActor(Target);
-
-    if (World->OverlapBlockingTestByChannel(BoxCenter, DropRotation, ECC_WorldDynamic, BoxShape, SpaceParams))
-    {
-        return false;
-    }
-
-    const double StartHeightAdjustment = FMath::Max( 0.0, GetExtentAlong(UpDirection) - CapsuleHalfHeight + SurfaceClearance);
-
-    const FVector PathStart = Player->GetActorLocation() + UpDirection * StartHeightAdjustment;
-
-    // 목적지까지 물체 크기로 검사하여 벽 너머에 놓는 것을 방지
-    FHitResult PathHit;
-
-    if (World->SweepSingleByChannel(PathHit, PathStart, BoxCenter, DropRotation, ECC_WorldDynamic, BoxShape, PathParams))
-    {
-        return false;
-    }
-
-    OutTransform = FTransform(DropRotation, DropActorLocation, OriginalWorldScale);
-    return true;
 }
 
 void UCarryComponent::RestoreObjectState(ACarryableGimmick* Target, bool bRestorePhysics)

@@ -19,20 +19,15 @@
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/GameStateBase.h"
 #include "UObject/UObjectIterator.h"
+#include "Gimmick/SideScrollingSoftPlatform.h"
 
 namespace
 {
 bool IsGrappleMesh(const UPrimitiveComponent* Component)
 {
-	const UMeshComponent* Mesh = Cast<UMeshComponent>(Component);
-	if (!Mesh) return false;
-	const FName Profile = Mesh->GetCollisionProfileName();
-	if (Profile == TEXT("InvisibleWall") || Profile == TEXT("InvisibleWallDynamic")) return false;
-	const AActor* Actor = Mesh->GetOwner();
+	if (!Component) return false;
+	const AActor* Actor = Component->GetOwner();
 	if (!Actor) return false;
-	// 외형과 분리된 바닥이나 문 위 구조물의 충돌 표면은 실제 지형으로 취급
-	const bool bTerrainSurface = Profile == TEXT("GrappleTerrain");
-	if (!bTerrainSurface && (!Mesh->IsVisible() || Mesh->bHiddenInGame || Actor->IsHidden())) return false;
 	// 캐릭터가 소유하거나 부착한 장비도 제외
 	for (const AActor* Owner = Actor; Owner; Owner = Owner->GetOwner())
 	{
@@ -42,17 +37,19 @@ bool IsGrappleMesh(const UPrimitiveComponent* Component)
 	{
 		if (Parent->IsA<APawn>()) return false;
 	}
-	if (const UStaticMeshComponent* StaticMesh = Cast<UStaticMeshComponent>(Mesh)) return StaticMesh->GetStaticMesh() != nullptr;
-	if (const USkeletalMeshComponent* SkeletalMesh = Cast<USkeletalMeshComponent>(Mesh)) return SkeletalMesh->GetSkeletalMeshAsset() != nullptr;
+	if (const UStaticMeshComponent* StaticMesh = Cast<UStaticMeshComponent>(Component)) return StaticMesh->GetStaticMesh() != nullptr;
+	if (const USkeletalMeshComponent* SkeletalMesh = Cast<USkeletalMeshComponent>(Component)) return SkeletalMesh->GetSkeletalMeshAsset() != nullptr;
+	// Trigger shapes and volume brushes are not grapple surfaces. Enabling their
+	// grapple collision can make a probe start inside an enclosing volume.
 	return false;
 }
 
 void PrepareGrappleMeshes(UWorld* World)
 {
 	// 장식 메시도 태그나 에디터 충돌 설정 없이 훅 전용 검사에 참여
-	for (TObjectIterator<UMeshComponent> It; It; ++It)
+	for (TObjectIterator<UPrimitiveComponent> It; It; ++It)
 	{
-		UMeshComponent* Mesh = *It;
+		UPrimitiveComponent* Mesh = *It;
 		if (Mesh->GetWorld() != World || !Mesh->IsRegistered() || !IsGrappleMesh(Mesh)) continue;
 		if (Mesh->GetCollisionEnabled() == ECollisionEnabled::NoCollision)
 		{

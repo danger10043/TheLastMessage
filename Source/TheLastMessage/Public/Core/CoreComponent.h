@@ -48,6 +48,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Core")
 	int32 GetCoreLevel(FName CoreId) const;
 
+	/** 획득 순서대로 보유 코어와 단계를 복사한다. 반환 배열을 바꿔도 실제 보유 기록은 변하지 않는다. */
+	UFUNCTION(BlueprintPure, Category = "Core")
+	TArray<FOwnedCoreEntry> GetOwnedCores() const;
+
 	/** 현재 보유 상태와 부여 설정을 검사해 예상 획득 결과를 반환한다. 실제 GE/GA 적용은 하지 않는다. */
 	ECoreAcquireResult CheckAcquire(const UCoreDataAsset* CoreData) const;
 

@@ -9,6 +9,9 @@
 #include "Gimmick/Component/CarryComponent.h"
 #include "GameplayEffect.h"
 #include "PhysicsEngine/BodyInstance.h"
+#include "CollisionQueryParams.h"
+#include "CollisionShape.h"
+#include "Engine/World.h"
 
 ACarryableGimmick::ACarryableGimmick()
 {
@@ -130,7 +133,15 @@ void ACarryableGimmick::OnPickedUp(ACharacter* Player)
         return;
     }
 
+    // 떨어지는 중에 다시 집으면 낙하 중단
+    bIsDropFalling = false;
+    DropFallSpeed = 0.0f;
+    DropIgnoredPlayer.Reset();
+
     Carrier = Player;
+
+    // 운반을 시작하면 일반 위치 관리 재개
+    SetActorTickEnabled(true);
 
     // 집은 물체의 상호작용 강조 해제
     UpdateInteractionHighlight(false);
@@ -138,10 +149,51 @@ void ACarryableGimmick::OnPickedUp(ACharacter* Player)
 
 void ACarryableGimmick::OnDropped()
 {
+    // 운반자 참조를 지우기 전에 낙하 검사에서 제외할 플레이어 기록
+    DropIgnoredPlayer = Carrier;
+
     Carrier.Reset();
 
-    // 내려놓은 뒤 물리 시뮬레이션의 Y축 제한 다시 적용
-    ApplyYLock();
+    DropFallSpeed = 0.0f;
+    bIsDropFalling = false;
+
+    if (IsValid(ObjectMesh))
+    {
+        // 물리 힘으로 이동하지 않고 코드에서 직접 낙하 처리
+        ObjectMesh->SetSimulatePhysics(false);
+        ObjectMesh->SetEnableGravity(false);
+
+        // 충돌 검사는 유지하지만 물리 시뮬레이션에는 참여하지 않음
+        ObjectMesh->SetCollisionEnabled(
+            ECollisionEnabled::QueryOnly);
+
+        // 기존 규칙대로 들기 전 Y 좌표 복구
+        ApplyYLock();
+
+        bIsDropFalling = true;
+        SetActorTickEnabled(true);
+    }
+
+    UpdateInteractionHighlight(false);
+}
+
+void ACarryableGimmick::OnTransferred()
+{
+    bIsDropFalling = false;
+    DropFallSpeed = 0.0f;
+    DropIgnoredPlayer.Reset();
+
+    Carrier.Reset();
+
+    // 장착 후에는 최초 Y 좌표로 되돌리는 갱신 중지
+    SetActorTickEnabled(false);
+
+    if (IsValid(ObjectMesh))
+    {
+        // 장착 위치를 유지하도록 기존 Y축 물리 제한 해제
+        ObjectMesh->BodyInstance.bLockYTranslation = false;
+        ObjectMesh->BodyInstance.SetDOFLock(EDOFMode::SixDOF);
+    }
 
     UpdateInteractionHighlight(false);
 }
@@ -176,6 +228,13 @@ void ACarryableGimmick::BeginPlay()
 
     Super::BeginPlay();
 
+    if (IsValid(ObjectMesh))
+    {
+        ObjectMesh->SetSimulatePhysics(false);
+        ObjectMesh->SetEnableGravity(false);
+        ObjectMesh->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+    }
+
     LoadCarryConfig();
 
     ApplyYLock();
@@ -187,6 +246,8 @@ void ACarryableGimmick::Tick(float DeltaSeconds)
     Super::Tick(DeltaSeconds);
 
     UpdateYLockedLocation();
+
+    UpdateDropFall(DeltaSeconds);
 }
 
 void ACarryableGimmick::ApplyYLock()
@@ -220,4 +281,113 @@ void ACarryableGimmick::UpdateYLockedLocation()
     {
         SetActorLocation(DesiredLocation, false, nullptr, ETeleportType::TeleportPhysics);
     }
+}
+
+void ACarryableGimmick::UpdateDropFall(float DeltaSeconds)
+{
+    if (!bIsDropFalling || Carrier.IsValid() || !HasAuthority() || DeltaSeconds <= 0.0f)
+    {
+        return;
+    }
+
+    UWorld* World = GetWorld();
+
+    if (!World || !IsValid(ObjectMesh) || !ObjectMesh->GetStaticMesh())
+    {
+        bIsDropFalling = false;
+        DropFallSpeed = 0.0f;
+        DropIgnoredPlayer.Reset();
+        return;
+    }
+
+    // 플레이어의 중력 반전과 관계없이 월드 아래쪽으로 낙하
+    const float FallAcceleration = FMath::Abs(World->GetGravityZ());
+
+    constexpr float MaxFallSpeed = 1500.0f;
+
+    const float PreviousSpeed = DropFallSpeed;
+
+    DropFallSpeed = FMath::Min(DropFallSpeed + FallAcceleration * DeltaSeconds, MaxFallSpeed);
+
+    // 이전 속도와 현재 속도의 평균으로 이번 프레임 이동 거리 계산
+    const double FallDistance = (PreviousSpeed + DropFallSpeed) * 0.5 * DeltaSeconds;
+
+    if (FallDistance <= 0.0)
+    {
+        return;
+    }
+
+    const FVector FallDirection = FVector::DownVector;
+    const FVector MoveDelta = FallDirection * FallDistance;
+
+    // 메시 피벗이 중앙에 있지 않은 경우도 고려
+    FVector LocalMin;
+    FVector LocalMax;
+    ObjectMesh->GetLocalBounds(LocalMin, LocalMax);
+
+    const FVector LocalCenter = (LocalMin + LocalMax) * 0.5;
+
+    const FVector LocalHalfSize = (LocalMax - LocalMin) * 0.5;
+
+    const FTransform MeshTransform = ObjectMesh->GetComponentTransform();
+
+    const FVector ScaledHalfSize = LocalHalfSize * MeshTransform.GetScale3D().GetAbs();
+
+    const FVector HalfSize(FMath::Max(ScaledHalfSize.X, 1.0), FMath::Max(ScaledHalfSize.Y, 1.0), FMath::Max(ScaledHalfSize.Z, 1.0));
+
+    const FVector StartCenter = MeshTransform.TransformPosition(LocalCenter);
+
+    const FVector EndCenter = StartCenter + MoveDelta;
+
+    FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(CarryItemDropFall), false, this);
+
+    // 내려놓은 플레이어를 바닥으로 판단하지 않도록 제외
+    if (ACharacter* IgnoredPlayer = DropIgnoredPlayer.Get())
+    {
+        QueryParams.AddIgnoredActor(IgnoredPlayer);
+    }
+
+    FHitResult Hit;
+
+    const bool bBlocked = World->SweepSingleByChannel(
+        Hit,
+        StartCenter,
+        EndCenter,
+        MeshTransform.GetRotation(),
+        ECC_WorldDynamic,
+        FCollisionShape::MakeBox(HalfSize),
+        QueryParams);
+
+    if (bBlocked)
+    {
+        // 처음부터 장애물 안에 겹쳐 있으면 관통 이동 방지
+        if (Hit.bStartPenetrating)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("%s: 낙하 시작 위치가 장애물과 겹쳐 있습니다."), *GetName());
+        }
+        else
+        {
+            // 충돌 지점보다 아주 조금 앞에서 멈춤
+            constexpr double SurfaceClearance = 0.5;
+
+            const double AllowedDistance = FMath::Max(0.0, FallDistance * Hit.Time - SurfaceClearance);
+
+            SetActorLocation(
+                GetActorLocation()
+                + FallDirection * AllowedDistance,
+                false,
+                nullptr,
+                ETeleportType::TeleportPhysics);
+        }
+
+        // 착지하면 현재 위치에 고정
+        bIsDropFalling = false;
+        DropFallSpeed = 0.0f;
+        DropIgnoredPlayer.Reset();
+        return;
+    }
+
+    // 장애물이 없으면 X와 Y는 유지하고 아래로만 이동
+    SetActorLocation(GetActorLocation() + MoveDelta, false, nullptr, ETeleportType::TeleportPhysics);
+
 }

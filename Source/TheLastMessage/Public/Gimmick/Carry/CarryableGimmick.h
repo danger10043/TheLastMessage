@@ -40,6 +40,9 @@ public:
     // CarryComponent가 운반 종료 시 호출
     virtual void OnDropped();
 
+    // 다른 장착 지점으로 전달되어 운반이 끝났을 때 호출
+    virtual void OnTransferred();
+
     // 내려놓을 위치를 아이템의 최초 Y 좌표에 맞게 보정
     virtual FVector ConstrainDropLocation(const FVector& WorldLocation) const;
 
@@ -66,7 +69,7 @@ protected:
     TWeakObjectPtr<ACharacter> Carrier;
 
     // 사용할 운반 데이터 테이블과 행
-    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Carry")
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Config")
     FDataTableRowHandle CarryConfigRow;
 
     // 데이터 테이블에서 읽은 설정
@@ -87,4 +90,17 @@ private:
 
     // 최초 Y 좌표 기록 여부
     bool bHasInitialWorldY = false;
+
+    // 내려놓은 아이템의 수직 낙하 갱신
+    void UpdateDropFall(float DeltaSeconds);
+
+    // 현재 내려놓기로 인한 낙하 중인지
+    bool bIsDropFalling = false;
+
+    // 현재 아래쪽으로 떨어지는 속도
+    float DropFallSpeed = 0.0f;
+
+    // 낙하 검사에서 방금 아이템을 내려놓은 플레이어 제외
+    TWeakObjectPtr<ACharacter> DropIgnoredPlayer;
+
 };

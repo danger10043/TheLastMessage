@@ -70,8 +70,6 @@ protected:
 private:
     void CacheOwner();
 
-    bool FindDropTransform(FTransform& OutTransform) const;
-
     void RestoreObjectState(ACarryableGimmick* Target, bool bRestorePhysics);
 
     void FinishCarryState();

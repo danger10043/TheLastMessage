@@ -5,6 +5,10 @@
 #include "UI/PlayerResourceBarWidget.h"
 #include "UI/PlayerWeaponSlotWidget.h"
 #include "UI/PlayerHUD.h"
+#include "UI/StartMenuWidget.h"
+#include "UI/StartMenuHUD.h"
+#include "Components/Button.h"
+#include "Components/WidgetSwitcher.h"
 #include "Character/Player/PlayerBase.h"
 #include "GAS/CombatAttributeSet.h"
 #include "GAS/WeaponSlotAttributeSet.h"
@@ -304,6 +308,80 @@ bool ResizeExisting()
 	return true;
 }
 
+bool BuildMenuScaffold(bool bPreview)
+{
+	const TCHAR* Path = TEXT("/Game/Main/UI/Menu/WBP_StartMenu");
+	UWidgetBlueprint* BP = LoadObject<UWidgetBlueprint>(nullptr, Path);
+	if (!BP)
+	{
+		BP = Blueprint(Path, UStartMenuWidget::StaticClass());
+		UStartMenuWidget::BuildDefaultLayout(BP->WidgetTree);
+		BP->WidgetTree->ForEachWidget([](UWidget* Control) { Control->bIsVariable = true; });
+		if (!CompileSave(BP)) return false;
+	}
+	const TCHAR* MapPath = TEXT("/Game/Main/Maps/Lv_MainMenu");
+	if (!FPackageName::DoesPackageExist(MapPath))
+	{
+		UPackage* Package = CreatePackage(MapPath);
+		UWorld* MenuWorld = UWorld::CreateWorld(EWorldType::Editor, false, TEXT("Lv_MainMenu"), Package);
+		MenuWorld->SetFlags(RF_Public | RF_Standalone);
+		Package->SetPackageFlags(PKG_ContainsMap);
+		MenuWorld->GetWorldSettings()->DefaultGameMode = AStartMenuGameMode::StaticClass();
+		FAssetRegistryModule::AssetCreated(MenuWorld);
+		FSavePackageArgs Args;
+		Args.TopLevelFlags = RF_Public | RF_Standalone;
+		const bool bSaved = UPackage::SavePackage(Package, MenuWorld,
+			*FPackageName::LongPackageNameToFilename(MapPath, FPackageName::GetMapPackageExtension()), Args);
+		MenuWorld->DestroyWorld(false);
+		if (!bSaved) return false;
+	}
+	if (!bPreview) return true;
+	if (!FApp::CanEverRender()) return false;
+	if (!FSlateApplication::IsInitialized())
+		FSlateApplication::InitializeAsStandaloneApplication(FModuleManager::LoadModuleChecked<ISlateRHIRendererModule>(TEXT("SlateRHIRenderer")).CreateSlateRHIRenderer());
+	UWorld::InitializationValues Values;
+	Values.AllowAudioPlayback(false).CreatePhysicsScene(false).CreateNavigation(false).CreateAISystem(false);
+	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false, NAME_None, nullptr, true, ERHIFeatureLevel::Num, &Values);
+	GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World);
+	UStartMenuWidget* Panel = CreateWidget<UStartMenuWidget>(World, BP->GeneratedClass.Get());
+	if (!Panel) return false;
+	TSharedRef<SWidget> SlateWidget = Panel->TakeWidget();
+	UWidgetSwitcher* Pages = Cast<UWidgetSwitcher>(Panel->WidgetTree->FindWidget(TEXT("Pages")));
+	UButton* Slot1 = Cast<UButton>(Panel->WidgetTree->FindWidget(TEXT("Slot1Button")));
+	if (!Pages || !Slot1 || Pages->GetActiveWidgetIndex() != 0) return false;
+	auto Render = [&](const TCHAR* Name)
+	{
+		SlateWidget->SlatePrepass(1.0f);
+		FWidgetRenderer Renderer(true);
+		UTextureRenderTarget2D* Target = Renderer.DrawWidget(SlateWidget, FVector2D(1280, 720));
+		for (int32 Frame = 0; Frame < 3 && Target; ++Frame)
+		{
+			FlushRenderingCommands();
+			Renderer.DrawWidget(Target, SlateWidget, FVector2D(1280, 720), 0.016f, false);
+		}
+		FlushRenderingCommands();
+		FBufferArchive PNG;
+		const FString Filename = FPaths::ProjectSavedDir() / TEXT("StartMenuPreview") / Name;
+		IFileManager::Get().MakeDirectory(*FPaths::GetPath(Filename), true);
+		return Target && FImageUtils::ExportRenderTarget2DAsPNG(Target, PNG) && FFileHelper::SaveArrayToFile(PNG, *Filename);
+	};
+	bool bOK = Render(TEXT("Main.png"));
+	CastChecked<UButton>(Panel->WidgetTree->FindWidget(TEXT("NewGameButton")))->OnClicked.Broadcast();
+	bOK = Pages->GetActiveWidgetIndex() == 1 && Slot1->GetIsEnabled() && Render(TEXT("NewGameSlots.png")) && bOK;
+	Slot1->OnClicked.Broadcast();
+	bOK = CastChecked<UTextBlock>(Panel->WidgetTree->FindWidget(TEXT("SelectionText")))->GetText().ToString().Contains(TEXT("1")) && bOK;
+	CastChecked<UButton>(Panel->WidgetTree->FindWidget(TEXT("BackButton")))->OnClicked.Broadcast();
+	bOK = Pages->GetActiveWidgetIndex() == 0 && bOK;
+	CastChecked<UButton>(Panel->WidgetTree->FindWidget(TEXT("LoadGameButton")))->OnClicked.Broadcast();
+	bOK = Pages->GetActiveWidgetIndex() == 1 && !Slot1->GetIsEnabled() && Render(TEXT("LoadSlots.png")) && bOK;
+	Panel->SetSlotPresentation(1, true, FText::FromString(TEXT("Saved game")));
+	bOK = Slot1->GetIsEnabled() && bOK;
+	Panel->RemoveFromParent();
+	World->DestroyWorld(false); GEngine->DestroyWorldContext(World);
+	UE_LOG(LogTemp, Display, TEXT("START_MENU_SCAFFOLD: editable widget, menu map, navigation/selection/empty-slot checks: %s"), bOK ? TEXT("PASS") : TEXT("FAIL"));
+	return bOK;
+}
+
 bool Preview()
 {
 	if (!FApp::CanEverRender())
@@ -393,6 +471,8 @@ UIntegratePlayerUICommandlet::UIntegratePlayerUICommandlet()
 int32 UIntegratePlayerUICommandlet::Main(const FString& Params)
 {
 #if WITH_EDITOR
+	if (FParse::Param(*Params, TEXT("MenuScaffold")))
+		return PlayerUIBuild::BuildMenuScaffold(FParse::Param(*Params, TEXT("Preview"))) ? 0 : 1;
 	if (FParse::Param(*Params, TEXT("Resize")))
 	{
 		if (!PlayerUIBuild::ResizeExisting()) return 1;

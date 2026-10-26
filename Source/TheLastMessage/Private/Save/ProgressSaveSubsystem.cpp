@@ -5,6 +5,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "Misc/PackageName.h"
 
 FString UProgressSaveSubsystem::GetSaveDirectory() const
 {
@@ -23,12 +24,37 @@ FString UProgressSaveSubsystem::GetSlotPath(int32 SlotId) const
 
 bool UProgressSaveSubsystem::HasSave(int32 SlotId) const
 {
-	return SlotId > 0 && IFileManager::Get().FileExists(*GetSlotPath(SlotId));
+	return SlotId >= 1 && SlotId <= 3 && IFileManager::Get().FileExists(*GetSlotPath(SlotId));
 }
 
-bool UProgressSaveSubsystem::StartNewGame(int32 SlotId)
+UProgressSaveGame* UProgressSaveSubsystem::ReadSlot(int32 SlotId) const
 {
-	if (ActiveSlot || bSaving || SlotId <= 0 || HasSave(SlotId)) return false;
+	if (SlotId < 1 || SlotId > 3) return nullptr;
+	TArray<uint8> Bytes;
+	if (!FFileHelper::LoadFileToArray(Bytes, *GetSlotPath(SlotId))) return nullptr;
+	UProgressSaveGame* Loaded = Cast<UProgressSaveGame>(UGameplayStatics::LoadGameFromMemory(Bytes));
+	if (!Loaded || Loaded->Version != UProgressSaveGame::CurrentVersion || Loaded->SlotId != SlotId
+		|| !Loaded->PlaythroughId.IsValid() || !FPackageName::IsValidLongPackageName(Loaded->MapPackage)
+		|| !FPackageName::DoesPackageExist(Loaded->MapPackage)) return nullptr;
+	return Loaded;
+}
+
+FProgressSlotInfo UProgressSaveSubsystem::GetSlotInfo(int32 SlotId) const
+{
+	FProgressSlotInfo Info;
+	Info.bExists = HasSave(SlotId);
+	if (const UProgressSaveGame* Save = ReadSlot(SlotId))
+	{
+		Info.bCanLoad = true;
+		Info.SavedAt = Save->SavedAt;
+		Info.MapPackage = Save->MapPackage;
+	}
+	return Info;
+}
+
+bool UProgressSaveSubsystem::StartNewGame(int32 SlotId, bool bOverwriteExisting)
+{
+	if (ActiveSlot || bSaving || SlotId < 1 || SlotId > 3 || (HasSave(SlotId) && !bOverwriteExisting)) return false;
 	WorkingProgress = NewObject<UProgressSaveGame>(this);
 	WorkingProgress->SlotId = SlotId;
 	WorkingProgress->PlaythroughId = FGuid::NewGuid();
@@ -38,12 +64,9 @@ bool UProgressSaveSubsystem::StartNewGame(int32 SlotId)
 
 bool UProgressSaveSubsystem::ContinueGame(int32 SlotId)
 {
-	if (ActiveSlot || bSaving || SlotId <= 0) return false;
-	TArray<uint8> Bytes;
-	if (!FFileHelper::LoadFileToArray(Bytes, *GetSlotPath(SlotId))) return false;
-	UProgressSaveGame* Loaded = Cast<UProgressSaveGame>(UGameplayStatics::LoadGameFromMemory(Bytes));
-	if (!Loaded || Loaded->Version != UProgressSaveGame::CurrentVersion || Loaded->SlotId != SlotId
-		|| !Loaded->PlaythroughId.IsValid()) return false;
+	if (ActiveSlot || bSaving) return false;
+	UProgressSaveGame* Loaded = ReadSlot(SlotId);
+	if (!Loaded) return false;
 	WorkingProgress = Loaded;
 	ActiveSlot = SlotId;
 	return true;

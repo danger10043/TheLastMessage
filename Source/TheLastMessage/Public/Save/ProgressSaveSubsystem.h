@@ -7,6 +7,16 @@
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FProgressSaveFinished, bool, bSuccess);
 
+USTRUCT(BlueprintType)
+struct FProgressSlotInfo
+{
+	GENERATED_BODY()
+	UPROPERTY(BlueprintReadOnly) bool bExists = false;
+	UPROPERTY(BlueprintReadOnly) bool bCanLoad = false;
+	UPROPERTY(BlueprintReadOnly) FDateTime SavedAt;
+	UPROPERTY(BlueprintReadOnly) FString MapPackage;
+};
+
 /** Session owns the slot. Save callers cannot specify or change its destination. */
 UCLASS()
 class THELASTMESSAGE_API UProgressSaveSubsystem : public UGameInstanceSubsystem
@@ -14,7 +24,8 @@ class THELASTMESSAGE_API UProgressSaveSubsystem : public UGameInstanceSubsystem
 	GENERATED_BODY()
 public:
 	/** Begin only from the title/menu. Existing files are never overwritten by StartNewGame. */
-	UFUNCTION(BlueprintCallable, Category="Save") bool StartNewGame(int32 SlotId);
+	UFUNCTION(BlueprintCallable, Category="Save") bool StartNewGame(int32 SlotId, bool bOverwriteExisting = false);
+	UFUNCTION(BlueprintPure, Category="Save") FProgressSlotInfo GetSlotInfo(int32 SlotId) const;
 	UFUNCTION(BlueprintCallable, Category="Save") bool ContinueGame(int32 SlotId);
 	/** Explicitly return to menu before selecting another playthrough. Fails during a write. */
 	UFUNCTION(BlueprintCallable, Category="Save") bool EndSession();
@@ -28,6 +39,7 @@ public:
 	// Mutable working state only. Disk writes take an independent serialized snapshot.
 	UProgressSaveGame* GetWorkingProgress() const { return WorkingProgress; }
 private:
+	UProgressSaveGame* ReadSlot(int32 SlotId) const;
 	FString GetSlotPath(int32 SlotId) const;
 	UPROPERTY(Transient) TObjectPtr<UProgressSaveGame> WorkingProgress;
 	int32 ActiveSlot = 0;

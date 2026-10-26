@@ -8,6 +8,7 @@
 #include "Perception/AISenseConfig_Sight.h"
 #include "Perception/AISense_Sight.h"
 #include "GameFramework/Pawn.h"
+#include "EngineUtils.h"
 #include "Misc/ScopeExit.h"
 #include "Character/Player/PlayerBase.h"
 #include "AbilitySystemComponent.h"
@@ -126,33 +127,42 @@ void ABossAIController::HandlePerceptionUpdated(
 
 void ABossAIController::RefreshTargetFromPerception()
 {
-    UAIPerceptionComponent* BossPerception = GetPerceptionComponent();
     if (!HasAuthority() || !IsValid(ControlledBoss.Get())
         || ControlledBoss.Get() != GetPawn()
-        || !IsValid(BossPerception) || !IsValid(GetBlackboardComponent()))
+        || !IsValid(GetWorld()) || !IsValid(GetBlackboardComponent()))
     {
         return;
     }
 
-    if (ControlledBoss->GetBossState() == EBossState::Dead)
+    const float DetectionRadius = TargetDetectionRadius;
+
+    if (ControlledBoss->GetBossState() == EBossState::Dead
+        || !FMath::IsFinite(DetectionRadius) || DetectionRadius <= 0.f)
     {
         UpdateTargetActor(nullptr);
         return;
     }
 
-    TArray<AActor*> SeenActors;
-    BossPerception->GetCurrentlyPerceivedActors(
-        UAISense_Sight::StaticClass(), SeenActors);
+    const float DetectionRadiusSquared = FMath::Square(DetectionRadius);
+    const FVector BossLocation = ControlledBoss->GetActorLocation();
 
     AActor* CurrentTarget = ControlledBoss->GetCurrentTarget();
     AActor* NewTarget = nullptr;
     float BestDistanceSquared = TNumericLimits<float>::Max();
 
-    for (AActor* SeenActor : SeenActors)
+    for (TActorIterator<APlayerBase> It(GetWorld()); It; ++It)
     {
-        APlayerBase* PlayerPawn = Cast<APlayerBase>(SeenActor);
+        APlayerBase* PlayerPawn = *It;
         if (!IsValid(PlayerPawn) || !PlayerPawn->IsPlayerControlled()
             || PlayerPawn->IsDead())
+        {
+            continue;
+        }
+
+        const float DistanceSquared = FVector::DistSquared(
+            BossLocation, PlayerPawn->GetActorLocation());
+        if (!FMath::IsFinite(DistanceSquared)
+            || DistanceSquared > DetectionRadiusSquared)
         {
             continue;
         }
@@ -163,8 +173,6 @@ void ABossAIController::RefreshTargetFromPerception()
             break;
         }
 
-        const float DistanceSquared = FVector::DistSquared(
-            ControlledBoss->GetActorLocation(), PlayerPawn->GetActorLocation());
         if (DistanceSquared < BestDistanceSquared)
         {
             BestDistanceSquared = DistanceSquared;
@@ -252,8 +260,7 @@ void ABossAIController::UpdateCombatRange(
         return;
     }
 
-    if (ControlledBoss->GetBossState() != EBossState::Dead
-        && !IsValid(ControlledBoss->GetCurrentTarget()))
+    if (ControlledBoss->GetBossState() != EBossState::Dead)
     {
         RefreshTargetFromPerception();
     }

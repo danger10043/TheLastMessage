@@ -39,30 +39,70 @@ bool IsGrappleMesh(const UPrimitiveComponent* Component)
 	}
 	if (const UStaticMeshComponent* StaticMesh = Cast<UStaticMeshComponent>(Component)) return StaticMesh->GetStaticMesh() != nullptr;
 	if (const USkeletalMeshComponent* SkeletalMesh = Cast<USkeletalMeshComponent>(Component)) return SkeletalMesh->GetSkeletalMeshAsset() != nullptr;
-	return true;
+	// Trigger shapes and volume brushes are not grapple surfaces. Enabling their
+	// grapple collision can make a probe start inside an enclosing volume.
+	return false;
 }
 
-void PrepareGrappleMeshes(UWorld* World)
+class FScopedGrappleCollision
 {
-	// 장식 메시도 태그나 에디터 충돌 설정 없이 훅 전용 검사에 참여
-	for (TObjectIterator<UPrimitiveComponent> It; It; ++It)
+public:
+	explicit FScopedGrappleCollision(UWorld* World)
 	{
-		UPrimitiveComponent* Mesh = *It;
-		if (Mesh->GetWorld() != World || !Mesh->IsRegistered() || !IsGrappleMesh(Mesh)) continue;
-		if (Mesh->GetCollisionEnabled() == ECollisionEnabled::NoCollision)
+		// Decorative surfaces participate only for this synchronous grapple probe.
+		for (TObjectIterator<UPrimitiveComponent> It; It; ++It)
 		{
-			// 원래 없던 이동 충돌이나 무기 판정이 생기지 않도록 훅 채널만 활성화
-			Mesh->SetCollisionResponseToAllChannels(ECR_Ignore);
-			Mesh->SetGenerateOverlapEvents(false);
-			Mesh->SetCollisionResponseToChannel(ECC_GameTraceChannel4, ECR_Block);
-			Mesh->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-		}
-		else if (Mesh->GetCollisionResponseToChannel(ECC_GameTraceChannel4) != ECR_Block)
-		{
-			Mesh->SetCollisionResponseToChannel(ECC_GameTraceChannel4, ECR_Block);
+			UPrimitiveComponent* Mesh = *It;
+			if (Mesh->GetWorld() != World || !Mesh->IsRegistered() || !IsGrappleMesh(Mesh)) continue;
+			const bool bDisabled = Mesh->GetCollisionEnabled() == ECollisionEnabled::NoCollision;
+			if (!bDisabled && Mesh->GetCollisionResponseToChannel(ECC_GameTraceChannel4) == ECR_Block) continue;
+			FOriginalCollision& Original = Originals.AddDefaulted_GetRef();
+			Original.Mesh = Mesh;
+			Original.Profile = Mesh->GetCollisionProfileName();
+			Original.Enabled = Mesh->GetCollisionEnabled();
+			Original.ObjectType = Mesh->GetCollisionObjectType();
+			Original.Responses = Mesh->GetCollisionResponseToChannels();
+			Original.bOverlapEvents = Mesh->GetGenerateOverlapEvents();
+			if (bDisabled)
+			{
+				Mesh->SetGenerateOverlapEvents(false);
+				Mesh->SetCollisionResponseToAllChannels(ECR_Ignore);
+				Mesh->SetCollisionResponseToChannel(ECC_GameTraceChannel4, ECR_Block);
+				Mesh->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+			}
+			else Mesh->SetCollisionResponseToChannel(ECC_GameTraceChannel4, ECR_Block);
 		}
 	}
-}
+
+	~FScopedGrappleCollision()
+	{
+		for (const FOriginalCollision& Original : Originals)
+		{
+			UPrimitiveComponent* Mesh = Original.Mesh.Get();
+			if (!IsValid(Mesh)) continue;
+			if (Mesh->GetCollisionProfileName() != Original.Profile)
+				Mesh->SetCollisionProfileName(Original.Profile, false);
+			if (Mesh->GetCollisionObjectType() != Original.ObjectType)
+				Mesh->SetCollisionObjectType(Original.ObjectType);
+			if (!(Mesh->GetCollisionResponseToChannels() == Original.Responses))
+				Mesh->SetCollisionResponseToChannels(Original.Responses);
+			Mesh->SetCollisionEnabled(Original.Enabled);
+			Mesh->SetGenerateOverlapEvents(Original.bOverlapEvents);
+		}
+	}
+
+private:
+	struct FOriginalCollision
+	{
+		TWeakObjectPtr<UPrimitiveComponent> Mesh;
+		FName Profile;
+		ECollisionEnabled::Type Enabled;
+		ECollisionChannel ObjectType;
+		FCollisionResponseContainer Responses;
+		bool bOverlapEvents = false;
+	};
+	TArray<FOriginalCollision> Originals;
+};
 }
 
 UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_GrapplingHookUnlock, "Unlock.GrapplingHook");
@@ -273,7 +313,6 @@ void UGrapplingHookComponent::ProbeForAnchor(FVector WorldAimPoint)
 	}
 	if (Direction.ContainsNaN() || !Direction.Normalize() || !FMath::IsFinite(MaxGrappleDistance) || MaxGrappleDistance <= 0.0f) return;
 	const FVector End = Start + Direction * MaxGrappleDistance;
-	PrepareGrappleMeshes(GetWorld());
 	FHitResult Hit;
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(GrapplingProbe), true, Player);
 	// Ignore anything attached to the character, including future weapon actors.
@@ -282,15 +321,18 @@ void UGrapplingHookComponent::ProbeForAnchor(FVector WorldAimPoint)
 	Params.AddIgnoredActors(AttachedActors);
 	bool bHit = false;
 	// 숨겨진 충돌 프록시와 적을 건너뛰고 실제 메시 검사
-	while (GetWorld()->LineTraceSingleByChannel(Hit, Start, End, TraceChannel, Params))
 	{
-		if (IsGrappleMesh(Hit.GetComponent()))
+		FScopedGrappleCollision CollisionScope(GetWorld());
+		while (GetWorld()->LineTraceSingleByChannel(Hit, Start, End, TraceChannel, Params))
 		{
-			bHit = true;
-			break;
+			if (IsGrappleMesh(Hit.GetComponent()))
+			{
+				bHit = true;
+				break;
+			}
+			if (!Hit.GetComponent()) break;
+			Params.AddIgnoredComponent(Hit.GetComponent());
 		}
-		if (!Hit.GetComponent()) break;
-		Params.AddIgnoredComponent(Hit.GetComponent());
 	}
 	ProbeState.TraceStart = Start;
 	ProbeState.TraceEnd = bHit ? Hit.ImpactPoint : End;

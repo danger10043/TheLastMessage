@@ -39,7 +39,9 @@ bool IsGrappleMesh(const UPrimitiveComponent* Component)
 	}
 	if (const UStaticMeshComponent* StaticMesh = Cast<UStaticMeshComponent>(Component)) return StaticMesh->GetStaticMesh() != nullptr;
 	if (const USkeletalMeshComponent* SkeletalMesh = Cast<USkeletalMeshComponent>(Component)) return SkeletalMesh->GetSkeletalMeshAsset() != nullptr;
-	return true;
+	// Trigger shapes and volume brushes are not grapple surfaces. Enabling their
+	// grapple collision can make a probe start inside an enclosing volume.
+	return false;
 }
 
 void PrepareGrappleMeshes(UWorld* World)

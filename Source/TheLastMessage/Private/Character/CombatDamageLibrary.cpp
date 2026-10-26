@@ -2,10 +2,16 @@
 #include "Character/IncomingDamageExecution.h"
 #include "AbilitySystemBlueprintLibrary.h"
 #include "AbilitySystemComponent.h"
+#include "Abilities/GameplayAbilityTypes.h"
 #include "GameplayEffect.h"
 #include "Character/Player/CombatFeedbackComponent.h"
 #include "Character/Enemy/EnemyAttributeSet.h"
 #include "Character/Boss/BossAttributeSet.h"
+
+namespace CombatGameplayTags
+{
+    UE_DEFINE_GAMEPLAY_TAG(Event_DamageDealt, "Event.Combat.DamageDealt");
+}
 
 namespace
 {
@@ -97,12 +103,27 @@ bool UCombatDamageLibrary::ApplyFinalDamageToTarget(
     const float HealthBefore = bHasHealth ? TargetASC->GetNumericAttribute(HealthAttribute) : 0.0f;
     const FActiveGameplayEffectHandle Applied =
         SourceASC->ApplyGameplayEffectSpecToTarget(*Spec.Data.Get(), TargetASC);
-    // An accepted GE can still deal zero damage (boss immunity, death or phase health floor).
-    if (bHasHealth && IsValid(TargetASC) && TargetASC->GetNumericAttribute(HealthAttribute) < HealthBefore
+    const float HealthAfter = bHasHealth && IsValid(TargetASC)
+        ? TargetASC->GetNumericAttribute(HealthAttribute) : HealthBefore;
+    const float ActualDamage = HealthBefore - HealthAfter;
+    // 면역·사망·페이즈 제한을 반영한 체력 감소가 있을 때만 플레이어 공격 결과를 전달한다.
+    if (FMath::IsFinite(ActualDamage) && ActualDamage > 0.0f
         && DamageCategory.GetTagName() != FName(TEXT("Damage.Category.Gimmick")) && IsValid(SourceActor))
     {
         if (UCombatFeedbackComponent* Feedback = SourceActor->FindComponentByClass<UCombatFeedbackComponent>())
             Feedback->NotifyDamageDealt(FeedbackStrength);
+
+        if (IsValid(SourceActor) && IsValid(SourceASC))
+        {
+            FGameplayEventData Payload;
+            Payload.EventTag = CombatGameplayTags::Event_DamageDealt;
+            Payload.Instigator = SourceActor;
+            Payload.Target = Target;
+            Payload.EventMagnitude = ActualDamage;
+            Payload.InstigatorTags.AddTag(DamageCategory);
+            Payload.ContextHandle = Context;
+            SourceASC->HandleGameplayEvent(Payload.EventTag, &Payload);
+        }
     }
     return Applied.WasSuccessfullyApplied();
 }

@@ -21,7 +21,10 @@
 #include "Character/Enemy/EnemyAttributeSet.h"
 #include "Character/Boss/BossMonster.h"
 #include "Character/Boss/BossAttributeSet.h"
+#include "Character/Boss/BossPhaseComponent.h"
+#include "Misc/ScopeExit.h"
 #include "UObject/Package.h"
+#include "UObject/UnrealType.h"
 #endif
 
 namespace
@@ -595,6 +598,127 @@ bool FCoreDamageHandoffTest::RunTest(const FString& Parameters)
 				bBoss ? TEXT("Boss") : TEXT("Enemy"), CategoryName, ActualLoss));
 		}
 	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCoreDamageEventTest, "TheLastMessage.Core.DamageEvent",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCoreDamageEventTest::RunTest(const FString& Parameters)
+{
+	FCoreTestFixture Fixture(true);
+	Fixture.Attributes->SetMaxHealth(100.f);
+	Fixture.Attributes->SetHealth(50.f);
+	TArray<FGameplayEventData> Events;
+	const FGameplayTag EventTag = CombatGameplayTags::Event_DamageDealt;
+	const FGameplayTag Melee = FGameplayTag::RequestGameplayTag(TEXT("Damage.Category.Player.Melee"));
+	const FGameplayTag Ranged = FGameplayTag::RequestGameplayTag(TEXT("Damage.Category.Player.Ranged"));
+	const FGameplayTag Gimmick = FGameplayTag::RequestGameplayTag(TEXT("Damage.Category.Gimmick"));
+	const FDelegateHandle EventHandle = Fixture.ASC->GenericGameplayEventCallbacks.FindOrAdd(EventTag).AddLambda(
+		[&Events](const FGameplayEventData* Payload)
+		{
+			if (Payload) Events.Add(*Payload);
+		});
+	ON_SCOPE_EXIT
+	{
+		Fixture.ASC->GenericGameplayEventCallbacks.FindChecked(EventTag).Remove(EventHandle);
+	};
+
+	UClass* Effect = LoadClass<UGameplayEffect>(nullptr,
+		TEXT("/Game/Test_Inhyeok/GAS/Effect/GE_BP_CommonIncomingDamage.GE_BP_CommonIncomingDamage_C"));
+	if (!TestNotNull(TEXT("Actual common incoming damage GE loads"), Effect)) return false;
+	AEnemyBase* Enemy = Fixture.World->SpawnActor<AEnemyBase>();
+	if (!TestNotNull(TEXT("Enemy target exists"), Enemy)) return false;
+	UAbilitySystemComponent* EnemyASC = Enemy->GetAbilitySystemComponent();
+	EnemyASC->InitAbilityActorInfo(Enemy, Enemy);
+	if (!EnemyASC->GetSet<UEnemyAttributeSet>())
+		EnemyASC->AddAttributeSetSubobject(CastChecked<UEnemyAttributeSet>(Enemy->GetDefaultSubobjectByName(TEXT("AttributeSet"))));
+	EnemyASC->SetNumericAttributeBase(UEnemyAttributeSet::GetMaxHealthAttribute(), 1000.f);
+
+	for (const FGameplayTag Category : {Melee, Ranged})
+	{
+		Events.Reset();
+		EnemyASC->SetNumericAttributeBase(UEnemyAttributeSet::GetHealthAttribute(), 1000.f);
+		TestTrue(TEXT("Player attack is accepted"), UCombatDamageLibrary::ApplyFinalDamageToTarget(
+			Fixture.Owner, Enemy, Effect, 125.f, Category));
+		TestEqual(TEXT("One damage event per successful attack"), Events.Num(), 1);
+		if (Events.Num() == 1)
+		{
+			const FGameplayEventData& Payload = Events[0];
+			TestTrue(TEXT("Event identifies actual damage"), Payload.EventTag == EventTag);
+			TestTrue(TEXT("Event preserves attacker and target"), Payload.Instigator == Fixture.Owner && Payload.Target == Enemy);
+			TestEqual(TEXT("Magnitude contains actual HP loss"), Payload.EventMagnitude, 125.f);
+			TestTrue(TEXT("Damage category is available to abilities"), Payload.InstigatorTags.HasTagExact(Category));
+			TestTrue(TEXT("Damage context preserves source"), Payload.ContextHandle.GetSourceObject() == Fixture.Owner);
+		}
+		TestEqual(TEXT("Damage application is unchanged"), EnemyASC->GetNumericAttribute(UEnemyAttributeSet::GetHealthAttribute()), 875.f);
+	}
+
+	Events.Reset();
+	TestTrue(TEXT("Gimmick damage still applies"), UCombatDamageLibrary::ApplyFinalDamageToTarget(
+		Fixture.Owner, Enemy, Effect, 25.f, Gimmick));
+	TestEqual(TEXT("Gimmick damage is excluded from player attack event"), Events.Num(), 0);
+	TestFalse(TEXT("Zero damage is rejected"), UCombatDamageLibrary::ApplyFinalDamageToTarget(
+		Fixture.Owner, Enemy, Effect, 0.f, Melee));
+	TestFalse(TEXT("Negative damage is rejected"), UCombatDamageLibrary::ApplyFinalDamageToTarget(
+		Fixture.Owner, Enemy, Effect, -10.f, Melee));
+	TestEqual(TEXT("Rejected damage sends no event"), Events.Num(), 0);
+
+	ABossMonster* Boss = Fixture.World->SpawnActorDeferred<ABossMonster>(ABossMonster::StaticClass(), FTransform::Identity);
+	if (!TestNotNull(TEXT("Boss target exists"), Boss)) return false;
+	Boss->AutoPossessAI = EAutoPossessAI::Disabled;
+	Boss->FinishSpawning(FTransform::Identity);
+	UAbilitySystemComponent* BossASC = Boss->GetAbilitySystemComponent();
+	BossASC->InitAbilityActorInfo(Boss, Boss);
+	if (!BossASC->GetSet<UBossAttributeSet>())
+		BossASC->AddAttributeSetSubobject(CastChecked<UBossAttributeSet>(Boss->GetDefaultSubobjectByName(TEXT("AttributeSet"))));
+	BossASC->SetNumericAttributeBase(UBossAttributeSet::GetMaxHealthAttribute(), 1000.f);
+	BossASC->SetNumericAttributeBase(UBossAttributeSet::GetHealthAttribute(), 1000.f);
+	Boss->SetRangedImmunity(true);
+	TestTrue(TEXT("Immune boss still accepts valid GE"), UCombatDamageLibrary::ApplyFinalDamageToTarget(
+		Fixture.Owner, Boss, Effect, 125.f, Ranged));
+	TestEqual(TEXT("Immunity leaves boss HP unchanged"), BossASC->GetNumericAttribute(UBossAttributeSet::GetHealthAttribute()), 1000.f);
+	TestEqual(TEXT("Immune hit sends no damage event"), Events.Num(), 0);
+	Boss->SetRangedImmunity(false);
+	for (const FGameplayTag Category : {Melee, Ranged})
+	{
+		Events.Reset();
+		BossASC->SetNumericAttributeBase(UBossAttributeSet::GetHealthAttribute(), 1000.f);
+		TestTrue(TEXT("Boss receives player attack"), UCombatDamageLibrary::ApplyFinalDamageToTarget(
+			Fixture.Owner, Boss, Effect, 125.f, Category));
+		TestEqual(TEXT("Boss hit sends one event"), Events.Num(), 1);
+		if (Events.Num() == 1)
+			TestTrue(TEXT("Boss event contains actual loss and target"), Events[0].EventMagnitude == 125.f && Events[0].Target == Boss);
+	}
+
+	// 페이즈 체력 하한만 검사하므로, 퍼즐 장치가 없는 테스트 월드에서는 전환 요청을 대기 상태로 둔다.
+	UBossPhaseComponent* Phase = Boss->FindComponentByClass<UBossPhaseComponent>();
+	if (!TestNotNull(TEXT("Boss phase component exists"), Phase)) return false;
+	FBoolProperty* PendingTransition = FindFProperty<FBoolProperty>(Phase->GetClass(), TEXT("bIsTransitionPending"));
+	if (!TestNotNull(TEXT("Phase transition test state is available"), PendingTransition)) return false;
+	PendingTransition->SetPropertyValue_InContainer(Phase, true);
+	Events.Reset();
+	BossASC->SetNumericAttributeBase(UBossAttributeSet::GetHealthAttribute(), 710.f);
+	TestTrue(TEXT("Phase-limited damage is accepted"), UCombatDamageLibrary::ApplyFinalDamageToTarget(
+		Fixture.Owner, Boss, Effect, 125.f, Melee));
+	TestEqual(TEXT("Boss phase floor is preserved"), BossASC->GetNumericAttribute(UBossAttributeSet::GetHealthAttribute()), 700.f);
+	TestEqual(TEXT("Phase-limited hit sends one event"), Events.Num(), 1);
+	if (Events.Num() == 1)
+		TestEqual(TEXT("Phase-limited event excludes blocked damage"), Events[0].EventMagnitude, 10.f);
+	Events.Reset();
+	UCombatDamageLibrary::ApplyFinalDamageToTarget(Fixture.Owner, Boss, Effect, 125.f, Melee);
+	TestEqual(TEXT("Hit at phase floor sends no event"), Events.Num(), 0);
+
+	EnemyASC->SetNumericAttributeBase(UEnemyAttributeSet::GetHealthAttribute(), 10.f);
+	TestTrue(TEXT("Lethal damage is accepted"), UCombatDamageLibrary::ApplyFinalDamageToTarget(
+		Fixture.Owner, Enemy, Effect, 125.f, Ranged));
+	TestEqual(TEXT("Lethal hit sends one event"), Events.Num(), 1);
+	if (Events.Num() == 1)
+		TestEqual(TEXT("Overkill reports remaining HP only"), Events[0].EventMagnitude, 10.f);
+	Events.Reset();
+	UCombatDamageLibrary::ApplyFinalDamageToTarget(Fixture.Owner, Enemy, Effect, 125.f, Ranged);
+	TestEqual(TEXT("Dead enemy sends no repeated damage event"), Events.Num(), 0);
+	TestEqual(TEXT("Damage event alone does not heal the attacker"), Fixture.Attributes->GetHealth(), 50.f);
 	return true;
 }
 

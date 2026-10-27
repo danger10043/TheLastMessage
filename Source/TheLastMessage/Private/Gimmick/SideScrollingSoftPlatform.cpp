@@ -20,7 +20,10 @@ ASideScrollingSoftPlatform::ASideScrollingSoftPlatform()
 
 	Mesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	Mesh->SetCollisionObjectType(ECC_GameTraceChannel1);
-	Mesh->SetCollisionResponseToAllChannels(ECR_Block);
+	Mesh->SetCollisionResponseToAllChannels(ECR_Ignore);
+	Mesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Block);
+	Mesh->SetCollisionResponseToChannel(ECC_GameTraceChannel4, ECR_Block);
+	Mesh->SetGenerateOverlapEvents(false);
 
 	// create the collision check box
 	CollisionCheckSphere = CreateDefaultSubobject<USphereComponent>(TEXT("Collision Check Sphere"));
@@ -39,8 +42,16 @@ ASideScrollingSoftPlatform::ASideScrollingSoftPlatform()
 void ASideScrollingSoftPlatform::BeginPlay()
 {
 	Super::BeginPlay();
-	// Keep existing child BP component defaults from reverting this to WorldStatic.
+
+	Mesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	Mesh->SetCollisionObjectType(ECC_GameTraceChannel1);
+	Mesh->SetCollisionResponseToAllChannels(ECR_Ignore);
+	Mesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Block);
+	Mesh->SetCollisionResponseToChannel(ECC_GameTraceChannel4, ECR_Block);
+	Mesh->SetGenerateOverlapEvents(false);
+
+	CollisionCheckSphere->SetGenerateOverlapEvents(false);
+	CollisionCheckSphere->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 }
 
 void ASideScrollingSoftPlatform::OnSoftCollisionOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)

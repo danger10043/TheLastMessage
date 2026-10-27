@@ -18,7 +18,24 @@ AFleaEnemy::AFleaEnemy()
 	StatConfig.MoveSpeed = 220.f;
 	StatConfig.AttackRange = 180.f;
 	StatConfig.ChaseAcceptableRadius = 120.f;
+	StatConfig.AttackDamage = 15.f;
 	StatConfig.AttackCooldown = 2.f;
+}
+
+void AFleaEnemy::ApplyEnemyData(const UEnemyDataAsset* Data)
+{
+	Super::ApplyEnemyData(Data);
+	if (!Data)
+	{
+		return;
+	}
+
+	const FFleaSettings& S = Data->Flea;
+	AreaAttackRadius = S.AreaAttackRadius;
+	ChargeEffectOffset = S.ChargeEffectOffset;
+	bScaleChargeEffectToAttackRadius = S.bScaleChargeEffectToAttackRadius;
+	ShockwaveEffectBaseRadius = S.ShockwaveEffectBaseRadius;
+	AreaAttackWindup = S.AreaAttackWindup;
 }
 
 void AFleaEnemy::StartAttack()
@@ -97,7 +114,7 @@ void AFleaEnemy::ExecuteAreaAttack()
 
 		DamagedActors.Add(Actor);
 
-		ApplyEnemyDamage(Actor, GetScaledDamage(AreaAttackDamage));
+		ApplyEnemyDamage(Actor, GetScaledDamage(GetStatConfig().AttackDamage));
 	}
 
 	SpawnShockwaveEffect();

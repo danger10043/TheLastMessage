@@ -44,6 +44,9 @@ protected:
 
     void RefreshTargetFromPerception();
 
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|AI", meta = (ClampMin = "0.0", Units = "cm"))
+    float TargetDetectionRadius = 2000.f;
+
     UPROPERTY(VisibleAnywhere, Category = "Boss|AI")
     TObjectPtr<UAISenseConfig_Sight> SightConfig;
 

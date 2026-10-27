@@ -40,6 +40,10 @@ AEnemyProjectile::AEnemyProjectile()
 	ProjectileMovement->ProjectileGravityScale = 0.f;
 	ProjectileMovement->bRotationFollowsVelocity = true;
 	ProjectileMovement->bAutoActivate = false; // LaunchProjectile에서 활성화
+
+	// 사이드뷰라 투사체는 발사된 Y 평면을 벗어나지 않는다.
+	ProjectileMovement->bConstrainToPlane = true;
+	ProjectileMovement->SetPlaneConstraintNormal(FVector(0.f, 1.f, 0.f));
 }
 
 void AEnemyProjectile::BeginPlay()
@@ -87,6 +91,10 @@ void AEnemyProjectile::LaunchProjectile(FVector Direction)
 		return;
 	}
 
+	// 벽 등에 막혀 멈춘 투사체는 이동 컴포넌트가 이동 대상(UpdatedComponent)을 놓아 버린다.
+	// 풀에서 재사용할 때 다시 연결하지 않으면 움직이지 않고 그 자리에 머문다.
+	ProjectileMovement->SetUpdatedComponent(CollisionComponent);
+	ProjectileMovement->SetPlaneConstraintOrigin(GetActorLocation());
 	ProjectileMovement->Velocity = Dir * ProjectileMovement->InitialSpeed;
 	ProjectileMovement->Activate(true);
 	bLaunched = true;

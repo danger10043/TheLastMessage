@@ -8,6 +8,7 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
+#include "NiagaraComponent.h"
 
 ABossActivationCore::ABossActivationCore()
 {
@@ -29,8 +30,12 @@ ABossActivationCore::ABossActivationCore()
     CoreMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     CoreMesh->SetGenerateOverlapEvents(false);
     CoreMesh->SetCanEverAffectNavigation(false);
-    CoreMesh->VisibilityBasedAnimTickOption =
-        EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+    CoreMesh->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+
+    ActiveVFX = CreateDefaultSubobject<UNiagaraComponent>(TEXT("ActiveVFX"));
+    ActiveVFX->SetupAttachment(CoreMesh);
+    ActiveVFX->SetAutoActivate(false);
+    ActiveVFX->SetAutoDestroy(false);
 
     SetActorHiddenInGame(true);
 }
@@ -94,6 +99,12 @@ bool ABossActivationCore::InitializeCore(
         return false;
     }
 
+    if (GetNetMode() != NM_DedicatedServer && ActiveVFX->GetAsset())
+    {
+        ActiveVFX->Activate(true);
+    }
+
+
     SetActorTickEnabled(true);
     return true;
 }
@@ -142,6 +153,7 @@ void ABossActivationCore::HandleMissileHit(AActor* Missile)
     // 연출이나 성공 콜백보다 먼저 중복 피격을 차단한다.
     bIsActive = false;
     bIsBroken = true;
+    ActiveVFX->DeactivateImmediate();
     CollisionComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     CoreState = ECoreState::Breaking;
 
@@ -166,6 +178,7 @@ void ABossActivationCore::DeactivateCore()
     }
 
     bIsActive = false;
+    ActiveVFX->DeactivateImmediate();
     CollisionComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     CoreState = ECoreState::Retracting;
 
@@ -236,6 +249,7 @@ void ABossActivationCore::SetCoreOpacity(float Opacity)
 void ABossActivationCore::HideCore()
 {
     bIsActive = false;
+    ActiveVFX->DeactivateImmediate();
     CollisionComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     SetActorHiddenInGame(true);
     CoreState = ECoreState::Hidden;

@@ -23,21 +23,24 @@ public:
 	void EndBurst();
 
 protected:
+	virtual void ApplyEnemyData(const UEnemyDataAsset* Data) override;
+
 	virtual float GetAttackCooldown() const override { return BurstCooldown; }
 
+	/** 발사할 투사체 블루프린트. 속도·수명은 데이터 에셋에서 정한다. */
 	UPROPERTY(EditDefaultsOnly, Category = "Rattler")
+	TSubclassOf<AEnemyProjectile> ProjectileClass;
+
+	/** 투사체 설정(클래스는 위 ProjectileClass, 속도·수명은 데이터 에셋에서 복사된다) */
 	FEnemyProjectileConfig ProjectileConfig;
 
 	/** 한 번의 연발에서 발사하는 개수 */
-	UPROPERTY(EditDefaultsOnly, Category = "Rattler")
 	int32 BurstCount = 3;
 
 	/** 연발 중 발사 간격(초) */
-	UPROPERTY(EditDefaultsOnly, Category = "Rattler")
 	float FireInterval = 0.15f;
 
 	/** 연발 종료 후 다음 공격까지 대기 시간(초) */
-	UPROPERTY(EditDefaultsOnly, Category = "Rattler")
 	float BurstCooldown = 1.5f;
 
 	/** 총구 화염 이펙트 (한 발마다 재생) */
@@ -49,7 +52,6 @@ protected:
 	FName MuzzleSocketName = TEXT("Fire");
 
 	/** 투사체 발사 위치(몬스터 기준 로컬 좌표) */
-	UPROPERTY(EditDefaultsOnly, Category = "Rattler")
 	FVector MuzzleOffset = FVector(80.f, 0.f, 30.f);
 
 	UPROPERTY(VisibleInstanceOnly, Category = "Rattler")
@@ -57,4 +59,8 @@ protected:
 
 private:
 	FTimerHandle BurstTimerHandle;
+
+	/** 이번 연발의 첫 발을 쏠 때 정한 조준 방향. 연발 내내 이 방향으로 쏜다. */
+	FVector LockedAimDirection = FVector::ZeroVector;
+	bool bAimLocked = false;
 };

@@ -67,16 +67,17 @@ void UGA_CoreResidualPowerRecovery::ActivateAbility(const FGameplayAbilitySpecHa
 	}
 	const float Health = Attributes->GetHealth();
 	const float MaxHealth = Attributes->GetMaxHealth();
-	const float Recovery = Attributes->GetKillHealAmount();
-	if (!FMath::IsFinite(Health) || !FMath::IsFinite(MaxHealth) || !FMath::IsFinite(Recovery)
-		|| Health <= 0.f || MaxHealth <= Health || Recovery <= 0.f || !HealEffectClass)
+	const float Ratio = Attributes->GetKillHealRatio();
+	if (!FMath::IsFinite(Health) || !FMath::IsFinite(MaxHealth) || !FMath::IsFinite(Ratio)
+		|| Health <= 0.f || MaxHealth <= Health || Ratio <= 0.f || !HealEffectClass)
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
 
-	// 처치 시점의 고정 회복량을 사용하고, 최대 체력까지 부족한 양만 회복한다.
-	const float HealAmount = FMath::Min(Recovery, MaxHealth - Health);
+	// 처치 시점의 최대 체력과 회복 비율을 사용하고, 부족한 체력까지만 회복한다.
+	const float HealAmount = static_cast<float>(FMath::Min(
+		static_cast<double>(MaxHealth) * Ratio, static_cast<double>(MaxHealth) - Health));
 	const FGameplayEffectSpecHandle Spec = MakeOutgoingGameplayEffectSpec(
 		Handle, ActorInfo, ActivationInfo, HealEffectClass);
 	if (!Spec.IsValid())

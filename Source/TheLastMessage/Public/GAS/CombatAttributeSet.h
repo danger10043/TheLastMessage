@@ -80,10 +80,10 @@ public:
 	FGameplayAttributeData LifeStealRatio;
 	ATTRIBUTE_ACCESSORS_BASIC(UCombatAttributeSet, LifeStealRatio);
 
-	/** 적 한 마리를 처치했을 때 회복할 체력량. 0.0은 추가 회복이 없음을 뜻한다. */
+	/** 적 처치 시 최대 체력을 기준으로 회복할 비율. 0.0은 회복 없음, 0.03은 최대 체력의 3% 회복이다. */
 	UPROPERTY(BlueprintReadOnly, Category = "Base Stat")
-	FGameplayAttributeData KillHealAmount;
-	ATTRIBUTE_ACCESSORS_BASIC(UCombatAttributeSet, KillHealAmount);
+	FGameplayAttributeData KillHealRatio;
+	ATTRIBUTE_ACCESSORS_BASIC(UCombatAttributeSet, KillHealRatio);
 
 	/** 원래 공격 피해 대비 보조 타격의 피해 비율. 0.0은 추가 피해 없음, 0.1은 10%이다. */
 	UPROPERTY(BlueprintReadOnly, Category = "Base Stat")

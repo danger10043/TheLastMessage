@@ -29,7 +29,7 @@ UCombatAttributeSet::UCombatAttributeSet()
 
 	// 코어가 부여하기 전에는 추가 회복과 보조 타격 피해가 없다.
 	InitLifeStealRatio(0.0f);
-	InitKillHealAmount(0.0f);
+	InitKillHealRatio(0.0f);
 	InitAssistStrikeDamageRatio(0.0f);
 }
 
@@ -68,7 +68,7 @@ void UCombatAttributeSet::PreAttributeChange(const FGameplayAttribute& Attribute
 		|| Attribute == GetEnergyRechargeRateMultiplierAttribute()
 		|| Attribute == GetMoveSpeedMultiplierAttribute()
 		|| Attribute == GetLifeStealRatioAttribute()
-		|| Attribute == GetKillHealAmountAttribute()
+		|| Attribute == GetKillHealRatioAttribute()
 		|| Attribute == GetAssistStrikeDamageRatioAttribute())
 	{
 		// 음수 배율·회복량은 피해 회복이나 역방향 이동 같은 의도하지 않은 동작을 만든다.

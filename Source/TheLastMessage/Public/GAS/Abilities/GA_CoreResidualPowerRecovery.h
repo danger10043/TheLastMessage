@@ -6,7 +6,7 @@
 
 class UGameplayEffect;
 
-/** 처치 결과를 받아 현재 KillHealAmount만큼 회복하고 종료하는 잔여 전력 회수 능력이다. */
+/** 처치 결과를 받아 최대 체력의 KillHealRatio만큼 회복하고 종료하는 잔여 전력 회수 능력이다. */
 UCLASS()
 class THELASTMESSAGE_API UGA_CoreResidualPowerRecovery : public UGameplayAbility
 {
@@ -16,7 +16,7 @@ public:
 	UGA_CoreResidualPowerRecovery();
 
 protected:
-	/** 처치당 고정 회복량을 적용하는 Instant GE. */
+	/** 계산된 회복량을 적용하는 Instant GE. */
 	UPROPERTY(EditDefaultsOnly, Category = "Core|Healing")
 	TSubclassOf<UGameplayEffect> HealEffectClass;
 

@@ -124,6 +124,8 @@ void UGA_WeaponAttackBase::ActivateAbility(const FGameplayAbilitySpecHandle Hand
 	ChargeDuration = 0.0f;
 	HitActorsThisAttack.Reset();
 	RangedAttack = FWeaponRangedAttackSnapshot{};
+	RemainingBurstShots = 0;
+	bAttackMontageFinished = false;
 	APlayerBase* Player = ActorInfo ? Cast<APlayerBase>(ActorInfo->AvatarActor.Get()) : nullptr;
 	SourceWeapon = Player ? Player->GetWeaponInSlot(WeaponSlot) : nullptr;
 	DamageEffectClass = Player ? Player->GetWeaponDamageEffectClass() : nullptr;
@@ -261,6 +263,117 @@ bool UGA_WeaponAttackBase::CaptureRangedAttack(APlayerBase* Player,
 	return true;
 }
 
+bool UGA_WeaponAttackBase::ResolveRangedSpawnLocation(APlayerBase* Player,
+	TSubclassOf<AProjectileBase> ProjectileClass, FVector& Location) const
+{
+	if (!IsValid(Player) || !ProjectileClass || !GetWorld()) return false;
+	Location = Player->GetWeaponMuzzleLocation(WeaponSlot);
+	const float Radius = ProjectileClass->GetDefaultObject<AProjectileBase>()->GetProjectileCollisionRadius();
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(MuzzleObstruction), false, Player);
+	FHitResult Obstruction;
+	// 총구가 벽을 넘어가도 탄환은 캐릭터와 총구 사이의 장애물 앞에서 생성한다.
+	if (!Location.Equals(Player->GetActorLocation()) && GetWorld()->SweepSingleByChannel(Obstruction,
+		Player->GetActorLocation(), Location, FQuat::Identity, ECC_Visibility,
+		FCollisionShape::MakeSphere(Radius), Params))
+	{
+		if (Obstruction.bStartPenetrating) return false;
+		Location = Obstruction.Location - (Location - Player->GetActorLocation()).GetSafeNormal();
+	}
+	return true;
+}
+
+bool UGA_WeaponAttackBase::CanContinueRangedAttack(const APlayerBase* Player) const
+{
+	return IsActive() && !bFinishingAttack && IsValid(Player) && !Player->IsDead()
+		&& IsValid(SourceWeapon) && IsValid(RangedAttack.WeaponData.Get()) && RangedAttack.ProjectileClass
+		&& Player->GetWeaponInSlot(WeaponSlot) == SourceWeapon
+		&& SourceWeapon->WeaponData == RangedAttack.WeaponData;
+}
+
+AProjectileBase* UGA_WeaponAttackBase::CreateRangedProjectile(APlayerBase* Player, const FTransform& Transform)
+{
+	if (!CanContinueRangedAttack(Player)) return nullptr;
+	AProjectileBase* Projectile = GetWorld()->SpawnActorDeferred<AProjectileBase>(RangedAttack.ProjectileClass,
+		Transform, Player, Player, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+	if (!Projectile) return nullptr;
+	if (!CanContinueRangedAttack(Player) || !Projectile->InitializeProjectile(Player, DamageEffectClass,
+		RangedAttack.DamagePerShot, RangedAttack.ProjectileSpeed, RangedAttack.Range, RangedAttack.FeedbackStrength))
+	{
+		Projectile->Destroy();
+		return nullptr;
+	}
+	return Projectile;
+}
+
+bool UGA_WeaponAttackBase::LaunchRangedProjectile(APlayerBase* Player, AProjectileBase* Projectile,
+	const FTransform& Transform)
+{
+	if (!CanContinueRangedAttack(Player))
+	{
+		Projectile->Destroy();
+		return false;
+	}
+	SourceWeapon->LastSuccessfulFireTime = GetWorld()->GetTimeSeconds();
+	Projectile->ConfigureVisuals(RangedAttack.WeaponData.Get());
+	Projectile->FinishSpawning(Transform);
+	if (!CanContinueRangedAttack(Player))
+	{
+		Projectile->Destroy();
+		return false;
+	}
+	Player->PlayRangedShotFeedback(WeaponSlot, RangedAttack.WeaponData.Get(), Transform);
+	if (!CanContinueRangedAttack(Player))
+	{
+		Projectile->Destroy();
+		return false;
+	}
+	Projectile->LaunchProjectile(RangedAttack.Direction);
+	return CanContinueRangedAttack(Player);
+}
+
+void UGA_WeaponAttackBase::FireNextBurstShot()
+{
+	if (!IsActive() || bFinishingAttack) return;
+	APlayerBase* Player = Cast<APlayerBase>(GetAvatarActorFromActorInfo());
+	FVector Location;
+	if (RemainingBurstShots <= 0 || !CanContinueRangedAttack(Player)
+		|| !ResolveRangedSpawnLocation(Player, RangedAttack.ProjectileClass, Location))
+	{
+		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
+		return;
+	}
+	const FTransform Transform(RangedAttack.Direction.Rotation(), Location);
+	AProjectileBase* Projectile = CreateRangedProjectile(Player, Transform);
+	if (!Projectile || !LaunchRangedProjectile(Player, Projectile, Transform))
+	{
+		if (IsActive() && !bFinishingAttack) EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
+		return;
+	}
+	// 발사 중 콜백에서도 이번 탄환이 아직 처리 중임을 알 수 있도록 발사 후에 차감한다.
+	--RemainingBurstShots;
+	if (RemainingBurstShots == 0)
+	{
+		GetWorld()->GetTimerManager().ClearTimer(BurstShotTimer);
+		FinishAttackIfReady();
+	}
+}
+
+void UGA_WeaponAttackBase::FinishAttackIfReady()
+{
+	if (IsActive() && !bFinishingAttack && bAttackMontageFinished && RemainingBurstShots == 0)
+	{
+		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
+	}
+}
+
+void UGA_WeaponAttackBase::HandleWeaponDataChanged()
+{
+	if (IsActive() && !bFinishingAttack && !CanContinueRangedAttack(Cast<APlayerBase>(GetAvatarActorFromActorInfo())))
+	{
+		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
+	}
+}
+
 void UGA_WeaponAttackBase::ExecuteAttack()
 {
 	if (!IsActive() || bFinishingAttack || bAttackExecuted) return;
@@ -279,27 +392,13 @@ void UGA_WeaponAttackBase::ExecuteAttack()
 	FVector ShotDirection = FVector::ZeroVector;
 	if (bRanged)
 	{
-		FVector SpawnLocation = Player->GetWeaponMuzzleLocation(WeaponSlot);
+		FVector SpawnLocation;
 		const TSubclassOf<AProjectileBase> ProjectileClass = Player->GetAttackProjectileClass(Data);
-		if (!ProjectileClass || ProjectileClass->HasAnyClassFlags(CLASS_Abstract))
+		if (!ProjectileClass || ProjectileClass->HasAnyClassFlags(CLASS_Abstract)
+			|| !ResolveRangedSpawnLocation(Player, ProjectileClass, SpawnLocation))
 		{
 			EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
 			return;
-		}
-		const float Radius = ProjectileClass->GetDefaultObject<AProjectileBase>()->GetProjectileCollisionRadius();
-		// Sweep the whole projectile from the body to the muzzle so a barrel cannot fire through a wall.
-		FCollisionQueryParams WallParams(SCENE_QUERY_STAT(MuzzleObstruction), false, Player);
-		FHitResult Obstruction;
-		if (!SpawnLocation.Equals(Player->GetActorLocation()) && GetWorld()->SweepSingleByChannel(Obstruction,
-			Player->GetActorLocation(), SpawnLocation, FQuat::Identity, ECC_Visibility,
-			FCollisionShape::MakeSphere(Radius), WallParams))
-		{
-			if (Obstruction.bStartPenetrating)
-			{
-				EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
-				return;
-			}
-			SpawnLocation = Obstruction.Location - (SpawnLocation - Player->GetActorLocation()).GetSafeNormal();
 		}
 		ShotDirection = (Player->GetAimTargetLocation() - SpawnLocation).GetSafeNormal();
 		if (!CaptureRangedAttack(Player, ProjectileClass, ShotDirection))
@@ -307,13 +406,15 @@ void UGA_WeaponAttackBase::ExecuteAttack()
 			EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
 			return;
 		}
-		SpawnTransform = FTransform(ShotDirection.Rotation(), SpawnLocation);
-		Projectile = GetWorld()->SpawnActorDeferred<AProjectileBase>(RangedAttack.ProjectileClass, SpawnTransform,
-			Player, Player, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
-		if (!Projectile || !Projectile->InitializeProjectile(Player, DamageEffectClass, RangedAttack.DamagePerShot,
-			RangedAttack.ProjectileSpeed, RangedAttack.Range, RangedAttack.FeedbackStrength))
+		RemainingBurstShots = RangedAttack.ShotCount - 1;
+		if (RemainingBurstShots > 0)
 		{
-			if (Projectile) Projectile->Destroy();
+			Player->OnWeaponDataChanged.AddUniqueDynamic(this, &UGA_WeaponAttackBase::HandleWeaponDataChanged);
+		}
+		SpawnTransform = FTransform(ShotDirection.Rotation(), SpawnLocation);
+		Projectile = CreateRangedProjectile(Player, SpawnTransform);
+		if (!Projectile)
+		{
 			EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
 			return;
 		}
@@ -333,22 +434,16 @@ void UGA_WeaponAttackBase::ExecuteAttack()
 	bAttackExecuted = true;
 	if (Projectile)
 	{
-		SourceWeapon->LastSuccessfulFireTime = GetWorld()->GetTimeSeconds();
-		Projectile->ConfigureVisuals(RangedAttack.WeaponData.Get());
-		Projectile->FinishSpawning(SpawnTransform);
-		if (!IsActive() || bFinishingAttack)
+		if (!LaunchRangedProjectile(Player, Projectile, SpawnTransform))
 		{
-			Projectile->Destroy();
+			if (IsActive() && !bFinishingAttack) EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
 			return;
 		}
-		Player->PlayRangedShotFeedback(WeaponSlot, RangedAttack.WeaponData.Get(), SpawnTransform);
-		if (!IsActive() || bFinishingAttack)
+		if (RemainingBurstShots > 0)
 		{
-			Projectile->Destroy();
-			return;
+			GetWorld()->GetTimerManager().SetTimer(BurstShotTimer, this,
+				&UGA_WeaponAttackBase::FireNextBurstShot, RangedAttack.ShotInterval, true);
 		}
-		Projectile->LaunchProjectile(RangedAttack.Direction);
-		if (!IsActive() || bFinishingAttack) return;
 	}
 
 	if (!bRanged)
@@ -359,6 +454,7 @@ void UGA_WeaponAttackBase::ExecuteAttack()
 		HitTask->ReadyForActivation();
 	}
 
+	bAttackMontageFinished = !Data->AttackMontage;
 	FName AttackSection = NAME_None;
 	if (Data->AttackMontage)
 	{
@@ -386,7 +482,7 @@ void UGA_WeaponAttackBase::ExecuteAttack()
 	{
 		Player->MulticastMeleeAttackFeedback(WeaponSlot, SourceWeapon->WeaponData);
 	}
-	if (!Data->AttackMontage) EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
+	FinishAttackIfReady();
 }
 
 void UGA_WeaponAttackBase::HandleMeleeHit(FGameplayEventData Payload)
@@ -484,7 +580,9 @@ float UGA_WeaponAttackBase::GetImpactFeedbackStrength() const
 
 void UGA_WeaponAttackBase::HandleMontageCompleted()
 {
-	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
+	if (!IsActive() || bFinishingAttack) return;
+	bAttackMontageFinished = true;
+	FinishAttackIfReady();
 }
 
 void UGA_WeaponAttackBase::HandleMontageCancelled()
@@ -498,13 +596,18 @@ void UGA_WeaponAttackBase::EndAbility(const FGameplayAbilitySpecHandle Handle,
 {
 	if (bFinishingAttack || !IsEndAbilityValid(Handle, ActorInfo)) return;
 	bFinishingAttack = true;
-	GetWorld()->GetTimerManager().ClearTimer(ChargeStartTimer);
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ChargeStartTimer);
+		World->GetTimerManager().ClearTimer(BurstShotTimer);
+	}
 	if (bWasCancelled)
 	{
 		if (APlayerBase* Player = ActorInfo ? Cast<APlayerBase>(ActorInfo->AvatarActor.Get()) : nullptr) Player->ClearPendingAttack();
 	}
 	if (APlayerBase* Player = ActorInfo ? Cast<APlayerBase>(ActorInfo->AvatarActor.Get()) : nullptr)
 	{
+		Player->OnWeaponDataChanged.RemoveDynamic(this, &UGA_WeaponAttackBase::HandleWeaponDataChanged);
 		Player->ClearWeaponCharge(WeaponSlot);
 		if (bAttackExecuted && SourceWeapon && SourceWeapon->WeaponData
 			&& (SourceWeapon->WeaponData->WeaponType == EWeaponType::LightMelee || SourceWeapon->WeaponData->WeaponType == EWeaponType::HeavyMelee))
@@ -522,5 +625,7 @@ void UGA_WeaponAttackBase::EndAbility(const FGameplayAbilitySpecHandle Handle,
 	SourceWeapon = nullptr;
 	DamageEffectClass = nullptr;
 	RangedAttack = FWeaponRangedAttackSnapshot{};
+	RemainingBurstShots = 0;
+	bAttackMontageFinished = false;
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 }

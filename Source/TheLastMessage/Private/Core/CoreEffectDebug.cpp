@@ -115,7 +115,8 @@ void Draw(UCanvas* Canvas, APlayerController*)
 	Lines.Add(Target ? FString::Printf(TEXT("Target %s | HP %.2f | last actual HP loss: %.2f"), *GetNameSafe(Target->GetAvatarActor()), Target->GetNumericAttribute(FindHealth(Target)), Monitor.LastTargetDrop) : TEXT("Target: not selected (tlm.CoreTarget)"));
 	Lines.Add(TEXT("Target HP loss includes ALL damage sources; shields/overkill affect the result."));
 	Lines.Add(FString::Printf(TEXT("Life steal %.1f%% | Kill recovery %.1f%% max HP"), Stats->GetLifeStealRatio() * 100.f, Stats->GetKillHealRatio() * 100.f));
-	Lines.Add(TEXT("tlm.CoreGive 2..13 | tlm.CoreHealth 80 | tlm.CoreHit 100 | tlm.CoreReset"));
+	Lines.Add(FString::Printf(TEXT("Burst: %.0f shots | total damage x%.2f | interval %.2fs"), Stats->GetRangedBurstShotCount(), Stats->GetRangedBurstTotalDamageMultiplier(), Stats->GetRangedBurstInterval()));
+	Lines.Add(TEXT("tlm.CoreGive 2..14 | tlm.CoreHealth 80 | tlm.CoreHit 100 | tlm.CoreReset"));
 	if (!Monitor.Message.IsEmpty()) Lines.Add(Monitor.Message);
 
 	const FVector2D Origin(24.0f, 120.0f);
@@ -154,14 +155,15 @@ FAutoConsoleCommandWithWorldAndArgs ShowCommand(TEXT("tlm.CoreDebug"), TEXT("Sho
 		else Enable(World);
 	}), ECVF_Cheat);
 
-FAutoConsoleCommandWithWorldAndArgs GiveCommand(TEXT("tlm.CoreGive"), TEXT("Acquire a real core by test-list number 2..13. 9: charge acceleration, 11: energy recharge, 12: power absorption, 13: residual power recovery. Existing cores are kept."),
+FAutoConsoleCommandWithWorldAndArgs GiveCommand(TEXT("tlm.CoreGive"), TEXT("Acquire a real core by test-list number 2..14. 9: charge acceleration, 11: energy recharge, 12: power absorption, 13: residual power recovery, 14: burst fire. Existing cores are kept."),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
 	{
 		APlayerBase* Player = GetPlayer(World);
 		int32 Number = 0;
-		if (!Player || !Player->HasAuthority() || Args.Num() != 1 || !LexTryParseString(Number, *Args[0]) || Number < 2 || Number > 13) return;
-		const TCHAR* Names[] = {TEXT("ImpactDispersionArmor"), TEXT("OverloadOutput"), TEXT("MeleeAmplifier"), TEXT("StableOutputCircuit"), TEXT("EmergencyOutputCircuit"), TEXT("PrecisionAimingCircuit"), TEXT("HighSpeedDrive"), TEXT("ChargeAccelerationCircuit"), TEXT("EfficientDischargeCircuit"), TEXT("FastRechargeCircuit"), TEXT("PowerAbsorption"), TEXT("ResidualPowerRecovery")};
-		UCoreDataAsset* Data = LoadObject<UCoreDataAsset>(nullptr, *FString::Printf(TEXT("/Game/Test_Jihun/Core/Stat/DataAsset/DA_Core_%s.DA_Core_%s"), Names[Number - 2], Names[Number - 2]));
+		if (!Player || !Player->HasAuthority() || Args.Num() != 1 || !LexTryParseString(Number, *Args[0]) || Number < 2 || Number > 14) return;
+		const TCHAR* Names[] = {TEXT("ImpactDispersionArmor"), TEXT("OverloadOutput"), TEXT("MeleeAmplifier"), TEXT("StableOutputCircuit"), TEXT("EmergencyOutputCircuit"), TEXT("PrecisionAimingCircuit"), TEXT("HighSpeedDrive"), TEXT("ChargeAccelerationCircuit"), TEXT("EfficientDischargeCircuit"), TEXT("FastRechargeCircuit"), TEXT("PowerAbsorption"), TEXT("ResidualPowerRecovery"), TEXT("BurstFire")};
+		const TCHAR* Category = Number == 14 ? TEXT("Ability") : TEXT("Stat");
+		UCoreDataAsset* Data = LoadObject<UCoreDataAsset>(nullptr, *FString::Printf(TEXT("/Game/Test_Jihun/Core/%s/DataAsset/DA_Core_%s.DA_Core_%s"), Category, Names[Number - 2], Names[Number - 2]));
 		Enable(World);
 		const ECoreAcquireResult Result = Data ? Player->GetCoreComponent()->AcquireCore(Data) : ECoreAcquireResult::InvalidData;
 		Message(FString::Printf(TEXT("%d %s: %s (Lv.%d)"), Number, Data ? *Data->CoreName.ToString() : TEXT("missing DA"), *UEnum::GetValueAsString(Result), Data ? Player->GetCoreComponent()->GetCoreLevel(Data->CoreId) : 0));

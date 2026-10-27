@@ -69,6 +69,8 @@ protected:
 	void HandleMontageCompleted();
 	UFUNCTION()
 	void HandleMontageCancelled();
+	UFUNCTION()
+	void HandleWeaponDataChanged();
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Attack", meta = (ClampMin = "1.0"))
 	float MeleeHitRadius = 35.0f;
@@ -101,8 +103,17 @@ protected:
 private:
 	void ExecuteAttack();
 	bool CaptureRangedAttack(APlayerBase* Player, TSubclassOf<AProjectileBase> ProjectileClass, const FVector& Direction);
+	bool ResolveRangedSpawnLocation(APlayerBase* Player, TSubclassOf<AProjectileBase> ProjectileClass, FVector& Location) const;
+	bool CanContinueRangedAttack(const APlayerBase* Player) const;
+	AProjectileBase* CreateRangedProjectile(APlayerBase* Player, const FTransform& Transform);
+	bool LaunchRangedProjectile(APlayerBase* Player, AProjectileBase* Projectile, const FTransform& Transform);
+	void FireNextBurstShot();
+	void FinishAttackIfReady();
 	void StartWeaponCharge();
 	FTimerHandle ChargeStartTimer;
+	FTimerHandle BurstShotTimer;
+	int32 RemainingBurstShots = 0;
+	bool bAttackMontageFinished = false;
 	bool bChargeStarted = false;
 	/** 현재 체력 비율에 따라 근접·원거리 공격에 적용할 피해 배율을 계산한다. */
 	float GetHealthDamageMultiplier() const;

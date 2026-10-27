@@ -3,11 +3,16 @@
 #include "Character/CombatDamageLibrary.h"
 #include "Character/Player/PlayerBase.h"
 #include "GAS/CombatAttributeSet.h"
-#include "GAS/Effects/GE_CoreHeal.h"
 #include "GAS/WeaponGameplayTags.h"
+#include "GameplayEffect.h"
+#include "UObject/ConstructorHelpers.h"
 
 UGA_CorePowerAbsorption::UGA_CorePowerAbsorption()
 {
+	static ConstructorHelpers::FClassFinder<UGameplayEffect> HealEffect(
+		TEXT("/Game/Test_Jihun/Core/Stat/GE/GE_Core_Heal"));
+	HealEffectClass = HealEffect.Class;
+
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
 	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::ServerOnly;
 	NetSecurityPolicy = EGameplayAbilityNetSecurityPolicy::ServerOnly;
@@ -56,7 +61,7 @@ void UGA_CorePowerAbsorption::ActivateAbility(const FGameplayAbilitySpecHandle H
 	const float MaxHealth = Attributes->GetMaxHealth();
 	const float Ratio = Attributes->GetLifeStealRatio();
 	if (!FMath::IsFinite(Health) || !FMath::IsFinite(MaxHealth) || !FMath::IsFinite(Ratio)
-		|| Health <= 0.f || MaxHealth <= Health || Ratio <= 0.f)
+		|| Health <= 0.f || MaxHealth <= Health || Ratio <= 0.f || !HealEffectClass)
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
@@ -66,13 +71,14 @@ void UGA_CorePowerAbsorption::ActivateAbility(const FGameplayAbilitySpecHandle H
 	const float HealAmount = static_cast<float>(FMath::Min(
 		static_cast<double>(ActualDamage) * Ratio, static_cast<double>(MaxHealth) - Health));
 	const FGameplayEffectSpecHandle Spec = MakeOutgoingGameplayEffectSpec(
-		Handle, ActorInfo, ActivationInfo, UGE_CoreHeal::StaticClass());
+		Handle, ActorInfo, ActivationInfo, HealEffectClass);
 	if (!Spec.IsValid())
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
-	Spec.Data->SetSetByCallerMagnitude(CoreGameplayTags::Data_HealAmount, HealAmount);
+	static const FGameplayTag HealAmountTag = FGameplayTag::RequestGameplayTag(TEXT("Data.Core.HealAmount"));
+	Spec.Data->SetSetByCallerMagnitude(HealAmountTag, HealAmount);
 	const FActiveGameplayEffectHandle Applied = ApplyGameplayEffectSpecToOwner(Handle, ActorInfo, ActivationInfo, Spec);
 	EndAbility(Handle, ActorInfo, ActivationInfo, true, !Applied.WasSuccessfullyApplied());
 }

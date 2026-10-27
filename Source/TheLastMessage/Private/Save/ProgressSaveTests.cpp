@@ -87,4 +87,50 @@ bool FProgressSlotFlowTest::RunTest(const FString& Parameters)
 	IFileManager::Get().DeleteDirectory(*Directory, false, false);
 	return !HasAnyErrors();
 }
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCinematicProgressTest, "TheLastMessage.Save.CinematicHistory",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCinematicProgressTest::RunTest(const FString& Parameters)
+{
+	TStrongObjectPtr<UGameInstance> Instance(NewObject<UGameInstance>());
+	TStrongObjectPtr<UProgressSaveSubsystem> Saves(NewObject<UProgressSaveSubsystem>(Instance.Get()));
+	const FString Directory = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir() / TEXT("Automation/CinematicHistory") / FGuid::NewGuid().ToString());
+	Saves->AutomationSaveDirectory = Directory;
+	auto Wait = [&]()
+	{
+		const double Deadline = FPlatformTime::Seconds() + 10;
+		while (Saves->IsSaving() && FPlatformTime::Seconds() < Deadline)
+		{
+			FTaskGraphInterface::Get().ProcessThreadUntilIdle(ENamedThreads::GameThread);
+			FPlatformProcess::Sleep(0.005f);
+		}
+		return TestFalse(TEXT("Cinematic history write finishes"), Saves->IsSaving());
+	};
+	TestTrue(TEXT("Start a new playthrough"), Saves->StartNewGame(1));
+	TestFalse(TEXT("New game allows entry scene"), Saves->IsLoadedSession());
+	Saves->GetWorkingProgress()->MapPackage = TEXT("/Game/Test_Jihong/Prototype/Lv_Factory_Metroidvania");
+	TestTrue(TEXT("Initial snapshot writes"), Saves->SaveActiveProgress());
+	// Exercise history requests while an earlier write is still pending.
+	TestTrue(TEXT("First cinematic can be consumed"), Saves->MarkCinematicPlayed(TEXT("Factory"), TEXT("Entry")));
+	TestFalse(TEXT("Duplicate cinematic is rejected"), Saves->MarkCinematicPlayed(TEXT("Factory"), TEXT("Entry")));
+	TestTrue(TEXT("Another cinematic queues into the same history write"), Saves->MarkCinematicPlayed(TEXT("Factory"), TEXT("BossIntro")));
+	if (!Wait()) return false;
+	Saves->EndSession();
+	TestTrue(TEXT("Continue before the first checkpoint succeeds"), Saves->ContinueGame(1));
+	TestTrue(TEXT("Even a save without a checkpoint is a loaded session"), Saves->IsLoadedSession());
+	TestTrue(TEXT("Loaded map skips its entry"), Saves->IsLoadedMap(TEXT("Lv_Factory_Metroidvania")));
+	TestFalse(TEXT("A different map can still play its first entry"), Saves->IsLoadedMap(TEXT("OtherMap")));
+	TestTrue(TEXT("Entry history survives reload"), Saves->HasPlayedCinematic(TEXT("Factory"), TEXT("Entry")));
+	TestTrue(TEXT("Queued boss history survives reload"), Saves->HasPlayedCinematic(TEXT("Factory"), TEXT("BossIntro")));
+	TestFalse(TEXT("IDs are scoped to their map"), Saves->HasPlayedCinematic(TEXT("OtherMap"), TEXT("Entry")));
+	TestFalse(TEXT("History save does not advance checkpoint"), Saves->GetWorkingProgress()->CheckpointId.IsValid());
+	Saves->EndSession();
+	TestTrue(TEXT("New game can replace the slot"), Saves->StartNewGame(1, true));
+	TestFalse(TEXT("New game clears cinematic history"), Saves->HasPlayedCinematic(TEXT("Factory"), TEXT("Entry")));
+	TestFalse(TEXT("New game resets loaded-session flag"), Saves->IsLoadedSession());
+	Saves->EndSession();
+	IFileManager::Get().Delete(*(Directory / TEXT("Progress_1.sav")));
+	IFileManager::Get().DeleteDirectory(*Directory, false, false);
+	return !HasAnyErrors();
+}
 #endif

@@ -38,8 +38,12 @@ public:
 	bool RestorePlayerIfPending(APlayerBase* Player);
 	void ApplyCheckpointState(APlayerCheckpoint* Checkpoint) const;
 	bool IsRestoringProgress() const { return bRestorePending || bRestoring; }
+	bool IsLoadedSession() const { return bLoadedSession; }
+	bool IsLoadedMap(FName Map) const { return bLoadedSession && LoadedMap == Map; }
+	bool HasPlayedCinematic(FName Map, FName Cinematic) const;
+	bool MarkCinematicPlayed(FName Map, FName Cinematic);
 	UFUNCTION(BlueprintPure, Category="Save") int32 GetActiveSlot() const { return ActiveSlot; }
-	UFUNCTION(BlueprintPure, Category="Save") bool IsSaving() const { return bSaving || PendingCheckpointSnapshot != nullptr; }
+	UFUNCTION(BlueprintPure, Category="Save") bool IsSaving() const { return bSaving || PendingCheckpointSnapshot != nullptr || bCinematicHistoryDirty; }
 	UFUNCTION(BlueprintPure, Category="Save") bool HasSave(int32 SlotId) const;
 	UFUNCTION(BlueprintPure, Category="Save") FString GetSaveDirectory() const;
 	UPROPERTY(BlueprintAssignable, Category="Save") FProgressSaveFinished OnSaveFinished;
@@ -51,6 +55,8 @@ private:
 	friend class FProgressSlotFlowTest;
 	friend class FCheckpointSaveFlowTest;
 	friend class FCheckpointRestoreStartupTest;
+	friend class FCinematicProgressTest;
+	friend class FCinematicControllerTest;
 	FString AutomationSaveDirectory;
 #endif
 	UProgressSaveGame* ReadSlot(int32 SlotId) const;
@@ -61,6 +67,9 @@ private:
 	bool bCheckpointWrite = false;
 	bool bRestorePending = false;
 	bool bRestoring = false;
+	bool bLoadedSession = false;
+	FName LoadedMap;
+	bool bCinematicHistoryDirty = false;
 	UPROPERTY(Transient) TObjectPtr<UProgressSaveGame> PendingCheckpointSnapshot;
 	void WriteCheckpointSnapshot(UProgressSaveGame* Snapshot);
 };

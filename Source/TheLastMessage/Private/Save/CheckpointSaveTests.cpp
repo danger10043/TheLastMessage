@@ -143,6 +143,9 @@ bool FCheckpointRestoreStartupTest::RunTest(const FString& Parameters)
 	Instance->InitializeStandalone();
 	UWorld* World = Instance->GetWorld();
 	UProgressSaveSubsystem* Saves = Instance->GetSubsystem<UProgressSaveSubsystem>();
+	// Real player saves must not prevent this fixture from creating its session.
+	Saves->AutomationSaveDirectory = FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir()
+		/ TEXT("Automation/CheckpointStartup") / FGuid::NewGuid().ToString());
 	Saves->StartNewGame(2);
 	UProgressSaveGame* Progress = Saves->GetWorkingProgress();
 	Progress->MapPackage = World->GetOutermost()->GetName();

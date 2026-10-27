@@ -71,6 +71,8 @@ bool UProgressSaveSubsystem::StartNewGame(int32 SlotId, bool bOverwriteExisting)
 {
 	if (ActiveSlot || bSaving || SlotId < 1 || SlotId > 3 || (HasSave(SlotId) && !bOverwriteExisting)) return false;
 	WorkingProgress = NewObject<UProgressSaveGame>(this);
+	bLoadedSession = false;
+	LoadedMap = NAME_None;
 	WorkingProgress->SlotId = SlotId;
 	WorkingProgress->PlaythroughId = FGuid::NewGuid();
 	ActiveSlot = SlotId;
@@ -83,6 +85,8 @@ bool UProgressSaveSubsystem::ContinueGame(int32 SlotId)
 	UProgressSaveGame* Loaded = ReadSlot(SlotId);
 	if (!Loaded) return false;
 	WorkingProgress = Loaded;
+	bLoadedSession = true;
+	LoadedMap = FName(*FPackageName::GetShortName(Loaded->MapPackage));
 	bRestorePending = Loaded->CheckpointId.IsValid();
 	ActiveSlot = SlotId;
 	return true;
@@ -94,6 +98,8 @@ bool UProgressSaveSubsystem::EndSession()
 	PendingCheckpointSnapshot = nullptr;
 	bRestorePending = false;
 	WorkingProgress = nullptr;
+	bLoadedSession = false;
+	LoadedMap = NAME_None;
 	ActiveSlot = 0;
 	return true;
 }
@@ -104,7 +110,26 @@ bool UProgressSaveSubsystem::ReloadActiveProgress()
 	UProgressSaveGame* Loaded = ReadSlot(ActiveSlot);
 	if (!Loaded || !Loaded->CheckpointId.IsValid()) return false;
 	WorkingProgress = Loaded;
+	bLoadedSession = true;
+	LoadedMap = FName(*FPackageName::GetShortName(Loaded->MapPackage));
 	bRestorePending = true;
+	return true;
+}
+
+bool UProgressSaveSubsystem::HasPlayedCinematic(FName Map, FName Cinematic) const
+{
+	const FProgressMapState* State = WorkingProgress ? WorkingProgress->Maps.Find(Map) : nullptr;
+	return State && State->PlayedCinematics.Contains(Cinematic);
+}
+
+bool UProgressSaveSubsystem::MarkCinematicPlayed(FName Map, FName Cinematic)
+{
+	if (!WorkingProgress || ActiveSlot <= 0 || Map.IsNone() || Cinematic.IsNone() || HasPlayedCinematic(Map, Cinematic)) return false;
+	WorkingProgress->Maps.FindOrAdd(Map).PlayedCinematics.Add(Cinematic);
+	// A queued checkpoint must not overwrite newer cinematic history.
+	if (PendingCheckpointSnapshot) PendingCheckpointSnapshot->Maps.FindOrAdd(Map).PlayedCinematics.Add(Cinematic);
+	if (bSaving) bCinematicHistoryDirty = true;
+	else SaveActiveProgress(); // Persist history without advancing the checkpoint/player snapshot.
 	return true;
 }
 
@@ -202,6 +227,7 @@ bool UProgressSaveSubsystem::SaveActiveProgress()
 	WorkingProgress->SavedAt = FDateTime::UtcNow();
 	TArray<uint8> Bytes;
 	if (!UGameplayStatics::SaveGameToMemory(WorkingProgress, Bytes)) return false;
+	bCinematicHistoryDirty = false;
 	const FString Path = GetSlotPath(ActiveSlot);
 	bSaving = true;
 	TWeakObjectPtr<UProgressSaveSubsystem> WeakThis(this);
@@ -228,6 +254,11 @@ bool UProgressSaveSubsystem::SaveActiveProgress()
 					UProgressSaveGame* Pending = Self->PendingCheckpointSnapshot;
 					Self->PendingCheckpointSnapshot = nullptr;
 					Self->WriteCheckpointSnapshot(Pending);
+				}
+				else if (Self->bCinematicHistoryDirty)
+				{
+					Self->bCinematicHistoryDirty = false;
+					if (!Self->SaveActiveProgress()) Self->OnSaveFinished.Broadcast(false);
 				}
 			}
 		});

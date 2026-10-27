@@ -42,8 +42,8 @@ public:
 		FModifyContextOptions Options; Options.bForceImmediately = true;
 		Inputs->RequestRebuildControlMappings(Options, EInputMappingRebuildType::RebuildWithFlush);
 		Test->TestTrue(TEXT("Pause action is enabled during pause"), PC->PauseMenuAction->bTriggerWhenPaused);
-		Test->TestTrue(TEXT("SideScroller maps Escape to pause action"),
-			Inputs->QueryKeysMappedToAction(PC->PauseMenuAction).Contains(EKeys::Escape));
+		Test->TestTrue(TEXT("SideScroller maps Tab to pause action"),
+			Inputs->QueryKeysMappedToAction(PC->PauseMenuAction).Contains(EKeys::Tab));
 		const bool PreviousCursor = PC->bShowMouseCursor;
 		PlayerInput->InjectInputForAction(PC->PauseMenuAction, FInputActionValue(true));
 		PC->PlayerInput->ProcessInputStack({PC->InputComponent}, 0.016f, false);
@@ -52,24 +52,24 @@ public:
 		Test->TestTrue(TEXT("Menu displays and pauses game"), Screen->IsInViewport() && UGameplayStatics::IsGamePaused(World));
 		UWidgetSwitcher* Pages = CastChecked<UWidgetSwitcher>(Screen->WidgetTree->FindWidget(TEXT("PausePages")));
 		auto Click = [&](const TCHAR* Name) { CastChecked<UButton>(Screen->WidgetTree->FindWidget(Name))->OnClicked.Broadcast(); };
-		const FKeyEvent Escape(EKeys::Escape, FModifierKeysState(), 0, false, 0, 0);
+		const FKeyEvent Tab(EKeys::Tab, FModifierKeysState(), 0, false, 0, 0);
 		Test->TestFalse(TEXT("No checkpoint disables reload"), Screen->WidgetTree->FindWidget(TEXT("ReloadButton"))->GetIsEnabled());
 		Click(TEXT("SettingsButton")); Test->TestEqual(TEXT("Settings page opens"), Pages->GetActiveWidgetIndex(), 2);
-		Screen->TakeWidget()->OnPreviewKeyDown(FGeometry(), Escape);
-		Test->TestTrue(TEXT("Escape leaves settings while keeping pause"), Pages->GetActiveWidgetIndex() == 0 && UGameplayStatics::IsGamePaused(World));
+		Screen->TakeWidget()->OnPreviewKeyDown(FGeometry(), Tab);
+		Test->TestTrue(TEXT("Tab leaves settings while keeping pause"), Pages->GetActiveWidgetIndex() == 0 && UGameplayStatics::IsGamePaused(World));
 		Click(TEXT("MenuButton")); Test->TestEqual(TEXT("Menu exit requires confirmation"), Pages->GetActiveWidgetIndex(), 1);
 		Click(TEXT("CancelButton")); Test->TestEqual(TEXT("Cancel returns to paused menu"), Pages->GetActiveWidgetIndex(), 0);
 		Click(TEXT("QuitButton")); Test->TestEqual(TEXT("Desktop exit requires confirmation"), Pages->GetActiveWidgetIndex(), 1);
-		Screen->TakeWidget()->OnPreviewKeyDown(FGeometry(), Escape);
+		Screen->TakeWidget()->OnPreviewKeyDown(FGeometry(), Tab);
 		Screen->SetCheckpointAvailable(true); Click(TEXT("ReloadButton"));
 		Test->TestEqual(TEXT("Checkpoint load requires confirmation"), Pages->GetActiveWidgetIndex(), 1);
 		Click(TEXT("CancelButton")); Screen->SetBusy(true);
 		Test->TestFalse(TEXT("Save wait disables resume"), Screen->WidgetTree->FindWidget(TEXT("ResumeButton"))->GetIsEnabled());
-		Screen->TakeWidget()->OnPreviewKeyDown(FGeometry(), Escape);
-		Test->TestTrue(TEXT("Escape cannot interrupt pending save navigation"), UGameplayStatics::IsGamePaused(World));
+		Screen->TakeWidget()->OnPreviewKeyDown(FGeometry(), Tab);
+		Test->TestTrue(TEXT("Tab cannot interrupt pending save navigation"), UGameplayStatics::IsGamePaused(World));
 		Screen->SetBusy(false);
-		Test->TestTrue(TEXT("Escape is consumed"), Screen->TakeWidget()->OnPreviewKeyDown(FGeometry(), Escape).IsEventHandled());
-		Test->TestFalse(TEXT("Escape resumes game"), UGameplayStatics::IsGamePaused(World));
+		Test->TestTrue(TEXT("Tab is consumed"), Screen->TakeWidget()->OnPreviewKeyDown(FGeometry(), Tab).IsEventHandled());
+		Test->TestFalse(TEXT("Tab resumes game"), UGameplayStatics::IsGamePaused(World));
 		Test->TestNull(TEXT("Pause UI removed"), PC->GetPauseMenu());
 		Test->TestEqual(TEXT("Cursor state restored"), PC->bShowMouseCursor, PreviousCursor);
 		PC->TogglePauseMenu(); Screen = PC->GetPauseMenu();
@@ -90,7 +90,7 @@ public:
 		PC->TogglePauseMenu(); Screen = PC->GetPauseMenu();
 		if (Test->TestNotNull(TEXT("Pause opens with remapped controls"), Screen))
 		{
-			Test->TestFalse(TEXT("Unmapped Escape is not hardcoded by pause UI"), Screen->TakeWidget()->OnPreviewKeyDown(FGeometry(), Escape).IsEventHandled());
+			Test->TestFalse(TEXT("Unmapped Tab is not hardcoded by pause UI"), Screen->TakeWidget()->OnPreviewKeyDown(FGeometry(), Tab).IsEventHandled());
 			const FKeyEvent RemappedKey(EKeys::F10, FModifierKeysState(), 0, false, 0, 0);
 			Test->TestTrue(TEXT("Remapped pause key closes the menu"), Screen->TakeWidget()->OnPreviewKeyDown(FGeometry(), RemappedKey).IsEventHandled());
 			Test->TestNull(TEXT("Remapped pause key resumes gameplay"), PC->GetPauseMenu());

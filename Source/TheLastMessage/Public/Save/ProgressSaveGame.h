@@ -19,6 +19,7 @@ struct FProgressMapState
 	GENERATED_BODY()
 	UPROPERTY(SaveGame, BlueprintReadWrite) TSet<FName> ExploredRooms;
 	UPROPERTY(SaveGame, BlueprintReadWrite) TSet<FGuid> VisitedCheckpoints;
+	UPROPERTY(SaveGame, BlueprintReadWrite) TSet<FName> PlayedCinematics;
 	/** Authored stable IDs; never use runtime actor names as persistence IDs. */
 	UPROPERTY(SaveGame, BlueprintReadWrite) TMap<FGuid, FProgressActorState> Actors;
 };

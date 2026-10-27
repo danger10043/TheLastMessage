@@ -224,6 +224,11 @@ bool UGA_BossGunShot::FireFan()
             Bullet->ReturnToPool();
             return false;
         }
+
+        if (Index == 0 && IsValid(Boss) && MuzzleEffect)
+        {
+            Boss->MulticastGunBurstMuzzle(MuzzleEffect.Get(), MuzzleSocketName);
+        }
     }
     return true;
 }

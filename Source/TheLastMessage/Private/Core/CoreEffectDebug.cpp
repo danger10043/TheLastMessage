@@ -8,14 +8,12 @@
 #include "Character/Player/PlayerBase.h"
 #include "Core/CoreComponent.h"
 #include "DataAsset/CoreDataAsset.h"
-#include "DataAsset/WeaponDataAsset.h"
 #include "Debug/DebugDrawService.h"
 #include "Engine/Canvas.h"
 #include "Engine/DamageEvents.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
-#include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "GAS/CombatAttributeSet.h"
 #include "GAS/WeaponSlotAttributeSet.h"
@@ -34,13 +32,7 @@ struct FMonitor
 	FDelegateHandle TargetHealthHandle;
 	float LastReceived = 0.0f;
 	float LastTargetDrop = 0.0f;
-	double EnergySampleTime = -1.0;
-	float EnergySampleValue = 0.0f;
-	float ObservedRechargeRate = 0.0f;
 	bool bAdjustingTestHealth = false;
-	bool bWasCharging = false;
-	double ChargeObservedStart = 0.0;
-	float LastObservedChargeSeconds = 0.0f;
 	FString Message;
 };
 
@@ -109,25 +101,6 @@ void Draw(UCanvas* Canvas, APlayerController*)
 	ObservePlayer(Player);
 	const UCombatAttributeSet* Stats = Player->GetCombatAttributes();
 	const UWeaponSlotAttributeSet* Energy = Player->GetWeaponSlotAttributes();
-	const UCharacterMovementComponent* Movement = Player->GetCharacterMovement();
-	const double Now = Monitor.World->GetTimeSeconds();
-	const bool bCharging = Player->IsChargingWeapon();
-	if (bCharging && !Monitor.bWasCharging) Monitor.ChargeObservedStart = Now;
-	if (!bCharging && Monitor.bWasCharging) Monitor.LastObservedChargeSeconds = float(Now - Monitor.ChargeObservedStart);
-	Monitor.bWasCharging = bCharging;
-	const float CurrentEnergy = Energy->GetSharedEnergy();
-	if (Monitor.EnergySampleTime < 0.0 || CurrentEnergy < Monitor.EnergySampleValue || Now < Monitor.EnergySampleTime)
-	{
-		Monitor.EnergySampleTime = Now;
-		Monitor.EnergySampleValue = CurrentEnergy;
-		Monitor.ObservedRechargeRate = 0.0f;
-	}
-	else if (Now - Monitor.EnergySampleTime >= 0.5)
-	{
-		Monitor.ObservedRechargeRate = (CurrentEnergy - Monitor.EnergySampleValue) / float(Now - Monitor.EnergySampleTime);
-		Monitor.EnergySampleTime = Now;
-		Monitor.EnergySampleValue = CurrentEnergy;
-	}
 	const float HealthRatio = Stats->GetMaxHealth() > 0.0f ? Stats->GetHealth() / Stats->GetMaxHealth() : 0.0f;
 	const bool bHigh = HealthRatio >= Stats->GetHighHealthThresholdRatio() && Stats->GetHighHealthDamageMultiplier() != 1.0f;
 	const bool bLow = HealthRatio <= Stats->GetLowHealthThresholdRatio() && Stats->GetLowHealthDamageMultiplier() != 1.0f;
@@ -137,16 +110,7 @@ void Draw(UCanvas* Canvas, APlayerController*)
 	Lines.Add(FString::Printf(TEXT("Taken x%.3f | Dealt x%.3f | Melee x%.3f"), Stats->GetDamageTakenMultiplier(), Stats->GetDamageDealtMultiplier(), Stats->GetMeleeDamageMultiplier()));
 	Lines.Add(FString::Printf(TEXT("High HP: %s x%.3f | Low HP: %s x%.3f"), bHigh ? TEXT("ON") : TEXT("OFF"), Stats->GetHighHealthDamageMultiplier(), bLow ? TEXT("ON") : TEXT("OFF"), Stats->GetLowHealthDamageMultiplier()));
 	Lines.Add(FString::Printf(TEXT("Critical chance %.1f%% | Critical damage x%.2f"), FMath::Clamp(Stats->GetCriticalChance(), 0.0f, 1.0f) * 100.0f, Stats->GetCriticalDamageMultiplier()));
-	Lines.Add(FString::Printf(TEXT("Move x%.3f | actual MaxWalkSpeed %.1f | horizontal speed %.1f"), Stats->GetMoveSpeedMultiplier(), Movement->MaxWalkSpeed, Movement->Velocity.Size2D()));
 	Lines.Add(FString::Printf(TEXT("Shared energy %.2f / %.2f | Recharge x%.3f"), Energy->GetSharedEnergy(), Energy->GetSharedMaxEnergy(), Stats->GetEnergyRechargeRateMultiplier()));
-	Lines.Add(FString::Printf(TEXT("Observed energy gain %.2f / game second (idle, below max)"), Monitor.ObservedRechargeRate));
-	Lines.Add(FString::Printf(TEXT("Charge x%.3f | actual charging: %s | actual progress %.1f%%"), Stats->GetChargeTimeMultiplier(), Player->IsChargingWeapon() ? TEXT("YES") : TEXT("NO"), Player->GetWeaponChargeRatio() * 100.0f));
-	Lines.Add(FString::Printf(TEXT("Last observed charge hold: %.3fs (release/cancel; frame sampled)"), Monitor.LastObservedChargeSeconds));
-	for (EWeaponSlot Slot : {EWeaponSlot::Primary, EWeaponSlot::Secondary})
-	{
-		const UWeaponDataAsset* Weapon = Player->GetWeaponDataInSlot(Slot);
-		if (Weapon) Lines.Add(FString::Printf(TEXT("%s %s | charge %s | base %.2fs -> expected %.2fs"), Slot == EWeaponSlot::Primary ? TEXT("LMB") : TEXT("RMB"), *Weapon->WeaponId.ToString(), Weapon->bSupportsChargeAttack ? TEXT("YES") : TEXT("NO"), Weapon->MaxChargeTime, Weapon->MaxChargeTime * Stats->GetChargeTimeMultiplier()));
-	}
 	UAbilitySystemComponent* Target = Monitor.TargetASC.Get();
 	Lines.Add(Target ? FString::Printf(TEXT("Target %s | HP %.2f | last actual HP loss: %.2f"), *GetNameSafe(Target->GetAvatarActor()), Target->GetNumericAttribute(FindHealth(Target)), Monitor.LastTargetDrop) : TEXT("Target: not selected (tlm.CoreTarget)"));
 	Lines.Add(TEXT("Target HP loss includes ALL damage sources; shields/overkill affect the result."));

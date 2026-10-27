@@ -3,6 +3,7 @@
 #include "Components/PrimitiveComponent.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
+#include "GameFramework/WorldSettings.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Pawn.h"
 #include "Net/UnrealNetwork.h"
@@ -49,6 +50,8 @@ class FScopedGrappleCollision
 public:
 	explicit FScopedGrappleCollision(UWorld* World)
 	{
+		// Authored maps provide persistent mesh collision; never rebuild physics on firing.
+		if (World && World->GetWorldSettings()->ActorHasTag(TEXT("GrappleCollisionAuthored"))) return;
 		// Decorative surfaces participate only for this synchronous grapple probe.
 		for (TObjectIterator<UPrimitiveComponent> It; It; ++It)
 		{
@@ -314,7 +317,10 @@ void UGrapplingHookComponent::ProbeForAnchor(FVector WorldAimPoint)
 	if (Direction.ContainsNaN() || !Direction.Normalize() || !FMath::IsFinite(MaxGrappleDistance) || MaxGrappleDistance <= 0.0f) return;
 	const FVector End = Start + Direction * MaxGrappleDistance;
 	FHitResult Hit;
-	FCollisionQueryParams Params(SCENE_QUERY_STAT(GrapplingProbe), true, Player);
+	// Authored terrain shares its simple movement shapes with the hook. These
+	// meshes may have no complex collision even though their simple shapes work.
+	const bool bAuthoredCollision = GetWorld()->GetWorldSettings()->ActorHasTag(TEXT("GrappleCollisionAuthored"));
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(GrapplingProbe), !bAuthoredCollision, Player);
 	// Ignore anything attached to the character, including future weapon actors.
 	TArray<AActor*> AttachedActors;
 	Player->GetAttachedActors(AttachedActors, true, true);

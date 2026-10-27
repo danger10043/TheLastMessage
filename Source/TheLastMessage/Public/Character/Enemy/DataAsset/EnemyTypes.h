@@ -49,7 +49,11 @@ struct FEnemyStatConfig
 
 	/** 추격 중 타겟에게 이만큼 가까워지면 멈추는 거리(Move To 허용 반경). 공격 범위보다 작게 둔다. 0 이하이면 공격 범위의 80%를 쓴다. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) float ChaseAcceptableRadius = 150.f;
+	/** 주 공격의 피해량(레벨 배율 적용 전). 투사체, 범위 공격, 돌진 등 몬스터의 대표 공격에 쓴다. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) float AttackDamage = 10.f;
+
+	/** 보조 공격의 피해량(레벨 배율 적용 전). Junker의 근접 주먹, Cinder의 자폭처럼 두 번째 공격이 있는 몬스터만 쓴다. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite) float SecondaryAttackDamage = 10.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) float AttackCooldown = 1.f;
 };
 
@@ -59,7 +63,6 @@ struct FEnemyProjectileConfig
 	GENERATED_BODY()
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) TSubclassOf<AEnemyProjectile> ProjectileClass;
-	UPROPERTY(EditAnywhere, BlueprintReadWrite) float Damage = 10.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) float Speed = 1500.f;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite) float Lifetime = 5.f;
 };

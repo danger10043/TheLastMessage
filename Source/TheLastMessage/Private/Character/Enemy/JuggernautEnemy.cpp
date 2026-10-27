@@ -17,6 +17,7 @@ AJuggernautEnemy::AJuggernautEnemy()
 
 	// 기본값(임시). 블루프린트에서 조정한다.
 	StatConfig.MaxHealth = 400.f;
+	StatConfig.AttackDamage = 30.f;           // 돌진 피해
 	StatConfig.MoveSpeed = 220.f;
 	StatConfig.DetectRange = 1800.f;
 	StatConfig.AttackRange = 1000.f;          // 이 거리 안에서 돌진을 시작한다.
@@ -27,6 +28,32 @@ AJuggernautEnemy::AJuggernautEnemy()
 
 	// 낭떠러지에서 멈추지 않고 그대로 떨어지게 한다.
 	GetCharacterMovement()->bCanWalkOffLedges = true;
+}
+
+void AJuggernautEnemy::ApplyEnemyData(const UEnemyDataAsset* Data)
+{
+	Super::ApplyEnemyData(Data);
+	if (!Data)
+	{
+		return;
+	}
+
+	const FJuggernautSettings& S = Data->Juggernaut;
+	ChargeWindup = S.ChargeWindup;
+	ChargeSpeed = S.ChargeSpeed;
+	ChargeAcceleration = S.ChargeAcceleration;
+	ChargeMaxDistance = S.ChargeMaxDistance;
+	ChargeMaxDuration = S.ChargeMaxDuration;
+	ChargeHitMargin = S.ChargeHitMargin;
+	bEndChargeOnHit = S.bEndChargeOnHit;
+	bPassThroughPawnsWhileCharging = S.bPassThroughPawnsWhileCharging;
+	ChargeRecoveryTime = S.ChargeRecoveryTime;
+	WallStunTime = S.WallStunTime;
+	WallHitSpeedRatio = S.WallHitSpeedRatio;
+	ChargeCooldown = S.ChargeCooldown;
+	KnockbackHorizontal = S.KnockbackHorizontal;
+	KnockbackUp = S.KnockbackUp;
+	RangedDamageMultiplier = S.RangedDamageMultiplier;
 }
 
 void AJuggernautEnemy::BeginPlay()
@@ -186,7 +213,7 @@ bool AJuggernautEnemy::TryHitPlayers()
 		HitActors.Add(Actor);
 		bHitAny = true;
 
-		ApplyEnemyDamage(Actor, GetScaledDamage(ChargeDamage));
+		ApplyEnemyDamage(Actor, GetScaledDamage(GetStatConfig().AttackDamage));
 
 		if (KnockbackHorizontal > 0.f || KnockbackUp > 0.f)
 		{

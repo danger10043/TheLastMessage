@@ -2,6 +2,8 @@
 #include "Character/Enemy/EnemyAIController.h"
 #include "Character/Enemy/EnemyAttributeSet.h"
 #include "Character/Enemy/EnemyProjectile.h"
+#include "Character/Player/PlayerBase.h"
+#include "Perception/AIPerceptionComponent.h"
 #include "Framework/ActorPoolSubsystem.h"
 #include "TimerManager.h"
 #include "AbilitySystemComponent.h"
@@ -46,6 +48,29 @@ AEnemyBase::AEnemyBase()
 UAbilitySystemComponent* AEnemyBase::GetAbilitySystemComponent() const
 {
 	return AbilitySystemComponent;
+}
+
+void AEnemyBase::PostInitializeComponents()
+{
+	Super::PostInitializeComponents();
+	ApplyEnemyData(EnemyData);
+}
+
+void AEnemyBase::ApplyEnemyData(const UEnemyDataAsset* Data)
+{
+	if (!Data)
+	{
+		return;
+	}
+
+	bAlwaysShowHealthBar = Data->bAlwaysShowHealthBar;
+	HealthBarVisibleTime = Data->HealthBarVisibleTime;
+	HitReactionCooldown = Data->HitReactionCooldown;
+	bHitReactionInterruptsAttack = Data->bHitReactionInterruptsAttack;
+	HitFlashDuration = Data->HitFlashDuration;
+	CorpseLifeSpan = Data->CorpseLifeSpan;
+	HomeReanchorHeight = Data->HomeReanchorHeight;
+	PatrolRadius = Data->PatrolRadius;
 }
 
 void AEnemyBase::BeginPlay()
@@ -218,9 +243,108 @@ void AEnemyBase::SetEnemyState(EEnemyState NewState)
 	OnEnemyStateChanged.Broadcast(NewState);
 }
 
+void AEnemyBase::BindTargetPlayerEvents(AActor* Target)
+{
+	APlayerBase* Player = Cast<APlayerBase>(Target);
+	if (!Player || BoundPlayer.Get() == Player)
+	{
+		return;
+	}
+
+	if (APlayerBase* OldPlayer = BoundPlayer.Get())
+	{
+		OldPlayer->OnPlayerDied.RemoveDynamic(this, &AEnemyBase::HandleTargetPlayerDied);
+	}
+
+	Player->OnPlayerDied.AddUniqueDynamic(this, &AEnemyBase::HandleTargetPlayerDied);
+	BoundPlayer = Player;
+}
+
+void AEnemyBase::UnbindTargetPlayerEvents()
+{
+	if (APlayerBase* Player = BoundPlayer.Get())
+	{
+		Player->OnPlayerDied.RemoveDynamic(this, &AEnemyBase::HandleTargetPlayerDied);
+	}
+	BoundPlayer.Reset();
+
+	if (APlayerBase* Player = DeadPlayer.Get())
+	{
+		Player->OnPlayerRespawned.RemoveDynamic(this, &AEnemyBase::HandleTargetPlayerRespawned);
+	}
+	DeadPlayer.Reset();
+}
+
+void AEnemyBase::HandleTargetPlayerDied(APlayerBase* Player)
+{
+	if (IsDead() || bInPool || !Player || Player != CurrentTarget)
+	{
+		return;
+	}
+
+	// 부활하면 다시 추격할 수 있도록 부활 이벤트도 받아 둔다.
+	Player->OnPlayerRespawned.AddUniqueDynamic(this, &AEnemyBase::HandleTargetPlayerRespawned);
+	DeadPlayer = Player;
+
+	// 진행 중인 공격을 취소하고 타겟을 해제한 뒤 정찰로 복귀한다. 죽은 위치를 조사하러 가지는 않는다.
+	OnTargetDied();
+}
+
+void AEnemyBase::HandleTargetPlayerRespawned(APlayerBase* Player)
+{
+	if (!Player)
+	{
+		return;
+	}
+
+	Player->OnPlayerRespawned.RemoveDynamic(this, &AEnemyBase::HandleTargetPlayerRespawned);
+	DeadPlayer.Reset();
+
+	if (IsDead() || bInPool || CurrentTarget)
+	{
+		return;
+	}
+
+	// 부활한 곳이 이 몬스터의 감지 거리 안이고 아직 시야에 감지된 상태라면(새 감지 이벤트가 오지 않으므로) 바로 다시 추격한다.
+	if (FVector::Dist(Player->GetActorLocation(), GetActorLocation()) > GetStatConfig().DetectRange)
+	{
+		return;
+	}
+
+	if (AEnemyAIController* AIC = Cast<AEnemyAIController>(GetController()))
+	{
+		if (UAIPerceptionComponent* Perception = AIC->GetAIPerceptionComponent())
+		{
+			FActorPerceptionBlueprintInfo Info;
+			if (Perception->GetActorsPerception(Player, Info))
+			{
+				for (const FAIStimulus& Stimulus : Info.LastSensedStimuli)
+				{
+					if (Stimulus.WasSuccessfullySensed())
+					{
+						OnPlayerDetected(Player);
+						break;
+					}
+				}
+			}
+		}
+	}
+}
+
 void AEnemyBase::SetCurrentTarget(AActor* NewTarget)
 {
 	CurrentTarget = NewTarget;
+
+	// 타겟이 바뀌거나 사라지면 이전 플레이어의 이벤트를 해제하고, 새 타겟이 플레이어면 연결한다.
+	if (!NewTarget || BoundPlayer.Get() != NewTarget)
+	{
+		if (APlayerBase* OldPlayer = BoundPlayer.Get())
+		{
+			OldPlayer->OnPlayerDied.RemoveDynamic(this, &AEnemyBase::HandleTargetPlayerDied);
+		}
+		BoundPlayer.Reset();
+	}
+	BindTargetPlayerEvents(NewTarget);
 
 	if (AEnemyAIController* AIC = Cast<AEnemyAIController>(GetController()))
 	{
@@ -233,6 +357,15 @@ void AEnemyBase::OnPlayerDetected(AActor* Player)
 	if (IsDead() || bInPool || !Player)
 	{
 		return;
+	}
+
+	// 이미 죽은 플레이어(시체)는 감지해도 추격하지 않는다.
+	if (const APlayerBase* PlayerCharacter = Cast<APlayerBase>(Player))
+	{
+		if (PlayerCharacter->IsDead())
+		{
+			return;
+		}
 	}
 
 	SetCurrentTarget(Player);
@@ -484,18 +617,40 @@ void AEnemyBase::FaceTarget()
 	}
 }
 
-AEnemyProjectile* AEnemyBase::SpawnEnemyProjectile(const FEnemyProjectileConfig& Config, const FVector& MuzzleLocation)
+FVector AEnemyBase::ComputeAimDirection(const FVector& MuzzleLocation) const
+{
+	if (!CurrentTarget)
+	{
+		return FVector::ZeroVector;
+	}
+
+	// 총구 소켓은 애니메이션에 따라 Y(깊이)가 몬스터 평면에서 벗어난다. 투사체는 몬스터가 있는 평면에서 쏘므로 같은 기준으로 계산한다.
+	FVector From = MuzzleLocation;
+	From.Y = GetActorLocation().Y;
+	return (CurrentTarget->GetActorLocation() - From).GetSafeNormal();
+}
+
+AEnemyProjectile* AEnemyBase::SpawnEnemyProjectile(const FEnemyProjectileConfig& Config, const FVector& MuzzleLocation, const FVector& FixedDirection)
 {
 	UClass* ProjectileClass = Config.ProjectileClass.Get();
-	if (!ProjectileClass || !CurrentTarget || !GetWorld())
+	if (!ProjectileClass || !GetWorld())
 	{
 		return nullptr;
 	}
 
-	const FVector Direction = (CurrentTarget->GetActorLocation() - MuzzleLocation).GetSafeNormal();
+	// 고정 방향이 있으면 타겟 없이도 그 방향으로 쏜다. 없으면 지금 타겟 방향을 쓴다.
+	const FVector Direction = FixedDirection.IsNearlyZero() ? ComputeAimDirection(MuzzleLocation) : FixedDirection.GetSafeNormal();
+	if (Direction.IsNearlyZero())
+	{
+		return nullptr;
+	}
+
+	// 투사체는 몬스터가 있는 Y 평면에서 발사한다. 소켓 위치의 Y가 애니메이션 때문에 벗어나 있으면 플레이어와 평면이 어긋나 지나쳐 버린다.
+	FVector SpawnLocation = MuzzleLocation;
+	SpawnLocation.Y = GetActorLocation().Y;
 
 	// 투사체는 오브젝트 풀에서 꺼내 쓴다(풀이 없으면 새로 만든다).
-	const FTransform SpawnTransform(Direction.Rotation(), MuzzleLocation);
+	const FTransform SpawnTransform(Direction.Rotation(), SpawnLocation);
 	AEnemyProjectile* Projectile = nullptr;
 
 	if (UActorPoolSubsystem* Pool = GetWorld()->GetSubsystem<UActorPoolSubsystem>())
@@ -516,7 +671,7 @@ AEnemyProjectile* AEnemyBase::SpawnEnemyProjectile(const FEnemyProjectileConfig&
 		return nullptr;
 	}
 
-	Projectile->InitializeProjectile(this, GetScaledDamage(Config.Damage));
+	Projectile->InitializeProjectile(this, GetScaledDamage(GetStatConfig().AttackDamage));
 	Projectile->SetProjectileSpeed(Config.Speed);
 	Projectile->SetProjectileLifetime(Config.Lifetime);
 	Projectile->LaunchProjectile(Direction);
@@ -533,6 +688,7 @@ void AEnemyBase::HandleDeath()
 	SetEnemyState(EEnemyState::Dead);
 	CancelAttack();
 	SetCurrentTarget(nullptr);
+	UnbindTargetPlayerEvents(); // 죽은 몬스터가 플레이어 이벤트를 받지 않게 한다.
 	GetWorldTimerManager().ClearTimer(HealthBarTimerHandle);
 	HideHealthBar();
 
@@ -611,6 +767,7 @@ void AEnemyBase::OnReturnedToPool()
 	AbilitySystemComponent->CancelAllAbilities();
 
 	CurrentTarget = nullptr;
+	UnbindTargetPlayerEvents();
 	GetCharacterMovement()->StopMovementImmediately();
 	GetCharacterMovement()->DisableMovement();
 
@@ -635,6 +792,7 @@ void AEnemyBase::ResetEnemy()
 
 	// 상태를 처음으로 되돌린다.
 	CurrentTarget = nullptr;
+	UnbindTargetPlayerEvents();
 	CurrentState = EEnemyState::Patrol;
 	LastAttackTime = -1000000.0;
 	LastHitReactionTime = -1000000.0;
@@ -658,6 +816,8 @@ void AEnemyBase::ResetEnemy()
 
 void AEnemyBase::Destroyed()
 {
+	UnbindTargetPlayerEvents();
+
 	// 몬스터가 제거될 때 AI 컨트롤러가 남지 않도록 함께 제거한다.
 	if (AController* OwnerController = GetController())
 	{

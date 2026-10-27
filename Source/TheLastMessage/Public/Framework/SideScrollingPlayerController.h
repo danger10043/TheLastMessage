@@ -28,6 +28,7 @@ public:
 	UFUNCTION(BlueprintPure, Category="Pause Menu") UPauseMenuWidget* GetPauseMenu() const { return PauseMenuWidget; }
 	UPROPERTY(EditDefaultsOnly, Config, Category="Pause Menu") TSoftClassPtr<UPauseMenuWidget> PauseMenuClass;
 	UPROPERTY(EditDefaultsOnly, Category="Pause Menu") TSoftObjectPtr<UWorld> MainMenuMap;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Input|Pause Menu") TObjectPtr<UInputAction> PauseMenuAction;
 	/** 구역 지도를 열고 닫는 입력 액션 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Input|Area Map", meta=(ToolTip="구역 지도를 열고 닫는 입력 액션"))
 	TObjectPtr<UInputAction> MapAction;

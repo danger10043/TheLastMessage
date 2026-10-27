@@ -27,6 +27,8 @@ ASideScrollingPlayerController::ASideScrollingPlayerController()
 {
 	static ConstructorHelpers::FObjectFinder<UInputAction> Action(TEXT("/Game/Main/Inputs/Actions/IA_Map.IA_Map"));
 	MapAction = Action.Object;
+	static ConstructorHelpers::FObjectFinder<UInputAction> PauseAction(TEXT("/Game/Main/Inputs/Actions/IA_PauseMenu.IA_PauseMenu"));
+	PauseMenuAction = PauseAction.Object;
 	MapWidgetClass = UAreaMapWidget::StaticClass();
 	PauseMenuClass = TSoftClassPtr<UPauseMenuWidget>(FSoftObjectPath(TEXT("/Game/Main/UI/Menu/WBP_PauseMenu.WBP_PauseMenu_C")));
 	MainMenuMap = TSoftObjectPtr<UWorld>(FSoftObjectPath(TEXT("/Game/Main/Maps/Lv_MainMenu.Lv_MainMenu")));
@@ -69,9 +71,11 @@ void ASideScrollingPlayerController::BeginPlay()
 void ASideScrollingPlayerController::SetupInputComponent()
 {
 	Super::SetupInputComponent();
-	InputComponent->BindKey(EKeys::Escape, IE_Pressed, this, &ASideScrollingPlayerController::TogglePauseMenu).bExecuteWhenPaused = true;
-	if (UEnhancedInputComponent* Inputs = Cast<UEnhancedInputComponent>(InputComponent); Inputs && MapAction)
-		Inputs->BindAction(MapAction,ETriggerEvent::Started,this,&ASideScrollingPlayerController::ToggleAreaMap);
+	if (UEnhancedInputComponent* Inputs = Cast<UEnhancedInputComponent>(InputComponent))
+	{
+		if (MapAction) Inputs->BindAction(MapAction,ETriggerEvent::Started,this,&ASideScrollingPlayerController::ToggleAreaMap);
+		if (PauseMenuAction) Inputs->BindAction(PauseMenuAction,ETriggerEvent::Started,this,&ASideScrollingPlayerController::TogglePauseMenu);
+	}
 
 	// only add IMCs for local player controllers
 	if (IsLocalPlayerController())
@@ -123,6 +127,7 @@ void ASideScrollingPlayerController::TogglePauseMenu()
 	if (APlayerBase* InGamePlayer = Cast<APlayerBase>(GetPawn())) InGamePlayer->CancelWeaponInputsForUI();
 	UClass* MenuClass = PauseMenuClass.LoadSynchronous();
 	PauseMenuWidget = CreateWidget<UPauseMenuWidget>(this, MenuClass ? MenuClass : UPauseMenuWidget::StaticClass());
+	if (PauseMenuWidget) PauseMenuWidget->SetPauseInputAction(PauseMenuAction);
 	if (!PauseMenuWidget || !PauseMenuWidget->AddToPlayerScreen(200)) { PauseMenuWidget = nullptr; return; }
 	bPausedByMenu = SetPause(true);
 	if (!bPausedByMenu) { PauseMenuWidget->RemoveFromParent(); PauseMenuWidget = nullptr; return; }

@@ -10,6 +10,10 @@
 #include "Components/VerticalBoxSlot.h"
 #include "Components/WidgetSwitcher.h"
 #include "InputCoreTypes.h"
+#include "EnhancedInputSubsystems.h"
+#include "Engine/LocalPlayer.h"
+#include "GameFramework/PlayerController.h"
+#include "InputAction.h"
 
 void UPauseMenuWidget::BuildDefaultLayout(UWidgetTree* Tree)
 {
@@ -140,7 +144,12 @@ void UPauseMenuWidget::Back()
 }
 FReply UPauseMenuWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, const FKeyEvent& Event)
 {
-	if (Event.GetKey() == EKeys::Escape)
+	// UIOnly does not route input to gameplay actions. Use the active IA mappings
+	// for menu navigation too, so rebinding affects opening and closing together.
+	const APlayerController* PC = GetOwningPlayer();
+	const ULocalPlayer* Local = PC ? PC->GetLocalPlayer() : nullptr;
+	const UEnhancedInputLocalPlayerSubsystem* Inputs = Local ? Local->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>() : nullptr;
+	if (Inputs && PauseInputAction && Inputs->QueryKeysMappedToAction(PauseInputAction).Contains(Event.GetKey()))
 	{
 		if (!Event.IsRepeat() && !bWorking) { if (Pages && Pages->GetActiveWidgetIndex() != 0) Back(); else Resume(); }
 		return FReply::Handled();

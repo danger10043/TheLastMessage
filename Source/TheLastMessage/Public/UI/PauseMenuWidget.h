@@ -6,6 +6,7 @@
 class UWidgetTree;
 class UWidgetSwitcher;
 class UTextBlock;
+class UInputAction;
 
 UENUM(BlueprintType)
 enum class EPauseMenuAction : uint8 { Resume, ReloadCheckpoint, MainMenu, QuitGame };
@@ -21,6 +22,7 @@ public:
 	void SetCheckpointAvailable(bool bAvailable);
 	void SetBusy(bool bBusy);
 	void ShowError(const FText& Message);
+	void SetPauseInputAction(UInputAction* Action) { PauseInputAction = Action; }
 	UPROPERTY(BlueprintAssignable, Category="Pause Menu") FPauseMenuActionRequested OnActionRequested;
 	FPauseMenuRemoved OnMenuRemoved;
 protected:
@@ -38,6 +40,7 @@ private:
 	UFUNCTION() void Back();
 	void Ask(EPauseMenuAction Action, const FText& Message);
 	UPROPERTY(Transient) TObjectPtr<UWidgetSwitcher> Pages;
+	UPROPERTY(Transient) TObjectPtr<UInputAction> PauseInputAction;
 	bool bWorking = false;
 	bool bCheckpointAvailable = false;
 	EPauseMenuAction PendingAction = EPauseMenuAction::Resume;

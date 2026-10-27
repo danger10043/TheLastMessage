@@ -13,6 +13,11 @@
 #include "Kismet/GameplayStatics.h"
 #include "InputCoreTypes.h"
 #include "Widgets/SWidget.h"
+#include "Engine/LocalPlayer.h"
+#include "EnhancedInputSubsystems.h"
+#include "EnhancedPlayerInput.h"
+#include "InputMappingContext.h"
+#include "InputActionValue.h"
 
 namespace
 {
@@ -26,8 +31,22 @@ public:
 		ASideScrollingPlayerController* PC = World ? Cast<ASideScrollingPlayerController>(UGameplayStatics::GetPlayerController(World, 0)) : nullptr;
 		if ((!PC || !PC->GetPawn()) && FPlatformTime::Seconds() < Deadline) return false;
 		if (!Test->TestNotNull(TEXT("Gameplay controller available"), PC)) return true;
+		UEnhancedInputLocalPlayerSubsystem* Inputs = PC->GetLocalPlayer()->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>();
+		UEnhancedPlayerInput* PlayerInput = Cast<UEnhancedPlayerInput>(PC->PlayerInput);
+		if (!Test->TestNotNull(TEXT("Enhanced input available"), Inputs)
+			|| !Test->TestNotNull(TEXT("Enhanced player input available"), PlayerInput)
+			|| !Test->TestNotNull(TEXT("Pause input action configured"), PC->PauseMenuAction.Get())) return true;
+		UInputMappingContext* Context = LoadObject<UInputMappingContext>(nullptr, TEXT("/Game/Main/Inputs/IMC_SideScroller.IMC_SideScroller"));
+		if (!Test->TestNotNull(TEXT("SideScroller input context exists"), Context)) return true;
+		Inputs->AddMappingContext(Context, 0);
+		FModifyContextOptions Options; Options.bForceImmediately = true;
+		Inputs->RequestRebuildControlMappings(Options, EInputMappingRebuildType::RebuildWithFlush);
+		Test->TestTrue(TEXT("Pause action is enabled during pause"), PC->PauseMenuAction->bTriggerWhenPaused);
+		Test->TestTrue(TEXT("SideScroller maps Escape to pause action"),
+			Inputs->QueryKeysMappedToAction(PC->PauseMenuAction).Contains(EKeys::Escape));
 		const bool PreviousCursor = PC->bShowMouseCursor;
-		PC->TogglePauseMenu();
+		PlayerInput->InjectInputForAction(PC->PauseMenuAction, FInputActionValue(true));
+		PC->PlayerInput->ProcessInputStack({PC->InputComponent}, 0.016f, false);
 		UPauseMenuWidget* Screen = PC->GetPauseMenu();
 		if (!Test->TestNotNull(TEXT("Pause UI created"), Screen)) return true;
 		Test->TestTrue(TEXT("Menu displays and pauses game"), Screen->IsInViewport() && UGameplayStatics::IsGamePaused(World));
@@ -62,6 +81,22 @@ public:
 		PC->TogglePauseMenu(); Screen = PC->GetPauseMenu();
 		if (Screen) Screen->RemoveFromParent();
 		Test->TestFalse(TEXT("External removal releases pause"), UGameplayStatics::IsGamePaused(World));
+		// Rebind in a transient context, leaving the saved gameplay context untouched.
+		Inputs->RemoveMappingContext(Context);
+		UInputMappingContext* Remapped = NewObject<UInputMappingContext>(PC);
+		Remapped->MapKey(PC->PauseMenuAction, EKeys::F10);
+		Inputs->AddMappingContext(Remapped, 100);
+		Inputs->RequestRebuildControlMappings(Options, EInputMappingRebuildType::RebuildWithFlush);
+		PC->TogglePauseMenu(); Screen = PC->GetPauseMenu();
+		if (Test->TestNotNull(TEXT("Pause opens with remapped controls"), Screen))
+		{
+			Test->TestFalse(TEXT("Unmapped Escape is not hardcoded by pause UI"), Screen->TakeWidget()->OnPreviewKeyDown(FGeometry(), Escape).IsEventHandled());
+			const FKeyEvent RemappedKey(EKeys::F10, FModifierKeysState(), 0, false, 0, 0);
+			Test->TestTrue(TEXT("Remapped pause key closes the menu"), Screen->TakeWidget()->OnPreviewKeyDown(FGeometry(), RemappedKey).IsEventHandled());
+			Test->TestNull(TEXT("Remapped pause key resumes gameplay"), PC->GetPauseMenu());
+		}
+		Inputs->RemoveMappingContext(Remapped);
+		Inputs->AddMappingContext(Context, 0);
 		return true;
 	}
 private:

@@ -90,6 +90,21 @@ public:
 	FGameplayAttributeData AssistStrikeDamageRatio;
 	ATTRIBUTE_ACCESSORS_BASIC(UCombatAttributeSet, AssistStrikeDamageRatio);
 
+	/** 원거리 공격 한 번에 발사할 총 탄환 수. 기본값 1은 단발이며, 2 이상이면 연속 발사한다. */
+	UPROPERTY(BlueprintReadOnly, Category = "Base Stat|Ranged Burst")
+	FGameplayAttributeData RangedBurstShotCount;
+	ATTRIBUTE_ACCESSORS_BASIC(UCombatAttributeSet, RangedBurstShotCount);
+
+	/** 모든 탄환이 명중했을 때 원래 공격 대비 총 피해 배율. 1.1은 총 피해 110%다. */
+	UPROPERTY(BlueprintReadOnly, Category = "Base Stat|Ranged Burst")
+	FGameplayAttributeData RangedBurstTotalDamageMultiplier;
+	ATTRIBUTE_ACCESSORS_BASIC(UCombatAttributeSet, RangedBurstTotalDamageMultiplier);
+
+	/** 연속 탄환 사이의 발사 간격(초). 단발일 때는 사용하지 않는다. */
+	UPROPERTY(BlueprintReadOnly, Category = "Base Stat|Ranged Burst")
+	FGameplayAttributeData RangedBurstInterval;
+	ATTRIBUTE_ACCESSORS_BASIC(UCombatAttributeSet, RangedBurstInterval);
+
 	UPROPERTY(BlueprintReadOnly, Category = "Base Stat")
 	FGameplayAttributeData HighHealthThresholdRatio;
 	ATTRIBUTE_ACCESSORS_BASIC(UCombatAttributeSet, HighHealthThresholdRatio);

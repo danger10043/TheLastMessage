@@ -11,6 +11,7 @@
 namespace CombatGameplayTags
 {
     UE_DEFINE_GAMEPLAY_TAG(Event_DamageDealt, "Event.Combat.DamageDealt");
+    UE_DEFINE_GAMEPLAY_TAG(Result_TargetKilled, "Combat.Result.TargetKilled");
 }
 
 namespace
@@ -106,6 +107,8 @@ bool UCombatDamageLibrary::ApplyFinalDamageToTarget(
     const float HealthAfter = bHasHealth && IsValid(TargetASC)
         ? TargetASC->GetNumericAttribute(HealthAttribute) : HealthBefore;
     const float ActualDamage = HealthBefore - HealthAfter;
+    // 결과를 먼저 확정하여 피드백이나 이벤트 수신 중 체력이 바뀌어도 이번 공격의 판정을 유지한다.
+    const bool bTargetKilled = HealthBefore > 0.f && HealthAfter <= 0.f;
     // 면역·사망·페이즈 제한을 반영한 체력 감소가 있을 때만 플레이어 공격 결과를 전달한다.
     if (FMath::IsFinite(ActualDamage) && ActualDamage > 0.0f
         && DamageCategory.GetTagName() != FName(TEXT("Damage.Category.Gimmick")) && IsValid(SourceActor))
@@ -122,6 +125,8 @@ bool UCombatDamageLibrary::ApplyFinalDamageToTarget(
             Payload.EventMagnitude = ActualDamage;
             Payload.InstigatorTags.AddTag(DamageCategory);
             Payload.ContextHandle = Context;
+            if (bTargetKilled)
+                Payload.TargetTags.AddTag(CombatGameplayTags::Result_TargetKilled);
             SourceASC->HandleGameplayEvent(Payload.EventTag, &Payload);
         }
     }

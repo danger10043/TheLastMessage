@@ -317,6 +317,7 @@ bool FCoreDamageEventTest::RunTest(const FString& Parameters)
 	Fixture.Attributes->SetCriticalDamageMultiplier(2.f);
 	TArray<FGameplayEventData> Events;
 	const FGameplayTag EventTag = CombatGameplayTags::Event_DamageDealt;
+	const FGameplayTag KilledTag = CombatGameplayTags::Result_TargetKilled;
 	const FGameplayTag Melee = FGameplayTag::RequestGameplayTag(TEXT("Damage.Category.Player.Melee"));
 	const FGameplayTag Ranged = FGameplayTag::RequestGameplayTag(TEXT("Damage.Category.Player.Ranged"));
 	const FGameplayTag Gimmick = FGameplayTag::RequestGameplayTag(TEXT("Damage.Category.Gimmick"));
@@ -356,6 +357,7 @@ bool FCoreDamageEventTest::RunTest(const FString& Parameters)
 			TestEqual(TEXT("Magnitude contains actual HP loss"), Payload.EventMagnitude, 125.f);
 			TestTrue(TEXT("Damage category is available to abilities"), Payload.InstigatorTags.HasTagExact(Category));
 			TestTrue(TEXT("Damage context preserves source"), Payload.ContextHandle.GetSourceObject() == Fixture.Owner);
+			TestFalse(TEXT("Nonlethal enemy damage has no kill result"), Payload.TargetTags.HasTagExact(KilledTag));
 		}
 		TestEqual(TEXT("Damage application is unchanged"), EnemyASC->GetNumericAttribute(UEnemyAttributeSet::GetHealthAttribute()), 875.f);
 	}
@@ -395,7 +397,10 @@ bool FCoreDamageEventTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("Boss damage does not reapply attacker multipliers"), BossASC->GetNumericAttribute(UBossAttributeSet::GetHealthAttribute()), 875.f);
 		TestEqual(TEXT("Boss hit sends one event"), Events.Num(), 1);
 		if (Events.Num() == 1)
+		{
 			TestTrue(TEXT("Boss event contains actual loss and target"), Events[0].EventMagnitude == 125.f && Events[0].Target == Boss);
+			TestFalse(TEXT("Nonlethal boss damage has no kill result"), Events[0].TargetTags.HasTagExact(KilledTag));
+		}
 	}
 
 	// 페이즈 체력 하한만 검사하므로, 퍼즐 장치가 없는 테스트 월드에서는 전환 요청을 대기 상태로 둔다.
@@ -411,20 +416,53 @@ bool FCoreDamageEventTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Boss phase floor is preserved"), BossASC->GetNumericAttribute(UBossAttributeSet::GetHealthAttribute()), 700.f);
 	TestEqual(TEXT("Phase-limited hit sends one event"), Events.Num(), 1);
 	if (Events.Num() == 1)
+	{
 		TestEqual(TEXT("Phase-limited event excludes blocked damage"), Events[0].EventMagnitude, 10.f);
+		TestFalse(TEXT("Reaching a phase threshold is not a kill"), Events[0].TargetTags.HasTagExact(KilledTag));
+	}
 	Events.Reset();
 	UCombatDamageLibrary::ApplyFinalDamageToTarget(Fixture.Owner, Boss, Effect, 125.f, Melee);
 	TestEqual(TEXT("Hit at phase floor sends no event"), Events.Num(), 0);
 
-	EnemyASC->SetNumericAttributeBase(UEnemyAttributeSet::GetHealthAttribute(), 10.f);
-	TestTrue(TEXT("Lethal damage is accepted"), UCombatDamageLibrary::ApplyFinalDamageToTarget(
-		Fixture.Owner, Enemy, Effect, 125.f, Ranged));
-	TestEqual(TEXT("Lethal hit sends one event"), Events.Num(), 1);
-	if (Events.Num() == 1)
-		TestEqual(TEXT("Overkill reports remaining HP only"), Events[0].EventMagnitude, 10.f);
+	// 피해 알림 수신 중 추가 공격이 적을 처치해도 각 공격의 결과는 서로 구분한다.
+	const FDelegateHandle FinishingHitHandle = Fixture.ASC->GenericGameplayEventCallbacks.FindChecked(EventTag).AddLambda(
+		[&](const FGameplayEventData* Payload)
+		{
+			if (Payload && Payload->Target == Enemy && Payload->EventMagnitude == 5.f)
+				UCombatDamageLibrary::ApplyFinalDamageToTarget(Fixture.Owner, Enemy, Effect, 125.f, Ranged);
+		});
+	EnemyASC->SetNumericAttributeBase(UEnemyAttributeSet::GetHealthAttribute(), 15.f);
+	TestTrue(TEXT("Initial damage is accepted"), UCombatDamageLibrary::ApplyFinalDamageToTarget(
+		Fixture.Owner, Enemy, Effect, 5.f, Melee));
+	Fixture.ASC->GenericGameplayEventCallbacks.FindChecked(EventTag).Remove(FinishingHitHandle);
+	TestEqual(TEXT("Initial and finishing attacks each send one event"), Events.Num(), 2);
+	const FGameplayEventData* InitialHit = Events.FindByPredicate([](const FGameplayEventData& Payload) { return Payload.EventMagnitude == 5.f; });
+	const FGameplayEventData* FinishingHit = Events.FindByPredicate([](const FGameplayEventData& Payload) { return Payload.EventMagnitude == 10.f; });
+	if (TestNotNull(TEXT("Initial damage result remains available"), InitialHit))
+		TestFalse(TEXT("A later attack cannot change the initial kill result"), InitialHit->TargetTags.HasTagExact(KilledTag));
+	if (TestNotNull(TEXT("Overkill reports the ten remaining HP"), FinishingHit))
+	{
+		TestTrue(TEXT("Lethal enemy damage includes the kill result"), FinishingHit->TargetTags.HasTagExact(KilledTag));
+	}
 	Events.Reset();
 	UCombatDamageLibrary::ApplyFinalDamageToTarget(Fixture.Owner, Enemy, Effect, 125.f, Ranged);
 	TestEqual(TEXT("Dead enemy sends no repeated damage event"), Events.Num(), 0);
+
+	FEnumProperty* CurrentPhase = FindFProperty<FEnumProperty>(Phase->GetClass(), TEXT("CurrentPhase"));
+	if (!TestNotNull(TEXT("Boss final phase test state is available"), CurrentPhase)) return false;
+	CurrentPhase->GetUnderlyingProperty()->SetIntPropertyValue(CurrentPhase->ContainerPtrToValuePtr<void>(Phase),
+		static_cast<int64>(EBossPhase::Phase3));
+	BossASC->SetNumericAttributeBase(UBossAttributeSet::GetHealthAttribute(), 10.f);
+	TestTrue(TEXT("Lethal boss damage is accepted"), UCombatDamageLibrary::ApplyFinalDamageToTarget(
+		Fixture.Owner, Boss, Effect, 125.f, Melee));
+	TestEqual(TEXT("Lethal boss hit sends one event"), Events.Num(), 1);
+	if (Events.Num() == 1)
+		TestTrue(TEXT("Lethal boss result preserves actual damage"), Events[0].EventMagnitude == 10.f && Events[0].TargetTags.HasTagExact(KilledTag));
+	Events.Reset();
+	UCombatDamageLibrary::ApplyFinalDamageToTarget(Fixture.Owner, Boss, Effect, 125.f, Melee);
+	TestEqual(TEXT("Dead boss sends no repeated damage event"), Events.Num(), 0);
+	TestFalse(TEXT("Kill result is not granted as an attacker state tag"), Fixture.ASC->HasMatchingGameplayTag(KilledTag));
+	TestFalse(TEXT("Kill result is not granted as a target state tag"), EnemyASC->HasMatchingGameplayTag(KilledTag));
 	TestEqual(TEXT("Damage event alone does not heal the attacker"), Fixture.Attributes->GetHealth(), 50.f);
 	return true;
 }

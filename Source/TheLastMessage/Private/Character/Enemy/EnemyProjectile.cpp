@@ -10,6 +10,7 @@
 #include "NiagaraComponent.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
+#include "Sound/SoundBase.h"
 
 AEnemyProjectile::AEnemyProjectile()
 {
@@ -156,6 +157,11 @@ void AEnemyProjectile::DestroyProjectile()
 	if (ImpactEffect && GetWorld())
 	{
 		UNiagaraFunctionLibrary::SpawnSystemAtLocation(GetWorld(), ImpactEffect, GetActorLocation(), GetActorRotation());
+	}
+
+	if (ImpactSound && GetWorld())
+	{
+		UGameplayStatics::PlaySoundAtLocation(this, ImpactSound, GetActorLocation());
 	}
 
 	ReturnToPool();

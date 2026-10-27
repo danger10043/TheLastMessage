@@ -11,6 +11,7 @@ class UProjectileMovementComponent;
 class AEnemyBase;
 class UNiagaraSystem;
 class UNiagaraComponent;
+class USoundBase;
 
 /** 몬스터 공통 투사체 (Cinder, Sentry, Rattler, Juggernaut, Junker가 사용) */
 UCLASS()
@@ -61,6 +62,10 @@ protected:
 	/** 착탄(피해를 주거나 벽에 닿을 때) 이펙트. 비행 중 꼬리 이펙트는 BP에 Niagara 컴포넌트를 직접 붙인다. */
 	UPROPERTY(EditDefaultsOnly, Category = "Projectile")
 	TObjectPtr<UNiagaraSystem> ImpactEffect;
+
+	/** 투사체가 플레이어나 벽에 맞아 사라질 때 재생할 소리(수명이 다해 사라질 때는 재생하지 않는다). 비워 두면 재생하지 않는다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Projectile")
+	TObjectPtr<USoundBase> ImpactSound;
 
 	UPROPERTY(VisibleInstanceOnly, Category = "Projectile")
 	float Damage = 0.f;

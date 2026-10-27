@@ -3,6 +3,9 @@
 #include "Animation/AnimMontage.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Kismet/GameplayStatics.h"
+#include "Materials/MaterialInterface.h"
+#include "Sound/SoundBase.h"
 #include "Engine/OverlapResult.h"
 #include "Engine/World.h"
 #include "GameFramework/Character.h"
@@ -61,7 +64,11 @@ void ACinderEnemy::ApplyEnemyData(const UEnemyDataAsset* Data)
 	ExplosionFuseTime = S.ExplosionFuseTime;
 	ExplosionRadius = S.ExplosionRadius;
 	ExplosionEffectScale = S.ExplosionEffectScale;
-	FuseEffectScale = S.FuseEffectScale;
+	LostTargetFuseTime = S.LostTargetFuseTime;
+	FuseBeepPitchStart = S.FuseBeepPitchStart;
+	FuseBeepPitchEnd = S.FuseBeepPitchEnd;
+	FuseBlinkStartInterval = S.FuseBlinkStartInterval;
+	FuseBlinkEndInterval = S.FuseBlinkEndInterval;
 	PatrolAxis = S.PatrolAxis;
 	ProjectileConfig.Speed = S.ProjectileSpeed;
 	ProjectileConfig.Lifetime = S.ProjectileLifetime;
@@ -117,6 +124,13 @@ void ACinderEnemy::ResetCinderState()
 {
 	Mode = ECinderMode::Crawling;
 	bFuseStarted = false;
+	bFuseBlinkOn = false;
+	FuseElapsed = 0.f;
+	FuseBlinkTimer = 0.f;
+	if (GetMesh())
+	{
+		GetMesh()->SetOverlayMaterial(nullptr); // 자폭 준비 깜빡임 해제
+	}
 	bExploded = false;
 	CrawlSpeed = 0.f;
 	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Pawn, DefaultPawnResponse); // 자폭 준비에서 바꾼 충돌 복구
@@ -333,6 +347,11 @@ void ACinderEnemy::Tick(float DeltaTime)
 		return;
 	}
 
+	if (bFuseStarted && !bExploded)
+	{
+		UpdateFuseBlink(DeltaTime);
+	}
+
 	switch (Mode)
 	{
 	case ECinderMode::Crawling:
@@ -429,6 +448,11 @@ void ACinderEnemy::FireProjectile()
 
 		SpawnEnemyProjectile(ProjectileConfig, Muzzle);
 		SpawnEffectAtSocket(MuzzleFlashEffect, MuzzleSocketName, MuzzleOffset, FlashRotation);
+
+		if (FireSound)
+		{
+			UGameplayStatics::PlaySoundAtLocation(this, FireSound, Muzzle);
+		}
 	}
 
 	if (IsAttacking())
@@ -464,6 +488,9 @@ void ACinderEnemy::StartFall()
 {
 	Mode = ECinderMode::Falling;
 	CancelAttack();
+
+	// 낙하와 자폭 돌진 중에는 다른 몬스터에 몸이 막히지 않게 폰 충돌을 겹침으로 바꾼다(원래 설정은 리셋 때 복구한다).
+	GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
 	EnterPhysicsMovement(MOVE_Falling);
 }
 
@@ -520,9 +547,16 @@ float ACinderEnemy::GetEdgeDistanceToTarget() const
 
 void ACinderEnemy::TickFallen(float DeltaTime)
 {
-	const AActor* Target = GetCurrentTarget();
-	if (!Target || bFuseStarted)
+	if (bFuseStarted)
 	{
+		return;
+	}
+
+	// 플레이어를 놓쳤다(시야에서 사라졌거나 플레이어가 죽었다). 쫓을 대상이 없으니 그 자리에서 일정 시간 뒤에 자폭한다.
+	const AActor* Target = GetCurrentTarget();
+	if (!Target)
+	{
+		StartFuse(LostTargetFuseTime);
 		return;
 	}
 
@@ -534,7 +568,7 @@ void ACinderEnemy::TickFallen(float DeltaTime)
 
 	if (GetEdgeDistanceToTarget() <= ExplosionTriggerRange)
 	{
-		StartFuse();
+		StartFuse(ExplosionFuseTime);
 	}
 }
 
@@ -542,7 +576,7 @@ void ACinderEnemy::TickFallen(float DeltaTime)
 // 자폭
 // ---------------------------------------------------------------------------
 
-void ACinderEnemy::StartFuse()
+void ACinderEnemy::StartFuse(float FuseDuration)
 {
 	if (bFuseStarted)
 	{
@@ -550,6 +584,7 @@ void ACinderEnemy::StartFuse()
 	}
 
 	bFuseStarted = true;
+	ActiveFuseTime = FMath::Max(FuseDuration, 0.01f);
 
 	// 폭발 전에 제자리에 고정한다. 이동을 막고, 플레이어와 겹쳐도 서로 밀지 않게 폰 충돌을 겹침으로 바꾼다.
 	UCharacterMovementComponent* Movement = GetCharacterMovement();
@@ -561,9 +596,52 @@ void ACinderEnemy::StartFuse()
 	{
 		PlayAnimMontage(FuseMontage);
 	}
-	SpawnEffectAtLocation(FuseEffect, GetActorLocation(), FRotator::ZeroRotator, FVector(FuseEffectScale));
 
-	GetWorldTimerManager().SetTimer(FuseTimerHandle, this, &ACinderEnemy::Explode, FMath::Max(ExplosionFuseTime, 0.01f), false);
+	// 몸이 깜빡이기 시작한다(켜진 상태로 시작).
+	FuseElapsed = 0.f;
+	FuseBlinkTimer = 0.f;
+	SetFuseBlink(true);
+
+	GetWorldTimerManager().SetTimer(FuseTimerHandle, this, &ACinderEnemy::Explode, ActiveFuseTime, false);
+}
+
+void ACinderEnemy::SetFuseBlink(bool bOn)
+{
+	bFuseBlinkOn = bOn;
+	if (GetMesh() && FuseBlinkMaterial)
+	{
+		GetMesh()->SetOverlayMaterial(bOn ? FuseBlinkMaterial.Get() : nullptr);
+	}
+
+	// 깜빡임이 켜질 때마다 삐 소리를 낸다. 간격이 줄어들면 소리도 같이 빨라지고, 피치는 폭발이 가까울수록 올라간다.
+	if (bOn && FuseBeepSound)
+	{
+		const float Alpha = FMath::Clamp(FuseElapsed / FMath::Max(ActiveFuseTime, 0.01f), 0.f, 1.f);
+		const float Pitch = FMath::Lerp(FuseBeepPitchStart, FuseBeepPitchEnd, Alpha);
+		UGameplayStatics::PlaySoundAtLocation(this, FuseBeepSound, GetActorLocation(), 1.f, FMath::Max(Pitch, 0.1f));
+	}
+}
+
+void ACinderEnemy::UpdateFuseBlink(float DeltaTime)
+{
+	// 머티리얼이 없어도 소리만으로 깜빡임 박자를 쓸 수 있다.
+	if (!FuseBlinkMaterial && !FuseBeepSound)
+	{
+		return;
+	}
+
+	FuseElapsed += DeltaTime;
+	FuseBlinkTimer += DeltaTime;
+
+	// 폭발까지 남은 시간이 줄어들수록 간격이 시작 값에서 끝 값으로 줄어든다.
+	const float Alpha = FMath::Clamp(FuseElapsed / FMath::Max(ActiveFuseTime, 0.01f), 0.f, 1.f);
+	const float Interval = FMath::Max(FMath::Lerp(FuseBlinkStartInterval, FuseBlinkEndInterval, Alpha), 0.01f);
+
+	if (FuseBlinkTimer >= Interval)
+	{
+		FuseBlinkTimer = FMath::Fmod(FuseBlinkTimer, Interval);
+		SetFuseBlink(!bFuseBlinkOn);
+	}
 }
 
 void ACinderEnemy::Explode()
@@ -613,6 +691,11 @@ void ACinderEnemy::Detonate()
 	}
 
 	SpawnEffectAtLocation(ExplosionEffect, GetActorLocation(), FRotator::ZeroRotator, FVector(ExplosionEffectScale));
+
+	if (ExplosionSound)
+	{
+		UGameplayStatics::PlaySoundAtLocation(this, ExplosionSound, GetActorLocation());
+	}
 
 	// 몸을 숨긴다.
 	if (GetMesh())

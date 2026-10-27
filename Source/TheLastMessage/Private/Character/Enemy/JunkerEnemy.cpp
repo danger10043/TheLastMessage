@@ -10,6 +10,8 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Pawn.h"
 #include "TimerManager.h"
+#include "Kismet/GameplayStatics.h"
+#include "Sound/SoundBase.h"
 
 AJunkerEnemy::AJunkerEnemy()
 {
@@ -233,6 +235,11 @@ void AJunkerEnemy::FireShot()
 
 	SpawnEnemyProjectile(MachineGunConfig, Muzzle, LockedAimDirection);
 	SpawnEffectAtSocket(MuzzleFlashEffect, MuzzleSocketName, MuzzleOffset, FlashRotation);
+
+	if (FireSound)
+	{
+		UGameplayStatics::PlaySoundAtLocation(this, FireSound, Muzzle);
+	}
 
 	--ShotsLeft;
 	if (ShotsLeft > 0)

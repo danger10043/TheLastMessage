@@ -7,6 +7,30 @@
 
 class UGameplayEffect;
 class UWeaponBase;
+class UWeaponDataAsset;
+class APlayerBase;
+class AProjectileBase;
+
+/** 한 번의 원거리 공격에서 모든 탄환이 공유하는 발사 정보다. */
+USTRUCT()
+struct FWeaponRangedAttackSnapshot
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	TObjectPtr<UWeaponDataAsset> WeaponData = nullptr;
+
+	UPROPERTY()
+	TSubclassOf<AProjectileBase> ProjectileClass;
+
+	FVector Direction = FVector::ZeroVector;
+	float DamagePerShot = 0.0f;
+	float ProjectileSpeed = 0.0f;
+	float Range = 0.0f;
+	float FeedbackStrength = 1.0f;
+	int32 ShotCount = 1;
+	float ShotInterval = 0.1f;
+};
 
 /** 주무기·보조무기 공격 능력이 공유하는 데이터와 실행 상태. */
 UCLASS(Abstract, Blueprintable)
@@ -76,6 +100,7 @@ protected:
 
 private:
 	void ExecuteAttack();
+	bool CaptureRangedAttack(APlayerBase* Player, TSubclassOf<AProjectileBase> ProjectileClass, const FVector& Direction);
 	void StartWeaponCharge();
 	FTimerHandle ChargeStartTimer;
 	bool bChargeStarted = false;
@@ -90,6 +115,10 @@ private:
 	float ChargeDamageMultiplier = 1.0f;
 	// 이번 공격에 적용할 치명타 피해 배율. 일반 공격은 1이다.
 	float CriticalHitDamageMultiplier = 1.0f;
+	/** 실제 발사 시점에 확정하며, 공격 종료 시 참조와 수치를 함께 비운다. */
+	UPROPERTY(Transient)
+	FWeaponRangedAttackSnapshot RangedAttack;
+
 	bool bWaitingForRelease = false;
 	bool bAttackExecuted = false;
 

@@ -70,7 +70,12 @@ bool APlayerBase::RestoreCheckpointProgress(const UProgressSaveGame* Save)
 	if (!SetCheckpoint(Save->RespawnTransform)) return false;
 	CombatAttributes->SetHealth(FMath::Clamp(Save->Player.Health, 1.f, CombatAttributes->GetMaxHealth()));
 	WeaponSlotAttributes->SetSharedEnergy(FMath::Clamp(Save->Player.Energy, 0.f, WeaponSlotAttributes->GetSharedMaxEnergy()));
-	LastSharedEnergyUseTime = GetWorld()->GetTimeSeconds();
+	// CleanupPlayerActions stops recharge during restoration. Resume it from
+	// this world's current time so loading neither freezes nor batches recharge.
+	const double RestoreTime = GetWorld()->GetTimeSeconds();
+	LastSharedEnergyUseTime = RestoreTime;
+	LastEnergyRechargeTime = RestoreTime;
+	GetWorldTimerManager().SetTimer(EnergyRechargeTimerHandle, this, &APlayerBase::RechargeWeaponEnergy, 0.05f, true);
 	if (AreaMapComponent)
 	{
 		const FProgressMapState* Map = Save->Maps.Find(FName(*UGameplayStatics::GetCurrentLevelName(this, true)));

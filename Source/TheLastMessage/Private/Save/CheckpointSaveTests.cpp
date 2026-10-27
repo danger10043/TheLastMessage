@@ -149,6 +149,7 @@ bool FCheckpointRestoreStartupTest::RunTest(const FString& Parameters)
 	Progress->CheckpointId = FGuid::NewGuid();
 	Progress->RespawnTransform = FTransform(FVector(3000, 0, 200));
 	Progress->Player.Health = 68;
+	Progress->Player.Energy = 25;
 	UCoreDataAsset* Core = LoadObject<UCoreDataAsset>(nullptr, TEXT("/Game/Test_Jihun/Core/Ability/DataAsset/DA_Core_DoubleJump.DA_Core_DoubleJump"));
 	Progress->Player.CoreLevels.Add(FSoftObjectPath(Core), 1);
 	Saves->bRestorePending = true;
@@ -168,6 +169,13 @@ bool FCheckpointRestoreStartupTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Deferred callbacks do not duplicate core grants"), Player->GetCoreComponent()->GetOwnedCores().Num(), 1);
 	TestEqual(TEXT("Startup restores health"), Player->GetCombatAttributes()->GetHealth(), 68.f);
 	TestFalse(TEXT("Loading does not autosave"), Saves->IsSaving());
+	TestEqual(TEXT("Startup restores saved energy"), Player->GetWeaponSlotAttributes()->GetSharedEnergy(), 25.f);
+	// Tick the actual world so both the recharge clock and its timer advance.
+	for (int32 Frame = 0; Frame < 10; ++Frame) { ++GFrameCounter; World->Tick(LEVELTICK_All, 0.05f); }
+	TestEqual(TEXT("Restored energy waits for the recharge delay"), Player->GetWeaponSlotAttributes()->GetSharedEnergy(), 25.f);
+	for (int32 Frame = 0; Frame < 30; ++Frame) { ++GFrameCounter; World->Tick(LEVELTICK_All, 0.05f); }
+	TestTrue(TEXT("Energy recharges after loading at the configured rate"),
+		FMath::IsNearlyEqual(Player->GetWeaponSlotAttributes()->GetSharedEnergy(), 45.f, 1.f));
 	World->EndPlay(EEndPlayReason::Quit);
 	Instance->Shutdown(); World->DestroyWorld(false); GEngine->DestroyWorldContext(World);
 	return !HasAnyErrors();

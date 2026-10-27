@@ -587,4 +587,55 @@ bool FGrapplingNamedWallTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("Explicit invisible boundary remains excluded even with Wall_ name"), Grapple->HasGrappleAnchor());
 	return !HasAnyErrors();
 }
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGrapplingAuthoredCollisionTest, "TheLastMessage.Grappling.AuthoredCollision",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FGrapplingAuthoredCollisionTest::RunTest(const FString& Parameters)
+{
+	GrapplingProbeTest::FWorld Fixture;
+	Fixture.World->GetWorldSettings()->Tags.Add(TEXT("GrappleCollisionAuthored"));
+	APlayerBase* Player = Fixture.SpawnPlayer();
+	UGrapplingHookComponent* Grapple = Player->FindComponentByClass<UGrapplingHookComponent>();
+	UStaticMeshComponent* Surface = Fixture.MakeSurface(400);
+	UStaticMeshComponent* Disabled = Fixture.MakeSurface(200);
+	Disabled->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	APawn* Enemy = Fixture.World->SpawnActor<APawn>();
+	Fixture.MakeSurface(300, Enemy);
+	for (int32 Attempt = 0; Attempt < 3; ++Attempt)
+	{
+		Grapple->RequestGrapple(FVector(800, 0, 0));
+		TestTrue(TEXT("Authored surface is hit past enemy and disabled decoration"),
+			Grapple->HasGrappleAnchor() && FMath::IsNearlyEqual(Grapple->ProbeState.AnchorPoint.X, 375., 1.));
+		TestTrue(TEXT("Probe never enables disabled mesh collision"), Disabled->GetCollisionEnabled() == ECollisionEnabled::NoCollision);
+		TestTrue(TEXT("Movement collision stays enabled"), Surface->GetCollisionEnabled() == ECollisionEnabled::QueryAndPhysics);
+		Grapple->ReleaseGrapple();
+	}
+	return !HasAnyErrors();
+}
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGrapplingAuthoredFactoryMeshTest, "TheLastMessage.Grappling.AuthoredFactoryMesh",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FGrapplingAuthoredFactoryMeshTest::RunTest(const FString& Parameters)
+{
+	GrapplingProbeTest::FWorld Fixture;
+	Fixture.World->GetWorldSettings()->Tags.Add(TEXT("GrappleCollisionAuthored"));
+	APlayerBase* Player = Fixture.SpawnPlayer();
+	UGrapplingHookComponent* Grapple = Player->FindComponentByClass<UGrapplingHookComponent>();
+	UStaticMesh* FactoryFloor = LoadObject<UStaticMesh>(nullptr,
+		TEXT("/Game/Test_Jihong/Prototype/CollisionMeshes/SM_Floor_4x4_A_Collision.SM_Floor_4x4_A_Collision"));
+	if (!TestNotNull(TEXT("Authored factory floor asset exists"), FactoryFloor)) return false;
+	UStaticMeshComponent* Surface = Fixture.MakeSurface(400);
+	Surface->SetStaticMesh(FactoryFloor);
+	Surface->GetOwner()->SetActorLocation(FVector(400, 0, 5));
+	for (int32 Attempt = 0; Attempt < 3; ++Attempt)
+	{
+		Grapple->RequestGrapple(FVector(800, 0, 0));
+		TestTrue(TEXT("Actual factory terrain accepts hook using its movement collision"),
+			Grapple->HasGrappleAnchor() && FMath::IsNearlyEqual(Grapple->ProbeState.AnchorPoint.X, 300., 1.));
+		TestTrue(TEXT("Hook does not change terrain collision"),
+			Surface->GetCollisionEnabled() == ECollisionEnabled::QueryAndPhysics);
+		Grapple->ReleaseGrapple();
+	}
+	return !HasAnyErrors();
+}
 #endif

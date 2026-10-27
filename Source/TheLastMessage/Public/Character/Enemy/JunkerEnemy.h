@@ -6,6 +6,7 @@
 
 class UNiagaraSystem;
 class UAnimMontage;
+class USoundBase;
 
 /** Junker의 현재 단계 */
 UENUM(BlueprintType)
@@ -95,6 +96,10 @@ protected:
 
 	/** 원거리 단계에서 다음 공격 시작까지의 쿨다운(초). 돌격 제한 시간이 끝나 원거리로 돌아왔을 때 적용된다. */
 	float RangedCooldown = 1.f;
+
+	/** 발사할 때 재생할 소리. 총구 위치에서 재생된다. 비워 두면 재생하지 않는다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Junker|Sound")
+	TObjectPtr<USoundBase> FireSound;
 
 	/** 총구 화염 이펙트(한 발마다 재생) */
 	UPROPERTY(EditDefaultsOnly, Category = "Junker|Ranged")

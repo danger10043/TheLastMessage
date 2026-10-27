@@ -10,7 +10,7 @@ class UArrowComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnSpawnedEnemyDiedSignature, AEnemyBase*, Enemy);
 
-/** 체크포인트 리셋 때 몬스터를 어떻게 다시 스폰할지 */
+/** 리셋 반경을 벗어났을 때(또는 ResetSpawn 호출 때) 몬스터를 어떻게 다시 스폰할지 */
 UENUM(BlueprintType)
 enum class EEnemyResetMode : uint8
 {
@@ -60,9 +60,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Enemy|Spawn")
 	void DespawnEnemies();
 
-	/** 체크포인트 리셋: Reset Mode에 따라 몬스터를 다시 스폰한다. */
+	/** 리셋: Reset Mode에 따라 몬스터를 다시 스폰한다. */
 	UFUNCTION(BlueprintCallable, Category = "Enemy|Spawn")
 	void ResetSpawn();
+
+	/**
+	 * 플레이어가 체크포인트에서 부활했을 때 호출한다. Reset Mode와 상관없이 이 구역의 몬스터를 모두 풀로 돌려보낸다.
+	 * 거리 기반 구역은 서브시스템이 부활 위치 기준으로 다시 스폰하고, 거리 기반이 아닌 구역은 바로 새로 스폰한다.
+	 */
+	void ResetForPlayerRespawn();
 
 	/** 지금 살아 있는 몬스터 수 (구역 클리어 판정 등에 사용) */
 	UFUNCTION(BlueprintPure, Category = "Enemy|Spawn")
@@ -123,7 +129,7 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Spawn|Streaming", meta = (EditCondition = "bStreamByDistance", ClampMin = "0.0"))
 	float ResetRadius = 2000.f;
 
-	/** 체크포인트 리셋 때의 동작 */
+	/** 리셋 반경 리셋 때의 동작. 플레이어가 체크포인트에서 부활할 때는 이 설정과 상관없이 모든 몬스터를 새로 스폰한다. */
 	UPROPERTY(EditAnywhere, Category = "Spawn")
 	EEnemyResetMode ResetMode = EEnemyResetMode::RespawnAll;
 

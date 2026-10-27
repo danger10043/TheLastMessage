@@ -8,7 +8,7 @@
  * 몬스터는 자기 종류의 묶음만 읽는다.
  */
 
-/** Rattler의 수치. 몽타주·이펙트·소켓 이름 같은 에셋 참조는 몬스터 블루프린트에 둔다. */
+ /** Rattler의 수치. 몽타주·이펙트·소켓 이름 같은 에셋 참조는 몬스터 블루프린트에 둔다. */
 USTRUCT(BlueprintType)
 struct FRattlerSettings
 {
@@ -182,9 +182,25 @@ struct FCinderSettings
 	UPROPERTY(EditAnywhere, meta = (ClampMin = "0.01"))
 	float ExplosionEffectScale = 1.f;
 
-	/** 자폭 준비 이펙트 크기 배율 (1 = 원래 크기) */
+	/** 자폭하러 가다가 플레이어를 놓치면 그 자리에서 이 시간(초) 뒤에 폭발한다. 그동안 몸이 깜빡인다. */
+	UPROPERTY(EditAnywhere, meta = (ClampMin = "0.0"))
+	float LostTargetFuseTime = 2.f;
+
+	/** 삐 소리의 피치. 자폭 준비를 시작할 때 값(1 = 원래 높이). */
+	UPROPERTY(EditAnywhere, meta = (ClampMin = "0.1"))
+	float FuseBeepPitchStart = 1.f;
+
+	/** 삐 소리의 피치. 폭발 직전 값. 시작 값에서 이 값까지 점점 올라간다. */
+	UPROPERTY(EditAnywhere, meta = (ClampMin = "0.1"))
+	float FuseBeepPitchEnd = 1.4f;
+
+	/** 자폭 준비를 시작할 때의 깜빡임 간격(초). 켜짐/꺼짐이 바뀌는 간격이다. */
 	UPROPERTY(EditAnywhere, meta = (ClampMin = "0.01"))
-	float FuseEffectScale = 1.f;
+	float FuseBlinkStartInterval = 0.2f;
+
+	/** 폭발 직전의 깜빡임 간격(초). 폭발까지 남은 시간이 줄어들수록 시작 간격에서 이 값까지 빨라진다. */
+	UPROPERTY(EditAnywhere, meta = (ClampMin = "0.01"))
+	float FuseBlinkEndInterval = 0.04f;
 
 	/** 정찰 이동 축(월드 기준). 사이드뷰 기본은 X축 왕복. 벽·천장 이동형은 (0,0,1)로 설정. */
 	UPROPERTY(EditAnywhere)
@@ -270,6 +286,18 @@ struct FJuggernautSettings
 	 */
 	UPROPERTY(EditAnywhere, meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float RangedDamageMultiplier = 0.5f;
+
+	/** 돌진 예고 띠의 높이 보정(cm). 띠 높이 = 캡슐 전체 높이 + 이 값. 실제 피해 범위에 맞춰 조절한다. */
+	UPROPERTY(EditAnywhere, meta = (ClampMin = "0.0"))
+	float TelegraphHeightPadding = 20.f;
+
+	/** 예고 마지막에 띠가 깜빡이는 시간(초). 윈드업 시간의 절반을 넘지 않는다. 0이면 깜빡이지 않는다. */
+	UPROPERTY(EditAnywhere, meta = (ClampMin = "0.0"))
+	float TelegraphBlinkDuration = 0.2f;
+
+	/** 깜빡임에서 켜짐/꺼짐이 바뀌는 간격(초) */
+	UPROPERTY(EditAnywhere, meta = (ClampMin = "0.01"))
+	float TelegraphBlinkInterval = 0.05f;
 };
 
 /** Junker의 수치. 몽타주·이펙트·소켓 이름 같은 에셋 참조는 몬스터 블루프린트에 둔다. */

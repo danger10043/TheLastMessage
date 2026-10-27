@@ -7,6 +7,8 @@
 
 class UNiagaraSystem;
 class UAnimMontage;
+class UMaterialInterface;
+class USoundBase;
 
 /** Cinder의 현재 이동 방식 */
 UENUM(BlueprintType)
@@ -144,9 +146,12 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Cinder|Explosion")
 	TObjectPtr<UAnimMontage> FuseMontage;
 
-	/** 자폭 준비를 시작할 때 재생할 이펙트(경고) */
+	/**
+	 * 자폭 준비 중 몸에 덧씌워 깜빡일 오버레이 머티리얼(예: 빨간색). 비워 두면 깜빡이지 않는다.
+	 * 피격 번쩍임(Hit Flash Material)과 같은 방식의 오버레이 머티리얼이며, 메시 사용 플래그 Used with Skeletal Mesh가 켜져 있어야 한다.
+	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Cinder|Explosion")
-	TObjectPtr<UNiagaraSystem> FuseEffect;
+	TObjectPtr<UMaterialInterface> FuseBlinkMaterial;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Cinder|Explosion")
 	TObjectPtr<UNiagaraSystem> ExplosionEffect;
@@ -154,8 +159,36 @@ protected:
 	/** 폭발 이펙트 크기 배율. 이펙트가 너무 크거나 작으면 이 값으로 조절한다(1 = 원래 크기). */
 	float ExplosionEffectScale = 1.f;
 
-	/** 자폭 준비 이펙트 크기 배율 (1 = 원래 크기) */
-	float FuseEffectScale = 1.f;
+	/**
+	 * 자폭하러 가다가 플레이어를 놓치면(시야에서 사라지거나 플레이어가 죽으면) 그 자리에서 자폭 준비를 시작하고
+	 * 이 시간(초) 뒤에 폭발한다. 그동안 몸이 깜빡인다.
+	 */
+	float LostTargetFuseTime = 2.f;
+
+	/**
+	 * 자폭 준비 중 몸이 깜빡여 켜질 때마다 재생할 삐 소리(짧은 한 번짜리). 깜빡임이 빨라지면 소리도 같이 빨라진다.
+	 * 비워 두면 재생하지 않는다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Cinder|Sound")
+	TObjectPtr<USoundBase> FuseBeepSound;
+
+	/** 투사체를 발사할 때 재생할 소리. 총구 위치에서 재생된다. 비워 두면 재생하지 않는다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Cinder|Sound")
+	TObjectPtr<USoundBase> FireSound;
+
+	/** 폭발할 때 재생할 소리. 처치당해서 터질 때도 같은 소리가 난다. 비워 두면 재생하지 않는다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Cinder|Sound")
+	TObjectPtr<USoundBase> ExplosionSound;
+
+	/** 삐 소리의 피치. 자폭 준비 시작 때 값에서 폭발 직전 값까지 점점 올라간다(1 = 원래 높이). */
+	float FuseBeepPitchStart = 1.f;
+	float FuseBeepPitchEnd = 1.4f;
+
+	/** 자폭 준비를 시작할 때의 깜빡임 간격(초). 켜짐/꺼짐이 바뀌는 간격이다. */
+	float FuseBlinkStartInterval = 0.2f;
+
+	/** 폭발 직전의 깜빡임 간격(초). 시작 간격에서 이 값까지 남은 시간에 따라 점점 빨라진다. */
+	float FuseBlinkEndInterval = 0.04f;
 
 private:
 	/** 체력이 줄 때마다 낙하 조건을 확인한다. */
@@ -190,7 +223,12 @@ private:
 
 	void FireProjectile();
 
-	void StartFuse();
+	/** 자폭 준비를 시작한다. FuseDuration 뒤에 폭발하고, 그동안 몸이 깜빡인다. */
+	void StartFuse(float FuseDuration);
+
+	/** 자폭까지 남은 시간이 줄어들수록 빠르게 몸을 깜빡인다. */
+	void UpdateFuseBlink(float DeltaTime);
+	void SetFuseBlink(bool bOn);
 
 	/** 자폭 준비가 끝났을 때: 스스로 사망 처리한다. 폭발은 사망 처리(HandleDeath)에서 일어난다. */
 	void Explode();
@@ -219,6 +257,10 @@ private:
 	/** 자폭 준비 때 폰 충돌을 겹침으로 바꾸기 전의 원래 설정 */
 	TEnumAsByte<ECollisionResponse> DefaultPawnResponse = ECR_Block;
 	bool bFuseStarted = false;
+	bool bFuseBlinkOn = false;
+	float FuseElapsed = 0.f;
+	float ActiveFuseTime = 0.4f; // 지금 진행 중인 자폭 준비의 길이(초)
+	float FuseBlinkTimer = 0.f;
 	bool bExploded = false;
 
 	FTimerHandle FireTimerHandle;

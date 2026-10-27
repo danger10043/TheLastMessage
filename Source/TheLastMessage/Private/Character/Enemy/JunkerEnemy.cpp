@@ -21,10 +21,49 @@ AJunkerEnemy::AJunkerEnemy()
 
 	// 기본값(임시). 블루프린트에서 조정한다.
 	StatConfig.MaxHealth = 300.f;
+	StatConfig.AttackDamage = 10.f;           // 기관총 1발 피해
+	StatConfig.SecondaryAttackDamage = 15.f; // 주먹질 1회 피해
 	StatConfig.MoveSpeed = 250.f;
 	StatConfig.DetectRange = 1800.f;
 	StatConfig.AttackRange = 1000.f;          // 이 거리 안에서 원거리 점사를 시작한다.
 	StatConfig.ChaseAcceptableRadius = 120.f; // 돌격 때 근접 거리까지 붙는다.
+}
+
+void AJunkerEnemy::ApplyEnemyData(const UEnemyDataAsset* Data)
+{
+	Super::ApplyEnemyData(Data);
+	MachineGunConfig.ProjectileClass = ProjectileClass;
+
+	if (!Data)
+	{
+		return;
+	}
+
+	const FJunkerSettings& S = Data->Junker;
+	ShotsPerBurst = S.ShotsPerBurst;
+	FireInterval = S.FireInterval;
+	BurstGap = S.BurstGap;
+	EndDelay = S.EndDelay;
+	ShootMontageBlendOut = S.ShootMontageBlendOut;
+	MinBursts = S.MinBursts;
+	MaxBursts = S.MaxBursts;
+	RangedCooldown = S.RangedCooldown;
+	MuzzleOffset = S.MuzzleOffset;
+	RushDuration = S.RushDuration;
+	RushStallTimeLimit = S.RushStallTimeLimit;
+	RushSpeedMultiplier = S.RushSpeedMultiplier;
+	MeleeRange = S.MeleeRange;
+	MeleeComboCount = S.MeleeComboCount;
+	MeleeInterval = S.MeleeInterval;
+	MeleeHitDelay = S.MeleeHitDelay;
+	MeleeReach = S.MeleeReach;
+	MeleeRadius = S.MeleeRadius;
+	RetreatMaxDistance = S.RetreatMaxDistance;
+	RetreatLedgeCheckDistance = S.RetreatLedgeCheckDistance;
+	RetreatMaxDropHeight = S.RetreatMaxDropHeight;
+	RetreatSpeed = S.RetreatSpeed;
+	MachineGunConfig.Speed = S.ProjectileSpeed;
+	MachineGunConfig.Lifetime = S.ProjectileLifetime;
 }
 
 // ---------------------------------------------------------------------------
@@ -135,6 +174,7 @@ void AJunkerEnemy::ResetPhase()
 	bLostWhileEngaged = false;
 	BurstsLeft = 0;
 	ShotsLeft = 0;
+	bAimLocked = false;
 	PunchesLeft = 0;
 }
 
@@ -161,6 +201,7 @@ void AJunkerEnemy::StartBurst()
 	}
 
 	ShotsLeft = FMath::Max(ShotsPerBurst, 1);
+	bAimLocked = false;
 	FaceTarget();
 
 	ActiveShootMontage = bRetreating ? RetreatShootMontage : BurstMontage;
@@ -181,13 +222,16 @@ void AJunkerEnemy::FireShot()
 
 	const FVector Muzzle = GetMuzzleLocation(MuzzleSocketName, MuzzleOffset);
 
-	FRotator FlashRotation = GetActorRotation();
-	if (const AActor* Target = GetCurrentTarget())
+	// 점사의 첫 발을 쏘는 순간의 플레이어 위치로 조준 방향을 고정한다. 나머지 발도 같은 방향이라 일자로 날아간다.
+	if (!bAimLocked)
 	{
-		FlashRotation = (Target->GetActorLocation() - Muzzle).Rotation();
+		LockedAimDirection = ComputeAimDirection(Muzzle);
+		bAimLocked = !LockedAimDirection.IsNearlyZero();
 	}
 
-	SpawnEnemyProjectile(MachineGunConfig, Muzzle);
+	const FRotator FlashRotation = bAimLocked ? LockedAimDirection.Rotation() : GetActorRotation();
+
+	SpawnEnemyProjectile(MachineGunConfig, Muzzle, LockedAimDirection);
 	SpawnEffectAtSocket(MuzzleFlashEffect, MuzzleSocketName, MuzzleOffset, FlashRotation);
 
 	--ShotsLeft;
@@ -386,7 +430,7 @@ void AJunkerEnemy::DoMeleeHit()
 		}
 
 		Damaged.Add(Actor);
-		ApplyEnemyDamage(Actor, GetScaledDamage(MeleeDamage));
+		ApplyEnemyDamage(Actor, GetScaledDamage(GetStatConfig().SecondaryAttackDamage));
 		SpawnEffectAtLocation(MeleeHitEffect, Actor->GetActorLocation());
 	}
 }
@@ -439,6 +483,32 @@ void AJunkerEnemy::StopRetreatMovement()
 	Movement->MaxWalkSpeed = GetStatConfig().MoveSpeed;
 }
 
+bool AJunkerEnemy::HasGroundBehind(const FVector& AwayDirection) const
+{
+	const UWorld* World = GetWorld();
+	if (!World)
+	{
+		return false;
+	}
+
+	const UCapsuleComponent* Capsule = GetCapsuleComponent();
+	const float Radius = Capsule->GetScaledCapsuleRadius();
+	const float HalfHeight = Capsule->GetScaledCapsuleHalfHeight();
+
+	// 캡슐 가장자리에서 조금 앞선 지점에서 아래로 쏘아 바닥을 찾는다.
+	const FVector Start = GetActorLocation() + AwayDirection * (Radius + RetreatLedgeCheckDistance);
+	const FVector End = Start - FVector(0.f, 0.f, HalfHeight + RetreatMaxDropHeight);
+
+	FCollisionObjectQueryParams ObjectParams;
+	ObjectParams.AddObjectTypesToQuery(ECC_WorldStatic);
+	ObjectParams.AddObjectTypesToQuery(ECC_WorldDynamic);
+
+	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(JunkerLedgeCheck), false, this);
+
+	FHitResult Hit;
+	return World->LineTraceSingleByObjectType(Hit, Start, End, ObjectParams, QueryParams);
+}
+
 void AJunkerEnemy::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
@@ -466,8 +536,15 @@ void AJunkerEnemy::Tick(float DeltaTime)
 		return;
 	}
 
+	// 뒤쪽에 바닥이 없으면(낭떠러지) 더 물러나지 않고 그 자리에서 사격만 계속한다.
+	const FVector AwayDirection = Away.GetSafeNormal();
+	if (!HasGroundBehind(AwayDirection))
+	{
+		return;
+	}
+
 	// bForce: AI가 이동 입력을 막아 두어도 후퇴 입력은 적용한다.
-	AddMovementInput(Away.GetSafeNormal(), 1.f, true);
+	AddMovementInput(AwayDirection, 1.f, true);
 }
 
 // ---------------------------------------------------------------------------

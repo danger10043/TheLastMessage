@@ -20,9 +20,30 @@ ASentryEnemy::ASentryEnemy()
 	StatConfig.AttackRange = 1500.f;
 	StatConfig.AttackCooldown = 3.f;
 
-	ProjectileConfig.Damage = 40.f;
+	StatConfig.AttackDamage = 40.f;
 	ProjectileConfig.Speed = 700.f;
 	ProjectileConfig.Lifetime = 6.f;
+}
+
+void ASentryEnemy::ApplyEnemyData(const UEnemyDataAsset* Data)
+{
+	Super::ApplyEnemyData(Data);
+	ProjectileConfig.ProjectileClass = ProjectileClass;
+
+	if (!Data)
+	{
+		return;
+	}
+
+	const FSentrySettings& S = Data->Sentry;
+	ChargeTime = S.ChargeTime;
+	RotationSpeed = S.RotationSpeed;
+	MinAimPitch = S.MinAimPitch;
+	MaxAimPitch = S.MaxAimPitch;
+	AimYawOffset = S.AimYawOffset;
+	MuzzleOffset = S.MuzzleOffset;
+	ProjectileConfig.Speed = S.ProjectileSpeed;
+	ProjectileConfig.Lifetime = S.ProjectileLifetime;
 }
 
 void ASentryEnemy::BeginPlay()

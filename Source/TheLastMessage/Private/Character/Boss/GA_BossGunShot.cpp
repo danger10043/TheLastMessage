@@ -14,9 +14,9 @@
 
 namespace
 {
-    const FName ReadySection(TEXT("GunReady"));
-    const FName FireSection(TEXT("GunFire"));
-    const FName EndSection(TEXT("GunEnd"));
+    const FName GunShotReadySection(TEXT("GunReady"));
+    const FName GunShotFireSection(TEXT("GunFire"));
+    const FName GunShotEndSection(TEXT("GunEnd"));
 }
 
 UGA_BossGunShot::UGA_BossGunShot()
@@ -75,9 +75,9 @@ void UGA_BossGunShot::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
         || !FMath::IsFinite(BulletSpeed) || BulletSpeed <= 0.f
         || !FMath::IsFinite(BulletLifetime) || BulletLifetime <= 0.f
         || AimOriginOffset.ContainsNaN()
-        || AttackMontage->GetSectionIndex(ReadySection) == INDEX_NONE
-        || AttackMontage->GetSectionIndex(FireSection) == INDEX_NONE
-        || AttackMontage->GetSectionIndex(EndSection) == INDEX_NONE)
+        || AttackMontage->GetSectionIndex(GunShotReadySection) == INDEX_NONE
+        || AttackMontage->GetSectionIndex(GunShotFireSection) == INDEX_NONE
+        || AttackMontage->GetSectionIndex(GunShotEndSection) == INDEX_NONE)
     {
         UE_LOG(LogTemp, Error, TEXT("GunShot: invalid phase config, montage, or muzzle."));
         HandleCancelled();
@@ -119,7 +119,7 @@ void UGA_BossGunShot::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
 
     Anim->OnMontageSectionChanged.AddUniqueDynamic(this, &UGA_BossGunShot::HandleSectionChanged);
     MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
-        this, NAME_None, AttackMontage.Get(), 1.f, ReadySection, true, 1.f, 0.f, true);
+        this, NAME_None, AttackMontage.Get(), 1.f, GunShotReadySection, true, 1.f, 0.f, true);
     if (!MontageTask)
     {
         HandleCancelled();
@@ -139,9 +139,9 @@ void UGA_BossGunShot::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
         return;
     }
     MontageInstanceID = Instance->GetInstanceID();
-    ASC->CurrentMontageSetNextSectionName(ReadySection, FireSection);
-    ASC->CurrentMontageSetNextSectionName(FireSection, EndSection);
-    ASC->CurrentMontageSetNextSectionName(EndSection, NAME_None);
+    ASC->CurrentMontageSetNextSectionName(GunShotReadySection, GunShotFireSection);
+    ASC->CurrentMontageSetNextSectionName(GunShotFireSection, GunShotEndSection);
+    ASC->CurrentMontageSetNextSectionName(GunShotEndSection, NAME_None);
     GetWorld()->GetTimerManager().SetTimer(
         UpdateTimer, this, &UGA_BossGunShot::UpdatePattern, 0.01f, true);
     HandleSectionChanged(AttackMontage.Get(), Instance->GetCurrentSection(), false);
@@ -183,7 +183,7 @@ void UGA_BossGunShot::HandleSectionChanged(
     UAnimMontage* Montage, FName SectionName, bool bLooped)
 {
     if (!IsActive() || bEnding || bFired || Montage != AttackMontage.Get()
-        || SectionName != FireSection) return;
+        || SectionName != GunShotFireSection) return;
     UAnimInstance* Anim = BoundAnim.Get();
     FAnimMontageInstance* Instance = Anim
         ? Anim->GetActiveInstanceForMontage(AttackMontage.Get()) : nullptr;
@@ -223,6 +223,11 @@ bool UGA_BossGunShot::FireFan()
         {
             Bullet->ReturnToPool();
             return false;
+        }
+
+        if (Index == 0 && IsValid(Boss) && MuzzleEffect)
+        {
+            Boss->MulticastGunBurstMuzzle(MuzzleEffect.Get(), MuzzleSocketName);
         }
     }
     return true;

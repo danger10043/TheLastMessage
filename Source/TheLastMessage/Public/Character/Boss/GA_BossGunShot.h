@@ -9,6 +9,7 @@ class ABossBullet;
 class APlayerBase;
 class UAnimInstance;
 class UAnimMontage;
+class UNiagaraSystem;
 class UAbilityTask_PlayMontageAndWait;
 
 USTRUCT(BlueprintType)
@@ -67,6 +68,9 @@ protected:
 
     UPROPERTY(EditDefaultsOnly, Category = "Boss|GunShot|Bullet")
     FName MuzzleSocketName = TEXT("Muzzle");
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|GunShot|Effects")
+    TObjectPtr<UNiagaraSystem> MuzzleEffect;
 
     UPROPERTY(EditDefaultsOnly, Category = "Boss|GunShot|Animation")
     TObjectPtr<UAnimMontage> AttackMontage;

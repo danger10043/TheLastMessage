@@ -19,15 +19,52 @@ ACinderEnemy::ACinderEnemy()
 
 	// 기본값(임시). 블루프린트·데이터 에셋에서 조정한다.
 	StatConfig.MaxHealth = 120.f;
+	StatConfig.AttackDamage = 10.f;           // 원거리 투사체 피해
+	StatConfig.SecondaryAttackDamage = 40.f; // 자폭 피해
 	StatConfig.MoveSpeed = 180.f;               // 표면을 기어가는 속도
 	StatConfig.DetectRange = 1800.f;
 	StatConfig.AttackRange = 1000.f;
 	StatConfig.ChaseAcceptableRadius = 700.f;   // 이 거리 안에서는 기어가다 멈춘다.
 	StatConfig.AttackCooldown = 2.5f;
 
-	ProjectileConfig.Damage = 10.f;
 	ProjectileConfig.Speed = 900.f;
 	ProjectileConfig.Lifetime = 5.f;
+}
+
+void ACinderEnemy::ApplyEnemyData(const UEnemyDataAsset* Data)
+{
+	Super::ApplyEnemyData(Data);
+	ProjectileConfig.ProjectileClass = ProjectileClass;
+
+	if (!Data)
+	{
+		return;
+	}
+
+	const FCinderSettings& S = Data->Cinder;
+	SurfaceOffset = S.SurfaceOffset;
+	SurfaceSnapDistance = S.SurfaceSnapDistance;
+	CornerCheckDistance = S.CornerCheckDistance;
+	SpawnSnapDistance = S.SpawnSnapDistance;
+	bUseWorldDynamicSurfaces = S.bUseWorldDynamicSurfaces;
+	RotationInterpSpeed = S.RotationInterpSpeed;
+	PositionInterpSpeed = S.PositionInterpSpeed;
+	PatrolMinDistance = S.PatrolMinDistance;
+	PatrolMaxDistance = S.PatrolMaxDistance;
+	PatrolWaitMin = S.PatrolWaitMin;
+	PatrolWaitMax = S.PatrolWaitMax;
+	FireDelay = S.FireDelay;
+	MuzzleOffset = S.MuzzleOffset;
+	FallHealthRatio = S.FallHealthRatio;
+	FallenMoveSpeed = S.FallenMoveSpeed;
+	ExplosionTriggerRange = S.ExplosionTriggerRange;
+	ExplosionFuseTime = S.ExplosionFuseTime;
+	ExplosionRadius = S.ExplosionRadius;
+	ExplosionEffectScale = S.ExplosionEffectScale;
+	FuseEffectScale = S.FuseEffectScale;
+	PatrolAxis = S.PatrolAxis;
+	ProjectileConfig.Speed = S.ProjectileSpeed;
+	ProjectileConfig.Lifetime = S.ProjectileLifetime;
 }
 
 FVector ACinderEnemy::GetVelocity() const
@@ -524,7 +561,7 @@ void ACinderEnemy::StartFuse()
 	{
 		PlayAnimMontage(FuseMontage);
 	}
-	SpawnEffectAtLocation(FuseEffect, GetActorLocation());
+	SpawnEffectAtLocation(FuseEffect, GetActorLocation(), FRotator::ZeroRotator, FVector(FuseEffectScale));
 
 	GetWorldTimerManager().SetTimer(FuseTimerHandle, this, &ACinderEnemy::Explode, FMath::Max(ExplosionFuseTime, 0.01f), false);
 }
@@ -572,10 +609,10 @@ void ACinderEnemy::Detonate()
 		}
 
 		Damaged.Add(Actor);
-		ApplyEnemyDamage(Actor, GetScaledDamage(ExplosionDamage), ExplosionDamageTag);
+		ApplyEnemyDamage(Actor, GetScaledDamage(GetStatConfig().SecondaryAttackDamage), ExplosionDamageTag);
 	}
 
-	SpawnEffectAtLocation(ExplosionEffect, GetActorLocation());
+	SpawnEffectAtLocation(ExplosionEffect, GetActorLocation(), FRotator::ZeroRotator, FVector(ExplosionEffectScale));
 
 	// 몸을 숨긴다.
 	if (GetMesh())

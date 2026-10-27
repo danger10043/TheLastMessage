@@ -11,11 +11,15 @@
 #include "CanvasItem.h"
 #include "RenderUtils.h"
 #include "Character/Player/GrapplingHookComponent.h"
+#include "UI/SaveNotificationWidget.h"
+#include "Save/ProgressSaveSubsystem.h"
+#include "Engine/GameInstance.h"
 
 APlayerHUD::APlayerHUD()
 {
 	PrimaryActorTick.bCanEverTick = true;
 	PrimaryActorTick.bStartWithTickEnabled = true;
+	SaveNotificationClass = USaveNotificationWidget::StaticClass();
 }
 
 void APlayerHUD::BeginPlay()
@@ -29,6 +33,13 @@ void APlayerHUD::EnsureWidgets()
 {
 	APlayerController* PC = GetOwningPlayerController();
 	if (!PC || !PC->IsLocalController() || !PC->GetLocalPlayer()) return;
+	if (!SaveNotification && SaveNotificationClass)
+	{
+		SaveNotification = CreateWidget<USaveNotificationWidget>(PC, SaveNotificationClass);
+		if (SaveNotification) SaveNotification->AddToPlayerScreen(100);
+		if (UGameInstance* Instance = GetGameInstance())
+			Instance->GetSubsystem<UProgressSaveSubsystem>()->OnCheckpointSaveFinished.AddUniqueDynamic(this, &APlayerHUD::CheckpointSaveFinished);
+	}
 	if (!StatusWidget && StatusWidgetClass)
 	{
 		StatusWidget = CreateWidget<UPlayerStatusWidget>(PC, StatusWidgetClass);
@@ -192,10 +203,22 @@ void APlayerHUD::SetPlayerUIVisible(bool bVisible)
 
 void APlayerHUD::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (GetGameInstance()) GetGameInstance()->GetSubsystem<UProgressSaveSubsystem>()->OnCheckpointSaveFinished.RemoveDynamic(this, &APlayerHUD::CheckpointSaveFinished);
+	if (SaveNotification) SaveNotification->RemoveFromParent();
+	SaveNotification = nullptr;
 	if (StatusWidget) { StatusWidget->SetObservedPlayer(nullptr); StatusWidget->RemoveFromParent(); }
 	if (ChargeWidget) ChargeWidget->RemoveFromParent();
 	StatusWidget = nullptr;
 	ChargeWidget = nullptr;
 	ObservedPlayer.Reset();
 	Super::EndPlay(EndPlayReason);
+}
+
+void APlayerHUD::CheckpointSaveFinished(bool bSuccess)
+{
+	if (SaveNotification)
+	{
+		const UProgressSaveSubsystem* Saves = GetGameInstance()->GetSubsystem<UProgressSaveSubsystem>();
+		SaveNotification->ShowResult(bSuccess, Saves->GetActiveSlot() > 0);
+	}
 }

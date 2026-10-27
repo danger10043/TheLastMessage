@@ -88,12 +88,21 @@ public:
 
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category="Checkpoint")
 	bool ActivateCheckpoint(APlayerBase* Player);
+	/** Set explicitly when renaming a placed checkpoint must preserve its save identity. */
+	UPROPERTY(EditInstanceOnly, Category="Checkpoint|Save") FGuid PersistentId;
+	FGuid GetPersistentId() const;
+
+	void SetInteractionHighlight(bool bVisible);
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Checkpoint|Visual")
+	TObjectPtr<UStaticMeshComponent> InteractionOutline;
 
 	/** Runs on the authority; use a Blueprint for optional visuals/audio. */
 	UPROPERTY(BlueprintAssignable, Category="Checkpoint")
 	FCheckpointActivated OnCheckpointActivated;
 
 private:
+	TSet<TWeakObjectPtr<APlayerBase>> TouchingPlayers;
 	void RefreshTerminalVisuals();
 	UFUNCTION()
 	void OnRep_VisualState();
@@ -101,4 +110,8 @@ private:
 	UFUNCTION()
 	void OnTriggerOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor,
 		UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult);
+	UFUNCTION()
+	void OnTriggerEndOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor,
+		UPrimitiveComponent* OtherComp, int32 OtherBodyIndex);
+
 };

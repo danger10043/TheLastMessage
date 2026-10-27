@@ -50,6 +50,7 @@ public:
 	FString GetExplorationSlot() const;
 	void SaveExploration();
 	void LoadExploration();
+	void RestoreExploration(const TSet<FName>& RoomsToRestore) { ExploredRooms = RoomsToRestore; CurrentRoom = NAME_None; bLoadedExploration = true; }
 private:
 	TArray<FAreaMapRoom> Rooms;
 	TArray<FBox2D> Surfaces;

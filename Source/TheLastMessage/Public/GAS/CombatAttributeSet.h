@@ -80,15 +80,30 @@ public:
 	FGameplayAttributeData LifeStealRatio;
 	ATTRIBUTE_ACCESSORS_BASIC(UCombatAttributeSet, LifeStealRatio);
 
-	/** 적 한 마리를 처치했을 때 회복할 체력량. 0.0은 추가 회복이 없음을 뜻한다. */
+	/** 적 처치 시 최대 체력을 기준으로 회복할 비율. 0.0은 회복 없음, 0.03은 최대 체력의 3% 회복이다. */
 	UPROPERTY(BlueprintReadOnly, Category = "Base Stat")
-	FGameplayAttributeData KillHealAmount;
-	ATTRIBUTE_ACCESSORS_BASIC(UCombatAttributeSet, KillHealAmount);
+	FGameplayAttributeData KillHealRatio;
+	ATTRIBUTE_ACCESSORS_BASIC(UCombatAttributeSet, KillHealRatio);
 
 	/** 원래 공격 피해 대비 보조 타격의 피해 비율. 0.0은 추가 피해 없음, 0.1은 10%이다. */
 	UPROPERTY(BlueprintReadOnly, Category = "Base Stat")
 	FGameplayAttributeData AssistStrikeDamageRatio;
 	ATTRIBUTE_ACCESSORS_BASIC(UCombatAttributeSet, AssistStrikeDamageRatio);
+
+	/** 원거리 공격 한 번에 발사할 총 탄환 수. 기본값 1은 단발이며, 2 이상이면 연속 발사한다. */
+	UPROPERTY(BlueprintReadOnly, Category = "Base Stat|Ranged Burst")
+	FGameplayAttributeData RangedBurstShotCount;
+	ATTRIBUTE_ACCESSORS_BASIC(UCombatAttributeSet, RangedBurstShotCount);
+
+	/** 모든 탄환이 명중했을 때 원래 공격 대비 총 피해 배율. 1.1은 총 피해 110%다. */
+	UPROPERTY(BlueprintReadOnly, Category = "Base Stat|Ranged Burst")
+	FGameplayAttributeData RangedBurstTotalDamageMultiplier;
+	ATTRIBUTE_ACCESSORS_BASIC(UCombatAttributeSet, RangedBurstTotalDamageMultiplier);
+
+	/** 연속 탄환 사이의 발사 간격(초). 단발일 때는 사용하지 않는다. */
+	UPROPERTY(BlueprintReadOnly, Category = "Base Stat|Ranged Burst")
+	FGameplayAttributeData RangedBurstInterval;
+	ATTRIBUTE_ACCESSORS_BASIC(UCombatAttributeSet, RangedBurstInterval);
 
 	UPROPERTY(BlueprintReadOnly, Category = "Base Stat")
 	FGameplayAttributeData HighHealthThresholdRatio;

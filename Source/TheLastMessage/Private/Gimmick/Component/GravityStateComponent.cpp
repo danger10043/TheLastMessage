@@ -12,7 +12,6 @@
 #include "GameplayEffect.h"
 #include "Math/RotationMatrix.h"
 #include "NativeGameplayTags.h"
-#include "UObject/ConstructorHelpers.h"
 
 UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_StateGravityReversed, "State.Gravity.Reversed");
 
@@ -25,9 +24,6 @@ UGravityStateComponent::UGravityStateComponent()
 	PrimaryComponentTick.TickGroup = TG_PostPhysics;
 
 	ReversedGravityTag = TAG_StateGravityReversed;
-	static ConstructorHelpers::FClassFinder<UGameplayEffect> GravityEffect(
-		TEXT("/Game/Test_Jiho/Gimmick/GE_BP_GravityReversed"));
-	GravityEffectClass = GravityEffect.Class;
 }
 
 void UGravityStateComponent::ToggleGravityState()

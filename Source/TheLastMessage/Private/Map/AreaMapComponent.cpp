@@ -1,4 +1,6 @@
 #include "Map/AreaMapComponent.h"
+#include "Save/ProgressSaveSubsystem.h"
+#include "Engine/GameInstance.h"
 #include "Map/AreaMapRegion.h"
 #include "Components/StaticMeshComponent.h"
 #include "Character/Player/PlayerBase.h"
@@ -141,21 +143,29 @@ int32 UAreaMapComponent::GetExploredRoomCount() const
 
 FString UAreaMapComponent::GetExplorationSlot() const
 {
-	return TEXT("AreaMap_") + UGameplayStatics::GetCurrentLevelName(this, true);
+	const UGameInstance* Instance = GetWorld() ? GetWorld()->GetGameInstance() : nullptr;
+	const UProgressSaveSubsystem* Saves = Instance ? Instance->GetSubsystem<UProgressSaveSubsystem>() : nullptr;
+	return Saves && Saves->GetActiveSlot() > 0
+		? FString::Printf(TEXT("Progress_%d"), Saves->GetActiveSlot()) : FString();
 }
 
 void UAreaMapComponent::SaveExploration()
 {
-	if (!bPersistExploration) return;
-	UAreaMapSaveGame* Save = Cast<UAreaMapSaveGame>(UGameplayStatics::CreateSaveGameObject(UAreaMapSaveGame::StaticClass()));
-	Save->ExploredRooms = ExploredRooms;
-	UGameplayStatics::SaveGameToSlot(Save, GetExplorationSlot(), 0);
+	if (!bPersistExploration || !GetWorld() || !GetWorld()->GetGameInstance()) return;
+	UProgressSaveSubsystem* Saves = GetWorld()->GetGameInstance()->GetSubsystem<UProgressSaveSubsystem>();
+	if (UProgressSaveGame* Save = Saves->GetWorkingProgress())
+		Save->Maps.FindOrAdd(FName(*UGameplayStatics::GetCurrentLevelName(this, true))).ExploredRooms = ExploredRooms;
+	// Exploration updates memory only; checkpoint/autosave commits the active slot.
 }
 
 void UAreaMapComponent::LoadExploration()
 {
 	bLoadedExploration = true;
-	if (!bPersistExploration) return;
-	if (const UAreaMapSaveGame* Save = Cast<UAreaMapSaveGame>(UGameplayStatics::LoadGameFromSlot(GetExplorationSlot(),0)))
-		ExploredRooms = Save->ExploredRooms;
+	if (!bPersistExploration || !GetWorld() || !GetWorld()->GetGameInstance()) return;
+	const UProgressSaveSubsystem* Saves = GetWorld()->GetGameInstance()->GetSubsystem<UProgressSaveSubsystem>();
+	if (const UProgressSaveGame* Save = Saves->GetWorkingProgress())
+	{
+		const FProgressMapState* Map = Save->Maps.Find(FName(*UGameplayStatics::GetCurrentLevelName(this, true)));
+		ExploredRooms = Map ? Map->ExploredRooms : TSet<FName>();
+	}
 }

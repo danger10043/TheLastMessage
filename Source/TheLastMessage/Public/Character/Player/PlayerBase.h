@@ -14,6 +14,7 @@ class UCombatAttributeSet;
 class UWeaponSlotAttributeSet;
 class UInteractionComponent;
 class UCarryComponent;
+class UPushPullComponent;
 class UCoreComponent;
 class UGameplayAbility;
 class UGameplayEffect;
@@ -22,6 +23,7 @@ class UWeaponDataAsset;
 class UStaticMeshComponent;
 class UAnimMontage;
 class UAnimSequenceBase;
+class UAnimSequence;
 class UAnimInstance;
 class UNiagaraSystem;
 class UNiagaraComponent;
@@ -33,6 +35,7 @@ class UCombatFeedbackComponent;
 class UGravityStateComponent;
 class APlayerBase;
 class AProjectileBase;
+class UProgressSaveGame;
 struct FGameplayEffectContextHandle;
 struct FOnAttributeChangeData;
 
@@ -66,6 +69,13 @@ class THELASTMESSAGE_API APlayerBase : public ASideScrollingCharacter, public IA
 	GENERATED_BODY()
 
 public:
+	/** Successful pickup/drop presentation; forced cleanup does not play the drop motion. */
+	UFUNCTION(NetMulticast, Reliable)
+	void PlayCarryTransition(bool bStarting, bool bWideCarry);
+	UFUNCTION(BlueprintPure, Category="Player|Gimmick Animation")
+	bool IsCarryTransitionActive() const { return bPlayingCarryTransition; }
+	float GetCarryTransitionDuration() const { return CarryTransitionDuration; }
+	void CancelCarryTransition();
 	APlayerBase();
 	virtual void Tick(float DeltaSeconds) override;
 	virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
@@ -164,6 +174,7 @@ public:
 
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category="Player|Checkpoint")
 	bool RespawnAtCheckpoint();
+	bool RestoreCheckpointProgress(const UProgressSaveGame* Save);
 
 	virtual void FellOutOfWorld(const UDamageType& DamageType) override;
 
@@ -194,8 +205,8 @@ public:
 	UFUNCTION(BlueprintPure, Category="Player|Aim")
 	bool IsRangedAiming() const;
 	TSubclassOf<AProjectileBase> GetAttackProjectileClass(const UWeaponDataAsset* Data) const;
-	UPROPERTY(EditDefaultsOnly, Category="Player|Aim")
-	TSoftClassPtr<UAnimInstance> RangedAimPostProcessClass;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Player|Aim")
+	TSubclassOf<UAnimInstance> RangedAimPostProcessClass = nullptr;
 	UPROPERTY(EditDefaultsOnly, Category="Player|Weapon|Projectile")
 	TSoftClassPtr<AProjectileBase> DefaultLightRangedProjectileClass;
 	UPROPERTY(EditDefaultsOnly, Category="Player|Weapon|Projectile")
@@ -331,6 +342,9 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|Core")
 	TObjectPtr<UCoreComponent> CoreComponent;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|Carry")
+	TObjectPtr<UPushPullComponent> PushPullComponent;
+
 	UPROPERTY(EditDefaultsOnly, Category="Player|GAS")
 	TSubclassOf<UGameplayEffect> InitialCombatStatsEffect;
 
@@ -344,6 +358,7 @@ protected:
 	FTimerHandle EnergyRechargeTimerHandle;
 
 private:
+	void ScheduleProgressRestore();
 	UFUNCTION(Server, Reliable)
 	void ServerAssignWeaponChoice(int32 Index, EWeaponSlot Slot);
 	UPROPERTY(Transient)
@@ -419,6 +434,32 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UAudioComponent> WeaponChargeAudio;
 	void UpdateRangedFacing();
+	void UpdateGimmickAnimation();
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Player|Gimmick Animation|Fuse", meta=(AllowPrivateAccess="true", DisplayName="Ground Start Montage"))
+	TObjectPtr<UAnimMontage> CarryStartMontage = nullptr;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Player|Gimmick Animation|Fuse", meta=(AllowPrivateAccess="true", DisplayName="Ground End Montage"))
+	TObjectPtr<UAnimMontage> CarryEndMontage = nullptr;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Player|Gimmick Animation|Cheolbongi", meta=(AllowPrivateAccess="true", DisplayName="Ground Start Montage"))
+	TObjectPtr<UAnimMontage> WideCarryStartMontage = nullptr;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Player|Gimmick Animation|Cheolbongi", meta=(AllowPrivateAccess="true", DisplayName="Ground End Montage"))
+	TObjectPtr<UAnimMontage> WideCarryEndMontage = nullptr;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Player|Gimmick Animation|Cheolbongi", meta=(AllowPrivateAccess="true", DisplayName="Idle Montage"))
+	TObjectPtr<UAnimMontage> WideCarryIdleMontage = nullptr;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Player|Gimmick Animation|Cheolbongi", meta=(AllowPrivateAccess="true", DisplayName="Walk Montage"))
+	TObjectPtr<UAnimMontage> WideCarryWalkMontage = nullptr;
+	FTimerHandle CarryTransitionTimer;
+	float CarryTransitionDuration = 0.0f;
+	bool bPlayingCarryTransition = false;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Player|Gimmick Animation|Fuse", meta=(AllowPrivateAccess="true", DisplayName="Idle Montage"))
+	TObjectPtr<UAnimMontage> CarryIdleMontage = nullptr;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Player|Gimmick Animation|Fuse", meta=(AllowPrivateAccess="true", DisplayName="Walk Montage"))
+	TObjectPtr<UAnimMontage> CarryWalkMontage = nullptr;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Player|Gimmick Animation|Push Pull", meta=(AllowPrivateAccess="true", DisplayName="Push Montage"))
+	TObjectPtr<UAnimMontage> PushMontage = nullptr;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Player|Gimmick Animation|Push Pull", meta=(AllowPrivateAccess="true", DisplayName="Pull Montage"))
+	TObjectPtr<UAnimMontage> PullMontage = nullptr;
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimMontage> GimmickMontage;
 	bool bRangedFacingOverride = false;
 	bool bRestoreOrientToMovement = true;
 	TWeakObjectPtr<UWeaponBase> PendingAttackWeapon;

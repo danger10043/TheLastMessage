@@ -15,6 +15,7 @@
 #include "Gimmick/Component/CarryComponent.h"
 #include "Gimmick/Carry/FuseItem.h"
 #include "Gimmick/FuseCircuit/FuseCircuitSocket.h"
+#include "Gimmick/Component/PushPullComponent.h"
 
 UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_EventGimmickInteract, "Event.Gimmick.Interact");
 
@@ -29,8 +30,21 @@ void UInteractionComponent::RequestInteract()
     AActor* OwnerActor = GetOwner();
     APlayerBase* Player = Cast<APlayerBase>(OwnerActor);
 
-    if (!IsValid(Player) || Player->IsDead() || Player->IsHitReacting())
+    if (!IsValid(Player) || Player->IsDead() || Player->IsHitReacting() || Player->IsCarryTransitionActive())
     {
+        return;
+    }
+
+    UPushPullComponent* PushPullComponent = Player->FindComponentByClass<UPushPullComponent>();
+
+    // 밀기·당기기 중에는 다른 상호작용보다 조작 해제를 먼저 처리
+    if (IsValid(PushPullComponent) && PushPullComponent->IsPushPulling())
+    {
+        PushPullComponent->StopPushPull();
+
+        // 해제 후 주변 상호작용 대상과 강조 표시 갱신
+        UpdateInteractionTarget();
+
         return;
     }
 

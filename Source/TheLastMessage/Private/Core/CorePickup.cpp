@@ -6,9 +6,11 @@
 #include "Components/StaticMeshComponent.h"
 #include "Core/CoreComponent.h"
 #include "Core/CoreRewardSession.h"
+#include "Core/CorePickupStateSubsystem.h"
 #include "DataAsset/CoreDataAsset.h"
 #include "Engine/AssetManager.h"
 #include "Engine/Engine.h"
+#include "Engine/GameInstance.h"
 #include "GameFramework/PlayerController.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Templates/UnrealTemplate.h"
@@ -43,11 +45,87 @@ ACorePickup::ACorePickup()
 	PickupCollision->OnComponentBeginOverlap.AddDynamic(this, &ACorePickup::OnPickupBeginOverlap);
 }
 
+void ACorePickup::EnsurePickupId()
+{
+	if (IsTemplate() || PickupId.IsValid()) return;
+#if WITH_EDITOR
+	// 기존 배치도 에디터에서 로드하면 안정적인 ActorGuid를 한 번 복사해 런타임 속성에 보관한다.
+	// 엔진의 ActorGuid 자체는 패키징 빌드에 없으므로 저장 API에서 직접 사용하지 않는다.
+	if (GetActorGuid().IsValid())
+	{
+		PickupId = GetActorGuid();
+		return;
+	}
+#endif
+	PickupId = FGuid::NewGuid();
+}
+
+void ACorePickup::OnConstruction(const FTransform& Transform)
+{
+	Super::OnConstruction(Transform);
+	EnsurePickupId();
+}
+
+void ACorePickup::PostLoad()
+{
+	Super::PostLoad();
+#if WITH_EDITOR
+	EnsurePickupId();
+#endif
+}
+
+#if WITH_EDITOR
+void ACorePickup::PostEditImport()
+{
+	Super::PostEditImport();
+	// 복제/붙여넣기는 새 배치다. PIE는 이 경로를 거치지 않으므로 원본 ID를 유지한다.
+	if (!IsTemplate()) PickupId = FGuid::NewGuid();
+}
+#endif
+
+bool ACorePickup::QuerySavedConsumedState_Implementation() const
+{
+	return false;
+}
+
+UCorePickupStateSubsystem* ACorePickup::GetPickupStateSubsystem() const
+{
+	UGameInstance* GameInstance = GetGameInstance();
+	return GameInstance ? GameInstance->GetSubsystem<UCorePickupStateSubsystem>() : nullptr;
+}
+
+void ACorePickup::RestoreConsumedState(bool bWasConsumed)
+{
+	// 이미 지급한 픽업을 false로 되돌려 보상을 다시 지급하지 않는다. 초기화는 맵 재로드 후 새 기록으로 한다.
+	if (!HasAuthority() || !bWasConsumed || bIsGrantingReward) return;
+	bConsumed = true;
+	if (UCorePickupStateSubsystem* State = GetPickupStateSubsystem()) State->SetPickupConsumed(PickupId, true);
+	bIsAbsorbing = false;
+	bOpenChoiceAfterAbsorb = false;
+	bHiddenForChoice = false;
+	AbsorbTarget.Reset();
+	ClearChoiceReward();
+	SetActorHiddenInGame(true);
+	SetActorEnableCollision(false);
+	SetActorTickEnabled(false);
+	// BeginPlay 처리 중이라면 엔진이 BeginPlay 종료 직후 안전하게 파괴한다.
+	Destroy();
+}
+
+void ACorePickup::MarkConsumed()
+{
+	if (bConsumed) return;
+	bConsumed = true;
+	// 픽업이 사라지기 전에 GameInstance에 기록한다. 획득 알림을 받는 BP가 맵을 바꿔도 기록이 유지된다.
+	if (UCorePickupStateSubsystem* State = GetPickupStateSubsystem()) State->SetPickupConsumed(PickupId, true);
+	OnPickupConsumed.Broadcast(PickupId);
+}
+
 void ACorePickup::OnPickupBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor,
 	UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
 {
 	// 코어 지급은 서버에서 처리한다.
-	if (!HasAuthority())
+	if (!HasAuthority() || !bPersistenceInitialized)
 	{
 		return;
 	}
@@ -74,7 +152,7 @@ bool ACorePickup::TryAcquireFixedCore(UCoreComponent* InCoreComponent)
 {
 	// 지급 가능한 고정 보상과 코어를 받을 컴포넌트가 준비되어 있어야 한다.
 	// 서버 권한이 없거나 액터가 파괴 중이면 보상을 지급할 수 없다.
-	if (!HasAuthority() || IsActorBeingDestroyed()
+	if (!HasAuthority() || !bPersistenceInitialized || IsActorBeingDestroyed()
 		|| RewardMode != ECoreRewardMode::Fixed || bConsumed || bIsGrantingReward
 		|| !IsValid(InCoreComponent) || !IsValid(CoreData))
 	{
@@ -90,14 +168,15 @@ bool ACorePickup::TryAcquireFixedCore(UCoreComponent* InCoreComponent)
 	}
 
 	// 획득 성공 후 소비 상태를 먼저 기록하고, 코어를 받은 액터에게 빨려 들어가는 연출을 시작한다.
-	bConsumed = true;
-	StartAbsorb(InCoreComponent->GetOwner());
+	AActor* RewardOwner = InCoreComponent->GetOwner();
+	MarkConsumed();
+	if (!IsActorBeingDestroyed()) StartAbsorb(RewardOwner);
 	return true;
 }
 
 bool ACorePickup::TryOpenCoreChoice(APlayerBase* Player)
 {
-	if (!HasAuthority() || IsActorBeingDestroyed() || bConsumed || bIsGrantingReward
+	if (!HasAuthority() || !bPersistenceInitialized || IsActorBeingDestroyed() || bConsumed || bIsGrantingReward
 		|| RewardMode != ECoreRewardMode::Choice || IsValid(ActiveChoiceWidget) || IsValid(ActiveRewardSession)
 		|| !IsValid(Player) || Player->IsDead() || !ChoiceWidgetClass)
 	{
@@ -276,7 +355,7 @@ void ACorePickup::HandleCoreSelected(UCoreDataAsset* SelectedCore)
 	}
 
 	// 코어는 선택 화면을 열기 전에 이미 빨려 들어갔으므로 바로 제거한다.
-	bConsumed = true;
+	MarkConsumed();
 	ClearChoiceReward(true);
 	Destroy();
 }
@@ -364,16 +443,25 @@ void ACorePickup::RestorePickup()
 
 void ACorePickup::BeginPlay()
 {
-	Super::BeginPlay();
-
 	// 배치한 위치·크기를 기준으로 떠다녀야 계속 움직여도 위치가 밀리지 않는다.
 	// 여러 코어가 같은 박자로 움직이지 않도록 시작 시점을 흩뜨린다.
 	IdleBaseLocation = GetActorLocation();
 	IdleBaseScale = GetActorScale3D();
 	IdleTime = FMath::FRandRange(0.0f, 10.0f);
+	if (!PickupId.IsValid())
+	{
+		UE_LOG(LogCoreReward, Warning, TEXT("%s: PickupId가 없습니다. 에디터에서 이 픽업의 맵을 열고 저장하세요."), *GetPathName());
+	}
+
+	// Blueprint BeginPlay 및 초기 겹침에 의한 지급보다 저장 기록을 먼저 적용한다.
+	if (HasAuthority())
+	{
+		const UCorePickupStateSubsystem* State = GetPickupStateSubsystem();
+		if ((State && State->IsPickupConsumed(PickupId)) || QuerySavedConsumedState()) RestoreConsumedState(true);
+	}
 
 	// 머티리얼에 발광 파라미터가 있을 때만 인스턴스를 만들어 세기를 조절한다.
-	UMaterialInterface* Material = CoreMesh->GetMaterial(0);
+	UMaterialInterface* Material = bConsumed ? nullptr : CoreMesh->GetMaterial(0);
 	float DefaultEmissive = 0.0f;
 	if (!EmissiveParameter.IsNone() && Material
 		&& Material->GetScalarParameterValue(FHashedMaterialParameterInfo(EmissiveParameter), DefaultEmissive))
@@ -381,6 +469,23 @@ void ACorePickup::BeginPlay()
 		CoreMaterial = CoreMesh->CreateDynamicMaterialInstance(0);
 	}
 	SetEmissive(IdleEmissive);
+	bPersistenceInitialized = true;
+	Super::BeginPlay();
+	if (bConsumed)
+	{
+		Destroy();
+		return;
+	}
+	if (IsActorBeingDestroyed()) return;
+
+	// 저장 상태 적용 전 발생한 초기 겹침은 무시했으므로, 이미 범위 안에 있던 플레이어를 한 번 다시 확인한다.
+	TArray<UPrimitiveComponent*> OverlappingComponents;
+	PickupCollision->GetOverlappingComponents(OverlappingComponents);
+	for (UPrimitiveComponent* Component : OverlappingComponents)
+	{
+		if (IsValid(Component))
+			OnPickupBeginOverlap(PickupCollision, Component->GetOwner(), Component, 0, false, FHitResult());
+	}
 }
 
 void ACorePickup::EndPlay(const EEndPlayReason::Type EndPlayReason)

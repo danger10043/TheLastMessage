@@ -54,7 +54,14 @@ bool FRangedWeaponTest::RunTest(const FString& Parameters)
 			World->Tick(LEVELTICK_All, 0.01f);
 		}
 	};
-	APlayerBase* Player = World->SpawnActor<APlayerBase>(FVector(0, 0, 200), FRotator::ZeroRotator);
+	UClass* PlayerConfigClass = LoadClass<APlayerBase>(nullptr,
+		TEXT("/Game/Test_Jihong/Blueprints/Player/BP_TestPlayer.BP_TestPlayer_C"));
+	const APlayerBase* PlayerDefaults = PlayerConfigClass ? PlayerConfigClass->GetDefaultObject<APlayerBase>() : nullptr;
+	TestNotNull(TEXT("Player Blueprint animation defaults exist"), PlayerDefaults);
+	const FTransform PlayerTransform(FVector(0, 0, 200));
+	APlayerBase* Player = World->SpawnActorDeferred<APlayerBase>(APlayerBase::StaticClass(), PlayerTransform);
+	if (PlayerDefaults) Player->RangedAimPostProcessClass = PlayerDefaults->RangedAimPostProcessClass;
+	Player->FinishSpawning(PlayerTransform);
 	APlayerController* Controller = World->SpawnActor<APlayerController>();
 	Controller->Possess(Player);
 	Player->GetCharacterMovement()->DisableMovement();
@@ -289,14 +296,13 @@ bool FRangedWeaponTest::RunTest(const FString& Parameters)
 	ASC->RemoveLooseGameplayTag(WeaponGameplayTags::State_Attacking);
 	Advance(0.02f);
 	TestFalse(TEXT("Interrupted attack discards queued input"), Player->IsChargingWeapon());
-	USkeletalMesh* PlayerMesh = LoadObject<USkeletalMesh>(nullptr, TEXT("/Game/Test_Jihong/Blueprints/Player/Robbie_01.Robbie_01"));
+	USkeletalMesh* PlayerMesh = PlayerDefaults ? PlayerDefaults->GetMesh()->GetSkeletalMeshAsset() : nullptr;
 	TestNotNull(TEXT("Player mesh for ranged aim exists"), PlayerMesh);
 	if (PlayerMesh)
 	{
 		Player->GetMesh()->SetSkeletalMeshAsset(PlayerMesh);
 		Player->GetMesh()->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
-		Player->GetMesh()->SetAnimInstanceClass(LoadClass<UAnimInstance>(nullptr,
-			TEXT("/Game/Test_Jihong/Animations/Robbie_01_AnimBP.Robbie_01_AnimBP_C")));
+		Player->GetMesh()->SetAnimInstanceClass(PlayerDefaults->GetMesh()->GetAnimClass());
 		Advance(0.1f);
 		UPlayerAimAnimInstance* AimAnim = Cast<UPlayerAimAnimInstance>(Player->GetMesh()->GetPostProcessInstance());
 		TestNotNull(TEXT("Ranged aim post-process is installed"), AimAnim);
@@ -342,7 +348,7 @@ bool FRangedWeaponTest::RunTest(const FString& Parameters)
 			ASC->CancelAbilityHandle(Spec->Handle);
 			Gravity->ToggleGravityState();
 			Advance(0.5f);
-			Data->AttackMontage = LoadObject<UAnimMontage>(nullptr, TEXT("/Game/Test_Jihong/Animations/LightRange/AM_PlayerAttack_LightRange"));
+			Data->AttackMontage = PlasmaFeedback ? PlasmaFeedback->AttackMontage.Get() : nullptr;
 			TestTrue(TEXT("Firing montage can start from ready idle"), Player->GetMesh()->GetAnimInstance()->Montage_Play(Data->AttackMontage) > 0.0f);
 			Advance(0.3f);
 			TestTrue(TEXT("Firing animation takes priority over ready idle"), AimAnim->RangedReadyAlpha < 0.4f);

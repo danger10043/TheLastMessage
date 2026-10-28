@@ -50,6 +50,10 @@ public:
     UStaticMeshComponent* GetObjectMesh() const;
     ACharacter* GetCarrier() const;
 
+    virtual bool UsesWideCarryPose() const { return false; }
+    bool ReserveForPickup(ACharacter* Player);
+    void ReleasePickupReservation(ACharacter* Player);
+
     const FCarryConfigRow& GetCarryConfig() const
     {
         return CarryConfig;
@@ -77,6 +81,7 @@ protected:
     FCarryConfigRow CarryConfig;
 
 private:
+    TWeakObjectPtr<ACharacter> ReservedCarrier;
     bool bCarryConfigLoaded = false;
 
     // 물리 시뮬레이션의 Y축 이동 제한 적용

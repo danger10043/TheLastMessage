@@ -11,11 +11,18 @@
 #include "CanvasItem.h"
 #include "RenderUtils.h"
 #include "Character/Player/GrapplingHookComponent.h"
+#include "UI/SaveNotificationWidget.h"
+#include "Save/ProgressSaveSubsystem.h"
+#include "Engine/GameInstance.h"
+#include "Engine/GameViewportClient.h"
+#include "Kismet/GameplayStatics.h"
+#include "Widgets/SViewport.h"
 
 APlayerHUD::APlayerHUD()
 {
 	PrimaryActorTick.bCanEverTick = true;
 	PrimaryActorTick.bStartWithTickEnabled = true;
+	SaveNotificationClass = USaveNotificationWidget::StaticClass();
 }
 
 void APlayerHUD::BeginPlay()
@@ -29,6 +36,13 @@ void APlayerHUD::EnsureWidgets()
 {
 	APlayerController* PC = GetOwningPlayerController();
 	if (!PC || !PC->IsLocalController() || !PC->GetLocalPlayer()) return;
+	if (!SaveNotification && SaveNotificationClass)
+	{
+		SaveNotification = CreateWidget<USaveNotificationWidget>(PC, SaveNotificationClass);
+		if (SaveNotification) SaveNotification->AddToPlayerScreen(100);
+		if (UGameInstance* Instance = GetGameInstance())
+			Instance->GetSubsystem<UProgressSaveSubsystem>()->OnCheckpointSaveFinished.AddUniqueDynamic(this, &APlayerHUD::CheckpointSaveFinished);
+	}
 	if (!StatusWidget && StatusWidgetClass)
 	{
 		StatusWidget = CreateWidget<UPlayerStatusWidget>(PC, StatusWidgetClass);
@@ -65,25 +79,42 @@ void APlayerHUD::DrawHUD()
 	DrawGrappleIndicator();
 }
 
+bool APlayerHUD::ShouldUseGrappleCursor() const
+{
+	const APlayerController* PC = GetOwningPlayerController();
+	const APlayerBase* Player = PC ? Cast<APlayerBase>(PC->GetPawn()) : nullptr;
+	const UGrapplingHookComponent* Grapple = Player ? Player->FindComponentByClass<UGrapplingHookComponent>() : nullptr;
+	UGameViewportClient* Viewport = GetWorld() ? GetWorld()->GetGameViewport() : nullptr;
+	const TSharedPtr<SViewport> ViewportWidget = Viewport ? Viewport->GetGameViewportWidget() : nullptr;
+	// Interactive menus keep the normal cursor; the HUD itself does not intercept mouse hits.
+	return bShowHUD && PC && PC->IsLocalController() && PC->bShowMouseCursor
+		&& Player && !Player->IsDead() && Grapple && Grapple->IsGrappleUnlocked()
+		&& !UGameplayStatics::IsGamePaused(this) && Viewport && !Viewport->IgnoreInput()
+		&& ViewportWidget.IsValid() && ViewportWidget->IsDirectlyHovered();
+}
+
 void APlayerHUD::DrawGrappleIndicator()
 {
 	APlayerController* PC = GetOwningPlayerController();
 	const APlayerBase* Player = PC ? Cast<APlayerBase>(PC->GetPawn()) : nullptr;
 	const UGrapplingHookComponent* Grapple = Player ? Player->FindComponentByClass<UGrapplingHookComponent>() : nullptr;
-	if (!Canvas || !bShowHUD || !PC || !PC->IsLocalController() || !Player || Player->IsDead()
-		|| !Grapple || !Grapple->IsGrappleUnlocked())
+	if (!Canvas || !ShouldUseGrappleCursor())
 	{
 		bGrappleWasCoolingDown = false;
 		GrappleReadyFlashEnd = 0;
 		return;
 	}
 	FVector2D Aim;
-	if (!PC->ProjectWorldLocationToScreen(Player->GetAimTargetLocation(), Aim, true)) return;
+	if (!PC->GetMousePosition(Aim.X, Aim.Y)) return;
+	if (const ULocalPlayer* LocalPlayer = PC->GetLocalPlayer())
+	{
+		FVector2D ViewportSize;
+		GetWorld()->GetGameViewport()->GetViewportSize(ViewportSize);
+		Aim -= LocalPlayer->Origin * ViewportSize;
+	}
 	const float Scale = FMath::Clamp(Canvas->ClipY / 1080.0f, 0.65f, 2.0f);
 	const float Radius = GrappleIndicatorRadius * Scale;
-	const FVector2D Center(
-		FMath::Clamp(Aim.X + GrappleIndicatorOffset.X * Scale, Radius + 2, FMath::Max(Radius + 2, Canvas->ClipX - Radius - 2)),
-		FMath::Clamp(Aim.Y + GrappleIndicatorOffset.Y * Scale, Radius + 2, FMath::Max(Radius + 2, Canvas->ClipY - Radius - 2)));
+	const FVector2D Center = Aim;
 	const bool bCoolingDown = Grapple->GetCooldownRemaining() > 0;
 	const float Now = GetWorld()->GetTimeSeconds();
 	if (bGrappleWasCoolingDown && !bCoolingDown) GrappleReadyFlashEnd = Now + 0.22f;
@@ -192,10 +223,22 @@ void APlayerHUD::SetPlayerUIVisible(bool bVisible)
 
 void APlayerHUD::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (GetGameInstance()) GetGameInstance()->GetSubsystem<UProgressSaveSubsystem>()->OnCheckpointSaveFinished.RemoveDynamic(this, &APlayerHUD::CheckpointSaveFinished);
+	if (SaveNotification) SaveNotification->RemoveFromParent();
+	SaveNotification = nullptr;
 	if (StatusWidget) { StatusWidget->SetObservedPlayer(nullptr); StatusWidget->RemoveFromParent(); }
 	if (ChargeWidget) ChargeWidget->RemoveFromParent();
 	StatusWidget = nullptr;
 	ChargeWidget = nullptr;
 	ObservedPlayer.Reset();
 	Super::EndPlay(EndPlayReason);
+}
+
+void APlayerHUD::CheckpointSaveFinished(bool bSuccess)
+{
+	if (SaveNotification)
+	{
+		const UProgressSaveSubsystem* Saves = GetGameInstance()->GetSubsystem<UProgressSaveSubsystem>();
+		SaveNotification->ShowResult(bSuccess, Saves->GetActiveSlot() > 0);
+	}
 }

@@ -11,6 +11,7 @@
 class UAnimMontage;
 class UNiagaraSystem;
 class UMaterialInterface;
+class UStaticMesh;
 class UAnimSequence;
 
 class USoundAttenuation;
@@ -29,7 +30,10 @@ public:
 	bool bUseEnergyFlash = true;
 	// 에너지 총구 섬광에 사용할 발광 머티리얼
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|MuzzleFlash", meta=(ToolTip="에너지 총구 섬광에 사용할 발광 머티리얼"))
-	TSoftObjectPtr<UMaterialInterface> EnergyFlashMaterial { FSoftObjectPath(TEXT("/Game/Test_Jihong/Blueprints/Weapon/Effects/M_EnergyMuzzleFlash.M_EnergyMuzzleFlash")) };
+	TSoftObjectPtr<UMaterialInterface> EnergyFlashMaterial;
+	// 총구 섬광에 사용할 메시를 무기 데이터에서 지정한다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|MuzzleFlash")
+	TObjectPtr<UStaticMesh> EnergyFlashMesh = nullptr;
 	// 에너지 섬광의 기본 크기, 중형 원거리 무기에는 추가 크기 배율이 적용된다
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|MuzzleFlash", meta=(ToolTip="에너지 섬광의 기본 크기, 중형 원거리 무기에는 추가 크기 배율이 적용된다", ClampMin="1"))
 	float EnergyFlashSize = 14.0f;
@@ -229,4 +233,8 @@ public:
 	// 투사체의 발사 속도(cm/초), 기본 사거리와 함께 최대 비행 시간 계산에 사용한다
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon", meta=(ToolTip="투사체의 발사 속도(cm/초), 기본 사거리와 함께 최대 비행 시간 계산에 사용한다"))
 	float ProjectileSpeed;
+
+	// 1: reveal after travelling the center-to-muzzle distance; 0: visible immediately.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Projectile", meta=(ClampMin="0"))
+	float ProjectileRevealDistanceMultiplier = 1.0f;
 };

@@ -652,6 +652,8 @@ void ACinderEnemy::Explode()
 	}
 
 	// 자폭: 체력을 0으로 만들고 사망 처리한다. 폭발은 사망 처리에서 일어난다(처치당했을 때와 같은 경로).
+	// 스스로 터진 경우에는 회복 아이템을 떨어뜨리지 않는다(처치해서 얻는 보상이므로).
+	bCanDropOnDeath = false;
 	if (AttributeSet)
 	{
 		AttributeSet->SetHealth(0.f);

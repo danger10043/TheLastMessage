@@ -10,6 +10,8 @@
 #include "Gimmick/Component/CarryComponent.h"
 #include "Gimmick/PushPull/PushPullGimmick.h"
 #include "PhysicsEngine/PhysicsHandleComponent.h"
+#include "CollisionQueryParams.h"
+#include "Engine/World.h"
 
 UPushPullComponent::UPushPullComponent()
 {
@@ -171,8 +173,7 @@ void UPushPullComponent::UpdatePushPull(const FVector& MoveDirection, float Delt
     if (!IsValid(Mesh) 
         || !IsValid(Anchor)
         || !Mesh->IsSimulatingPhysics()
-        || Mesh->GetCollisionEnabled()
-        == ECollisionEnabled::NoCollision
+        || Mesh->GetCollisionEnabled() == ECollisionEnabled::NoCollision
         || PhysicsHandle->GetGrabbedComponent() != Mesh)
     {
         StopPushPull();
@@ -203,12 +204,75 @@ void UPushPullComponent::UpdatePushPull(const FVector& MoveDirection, float Delt
     // 플레이어의 현재 제한 속도를 넘지 않도록 처리
     const float EffectiveMoveSpeed = FMath::Max(0.0f, FMath::Min(Config.MoveSpeed, Movement->MaxWalkSpeed));
 
-    TargetLocation += PlanarDirection * EffectiveMoveSpeed * DeltaTime;
+    UWorld* World = GetWorld();
 
-    // 벽에 막혔을 때 목표점만 계속 멀어지는 것을 제한
+    if (!World)
+    {
+        StopPushPull();
+        return;
+    }
+
     const FVector MeshLocation = Mesh->GetComponentLocation();
 
-    TargetLocation = MeshLocation + (TargetLocation - MeshLocation).GetClampedToMaxSize(Config.MaxSeparationDistance);
+    // 입력에 따라 이동하려는 목표 위치 계산
+    const FVector DesiredLocation = TargetLocation + PlanarDirection * EffectiveMoveSpeed * DeltaTime;
+
+    // 물체의 현재 위치에서 목표 위치까지의 이동량
+    const FVector DesiredDelta = (DesiredLocation - MeshLocation).GetClampedToMaxSize(Config.MaxSeparationDistance);
+
+    const double DesiredDistance = DesiredDelta.Size();
+
+    // 이동량이 없으면 현재 위치 유지
+    TargetLocation = MeshLocation;
+
+    if (!DesiredDelta.IsNearlyZero())
+    {
+        FComponentQueryParams QueryParams(SCENE_QUERY_STAT(PushPullMovement), Target);
+
+        QueryParams.AddIgnoredActor(Player);
+        QueryParams.bIgnoreTouches = true;
+
+        TArray<FHitResult> SweepHits;
+
+        // 실제 메시의 충돌 형상으로 이동 경로 검사
+        World->ComponentSweepMulti(
+            SweepHits,
+            Mesh,
+            MeshLocation,
+            MeshLocation + DesiredDelta,
+            Mesh->GetComponentQuat(),
+            QueryParams);
+
+        double AllowedDistance = DesiredDistance;
+
+        // 벽 표면에 목표점이 들어가지 않도록 약간의 여유 확보
+        constexpr double CollisionMargin = 1.0;
+
+        for (const FHitResult& Hit : SweepHits)
+        {
+            if (!Hit.bBlockingHit)
+            {
+                continue;
+            }
+
+            // 접촉면에서 멀어지거나 나란히 움직이는 경우는 허용
+            const double IntoSurface = FVector::DotProduct(DesiredDelta, Hit.Normal);
+
+            if (IntoSurface >= -UE_KINDA_SMALL_NUMBER)
+            {
+                continue;
+            }
+
+            const double HitDistance = DesiredDistance * FMath::Clamp(static_cast<double>(Hit.Time), 0.0, 1.0);
+
+            const double SafeDistance = FMath::Max(0.0, HitDistance - CollisionMargin);
+
+            AllowedDistance = FMath::Min(AllowedDistance, SafeDistance);
+        }
+
+        // 벽에 막히면 목표점도 벽 앞에서 멈춤
+        TargetLocation = MeshLocation + DesiredDelta.GetSafeNormal() * AllowedDistance;
+    }
 
     PhysicsHandle->SetTargetLocationAndRotation(TargetLocation, TargetRotation);
 }

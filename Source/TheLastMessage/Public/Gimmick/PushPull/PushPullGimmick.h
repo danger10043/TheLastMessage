@@ -84,4 +84,7 @@ protected:
 private:
     // 설정이 정상적으로 로딩됐는지 확인
     bool bHasValidPushPullConfig = false;
+
+    // 조작 여부에 따라 수평 이동 잠금 상태 변경
+    void SetPushPullMovementEnabled(bool bAllowHorizontalMovement);
 };

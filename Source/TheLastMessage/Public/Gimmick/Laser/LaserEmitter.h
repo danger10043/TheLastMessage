@@ -22,6 +22,8 @@ class THELASTMESSAGE_API ALaserEmitter : public AGimmickBase
     GENERATED_BODY()
 
 public:
+    virtual void FinishRestoreProgress(const FProgressActorState& State) override;
+    virtual int32 GetRestorePriority() const override { return 2; }
 	ALaserEmitter();
 
 	virtual void ApplyActiveState(bool bNewActive) override;

@@ -103,3 +103,15 @@ FVector ALaserReflector::GetReflectedDirection(const FVector& IncomingDirection,
 
 	return FMath::GetReflectionVector(Direction, Normal).GetSafeNormal();
 }
+FProgressActorState ALaserReflector::CaptureProgress() const
+{
+    FProgressActorState State = Super::CaptureProgress();
+    State.ComponentTransform = ReflectorPivot->GetRelativeTransform();
+    return State;
+}
+
+void ALaserReflector::RestoreProgress(const FProgressActorState& State)
+{
+    ReflectorPivot->SetRelativeTransform(State.ComponentTransform);
+    Super::RestoreProgress(State);
+}

@@ -213,3 +213,37 @@ void ASwitchGroupBase::HandleGroupSwitchStateChanged(AGimmickBase* Source, bool 
 	UpdateGroupIndicator();
 
 }
+
+FProgressActorState ASwitchGroupBase::CaptureProgress() const
+{
+    FProgressActorState State = Super::CaptureProgress();
+    State.bCompleted = bIsCompleted;
+    if (!bIsCompleted && ResetIncompleteOnLoad()) State.bActive = false;
+    return State;
+}
+
+void ASwitchGroupBase::RestoreProgress(const FProgressActorState& State)
+{
+    bIsCompleted = State.bCompleted;
+    bIsResetting = false;
+    Super::RestoreProgress(State);
+}
+
+void ASwitchGroupBase::RefreshRestoredState()
+{
+    UpdateGroupIndicator();
+    UpdateInteractionHighlight(false);
+}
+
+void ASwitchGroupBase::FinishRestoreProgress(const FProgressActorState& State)
+{
+    if (bIsCompleted || ResetIncompleteOnLoad())
+        for (AToggleSwitch* Switch : GroupSwitches)
+            if (IsValid(Switch))
+            {
+                Switch->RestoreLinkedActiveState(bIsCompleted);
+                Switch->FinishRestoreProgress(Switch->CaptureProgress());
+            }
+    UpdateGroupIndicator();
+    Super::FinishRestoreProgress(State);
+}

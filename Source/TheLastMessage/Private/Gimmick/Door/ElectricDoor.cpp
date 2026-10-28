@@ -169,3 +169,11 @@ void AElectricDoor::UpdateDoorTransform(float Alpha)
 
     DoorMesh->SetRelativeTransform(NewTransform);
 }
+
+void AElectricDoor::RefreshRestoredState()
+{
+    DoorTimeline->Stop();
+    DoorTimeline->SetPlaybackPosition(bIsActive ? 1.0f : 0.0f, false, false);
+    UpdateDoorTransform(bIsActive ? 1.0f : 0.0f);
+    UpdateInteractionHighlight(false);
+}

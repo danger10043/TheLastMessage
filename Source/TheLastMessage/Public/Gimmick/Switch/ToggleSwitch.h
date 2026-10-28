@@ -18,6 +18,7 @@ class THELASTMESSAGE_API AToggleSwitch : public AGimmickBase
 	GENERATED_BODY()
 	
 public:
+	virtual void RefreshRestoredState() override;
 	AToggleSwitch();
 
 	// 현재 활성 상태를 반전

@@ -18,6 +18,8 @@ class THELASTMESSAGE_API ACarryableGimmick : public AGimmickBase
 	GENERATED_BODY()
 	
 public:
+    virtual FProgressActorState CaptureProgress() const override;
+    virtual void RestoreProgress(const FProgressActorState& State) override;
     ACarryableGimmick();
 
     // 데이터 테이블에서 운반 설정 읽기

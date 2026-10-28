@@ -19,6 +19,10 @@ class THELASTMESSAGE_API ALaserReceiver : public AGimmickBase
 	GENERATED_BODY()
 	
 public:
+    virtual FProgressActorState CaptureProgress() const override;
+    virtual void RefreshRestoredState() override;
+    virtual void FinishRestoreProgress(const FProgressActorState& State) override;
+    virtual int32 GetRestorePriority() const override { return 3; }
 	ALaserReceiver();
 
 	virtual void ApplyActiveState(bool bNewActive) override;

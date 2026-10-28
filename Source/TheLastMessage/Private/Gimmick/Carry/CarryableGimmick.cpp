@@ -416,3 +416,25 @@ void ACarryableGimmick::UpdateDropFall(float DeltaSeconds)
     SetActorLocation(GetActorLocation() + MoveDelta, false, nullptr, ETeleportType::TeleportPhysics);
 
 }
+
+FProgressActorState ACarryableGimmick::CaptureProgress() const
+{
+    FProgressActorState State = Super::CaptureProgress();
+    State.Transform = LastPlacedWorldTransform;
+    return State;
+}
+
+void ACarryableGimmick::RestoreProgress(const FProgressActorState& State)
+{
+    ReservedCarrier.Reset();
+    Carrier.Reset();
+    DropIgnoredPlayer.Reset();
+    bIsDropFalling = false;
+    DropFallSpeed = 0.0f;
+    DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+    SetActorTransform(State.Transform, false, nullptr, ETeleportType::TeleportPhysics);
+    LastPlacedWorldTransform = State.Transform;
+    InitialWorldY = State.Transform.GetLocation().Y;
+    bHasInitialWorldY = true;
+    Super::RestoreProgress(State);
+}

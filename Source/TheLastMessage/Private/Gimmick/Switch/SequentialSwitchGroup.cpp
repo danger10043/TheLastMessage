@@ -176,3 +176,12 @@ void ASequentialSwitchGroup::SetGroupLeverInputLocked(bool bLocked)
 		}
 	}
 }
+
+void ASequentialSwitchGroup::RestoreProgress(const FProgressActorState& State)
+{
+    GetWorldTimerManager().ClearTimer(FailureReturnTimerHandle);
+    GetWorldTimerManager().ClearTimer(FailureUnlockTimerHandle);
+    bIsFailureAnimating = false;
+    NextSwitchIndex = State.bCompleted ? GroupSwitches.Num() : 0;
+    Super::RestoreProgress(State);
+}

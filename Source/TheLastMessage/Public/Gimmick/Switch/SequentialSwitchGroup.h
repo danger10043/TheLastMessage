@@ -17,6 +17,8 @@ class THELASTMESSAGE_API ASequentialSwitchGroup : public ASwitchGroupBase
 	GENERATED_BODY()
 	
 public:
+    virtual bool ResetIncompleteOnLoad() const override { return true; }
+    virtual void RestoreProgress(const FProgressActorState& State) override;
 	// 입력된 스위치가 다음 순서에 해당하는지 확인
 	UFUNCTION(BlueprintPure, Category = "Gimmick|SequentialSwitchGroup")
 	bool IsExpectedSwitch(AToggleSwitch* Switch) const;

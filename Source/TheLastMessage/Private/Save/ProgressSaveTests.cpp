@@ -48,6 +48,16 @@ bool FProgressSlotFlowTest::RunTest(const FString& Parameters)
 	UProgressSaveGame* Progress = Saves->GetWorkingProgress();
 	Progress->MapPackage = TEXT("/Game/Test_Jihong/Prototype/Lv_Factory_Metroidvania");
 	Progress->Maps.FindOrAdd(TEXT("Factory")).ExploredRooms.Add(TEXT("RoomA"));
+	const FGuid GimmickId = FGuid::NewGuid();
+	FProgressActorState& Gimmick = Progress->Maps.FindChecked(TEXT("Factory")).Actors.Add(GimmickId);
+	Gimmick.State = TEXT("GimmickV1");
+	Gimmick.bEnabled = false;
+	Gimmick.bActive = true;
+	Gimmick.bCompleted = true;
+	Gimmick.RelatedActorId = FGuid::NewGuid();
+	const FGuid FuseId = Gimmick.RelatedActorId;
+	Gimmick.Transform = FTransform(FVector(120, 0, 240));
+	Gimmick.ComponentTransform = FTransform(FRotator(0, 45, 0));
 	Progress->CheckpointId = FGuid::NewGuid();
 	const FGuid FirstId = Progress->PlaythroughId;
 	TestTrue(TEXT("Initial save accepted"), Saves->SaveActiveProgress());
@@ -62,6 +72,15 @@ bool FProgressSlotFlowTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Continue arms checkpoint restoration"), Saves->IsRestoringProgress());
 	TestEqual(TEXT("Continue keeps selected slot"), Saves->GetActiveSlot(), 2);
 	TestTrue(TEXT("Playthrough preserved"), Saves->GetWorkingProgress()->PlaythroughId == FirstId);
+	const FProgressActorState* RestoredGimmick = Saves->GetWorkingProgress()->Maps.FindChecked(TEXT("Factory")).Actors.Find(GimmickId);
+	if (TestNotNull(TEXT("Placed gimmick ID survives disk round trip"), RestoredGimmick))
+	{
+		TestFalse(TEXT("Gimmick enabled flag restored"), RestoredGimmick->bEnabled);
+		TestTrue(TEXT("Gimmick active and completion flags restored"), RestoredGimmick->bActive && RestoredGimmick->bCompleted);
+		TestTrue(TEXT("Socket fuse reference restored"), RestoredGimmick->RelatedActorId == FuseId);
+		TestTrue(TEXT("Placed transform restored"), RestoredGimmick->Transform.GetLocation().Equals(FVector(120, 0, 240)));
+		TestTrue(TEXT("Reflector component rotation restored"), RestoredGimmick->ComponentTransform.Rotator().Equals(FRotator(0, 45, 0)));
+	}
 	TestTrue(TEXT("Exploration survives disk round trip"), Saves->GetWorkingProgress()->Maps.FindChecked(TEXT("Factory")).ExploredRooms.Contains(TEXT("RoomA")));
 	Saves->GetWorkingProgress()->Maps.FindChecked(TEXT("Factory")).ExploredRooms.Add(TEXT("UnsavedRoom"));
 	TestTrue(TEXT("Reload reads the active slot"), Saves->ReloadActiveProgress());

@@ -9,7 +9,6 @@
 #include "Weapon/WeaponImpactFeedback.h"
 #include "Character/Boss/BossMonster.h"
 #include "GAS/WeaponGameplayTags.h"
-#include "UObject/ConstructorHelpers.h"
 #include "Engine/StaticMesh.h"
 #include "DataAsset/WeaponDataAsset.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -38,8 +37,6 @@ AProjectileBase::AProjectileBase()
 	ProjectileMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ProjectileMesh"));
 	ProjectileMesh->SetupAttachment(RootComponent);
 	ProjectileMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> Sphere(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
-	ProjectileMesh->SetStaticMesh(Sphere.Object);
 	ProjectileMesh->SetRelativeScale3D(FVector(0.45f, 0.12f, 0.12f));
 	ProjectileMesh->SetCastShadow(false);
 	FlightEffect = CreateDefaultSubobject<UNiagaraComponent>(TEXT("FlightEffect"));

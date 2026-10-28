@@ -10,7 +10,9 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Gimmick/Component/InteractionComponent.h"
 #include "Gimmick/Component/CarryComponent.h"
+#include "Gimmick/Carry/CarryableGimmick.h"
 #include "Gimmick/Component/GravityStateComponent.h"
+#include "Gimmick/Component/PushPullComponent.h"
 #include "Core/CoreComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -29,6 +31,8 @@
 #include "Net/UnrealNetwork.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
+#include "Animation/AnimSequence.h"
+#include "Gimmick/PushPull/PushPullGimmick.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/PlayerController.h"
 #include "Camera/PlayerCameraManager.h"
@@ -36,7 +40,6 @@
 #include "HAL/IConsoleManager.h"
 #include "Engine/DamageEvents.h"
 #include "InputAction.h"
-#include "UObject/ConstructorHelpers.h"
 #include "Engine/World.h"
 #include "Projectile/ProjectileBase.h"
 #include "GameFramework/GameStateBase.h"
@@ -74,9 +77,6 @@ static TAutoConsoleVariable<int32> CVarDebugAim(
 
 APlayerBase::APlayerBase()
 {
-	RangedAimPostProcessClass = FSoftObjectPath(TEXT("/Game/Test_Jihong/Animations/ABP_PlayerRangedReady.ABP_PlayerRangedReady_C"));
-	DefaultLightRangedProjectileClass = FSoftObjectPath(TEXT("/Game/Test_Jihong/Blueprints/Projectile/BP_Projectile_Plasma.BP_Projectile_Plasma_C"));
-	DefaultHeavyRangedProjectileClass = FSoftObjectPath(TEXT("/Game/Test_Jihong/Blueprints/Projectile/BP_Projectile_Railgun.BP_Projectile_Railgun_C"));
 	WeaponChoices.SetNum(4);
 	OwnedWeaponChoices.SetNumZeroed(4);
 	WeaponSelectionActions.SetNum(4);
@@ -84,8 +84,6 @@ APlayerBase::APlayerBase()
 	CombatFeedbackComponent = CreateDefaultSubobject<UCombatFeedbackComponent>(TEXT("CombatFeedbackComponent"));
 	GrapplingHookComponent = CreateDefaultSubobject<UGrapplingHookComponent>(TEXT("GrapplingHookComponent"));
 	AreaMapComponent = CreateDefaultSubobject<UAreaMapComponent>(TEXT("AreaMapComponent"));
-	static ConstructorHelpers::FObjectFinder<UInputAction> GrappleAction(TEXT("/Game/Main/Inputs/Actions/IA_GrapplingHook.IA_GrapplingHook"));
-	GrapplingHookAction = GrappleAction.Object;
 	AbilitySystemComponent = CreateDefaultSubobject<UAbilitySystemComponent>(TEXT("AbilitySystemComponent"));
 	AbilitySystemComponent->SetIsReplicated(true);
 	AbilitySystemComponent->SetReplicationMode(EGameplayEffectReplicationMode::Mixed);
@@ -94,6 +92,7 @@ APlayerBase::APlayerBase()
 
 	InteractionComponent = CreateDefaultSubobject<UInteractionComponent>(TEXT("InteractionComponent"));
 	CarryComponent = CreateDefaultSubobject<UCarryComponent>(TEXT("CarryComponent"));
+	PushPullComponent = CreateDefaultSubobject<UPushPullComponent>(TEXT("PushPullComponent"));
 
 	CoreComponent = CreateDefaultSubobject<UCoreComponent>(TEXT("CoreComponent"));
 
@@ -241,6 +240,87 @@ void APlayerBase::UpdateRangedFacing()
 	}
 }
 
+void APlayerBase::PlayCarryTransition_Implementation(bool bStarting, bool bWideCarry)
+{
+	if (IsDead() || IsHitReacting() || IsGrappling()) return;
+	const TObjectPtr<UAnimMontage>& Asset = bWideCarry
+		? (bStarting ? WideCarryStartMontage : WideCarryEndMontage)
+		: (bStarting ? CarryStartMontage : CarryEndMontage);
+	UAnimMontage* Transition = Asset.Get();
+	if (!Transition) return;
+	UAnimInstance* Anim = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr;
+	const float Duration = Anim ? Anim->Montage_Play(Transition, 1.0f, EMontagePlayReturnType::Duration)
+		: Transition->GetPlayLength() / FMath::Max(0.01f, Transition->RateScale);
+	if (Duration <= 0.0f) return;
+	CarryTransitionDuration = Duration;
+	GimmickMontage = Transition;
+	bPlayingCarryTransition = true;
+	StopJumping();
+	StopMovementForAttack();
+	if (Anim) Anim->Montage_SetNextSection(Transition->GetSectionName(0), NAME_None, Transition);
+	// Also release on servers without pose evaluation and if the montage is replaced.
+	GetWorldTimerManager().SetTimer(CarryTransitionTimer, this, &APlayerBase::CancelCarryTransition, Duration, false);
+}
+
+void APlayerBase::CancelCarryTransition()
+{
+	GetWorldTimerManager().ClearTimer(CarryTransitionTimer);
+	if (!bPlayingCarryTransition) return;
+	bPlayingCarryTransition = false;
+	if (UAnimInstance* Anim = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr)
+	{
+		if (GimmickMontage) Anim->Montage_Stop(0.12f, GimmickMontage);
+	}
+	GimmickMontage = nullptr;
+}
+
+void APlayerBase::UpdateGimmickAnimation()
+{
+	UAnimInstance* Anim = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr;
+	const bool bAvailable = !IsDead() && !IsHitReacting() && !IsGrappling()
+		&& !AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking);
+	if (bPlayingCarryTransition)
+	{
+		StopMovementForAttack();
+		if (bAvailable && (!Anim || (GimmickMontage && Anim->Montage_IsPlaying(GimmickMontage)))) return;
+		CancelCarryTransition();
+	}
+	if (!Anim) return;
+	UAnimMontage* Desired = nullptr;
+	float PlayRate = 1.0f;
+	if (bAvailable && PushPullComponent && PushPullComponent->IsPushPulling())
+	{
+		const FVector ToObject = PushPullComponent->GetCurrentTarget()->GetActorLocation() - GetActorLocation();
+		const FVector Velocity = FVector::VectorPlaneProject(GetVelocity(), GetActorUpVector());
+		const bool bPulling = FVector::DotProduct(Velocity, ToObject) < -1.0f;
+		Desired = (bPulling ? PullMontage : PushMontage).Get();
+		PlayRate = Velocity.SizeSquared() > 25.0f ? 1.0f : 0.0f;
+	}
+	else if (bAvailable && CarryComponent && CarryComponent->HasCarriedObject())
+	{
+		const float Speed = FVector::VectorPlaneProject(GetVelocity(), GetActorUpVector()).Size();
+		const bool bWalking = GetCharacterMovement()->IsMovingOnGround() && Speed > 10.0f;
+		const bool bWide = CarryComponent->GetCarriedObject()->UsesWideCarryPose();
+		Desired = (bWide ? (bWalking ? WideCarryWalkMontage : WideCarryIdleMontage)
+			: (bWalking ? CarryWalkMontage : CarryIdleMontage)).Get();
+	}
+	if (!Desired)
+	{
+		if (GimmickMontage) Anim->Montage_Stop(0.15f, GimmickMontage);
+		GimmickMontage = nullptr;
+		return;
+	}
+	if (Desired != GimmickMontage || !Anim->Montage_IsActive(GimmickMontage))
+	{
+		GimmickMontage = Anim->Montage_Play(Desired, 1.0f) > 0.0f ? Desired : nullptr;
+		if (GimmickMontage)
+		{
+			Anim->Montage_SetNextSection(TEXT("Default"), TEXT("Default"), GimmickMontage);
+		}
+	}
+	if (GimmickMontage) Anim->Montage_SetPlayRate(GimmickMontage, PlayRate);
+}
+
 void APlayerBase::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
@@ -260,6 +340,7 @@ void APlayerBase::Tick(float DeltaSeconds)
 		SetAimTarget(AimTargetLocation);
 	}
 	UpdateRangedFacing();
+	UpdateGimmickAnimation();
 	if (IsLocallyControlled() && !HasAuthority() && bHasAimTarget && !IsDead())
 	{
 		AimSendElapsed += DeltaSeconds;
@@ -285,6 +366,7 @@ void APlayerBase::ServerUpdateAim_Implementation(FVector_NetQuantize AimPoint)
 
 void APlayerBase::RequestGrapplingHook()
 {
+	if (IsCarryTransitionActive()) return;
 	if (IsGrappling())
 	{
 		GrapplingHookComponent->CancelGrapple();
@@ -373,14 +455,9 @@ void APlayerBase::BeginPlay()
 	Super::BeginPlay();
 	// Authority must evaluate hand bones even without a rendered viewport to resolve muzzle sockets.
 	if (HasAuthority()) GetMesh()->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
-	if (UClass* AimClass = RangedAimPostProcessClass.LoadSynchronous())
+	if (UClass* AimClass = RangedAimPostProcessClass.Get())
 	{
 		GetMesh()->SetOverridePostProcessAnimBP(AimClass);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Error, TEXT("Failed to load ranged aim animation class: %s"),
-			*RangedAimPostProcessClass.ToSoftObjectPath().ToString());
 	}
 	InitializePlayer();
 	if (HasAuthority() && !bHasCheckpoint) SetCheckpoint(GetActorTransform());
@@ -531,6 +608,7 @@ void APlayerBase::CancelWeaponInputsForUI()
 
 void APlayerBase::AbilityInputPressed(FGameplayTag InputTag)
 {
+	if (IsCarryTransitionActive()) return;
 	const EWeaponSlot AssignmentSlot = InputTag == WeaponGameplayTags::Input_Primary ? EWeaponSlot::Primary
 		: InputTag == WeaponGameplayTags::Input_Secondary ? EWeaponSlot::Secondary : EWeaponSlot::None;
 	const int32 Choice = GetHeldWeaponChoice();
@@ -1026,11 +1104,6 @@ bool APlayerBase::EquipWeapon(EWeaponSlot Slot, UWeaponDataAsset* Data)
 	UWeaponBase* Weapon = bRanged ? static_cast<UWeaponBase*>(NewObject<URangedWeaponBase>(this))
 		: static_cast<UWeaponBase*>(NewObject<UMeleeWeaponBase>(this));
 	if (!Weapon->Initialize(Data)) return false;
-	if (bRanged)
-	{
-		// Warm the shared flash material while equipping/charging, not on its first 0.14-second pulse.
-		if (Data->bUseEnergyFlash) Data->EnergyFlashMaterial.LoadSynchronous();
-	}
 	for (int32 Index = 0; Index < 4; ++Index)
 	{
 		if (GetWeaponChoice(Index) == Data)
@@ -1377,6 +1450,7 @@ void APlayerBase::MulticastRespawn_Implementation()
 
 void APlayerBase::ResetRespawnPresentation()
 {
+	CancelCarryTransition();
 	HeldWeaponChoices.Reset();
 	bDeathPresentationStarted = false;
 	if (UAnimInstance* Anim = GetMesh()->GetAnimInstance()) Anim->StopAllMontages(0.0f);
@@ -1460,6 +1534,7 @@ void APlayerBase::UpdateMoveSpeed()
 
 void APlayerBase::DoMove(float Forward)
 {
+	if (IsCarryTransitionActive()) return;
 	if (IsDead() || IsHitReacting() || IsGrappling() || AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking))
 	{
 		ActionValueY = 0.0f;
@@ -1470,6 +1545,7 @@ void APlayerBase::DoMove(float Forward)
 
 void APlayerBase::DoDrop(float Value)
 {
+	if (IsCarryTransitionActive()) return;
 	if (IsDead() || IsHitReacting() || IsGrappling() || AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking))
 	{
 		DropValue = 0.0f;
@@ -1480,6 +1556,7 @@ void APlayerBase::DoDrop(float Value)
 
 void APlayerBase::DoJumpStart()
 {
+	if (IsCarryTransitionActive()) return;
 	if (IsDead() || IsHitReacting() || AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking)) return;
 	if (IsGrappling()) GrapplingHookComponent->CancelGrapple();
 	if (bGrappleCancelJumpAvailable && !IsGrappling())
@@ -1509,6 +1586,7 @@ void APlayerBase::StopMovementForAttack()
 
 void APlayerBase::DoInteract()
 {
+	if (IsCarryTransitionActive()) return;
 	if (IsDead() || IsHitReacting() || !IsValid(InteractionComponent))
 	{
 		return;
@@ -1524,6 +1602,7 @@ UCoreComponent* APlayerBase::GetCoreComponent() const
 
 void APlayerBase::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	CancelCarryTransition();
 	StopMeleeAttackFeedback();
 	StopWeaponChargeSound();
 	GetWorldTimerManager().ClearTimer(RespawnTimer);

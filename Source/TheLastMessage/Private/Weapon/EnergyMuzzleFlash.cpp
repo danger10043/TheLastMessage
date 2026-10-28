@@ -4,7 +4,6 @@
 #include "Components/PointLightComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Engine/StaticMesh.h"
-#include "UObject/ConstructorHelpers.h"
 
 AEnergyMuzzleFlash::AEnergyMuzzleFlash()
 {
@@ -13,11 +12,9 @@ AEnergyMuzzleFlash::AEnergyMuzzleFlash()
 	RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	Core = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Core"));
 	Halo = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Halo"));
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> Sphere(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
 	for (UStaticMeshComponent* Mesh : { Core.Get(), Halo.Get() })
 	{
 		Mesh->SetupAttachment(RootComponent);
-		Mesh->SetStaticMesh(Sphere.Object);
 		Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		Mesh->SetGenerateOverlapEvents(false);
 		Mesh->SetCastShadow(false);
@@ -32,7 +29,9 @@ AEnergyMuzzleFlash::AEnergyMuzzleFlash()
 void AEnergyMuzzleFlash::Initialize(UWeaponDataAsset* Settings, bool bHeavy)
 {
 	UMaterialInterface* Material = Settings ? Settings->EnergyFlashMaterial.LoadSynchronous() : nullptr;
-	if (!Material) { Destroy(); return; }
+	if (!Material || !Settings->EnergyFlashMesh) { Destroy(); return; }
+	Core->SetStaticMesh(Settings->EnergyFlashMesh);
+	Halo->SetStaticMesh(Settings->EnergyFlashMesh);
 	bHeavyPulse = bHeavy;
 	Size = FMath::Max(1.0f, Settings->EnergyFlashSize) * (bHeavy ? 1.35f : 1.0f);
 	Brightness = FMath::Max(0.0f, Settings->EnergyFlashBrightness);

@@ -12,16 +12,167 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
+#include "Engine/StaticMesh.h"
+#include "TimerManager.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameplayEffect.h"
 #include "Gimmick/Carry/CarryableGimmick.h"
 
 UCarryComponent::UCarryComponent()
 {
-	PrimaryComponentTick.bCanEverTick = false;
+	PrimaryComponentTick.bCanEverTick = true;
+    PrimaryComponentTick.bStartWithTickEnabled = false;
 }
 
 bool UCarryComponent::TryPickUp(ACarryableGimmick* Target)
+{
+    CacheOwner();
+    APlayerBase* Player = OwnerPlayer.Get();
+    if (!IsValid(Player) || !Player->HasAuthority() || Player->IsDead() || Player->IsHitReacting()
+        || Player->IsCarryTransitionActive() || HasCarriedObject() || PendingPickup.IsValid()
+        || bIsChangingCarryState || bIsClearingCarryState || !IsValid(Target)
+        || !Player->GetCharacterMovement()->IsMovingOnGround() || !Target->ReserveForPickup(Player)) return false;
+    const FVector Facing = FVector::VectorPlaneProject(
+        Player->GetCharacterMovement()->ConstrainDirectionToPlane(Target->GetActorLocation() - Player->GetActorLocation()),
+        Player->GetActorUpVector()).GetSafeNormal();
+    if (!Facing.IsNearlyZero()) Player->SetActorRotation(FRotationMatrix::MakeFromXZ(Facing, Player->GetActorUpVector()).Rotator());
+    PendingPickup = Target;
+    Target->OnEndPlay.AddUniqueDynamic(this, &UCarryComponent::HandleCarriedObjectEndPlay);
+    Player->PlayCarryTransition(true, Target->UsesWideCarryPose());
+    if (!Player->IsCarryTransitionActive())
+    {
+        CancelPendingPickup();
+        return false;
+    }
+    // The hands contact the grounded prop at the middle of the crouch, not on input.
+    GetWorld()->GetTimerManager().SetTimer(CarryContactTimer, this, &UCarryComponent::CompletePendingPickup,
+        Player->GetCarryTransitionDuration() * 0.5f, false);
+    SetComponentTickEnabled(true);
+    return true;
+}
+
+void UCarryComponent::CancelPendingPickup()
+{
+    if (GetWorld()) GetWorld()->GetTimerManager().ClearTimer(CarryContactTimer);
+    if (ACarryableGimmick* Target = PendingPickup.Get())
+    {
+        Target->ReleasePickupReservation(OwnerPlayer.Get());
+        Target->OnEndPlay.RemoveDynamic(this, &UCarryComponent::HandleCarriedObjectEndPlay);
+    }
+    PendingPickup.Reset();
+}
+
+void UCarryComponent::CompletePendingPickup()
+{
+    APlayerBase* Player = OwnerPlayer.Get();
+    ACarryableGimmick* Target = PendingPickup.Get();
+    const bool bCanCommit = IsValid(Player) && !Player->IsDead() && !Player->IsHitReacting()
+        && Player->IsCarryTransitionActive() && Player->GetCharacterMovement()->IsMovingOnGround() && IsValid(Target);
+    PendingPickup.Reset();
+    if (IsValid(Target)) Target->OnEndPlay.RemoveDynamic(this, &UCarryComponent::HandleCarriedObjectEndPlay);
+    const bool bPickedUp = bCanCommit && CommitPickUp(Target);
+    if (IsValid(Target)) Target->ReleasePickupReservation(Player);
+    if (!bPickedUp)
+    {
+        if (IsValid(Player)) Player->CancelCarryTransition();
+        SetComponentTickEnabled(false);
+        return;
+    }
+    MotionStartRelativeTransform = Target->GetActorTransform().GetRelativeTransform(
+        Player->GetMesh()->GetSocketTransform(CarrySocketName));
+    MotionEndRelativeTransform = Target->GetCarryConfig().CarryOffset;
+    MotionElapsed = 0.0f;
+    MotionDuration = Player->GetCarryTransitionDuration() * 0.5f;
+    CarryMotion = ECarryMotion::Lift;
+}
+
+bool UCarryComponent::FindGroundDropTransform(ACarryableGimmick* Target, FTransform& OutTransform) const
+{
+    APlayerBase* Player = OwnerPlayer.Get();
+    UStaticMeshComponent* Mesh = Target ? Target->GetObjectMesh() : nullptr;
+    if (!Player || !Mesh || !Mesh->GetStaticMesh() || !GetWorld()) return false;
+    const FVector Up = Player->GetActorUpVector();
+    const FVector Probe = Target->ConstrainDropLocation(Player->GetActorLocation()
+        + Player->GetActorForwardVector() * Target->GetCarryConfig().DropDistance);
+    FCollisionQueryParams Params(SCENE_QUERY_STAT(CarryGroundPlacement), false, Player);
+    Params.AddIgnoredActor(Target);
+    FHitResult Floor;
+    if (!GetWorld()->LineTraceSingleByChannel(Floor, Probe + Up * 100.0f, Probe - Up * 400.0f, ECC_Visibility, Params)
+        || FVector::DotProduct(Floor.ImpactNormal, Up) < 0.5f) return false;
+    const FBoxSphereBounds Bounds = Mesh->GetStaticMesh()->GetBounds();
+    const FTransform MeshTransform = Mesh->GetComponentTransform();
+    const FVector Extent = Bounds.BoxExtent * MeshTransform.GetScale3D().GetAbs();
+    const float Support = FMath::Abs(FVector::DotProduct(MeshTransform.GetUnitAxis(EAxis::X), Up)) * Extent.X
+        + FMath::Abs(FVector::DotProduct(MeshTransform.GetUnitAxis(EAxis::Y), Up)) * Extent.Y
+        + FMath::Abs(FVector::DotProduct(MeshTransform.GetUnitAxis(EAxis::Z), Up)) * Extent.Z;
+    const float Bottom = FVector::DotProduct(MeshTransform.TransformVector(Bounds.Origin), Up) - Support;
+    OutTransform = Target->GetActorTransform();
+    OutTransform.SetLocation(Floor.ImpactPoint + Up * (1.0f - Bottom));
+    // Refuse a placement through a wall; keep the held object and let the player try elsewhere.
+    const FVector CenterOffset = MeshTransform.TransformVector(Bounds.Origin);
+    FHitResult Obstacle;
+    if (GetWorld()->SweepSingleByChannel(Obstacle, Target->GetActorLocation() + CenterOffset,
+        OutTransform.GetLocation() + CenterOffset, MeshTransform.GetRotation(), ECC_Visibility,
+        FCollisionShape::MakeBox(Extent * 0.95f), Params)) return false;
+    return true;
+}
+
+void UCarryComponent::CompleteDrop()
+{
+    ACarryableGimmick* Target = CarriedObject.Get();
+    if (!IsValid(Target)) { ClearCarryState(); return; }
+    Target->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+    RestoreObjectState(Target, false);
+    Target->OnDropped();
+    FinishCarryState();
+}
+
+void UCarryComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
+{
+    Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+    APlayerBase* Player = OwnerPlayer.Get();
+    if (!IsValid(Player) || Player->IsDead()) { ClearCarryState(); return; }
+    if (PendingPickup.IsValid())
+    {
+        if (!Player->IsCarryTransitionActive() || Player->IsHitReacting()
+            || !Player->GetCharacterMovement()->IsMovingOnGround())
+        {
+            CancelPendingPickup();
+            Player->CancelCarryTransition();
+            SetComponentTickEnabled(false);
+        }
+        return;
+    }
+    ACarryableGimmick* Target = CarriedObject.Get();
+    if (CarryMotion == ECarryMotion::None || !IsValid(Target))
+    {
+        SetComponentTickEnabled(false);
+        return;
+    }
+    if (!Player->IsCarryTransitionActive() || Player->IsHitReacting())
+    {
+        // Interrupted before release: retain ownership instead of losing the item mid-air.
+        Target->GetRootComponent()->SetRelativeLocationAndRotation(Target->GetCarryConfig().CarryOffset.GetLocation(),
+            Target->GetCarryConfig().CarryOffset.GetRotation(), false, nullptr, ETeleportType::TeleportPhysics);
+        CarryMotion = ECarryMotion::None;
+        SetComponentTickEnabled(false);
+        return;
+    }
+    MotionElapsed += DeltaTime;
+    const float Alpha = FMath::Clamp(MotionElapsed / FMath::Max(0.01f, MotionDuration), 0.0f, 1.0f);
+    const float Weight = FMath::SmoothStep(0.0f, 1.0f, Alpha);
+    Target->GetRootComponent()->SetRelativeLocationAndRotation(
+        FMath::Lerp(MotionStartRelativeTransform.GetLocation(), MotionEndRelativeTransform.GetLocation(), Weight),
+        FQuat::Slerp(MotionStartRelativeTransform.GetRotation(), MotionEndRelativeTransform.GetRotation(), Weight),
+        false, nullptr, ETeleportType::TeleportPhysics);
+    if (Alpha >= 1.0f)
+    {
+        if (CarryMotion == ECarryMotion::Lower) CompleteDrop();
+        else { CarryMotion = ECarryMotion::None; SetComponentTickEnabled(false); }
+    }
+}
+
+bool UCarryComponent::CommitPickUp(ACarryableGimmick* Target)
 {
     CacheOwner();
 
@@ -94,7 +245,8 @@ bool UCarryComponent::TryPickUp(ACarryableGimmick* Target)
             }
         };
 
-    if (!NewEffectHandle.IsValid() || !IsValid(Player) || Player->IsDead() || !IsValid(Target) || !Target->CanBePickedUp(Player))
+    if (!NewEffectHandle.IsValid() || !IsValid(Player) || Player->IsDead()
+        || !IsValid(Target) || !Target->CanBePickedUp(Player))
     {
         RemoveNewEffect();
         return false;
@@ -122,7 +274,9 @@ bool UCarryComponent::TryPickUp(ACarryableGimmick* Target)
         return false;
     }
 
-    Target->SetActorRelativeTransform(Config.CarryOffset, false, nullptr, ETeleportType::TeleportPhysics);
+    // Contact happens at the bottom of the crouch. Keep the prop on the floor here;
+    // the component raises it with the hands during the second half of the montage.
+    Target->SetActorTransform(OriginalTransform, false, nullptr, ETeleportType::TeleportPhysics);
 
     // 플레이어 메시의 크기 때문에 물체 크기가 달라지는 것을 방지
     Target->SetActorScale3D(OriginalWorldScale * Config.CarryOffset.GetScale3D());
@@ -170,31 +324,20 @@ bool UCarryComponent::DropCarriedObject()
 {
     APlayerBase* Player = OwnerPlayer.Get();
     ACarryableGimmick* Target = CarriedObject.Get();
-
-    if (bIsChangingCarryState
-        || bIsClearingCarryState
-        || !IsValid(Player)
-        || Player->IsDead()
-        || !Player->HasAuthority()
-        || !IsValid(Target))
-    {
-        return false;
-    }
-
-    TGuardValue<bool> ChangingGuard(bIsChangingCarryState, true);
-
-    // 현재 들고 있던 월드 위치와 회전을 유지하며 부착 해제
-    Target->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
-
-    // 크기와 충돌 상태를 복구하되 물리 시뮬레이션은 끔
-    RestoreObjectState(Target, false);
-
-    // 아이템 자체의 수직 낙하 시작
-    Target->OnDropped();
-
-    // 플레이어의 운반 참조와 효과 정리
-    FinishCarryState();
-
+    if (bIsChangingCarryState || bIsClearingCarryState || !IsValid(Player) || Player->IsDead()
+        || Player->IsHitReacting() || Player->IsCarryTransitionActive() || !Player->HasAuthority()
+        || !IsValid(Target) || !Player->GetCharacterMovement()->IsMovingOnGround()) return false;
+    FTransform Ground;
+    if (!FindGroundDropTransform(Target, Ground)) return false;
+    Player->PlayCarryTransition(false, Target->UsesWideCarryPose());
+    if (!Player->IsCarryTransitionActive()) return false;
+    MotionStartRelativeTransform = Target->GetActorTransform().GetRelativeTransform(
+        Player->GetMesh()->GetSocketTransform(CarrySocketName));
+    MotionEndRelativeTransform = Ground.GetRelativeTransform(Player->GetMesh()->GetSocketTransform(CarrySocketName));
+    MotionElapsed = 0.0f;
+    MotionDuration = Player->GetCarryTransitionDuration() * 0.5f;
+    CarryMotion = ECarryMotion::Lower;
+    SetComponentTickEnabled(true);
     return true;
 }
 
@@ -207,6 +350,7 @@ bool UCarryComponent::TransferCarriedObject(USceneComponent* TargetParent)
         || bIsClearingCarryState
         || !IsValid(Player)
         || Player->IsDead()
+        || Player->IsCarryTransitionActive()
         || !Player->HasAuthority()
         || !IsValid(Target)
         || !IsValid(TargetParent))
@@ -234,7 +378,6 @@ bool UCarryComponent::TransferCarriedObject(USceneComponent* TargetParent)
     Target->OnTransferred();
 
     FinishCarryState();
-
     return true;
 }
 
@@ -246,6 +389,10 @@ void UCarryComponent::ClearCarryState()
     }
 
     TGuardValue<bool> ClearingGuard(bIsClearingCarryState, true);
+    CancelPendingPickup();
+    CarryMotion = ECarryMotion::None;
+    SetComponentTickEnabled(false);
+    if (APlayerBase* Player = OwnerPlayer.Get()) Player->CancelCarryTransition();
 
     ACarryableGimmick* Target = CarriedObject.Get();
 
@@ -331,6 +478,8 @@ void UCarryComponent::RestoreObjectState(ACarryableGimmick* Target, bool bRestor
 
 void UCarryComponent::FinishCarryState()
 {
+    CarryMotion = ECarryMotion::None;
+    SetComponentTickEnabled(false);
     const bool bHadCarryState = CarriedObject.IsValid() || ActiveCarryEffectHandle.IsValid() || bHasJumpVelocityOverride;
 
     if (ACarryableGimmick* Target = CarriedObject.Get())

@@ -17,9 +17,9 @@ public:
 	UPROPERTY(BlueprintReadOnly, Transient, Category="Player|Ranged Idle")
 	float RangedReadyAlpha = 0.0f;
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Player|Ranged Idle")
-	TSoftObjectPtr<UAnimSequence> PistolIdleAnimation { FSoftObjectPath(TEXT("/Game/Test_Jihong/Animations/LightRange/AS_PlayerIdle_LightRange.AS_PlayerIdle_LightRange")) };
+	TObjectPtr<UAnimSequence> PistolIdleAnimation = nullptr;
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Player|Ranged Idle")
-	TSoftObjectPtr<UAnimSequence> RifleIdleAnimation { FSoftObjectPath(TEXT("/Game/Test_Jihong/Animations/HeavyRange/AS_PlayerIdle_HeavyRange.AS_PlayerIdle_HeavyRange")) };
+	TObjectPtr<UAnimSequence> RifleIdleAnimation = nullptr;
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Player|Ranged Idle", meta=(ClampMin="0.1"))
 	float ReadyInterpolationSpeed = 16.0f;
 	UPROPERTY(BlueprintReadOnly, Transient, Category="Player|Ranged Aim")

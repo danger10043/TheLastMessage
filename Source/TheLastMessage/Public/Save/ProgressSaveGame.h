@@ -56,5 +56,7 @@ public:
 	UPROPERTY(SaveGame) FTransform RespawnTransform;
 	UPROPERTY(SaveGame) FVector RespawnGravity = FVector(0, 0, -1);
 	UPROPERTY(SaveGame) FProgressPlayerState Player;
+	/** Placed pickup IDs captured with the checkpoint, independently of owned core types/levels. */
+	UPROPERTY(SaveGame) TMap<FGuid, bool> CorePickupStates;
 	UPROPERTY(SaveGame) TMap<FName, FProgressMapState> Maps;
 };

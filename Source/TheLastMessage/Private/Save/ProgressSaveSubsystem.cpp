@@ -9,6 +9,8 @@
 #include "Character/Player/PlayerBase.h"
 #include "Checkpoint/PlayerCheckpoint.h"
 #include "Core/CoreComponent.h"
+#include "Core/CorePickupStateSubsystem.h"
+#include "Engine/GameInstance.h"
 #include "DataAsset/CoreDataAsset.h"
 #include "DataAsset/WeaponDataAsset.h"
 #include "GAS/CombatAttributeSet.h"
@@ -71,6 +73,8 @@ bool UProgressSaveSubsystem::StartNewGame(int32 SlotId, bool bOverwriteExisting)
 {
 	if (ActiveSlot || bSaving || SlotId < 1 || SlotId > 3 || (HasSave(SlotId) && !bOverwriteExisting)) return false;
 	WorkingProgress = NewObject<UProgressSaveGame>(this);
+	if (UCorePickupStateSubsystem* Pickups = GetGameInstance()->GetSubsystem<UCorePickupStateSubsystem>())
+		Pickups->ResetPickupStates();
 	bLoadedSession = false;
 	LoadedMap = NAME_None;
 	WorkingProgress->SlotId = SlotId;
@@ -85,6 +89,9 @@ bool UProgressSaveSubsystem::ContinueGame(int32 SlotId)
 	UProgressSaveGame* Loaded = ReadSlot(SlotId);
 	if (!Loaded) return false;
 	WorkingProgress = Loaded;
+	// Restore before travelling: pickups query this registry before their Blueprint BeginPlay.
+	if (UCorePickupStateSubsystem* Pickups = GetGameInstance()->GetSubsystem<UCorePickupStateSubsystem>())
+		Pickups->RestorePickupStates(Loaded->CorePickupStates);
 	bLoadedSession = true;
 	LoadedMap = FName(*FPackageName::GetShortName(Loaded->MapPackage));
 	bRestorePending = Loaded->CheckpointId.IsValid();
@@ -98,6 +105,8 @@ bool UProgressSaveSubsystem::EndSession()
 	PendingCheckpointSnapshot = nullptr;
 	bRestorePending = false;
 	WorkingProgress = nullptr;
+	if (UCorePickupStateSubsystem* Pickups = GetGameInstance()->GetSubsystem<UCorePickupStateSubsystem>())
+		Pickups->ResetPickupStates();
 	bLoadedSession = false;
 	LoadedMap = NAME_None;
 	ActiveSlot = 0;
@@ -110,6 +119,9 @@ bool UProgressSaveSubsystem::ReloadActiveProgress()
 	UProgressSaveGame* Loaded = ReadSlot(ActiveSlot);
 	if (!Loaded || !Loaded->CheckpointId.IsValid()) return false;
 	WorkingProgress = Loaded;
+	// Replace unsaved pickups too, so death/reload rolls back to the checkpoint snapshot.
+	if (UCorePickupStateSubsystem* Pickups = GetGameInstance()->GetSubsystem<UCorePickupStateSubsystem>())
+		Pickups->RestorePickupStates(Loaded->CorePickupStates);
 	bLoadedSession = true;
 	LoadedMap = FName(*FPackageName::GetShortName(Loaded->MapPackage));
 	bRestorePending = true;
@@ -148,6 +160,8 @@ bool UProgressSaveSubsystem::SaveCheckpoint(APlayerBase* Player, APlayerCheckpoi
 		Map->SaveExploration();
 	}
 	UProgressSaveGame* Snapshot = DuplicateObject<UProgressSaveGame>(WorkingProgress, this);
+	if (const UCorePickupStateSubsystem* Pickups = GetGameInstance()->GetSubsystem<UCorePickupStateSubsystem>())
+		Snapshot->CorePickupStates = Pickups->GetPickupStates();
 	Snapshot->MapPackage = UWorld::RemovePIEPrefix(Player->GetWorld()->GetOutermost()->GetName());
 	Snapshot->CheckpointId = Checkpoint->GetPersistentId();
 	Snapshot->RespawnTransform = Checkpoint->RespawnPoint->GetComponentTransform();

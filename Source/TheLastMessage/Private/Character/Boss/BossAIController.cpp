@@ -161,8 +161,16 @@ void ABossAIController::RefreshTargetFromPerception()
 
         const float DistanceSquared = FVector::DistSquared(
             BossLocation, PlayerPawn->GetActorLocation());
+
+        const bool bKeepCrossLaserTarget =
+            ControlledBoss->GetBossState() == EBossState::Attacking
+            && GetBlackboardComponent()->GetValueAsEnum(TEXT("SelectedAttack"))
+            == static_cast<uint8>(EBossAttackType::CrossLaser)
+            && PlayerPawn == CurrentTarget;
+
         if (!FMath::IsFinite(DistanceSquared)
-            || DistanceSquared > DetectionRadiusSquared)
+            || (!bKeepCrossLaserTarget
+                && DistanceSquared > DetectionRadiusSquared))
         {
             continue;
         }
@@ -308,13 +316,21 @@ void ABossAIController::UpdateCombatRange(
 
     const bool bNormalCombatState = State == EBossState::Idle
         || State == EBossState::Combat || State == EBossState::Attacking;
+
+    const bool bCrossLaserInProgress =
+        State == EBossState::Attacking
+        && BB->GetValueAsEnum(TEXT("SelectedAttack"))
+        == static_cast<uint8>(EBossAttackType::CrossLaser);
+
     const bool bInCombatRange = bNormalCombatState
-        && FMath::IsFinite(CombatRadius) && CombatRadius > 0.f
-        && Distance <= CombatRadius;
+        && (bCrossLaserInProgress
+            || (FMath::IsFinite(CombatRadius) && CombatRadius > 0.f
+                && Distance <= CombatRadius));
 
     BB->SetValueAsBool(TEXT("bIsInCombatRange"), bInCombatRange);
     BB->SetValueAsBool(TEXT("bIsInAttackRange"), bInCombatRange
-        && ControlledBoss->IsDistanceInAttackRange(AttackType, Distance));
+        && (bCrossLaserInProgress
+            || ControlledBoss->IsDistanceInAttackRange(AttackType, Distance)));
 }
 
 void ABossAIController::OnUnPossess()

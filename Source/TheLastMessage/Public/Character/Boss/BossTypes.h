@@ -48,7 +48,8 @@ enum class EBossAttackType : uint8
     RockThrow,
     PullAttack,
     LightningAttack,
-    GunShot
+    GunShot,
+    CrossLaser
 };
 
 USTRUCT()

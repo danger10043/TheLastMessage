@@ -54,6 +54,20 @@ public:
         return PushPullConfig;
     }
 
+    // 게임 시작 시 최초 배치 상태 반환
+    UFUNCTION(BlueprintPure, Category = "Gimmick|Checkpoint")
+    FTransform GetInitialWorldTransform() const
+    {
+        return InitialWorldTransform;
+    }
+
+    // 마지막으로 기록한 배치 상태 반환
+    UFUNCTION(BlueprintPure, Category = "Gimmick|Checkpoint")
+    FTransform GetLastPlacedWorldTransform() const
+    {
+        return LastPlacedWorldTransform;
+    }
+
 protected:
     virtual void BeginPlay() override;
 
@@ -80,6 +94,14 @@ protected:
     // 데이터 테이블에서 읽은 설정
     UPROPERTY(Transient)
     FPushPullConfigRow PushPullConfig;
+
+    // 게임 시작 시 최초 배치 상태
+    UPROPERTY(Transient, VisibleInstanceOnly, BlueprintReadOnly, Category = "Gimmick|Checkpoint")
+    FTransform InitialWorldTransform = FTransform::Identity;
+
+    // 상호작용으로 이동한 뒤의 월드 배치 상태
+    UPROPERTY(Transient, VisibleInstanceOnly, BlueprintReadOnly, Category = "Gimmick|Checkpoint")
+    FTransform LastPlacedWorldTransform = FTransform::Identity;
 
 private:
     // 설정이 정상적으로 로딩됐는지 확인

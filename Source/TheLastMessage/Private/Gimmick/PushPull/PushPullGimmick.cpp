@@ -141,6 +141,12 @@ void APushPullGimmick::EndPushPull()
     ControllingPlayer.Reset();
 
     SetPushPullMovementEnabled(false);
+
+    // 목표 위치가 아닌 물리 메시의 실제 배치 상태 기록
+    if (IsValid(PhysicsMesh))
+    {
+        LastPlacedWorldTransform = PhysicsMesh->GetComponentTransform();
+    }
 }
 
 UStaticMeshComponent* APushPullGimmick::GetPhysicsMesh() const
@@ -160,6 +166,12 @@ ACharacter* APushPullGimmick::GetControllingPlayer() const
 
 void APushPullGimmick::BeginPlay()
 {
+    // 게임 시작 시 최초 배치 상태 기록
+    InitialWorldTransform = GetActorTransform();
+
+    // 아직 이동하지 않았으므로 최초 배치 상태로 초기화
+    LastPlacedWorldTransform = InitialWorldTransform;
+
     Super::BeginPlay();
 
     LoadPushPullConfig();

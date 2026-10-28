@@ -23,6 +23,7 @@ class ASideScrollingPlayerController : public APlayerController
 	GENERATED_BODY()
 public:
 	ASideScrollingPlayerController();
+	virtual EMouseCursor::Type GetMouseCursor() const override;
 	UFUNCTION(BlueprintCallable, Category="Area Map") void ToggleAreaMap();
 	UFUNCTION(BlueprintCallable, Category="Pause Menu") void TogglePauseMenu();
 	UFUNCTION(BlueprintPure, Category="Pause Menu") UPauseMenuWidget* GetPauseMenu() const { return PauseMenuWidget; }

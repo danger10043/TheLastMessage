@@ -21,10 +21,17 @@
 #include "InputCoreTypes.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Misc/PackageName.h"
+#include "UI/PlayerHUD.h"
 
 ASideScrollingPlayerController::ASideScrollingPlayerController()
 {
 	MapWidgetClass = UAreaMapWidget::StaticClass();
+}
+
+EMouseCursor::Type ASideScrollingPlayerController::GetMouseCursor() const
+{
+	const APlayerHUD* PlayerHUD = Cast<APlayerHUD>(GetHUD());
+	return PlayerHUD && PlayerHUD->ShouldUseGrappleCursor() ? EMouseCursor::None : Super::GetMouseCursor();
 }
 
 void ASideScrollingPlayerController::ToggleAreaMap()

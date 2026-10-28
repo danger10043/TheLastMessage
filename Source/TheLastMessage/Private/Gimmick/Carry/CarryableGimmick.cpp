@@ -87,6 +87,7 @@ bool ACarryableGimmick::LoadCarryConfig()
 
 bool ACarryableGimmick::CanBePickedUp(ACharacter* Player) const
 {
+    if (ReservedCarrier.IsValid() && ReservedCarrier.Get() != Player) return false;
     if (!Super::CanInteractInternal(Player) || !bCarryConfigLoaded || !IsValid(ObjectMesh) || !ObjectMesh->GetStaticMesh() || Carrier.IsValid())
     {
         return false;
@@ -107,6 +108,18 @@ bool ACarryableGimmick::CanBePickedUp(ACharacter* Player) const
 bool ACarryableGimmick::CanInteractInternal(ACharacter* Player) const
 {
     return CanBePickedUp(Player);
+}
+
+bool ACarryableGimmick::ReserveForPickup(ACharacter* Player)
+{
+    if (!CanBePickedUp(Player)) return false;
+    ReservedCarrier = Player;
+    return true;
+}
+
+void ACarryableGimmick::ReleasePickupReservation(ACharacter* Player)
+{
+    if (ReservedCarrier.Get() == Player) ReservedCarrier.Reset();
 }
 
 void ACarryableGimmick::PerformInteraction(ACharacter* Player)

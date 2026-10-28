@@ -118,6 +118,14 @@ bool UPushPullComponent::StartPushPull(APushPullGimmick* Target)
     }
 
     CurrentTarget = Target;
+    bOriginalOrientToMovement = Movement->bOrientRotationToMovement;
+    Movement->bOrientRotationToMovement = false;
+    const FVector Facing = FVector::VectorPlaneProject(
+        Mesh->GetComponentLocation() - Player->GetActorLocation(), Player->GetActorUpVector()).GetSafeNormal();
+    if (!Facing.IsNearlyZero())
+    {
+        Player->SetActorRotation(FRotationMatrix::MakeFromXZ(Facing, Player->GetActorUpVector()).Rotator());
+    }
 
     // 조작 전 걷기 속도를 기록하고 제한 적용
     OriginalMaxWalkSpeed = Movement->MaxWalkSpeed;
@@ -239,6 +247,7 @@ void UPushPullComponent::StopPushPull()
         {
             if (UCharacterMovementComponent* Movement = Player->GetCharacterMovement())
             {
+                Movement->bOrientRotationToMovement = bOriginalOrientToMovement;
                 // 다른 기능이 이미 속도를 변경했다면 덮어쓰지 않음
                 if (FMath::IsNearlyEqual(Movement->MaxWalkSpeed, AppliedMaxWalkSpeed))
                 {

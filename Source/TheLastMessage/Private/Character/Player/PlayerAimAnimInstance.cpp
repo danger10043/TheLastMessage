@@ -6,6 +6,8 @@
 #include "DataAsset/WeaponDataAsset.h"
 #include "AbilitySystemComponent.h"
 #include "GAS/WeaponGameplayTags.h"
+#include "Gimmick/Component/CarryComponent.h"
+#include "Gimmick/Component/PushPullComponent.h"
 
 void UPlayerAimAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 {
@@ -25,7 +27,10 @@ void UPlayerAimAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 		RangedReadyAlpha = 0.0f;
 	}
 	const UAnimInstance* MainAnim = GetSkelMeshComponent() ? GetSkelMeshComponent()->GetAnimInstance() : nullptr;
-	const bool bReady = Ready && Player && !Player->IsDead() && !Player->IsHitReacting()
+	const UCarryComponent* Carry = Player ? Player->FindComponentByClass<UCarryComponent>() : nullptr;
+	const UPushPullComponent* PushPull = Player ? Player->FindComponentByClass<UPushPullComponent>() : nullptr;
+	const bool bInteracting = (Carry && Carry->HasCarriedObject()) || (PushPull && PushPull->IsPushPulling());
+	const bool bReady = Ready && Player && !bInteracting && !Player->IsDead() && !Player->IsHitReacting()
 		&& !Player->GetAbilitySystemComponent()->HasMatchingGameplayTag(WeaponGameplayTags::State_Grappling);
 	float ReadyWeight = bReady ? 1.0f : 0.0f;
 	if (bReady && MainAnim && MainAnim->IsAnyMontagePlaying())

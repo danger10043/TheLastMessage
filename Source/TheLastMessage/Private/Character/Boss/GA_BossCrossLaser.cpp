@@ -19,6 +19,11 @@
 #include "NiagaraFunctionLibrary.h"
 #include "ProceduralMeshComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Components/CapsuleComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
+#include "CollisionQueryParams.h"
+#include "CollisionShape.h"
 
 UGA_BossCrossLaser::UGA_BossCrossLaser()
 {
@@ -67,7 +72,8 @@ void UGA_BossCrossLaser::ActivateAbility(const FGameplayAbilitySpecHandle Handle
     if (!Boss || !Boss->HasAuthority() || !GetWorld() || !Anim
         || !Boss->GetCharacterMovement() || !IsValid(Boss->BossFlyLocator)
         || !IsValid(Boss->BossLaserCenter) || !JumpMontage || !ChargeMontage
-        || !ReadyFlame || !FlyFlame || !WarningMaterial || !LaserMaterial || !TriangleMaterial
+        || !ReadyFlame || !FlyFlame || !WarningMaterial || !LaserMaterial
+        || !WarningTriangleMaterial || !FiringTriangleMaterial
         || !Boss->GetMesh()->DoesSocketExist(FlameSocket))
     {
         Finish(true);
@@ -111,6 +117,14 @@ TraceLength, BeamWidth, DamageInterval, Config.Duration, LaserImpactInterval };
         || !FMath::IsFinite(MissileConfig.Damage) || MissileConfig.Damage < 0.f
         || !FMath::IsFinite(MissileConfig.DamageRadius) || MissileConfig.DamageRadius < 1.f))
     {
+        Finish(true);
+        return;
+    }
+    bDropLanded = false;
+    DropHitPlayers.Reset();
+    if (!ValidateFollowUp())
+    {
+        UE_LOG(LogTemp, Error, TEXT("CrossLaser: invalid follow-up settings."));
         Finish(true);
         return;
     }
@@ -169,13 +183,37 @@ TraceLength, BeamWidth, DamageInterval, Config.Duration, LaserImpactInterval };
 
 void UGA_BossCrossLaser::SwitchFlame(UNiagaraSystem* System)
 {
-    if (Flame) { Flame->DeactivateImmediate(); Flame->DestroyComponent(); Flame = nullptr; }
-    if (ABossMonster* Boss = GetBossOwner())
+    if (IsValid(Flame.Get()))
     {
-        Flame = UNiagaraFunctionLibrary::SpawnSystemAttached(System, Boss->GetMesh(),
-            FlameSocket, FVector::ZeroVector, FRotator::ZeroRotator,
-            EAttachLocation::SnapToTarget, false);
+        Flame->DeactivateImmediate();
+        Flame->DestroyComponent();
     }
+    Flame = nullptr;
+
+    ABossMonster* Boss = GetBossOwner();
+    if (!IsValid(Boss) || !System) return;
+
+    Flame = UNiagaraFunctionLibrary::SpawnSystemAttached(
+        System,
+        Boss->GetMesh(),
+        FlameSocket,
+        FVector::ZeroVector,
+        FRotator::ZeroRotator,
+        EAttachLocation::SnapToTarget,
+        false,
+        false,
+        ENCPoolMethod::None,
+        false);
+
+    if (!IsValid(Flame.Get())) return;
+
+    if (System == FlyFlame.Get())
+    {
+        Flame->SetAbsolute(false, true, false);
+        Flame->SetWorldRotation(FRotator::ZeroRotator);
+    }
+
+    Flame->Activate(true);
 }
 
 void UGA_BossCrossLaser::OnJumpNotify(
@@ -383,12 +421,22 @@ void UGA_BossCrossLaser::UpdatePattern()
             T += Step;
         }
         PreviousTime = End;
-        if (Elapsed >= Config.Duration) { Finish(false); return; }
+        if (Elapsed >= Config.Duration)
+        {
+            BeginLaserFadeOut(Now);
+            return;
+        }
         DrawLasers(true, Now);
         if (IsActive() && Config.bFireCircularMissiles && MissileCount < MissileConfig.MissileCount
             && Now >= NextMissileTime) SpawnMissile(Now);
         break;
     }
+    case EStage::LaserFadeOut:
+    case EStage::FollowRise:
+    case EStage::DropWarning:
+    case EStage::Dropping:
+        UpdateFollowUp(Now);
+        break;
     }
 }
 
@@ -455,8 +503,29 @@ void UGA_BossCrossLaser::DrawLasers(bool bDamage, double Now)
         }
     }
 
-    ActiveMID->SetScalarParameterValue(
-        TEXT("LaserOpacity"), FMath::Clamp(RawOpacity, 0.f, 1.f));
+    TObjectPtr<UMaterialInstanceDynamic>& ActiveTriangleMID =
+        bDamage ? FiringTriangleMID : WarningTriangleMID;
+
+    if (!IsValid(ActiveTriangleMID.Get()))
+    {
+        UMaterialInterface* ParentMaterial = bDamage
+            ? FiringTriangleMaterial.Get()
+            : WarningTriangleMaterial.Get();
+
+        ActiveTriangleMID =
+            UMaterialInstanceDynamic::Create(ParentMaterial, this);
+
+        if (!IsValid(ActiveTriangleMID.Get()))
+        {
+            Finish(true);
+            return;
+        }
+    }
+
+    const float Opacity = FMath::Clamp(RawOpacity, 0.f, 1.f);
+
+    ActiveMID->SetScalarParameterValue(TEXT("LaserOpacity"), Opacity);
+    ActiveTriangleMID->SetScalarParameterValue(TEXT("LaserOpacity"), Opacity);
     const FVector Center = Boss->BossLaserCenter->GetActorLocation();
     FCollisionQueryParams Query(SCENE_QUERY_STAT(BossCrossLaser), false, Boss);
     Query.AddIgnoredActor(Boss->BossLaserCenter);
@@ -478,7 +547,8 @@ void UGA_BossCrossLaser::DrawLasers(bool bDamage, double Now)
             {
                 End = Hit.ImpactPoint;
 
-                if (IsValid(LaserImpactEffect.Get())
+                if (Stage == EStage::Firing
+                    && IsValid(LaserImpactEffect.Get())
                     && !Cast<APlayerBase>(Hit.GetActor())
                     && NextImpactTimes.IsValidIndex(I)
                     && Now >= NextImpactTimes[I])
@@ -511,7 +581,8 @@ void UGA_BossCrossLaser::DrawLasers(bool bDamage, double Now)
         const FVector Side = FVector::CrossProduct(Direction, FVector::YAxisVector) * BeamWidth * 0.5f;
         WriteSection(I * 2, { Center - Side, Center + Side, End + Side, End - Side },
             ActiveMID.Get());
-        WriteSection(I * 2 + 1, { Boss->GetActorLocation(), Center, End }, TriangleMaterial);
+        WriteSection(I * 2 + 1, { Boss->GetActorLocation(), Center, End },
+            ActiveTriangleMID.Get());
     }
     if (bDamage)
     {
@@ -579,6 +650,311 @@ void UGA_BossCrossLaser::SpawnMissile(double Now)
     NextMissileTime = Now + MissileConfig.SpawnInterval;
 }
 
+
+bool UGA_BossCrossLaser::ValidateFollowUp()
+{
+    if (!FollowRiseMontage || !DropMontage || !DropWarningMesh || !DropWarningMaterial)
+        return false;
+    const float Positive[] = { FiringFadeInDuration, FollowRiseHeight, FollowRiseDuration,
+        DropDamageDiameter, DropWarningHeight, DropWarningDuration, DropSpeed };
+    for (float V : Positive)
+        if (!FMath::IsFinite(V) || V <= 0.f) return false;
+    const float NonNegative[] = { DropDamage, DropKnockbackHorizontal, DropKnockbackUp };
+    for (float V : NonNegative)
+        if (!FMath::IsFinite(V) || V < 0.f) return false;
+
+    FollowRiseIntegral.SetNumZeroed(129);
+    for (int32 I = 1; I <= 128; ++I)
+    {
+        const float A = FollowRiseSpeedCurve
+            ? FollowRiseSpeedCurve->GetFloatValue((I - 1) / 128.f) : 1.f;
+        const float B = FollowRiseSpeedCurve
+            ? FollowRiseSpeedCurve->GetFloatValue(I / 128.f) : 1.f;
+        if (!FMath::IsFinite(A) || !FMath::IsFinite(B)) return false;
+        FollowRiseIntegral[I] = FollowRiseIntegral[I - 1]
+            + (FMath::Max(0.f, A) + FMath::Max(0.f, B)) / 256.f;
+    }
+    const float Total = FollowRiseIntegral.Last();
+    if (!FMath::IsFinite(Total) || Total <= UE_SMALL_NUMBER) return false;
+    for (float& V : FollowRiseIntegral) V /= Total;
+
+    const FBoxSphereBounds Bounds = DropWarningMesh->GetBounds();
+    return !Bounds.Origin.ContainsNaN() && !Bounds.BoxExtent.ContainsNaN()
+        && Bounds.BoxExtent.X > 0.f && Bounds.BoxExtent.Y > 0.f && Bounds.BoxExtent.Z > 0.f;
+}
+
+float UGA_BossCrossLaser::GetFollowRiseAlpha(float T) const
+{
+    const float Sample = FMath::Clamp(T, 0.f, 1.f) * 128.f;
+    const int32 I = FMath::Min(FMath::FloorToInt(Sample), 127);
+    return FMath::Lerp(FollowRiseIntegral[I], FollowRiseIntegral[I + 1], Sample - I);
+}
+
+bool UGA_BossCrossLaser::PlayFollowMontage(UAnimMontage* Montage)
+{
+    UAnimInstance* Anim = BoundAnim.Get();
+    if (!IsValid(Anim) || !Montage) return false;
+    if (IsValid(MontageTask.Get()))
+    {
+        MontageTask->OnCompleted.RemoveAll(this);
+        MontageTask->OnInterrupted.RemoveAll(this);
+        MontageTask->OnCancelled.RemoveAll(this);
+        MontageTask->EndTask();
+    }
+    MontageTask = nullptr;
+    MontageInstanceID = INDEX_NONE;
+    MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
+        this, NAME_None, Montage, 1.f, NAME_None, true, 1.f, 0.f, true);
+    if (!MontageTask) return false;
+    MontageTask->OnCompleted.AddDynamic(this, &UGA_BossCrossLaser::OnMontageCompleted);
+    MontageTask->OnInterrupted.AddDynamic(this, &UGA_BossCrossLaser::OnMontageCancelled);
+    MontageTask->OnCancelled.AddDynamic(this, &UGA_BossCrossLaser::OnMontageCancelled);
+    MontageTask->ReadyForActivation();
+    if (!IsActive() || bEnding) return false;
+    FAnimMontageInstance* Instance = Anim->GetActiveInstanceForMontage(Montage);
+    if (!Instance) return false;
+    MontageInstanceID = Instance->GetInstanceID();
+    Instance->bEnableAutoBlendOut = false;
+    return true;
+}
+
+void UGA_BossCrossLaser::BeginLaserFadeOut(double Now)
+{
+    Stage = EStage::LaserFadeOut;
+    StageStart = Now;
+    FadeStartProgress = FMath::Clamp(Config.Duration / FiringFadeInDuration, 0.f, 1.f);
+    if (IsValid(FiringEffectComponent.Get()))
+    {
+        FiringEffectComponent->DeactivateImmediate();
+        FiringEffectComponent->DestroyComponent();
+    }
+    FiringEffectComponent = nullptr;
+    // Stop the firing batch; returned missiles remove themselves from Missiles.
+    const TArray<TWeakObjectPtr<ABossCircularMissile>> Remaining = MoveTemp(Missiles);
+    Missiles.Reset();
+    for (const TWeakObjectPtr<ABossCircularMissile>& Entry : Remaining)
+        if (ABossCircularMissile* Missile = Entry.Get()) Missile->ReturnToPool();
+}
+
+bool UGA_BossCrossLaser::CreateDropWarning(double Now)
+{
+    ABossMonster* Boss = GetBossOwner();
+    APlayerBase* Target = Cast<APlayerBase>(LockedTarget.Get());
+    if (!Boss || !IsValid(Target) || !DropWarningMesh || !DropWarningMaterial) return false;
+
+    const FVector TraceStart = Target->GetActorLocation();
+    FCollisionObjectQueryParams Objects;
+    Objects.AddObjectTypesToQuery(ECC_WorldStatic);
+    Objects.AddObjectTypesToQuery(ECC_WorldDynamic);
+    FCollisionQueryParams Query(SCENE_QUERY_STAT(CrossLaserDropGround), false, Boss);
+    Query.AddIgnoredActor(Target);
+    FHitResult GroundHit;
+    if (!GetWorld()->LineTraceSingleByObjectType(GroundHit, TraceStart,
+        TraceStart - FVector(0.f, 0.f, 10000.f), Objects, Query)
+        || GroundHit.ImpactNormal.Z < 0.5f)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("CrossLaser: no suitable ground for drop."));
+        return false;
+    }
+    DropGroundPoint = GroundHit.ImpactPoint;
+    const float HalfHeight = Boss->GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+    DropEnd = DropGroundPoint + FVector(0.f, 0.f, HalfHeight + 2.f);
+    if (DropEnd.ContainsNaN() || DropEnd.Z >= Boss->GetActorLocation().Z
+        || DropEnd.Z <= GetWorld()->GetWorldSettings()->KillZ) return false;
+
+    ClearDropWarning();
+    DropWarningComponent = NewObject<UStaticMeshComponent>(Boss);
+    Boss->AddInstanceComponent(DropWarningComponent);
+    DropWarningComponent->SetAbsolute(true, true, true);
+    DropWarningComponent->SetStaticMesh(DropWarningMesh);
+    DropWarningComponent->SetMaterial(0, DropWarningMaterial);
+    DropWarningComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    DropWarningComponent->SetGenerateOverlapEvents(false);
+    DropWarningComponent->SetCastShadow(false);
+    DropWarningComponent->SetCanEverAffectNavigation(false);
+    DropWarningComponent->RegisterComponent();
+
+    const FBoxSphereBounds Bounds = DropWarningMesh->GetBounds();
+    const FVector Scale(DropDamageDiameter / (2.f * Bounds.BoxExtent.X),
+        DropDamageDiameter / (2.f * Bounds.BoxExtent.Y),
+        DropWarningHeight / (2.f * Bounds.BoxExtent.Z));
+    const FVector Center = DropGroundPoint + FVector(0.f, 0.f, DropWarningHeight * 0.5f + 2.f);
+    DropWarningComponent->SetWorldRotation(FRotator::ZeroRotator);
+    DropWarningComponent->SetWorldScale3D(Scale);
+    DropWarningComponent->SetWorldLocation(Center - Bounds.Origin * Scale);
+    DropWarningMID = DropWarningComponent->CreateDynamicMaterialInstance(0);
+    if (!DropWarningMID) return false;
+    DropWarningMID->SetScalarParameterValue(TEXT("Progress"), 0.f);
+    Stage = EStage::DropWarning;
+    StageStart = Now;
+    return true;
+}
+
+void UGA_BossCrossLaser::SweepDropPlayers(const FVector& From, const FVector& To)
+{
+    ABossMonster* Boss = GetBossOwner();
+    if (!Boss || !Boss->HasAuthority()) return;
+    const float Radius = DropDamageDiameter * 0.5f;
+    const float HalfHeight = FMath::Max(Radius,
+        Boss->GetCapsuleComponent()->GetScaledCapsuleHalfHeight());
+    FCollisionQueryParams Query(SCENE_QUERY_STAT(CrossLaserDropPlayers), false, Boss);
+    Query.bFindInitialOverlaps = true;
+    // The query shape only overlaps Pawn objects; terrain cannot truncate this damage query.
+    FCollisionResponseParams Responses;
+    Responses.CollisionResponse.SetAllChannels(ECR_Ignore);
+    Responses.CollisionResponse.SetResponse(ECC_Pawn, ECR_Overlap);
+    TArray<FHitResult> Hits;
+    GetWorld()->SweepMultiByChannel(Hits, From, To, FQuat::Identity,
+        LaserTraceChannel, FCollisionShape::MakeCapsule(Radius, HalfHeight), Query, Responses);
+
+    for (const FHitResult& Hit : Hits)
+    {
+        APlayerBase* Player = Cast<APlayerBase>(Hit.GetActor());
+        if (!IsValid(Player) || !Player->IsPlayerControlled() || Player->IsDead()
+            || Hit.GetComponent() != Player->GetCapsuleComponent()) continue;
+        const TWeakObjectPtr<AActor> Key(Player);
+        if (DropHitPlayers.Contains(Key)) continue;
+        DropHitPlayers.Add(Key);
+
+        UAbilitySystemComponent* Source = Boss->GetAbilitySystemComponent();
+        UAbilitySystemComponent* Dest = Player->GetAbilitySystemComponent();
+        if (!Source || !Dest || !Dest->HasAttributeSetForAttribute(
+            UCombatAttributeSet::GetIncomingDamageAttribute())) continue;
+        const FVector ContactBossLocation = FMath::Lerp(From, To, Hit.Time);
+        const float Sign = Player->GetActorLocation().X < ContactBossLocation.X ? -1.f : 1.f;
+        FGameplayEffectContextHandle Context = Source->MakeEffectContext();
+        Context.AddSourceObject(Boss);
+        Context.AddOrigin(ContactBossLocation);
+        Context.AddHitResult(Hit);
+        FGameplayEffectSpecHandle Spec = Source->MakeOutgoingSpec(DamageEffectClass, GetAbilityLevel(), Context);
+        if (!Spec.IsValid()) continue;
+        Spec.Data->SetSetByCallerMagnitude(WeaponGameplayTags::Data_Damage, DropDamage);
+        const FActiveGameplayEffectHandle Applied = Source->ApplyGameplayEffectSpecToTarget(*Spec.Data.Get(), Dest);
+        if (!IsActive() || bEnding) return;
+        if (Applied.WasSuccessfullyApplied() && IsValid(Player) && !Player->IsDead())
+            Player->LaunchCharacter(FVector(Sign * DropKnockbackHorizontal, 0.f, DropKnockbackUp), true, true);
+    }
+}
+
+void UGA_BossCrossLaser::ClearDropWarning()
+{
+    if (IsValid(DropWarningComponent.Get()))
+    {
+        if (ABossMonster* Boss = GetBossOwner()) Boss->RemoveInstanceComponent(DropWarningComponent);
+        DropWarningComponent->DestroyComponent();
+    }
+    DropWarningComponent = nullptr;
+    DropWarningMID = nullptr;
+}
+
+void UGA_BossCrossLaser::UpdateFollowUp(double Now)
+{
+    ABossMonster* Boss = GetBossOwner();
+    if (!Boss || !IsActive() || bEnding) return;
+    const float Elapsed = static_cast<float>(Now - StageStart);
+    switch (Stage)
+    {
+    case EStage::LaserFadeOut:
+    {
+        const float T = FMath::Clamp(Elapsed / FiringFadeInDuration, 0.f, 1.f);
+        const float X = FadeStartProgress * (1.f - T);
+        const float Raw = FiringOpacityCurve ? FiringOpacityCurve->GetFloatValue(X) : X;
+        if (!FMath::IsFinite(Raw)) { Finish(true); return; }
+        const float Opacity = T >= 1.f ? 0.f : FMath::Clamp(Raw, 0.f, 1.f);
+        if (FiringLaserMID) FiringLaserMID->SetScalarParameterValue(TEXT("LaserOpacity"), Opacity);
+        if (FiringTriangleMID) FiringTriangleMID->SetScalarParameterValue(TEXT("LaserOpacity"), Opacity);
+        if (T >= 1.f)
+        {
+            if (Geometry)
+            {
+                Boss->RemoveInstanceComponent(Geometry);
+                Geometry->DestroyComponent();
+                Geometry = nullptr;
+            }
+            FollowRiseStart = Boss->GetActorLocation();
+            FollowRiseEnd = FollowRiseStart + FVector(0.f, 0.f, FollowRiseHeight);
+            Stage = EStage::FollowRise;
+            StageStart = Now;
+            if (!PlayFollowMontage(FollowRiseMontage)) Finish(true);
+        }
+        break;
+    }
+    case EStage::FollowRise:
+    {
+        const float T = FMath::Clamp(Elapsed / FollowRiseDuration, 0.f, 1.f);
+        Boss->SetActorLocation(FMath::Lerp(FollowRiseStart, FollowRiseEnd, GetFollowRiseAlpha(T)),
+            false, nullptr, ETeleportType::TeleportPhysics);
+        if (T >= 1.f && !CreateDropWarning(Now)) Finish(true);
+        break;
+    }
+    case EStage::DropWarning:
+    {
+        if (!DropWarningMID) { Finish(true); return; }
+        DropWarningMID->SetScalarParameterValue(TEXT("Progress"),
+            FMath::Clamp(Elapsed / DropWarningDuration, 0.f, 1.f));
+        if (Elapsed >= DropWarningDuration)
+        {
+            DropStart = FVector(
+                DropEnd.X,
+                DropEnd.Y,
+                Boss->GetActorLocation().Z);
+
+            if (DropStart.ContainsNaN() || DropStart.Z <= DropEnd.Z)
+            {
+                Finish(true);
+                return;
+            }
+
+            DropDuration = (DropStart.Z - DropEnd.Z) / DropSpeed;
+            if (!FMath::IsFinite(DropDuration) || DropDuration <= 0.f)
+            {
+                Finish(true);
+                return;
+            }
+
+            Boss->SetActorLocation(
+                DropStart, false, nullptr,
+                ETeleportType::TeleportPhysics);
+            DropHitPlayers.Reset();
+            if (IsValid(Flame.Get()))
+            {
+                Flame->DeactivateImmediate();
+                Flame->DestroyComponent();
+            }
+            Flame = nullptr;
+            Stage = EStage::Dropping;
+            StageStart = Now;
+            if (!PlayFollowMontage(DropMontage)) Finish(true);
+        }
+        break;
+    }
+    case EStage::Dropping:
+    {
+        const float T = FMath::Clamp(Elapsed / DropDuration, 0.f, 1.f);
+        const FVector From = Boss->GetActorLocation();
+        const FVector To = FMath::Lerp(DropStart, DropEnd, T);
+
+        Boss->SetActorLocation(
+            To, false, nullptr,
+            ETeleportType::TeleportPhysics);
+
+        SweepDropPlayers(From, To);
+        if (!IsActive() || bEnding) return;
+
+        if (T >= 1.f)
+        {
+            bDropLanded = true;
+            ClearDropWarning();
+            Finish(false);
+        }
+
+        break;
+    }
+    default:
+        break;
+    }
+}
+
 void UGA_BossCrossLaser::OnMontageCompleted()
 {
     if (!IsActive() || bEnding) return;
@@ -616,6 +992,8 @@ void UGA_BossCrossLaser::EndAbility(const FGameplayAbilitySpecHandle Handle,
 {
     if (bEnding || !IsEndAbilityValid(Handle, ActorInfo)) return;
     TGuardValue<bool> Guard(bEnding, true);
+    ClearDropWarning();
+    DropHitPlayers.Reset();
     if (GetWorld()) GetWorld()->GetTimerManager().ClearTimer(UpdateTimer);
     if (UAnimInstance* Anim = BoundAnim.Get())
         Anim->OnPlayMontageNotifyBegin.RemoveDynamic(this, &UGA_BossCrossLaser::OnJumpNotify);
@@ -648,6 +1026,8 @@ void UGA_BossCrossLaser::EndAbility(const FGameplayAbilitySpecHandle Handle,
     }
     WarningLaserMID = nullptr;
     FiringLaserMID = nullptr;
+    WarningTriangleMID = nullptr;
+    FiringTriangleMID = nullptr;
     const TArray<TWeakObjectPtr<ABossCircularMissile>> RemainingMissiles = MoveTemp(Missiles);
     Missiles.Reset();
     for (const TWeakObjectPtr<ABossCircularMissile>& Entry : RemainingMissiles)
@@ -658,7 +1038,18 @@ void UGA_BossCrossLaser::EndAbility(const FGameplayAbilitySpecHandle Handle,
         Boss->OnBossStateChanged.RemoveDynamic(this, &UGA_BossCrossLaser::OnStateChanged);
         if (bOwnsMovement)
         {
-            Boss->SetActorTransform(SavedTransform, false, nullptr, ETeleportType::TeleportPhysics);
+            if (bWasCancelled || !bDropLanded)
+            {
+                Boss->SetActorTransform(
+                    SavedTransform, false, nullptr,
+                    ETeleportType::TeleportPhysics);
+            }
+            else
+            {
+                Boss->SetActorRotation(
+                    SavedTransform.GetRotation(),
+                    ETeleportType::TeleportPhysics);
+            }
             Boss->bUseControllerRotationYaw = bSavedUseControllerYaw;
             Boss->SetActorEnableCollision(bSavedCollision);
             UCharacterMovementComponent* Move = Boss->GetCharacterMovement();

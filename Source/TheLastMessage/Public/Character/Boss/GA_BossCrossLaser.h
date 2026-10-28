@@ -112,8 +112,12 @@ protected:
     TObjectPtr<UMaterialInterface> WarningMaterial;
     UPROPERTY(EditDefaultsOnly, Category = "Boss|CrossLaser|Laser")
     TObjectPtr<UMaterialInterface> LaserMaterial;
+
     UPROPERTY(EditDefaultsOnly, Category = "Boss|CrossLaser|Laser")
-    TObjectPtr<UMaterialInterface> TriangleMaterial;
+    TObjectPtr<UMaterialInterface> WarningTriangleMaterial;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CrossLaser|Laser")
+    TObjectPtr<UMaterialInterface> FiringTriangleMaterial;
 
     UPROPERTY(EditDefaultsOnly, Category = "Boss|CrossLaser|Fade")
     TObjectPtr<UCurveFloat> WarningOpacityCurve;
@@ -130,8 +134,53 @@ protected:
     UPROPERTY(EditDefaultsOnly, Category = "Boss|CrossLaser|Missiles")
     FVector MissileSpawnOffset = FVector(0.f, 0.f, 150.f);
 
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CrossLaser|FollowUp")
+    TObjectPtr<UAnimMontage> FollowRiseMontage;
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CrossLaser|FollowUp", meta = (ClampMin = "1"))
+    float FollowRiseHeight = 1500.f;
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CrossLaser|FollowUp", meta = (ClampMin = "0.01"))
+    float FollowRiseDuration = 1.f;
+    // X: normalized time. Y: non-negative relative speed.
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CrossLaser|FollowUp")
+    TObjectPtr<UCurveFloat> FollowRiseSpeedCurve;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CrossLaser|FollowUp")
+    TObjectPtr<class UStaticMesh> DropWarningMesh;
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CrossLaser|FollowUp")
+    TObjectPtr<UMaterialInterface> DropWarningMaterial;
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CrossLaser|FollowUp", meta = (ClampMin = "1"))
+    float DropDamageDiameter = 400.f;
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CrossLaser|FollowUp", meta = (ClampMin = "1"))
+    float DropWarningHeight = 1600.f;
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CrossLaser|FollowUp", meta = (ClampMin = "0.01"))
+    float DropWarningDuration = 1.f;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CrossLaser|FollowUp")
+    TObjectPtr<UAnimMontage> DropMontage;
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CrossLaser|FollowUp", meta = (ClampMin = "1"))
+    float DropSpeed = 5000.f;
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CrossLaser|FollowUp", meta = (ClampMin = "0"))
+    float DropDamage = 70.f;
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CrossLaser|FollowUp", meta = (ClampMin = "0"))
+    float DropKnockbackHorizontal = 1000.f;
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CrossLaser|FollowUp", meta = (ClampMin = "0"))
+    float DropKnockbackUp = 300.f;
+
 private:
-    enum class EStage : uint8 { WaitingNotify, Exiting, OffMap, Rising, Warning, Firing };
+    enum class EStage : uint8
+    {
+        WaitingNotify,
+        Exiting,
+        OffMap,
+        Rising,
+        Warning,
+        Firing,
+        LaserFadeOut,
+        FollowRise,
+        DropWarning,
+        Dropping
+    };
     EStage Stage = EStage::WaitingNotify;
     EBossPhase LockedPhase = EBossPhase::Phase1;
     FBossCrossLaserPhaseConfig Config;
@@ -151,6 +200,30 @@ private:
     TWeakObjectPtr<AActor> LockedTarget;
     TWeakObjectPtr<UAnimInstance> BoundAnim;
     FTimerHandle UpdateTimer;
+    FVector FollowRiseStart = FVector::ZeroVector;
+    FVector FollowRiseEnd = FVector::ZeroVector;
+    FVector DropGroundPoint = FVector::ZeroVector;
+    FVector DropStart = FVector::ZeroVector;
+    FVector DropEnd = FVector::ZeroVector;
+    float DropDuration = 0.f;
+    float FadeStartProgress = 1.f;
+    bool bDropLanded = false;
+    TArray<float> FollowRiseIntegral;
+    TSet<TWeakObjectPtr<AActor>> DropHitPlayers;
+
+    UPROPERTY(Transient)
+    TObjectPtr<class UStaticMeshComponent> DropWarningComponent;
+    UPROPERTY(Transient)
+    TObjectPtr<UMaterialInstanceDynamic> DropWarningMID;
+
+    bool ValidateFollowUp();
+    float GetFollowRiseAlpha(float T) const;
+    bool PlayFollowMontage(UAnimMontage* Montage);
+    void BeginLaserFadeOut(double Now);
+    void UpdateFollowUp(double Now);
+    bool CreateDropWarning(double Now);
+    void SweepDropPlayers(const FVector& From, const FVector& To);
+    void ClearDropWarning();
 
     UPROPERTY(Transient)
     TObjectPtr<UNiagaraComponent> Flame;
@@ -162,6 +235,10 @@ private:
     TObjectPtr<UMaterialInstanceDynamic> WarningLaserMID;
     UPROPERTY(Transient)
     TObjectPtr<UMaterialInstanceDynamic> FiringLaserMID;
+    UPROPERTY(Transient)
+    TObjectPtr<UMaterialInstanceDynamic> WarningTriangleMID;
+    UPROPERTY(Transient)
+    TObjectPtr<UMaterialInstanceDynamic> FiringTriangleMID;
     UPROPERTY(Transient)
     TObjectPtr<UAbilityTask_PlayMontageAndWait> MontageTask;
 

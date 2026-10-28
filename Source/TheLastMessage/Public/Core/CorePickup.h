@@ -15,6 +15,9 @@ class UPrimitiveComponent;
 class USphereComponent;
 class UStaticMeshComponent;
 
+/** 실제 보상 지급 성공 후에만 발생한다. 저장 상태 복원 시에는 발생하지 않는다. */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnCorePickupConsumed, FGuid, PickupId);
+
 /**
  * 맵에 배치하여 플레이어에게 코어 보상을 제공하는 액터다.
  * 실제 코어의 능력과 효과 부여는 전달받은 UCoreComponent에 맡긴다.
@@ -26,6 +29,31 @@ class THELASTMESSAGE_API ACorePickup : public AActor
 
 public:
 	ACorePickup();
+	virtual void OnConstruction(const FTransform& Transform) override;
+	virtual void PostLoad() override;
+#if WITH_EDITOR
+	virtual void PostEditImport() override;
+#endif
+
+	/** 코어 종류의 CoreId와 별개인 배치 인스턴스 ID. 맵에 저장되며 PIE에서도 유지된다. */
+	UFUNCTION(BlueprintPure, Category = "Core|Persistence")
+	FGuid GetPickupId() const { return PickupId; }
+
+	UFUNCTION(BlueprintPure, Category = "Core|Persistence")
+	bool IsConsumed() const { return bConsumed; }
+
+	/** 로드 직후 적용한다. true면 보상 없이 숨기고 충돌·Tick을 끈다. false는 미소모 픽업을 유지한다. */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Core|Persistence")
+	void RestoreConsumedState(bool bWasConsumed);
+
+	/** 저장 담당자가 ID -> true를 기록할 연결점. 고정형/선택형 모두 실제 지급 성공 시 한 번 발생한다. */
+	UPROPERTY(BlueprintAssignable, Category = "Core|Persistence")
+	FOnCorePickupConsumed OnPickupConsumed;
+
+	/** BP에서 GetPickupId로 외부 저장 기록을 조회해 반환한다. 획득 허용 전 호출되며 기본값은 false다. */
+	UFUNCTION(BlueprintNativeEvent, Category = "Core|Persistence")
+	bool QuerySavedConsumedState() const;
+	virtual bool QuerySavedConsumedState_Implementation() const;
 
 	/** 지정된 코어의 획득을 요청한다. 성공하면 보상을 소비하고 true를 반환한다. */
 	UFUNCTION(BlueprintCallable, Category = "Core|Reward")
@@ -124,6 +152,14 @@ protected:
 	bool bConsumed = false;
 
 private:
+	/** 외부 저장 시스템은 이 ID와 bool 소모 상태를 함께 보관한다. 런타임 bool은 맵 원본에 저장하지 않는다. */
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Core|Persistence", meta = (AllowPrivateAccess = "true"))
+	FGuid PickupId;
+
+	void EnsurePickupId();
+	void MarkConsumed();
+	bool bPersistenceInitialized = false;
+
 	/** 선택 권한과 소유자를 확인하고, 더 이상 유효하지 않은 선택은 정리한다. */
 	UCoreRewardSession* GetValidRewardSession();
 

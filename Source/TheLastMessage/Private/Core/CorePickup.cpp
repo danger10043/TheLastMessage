@@ -6,9 +6,11 @@
 #include "Components/StaticMeshComponent.h"
 #include "Core/CoreComponent.h"
 #include "Core/CoreRewardSession.h"
+#include "Core/CorePickupStateSubsystem.h"
 #include "DataAsset/CoreDataAsset.h"
 #include "Engine/AssetManager.h"
 #include "Engine/Engine.h"
+#include "Engine/GameInstance.h"
 #include "GameFramework/PlayerController.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Templates/UnrealTemplate.h"
@@ -86,11 +88,18 @@ bool ACorePickup::QuerySavedConsumedState_Implementation() const
 	return false;
 }
 
+UCorePickupStateSubsystem* ACorePickup::GetPickupStateSubsystem() const
+{
+	UGameInstance* GameInstance = GetGameInstance();
+	return GameInstance ? GameInstance->GetSubsystem<UCorePickupStateSubsystem>() : nullptr;
+}
+
 void ACorePickup::RestoreConsumedState(bool bWasConsumed)
 {
 	// 이미 지급한 픽업을 false로 되돌려 보상을 다시 지급하지 않는다. 초기화는 맵 재로드 후 새 기록으로 한다.
 	if (!HasAuthority() || !bWasConsumed || bIsGrantingReward) return;
 	bConsumed = true;
+	if (UCorePickupStateSubsystem* State = GetPickupStateSubsystem()) State->SetPickupConsumed(PickupId, true);
 	bIsAbsorbing = false;
 	bOpenChoiceAfterAbsorb = false;
 	bHiddenForChoice = false;
@@ -99,12 +108,16 @@ void ACorePickup::RestoreConsumedState(bool bWasConsumed)
 	SetActorHiddenInGame(true);
 	SetActorEnableCollision(false);
 	SetActorTickEnabled(false);
+	// BeginPlay 처리 중이라면 엔진이 BeginPlay 종료 직후 안전하게 파괴한다.
+	Destroy();
 }
 
 void ACorePickup::MarkConsumed()
 {
 	if (bConsumed) return;
 	bConsumed = true;
+	// 픽업이 사라지기 전에 GameInstance에 기록한다. 획득 알림을 받는 BP가 맵을 바꿔도 기록이 유지된다.
+	if (UCorePickupStateSubsystem* State = GetPickupStateSubsystem()) State->SetPickupConsumed(PickupId, true);
 	OnPickupConsumed.Broadcast(PickupId);
 }
 
@@ -441,7 +454,11 @@ void ACorePickup::BeginPlay()
 	}
 
 	// Blueprint BeginPlay 및 초기 겹침에 의한 지급보다 저장 기록을 먼저 적용한다.
-	if (HasAuthority() && QuerySavedConsumedState()) RestoreConsumedState(true);
+	if (HasAuthority())
+	{
+		const UCorePickupStateSubsystem* State = GetPickupStateSubsystem();
+		if ((State && State->IsPickupConsumed(PickupId)) || QuerySavedConsumedState()) RestoreConsumedState(true);
+	}
 
 	// 머티리얼에 발광 파라미터가 있을 때만 인스턴스를 만들어 세기를 조절한다.
 	UMaterialInterface* Material = bConsumed ? nullptr : CoreMesh->GetMaterial(0);
@@ -456,8 +473,7 @@ void ACorePickup::BeginPlay()
 	Super::BeginPlay();
 	if (bConsumed)
 	{
-		// Super::BeginPlay가 액터 Tick을 등록하면서 다시 켤 수 있으므로 등록 후에도 끈다.
-		SetActorTickEnabled(false);
+		Destroy();
 		return;
 	}
 	if (IsActorBeingDestroyed()) return;

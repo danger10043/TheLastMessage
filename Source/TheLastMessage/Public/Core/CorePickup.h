@@ -10,6 +10,7 @@ class UCoreChoiceWidget;
 class UCoreComponent;
 class UCoreDataAsset;
 class UCoreRewardSession;
+class UCorePickupStateSubsystem;
 class UMaterialInstanceDynamic;
 class UPrimitiveComponent;
 class USphereComponent;
@@ -42,7 +43,7 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Core|Persistence")
 	bool IsConsumed() const { return bConsumed; }
 
-	/** 로드 직후 적용한다. true면 보상 없이 숨기고 충돌·Tick을 끈다. false는 미소모 픽업을 유지한다. */
+	/** 로드 직후 적용한다. true면 소모 기록을 유지하고 보상 없이 액터를 제거한다. false는 미소모 픽업을 유지한다. */
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Core|Persistence")
 	void RestoreConsumedState(bool bWasConsumed);
 
@@ -50,7 +51,7 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Core|Persistence")
 	FOnCorePickupConsumed OnPickupConsumed;
 
-	/** BP에서 GetPickupId로 외부 저장 기록을 조회해 반환한다. 획득 허용 전 호출되며 기본값은 false다. */
+	/** 선택적인 외부 저장 조회 연결점. GameInstance의 실행 중 기록은 BP 연결 없이 먼저 확인한다. */
 	UFUNCTION(BlueprintNativeEvent, Category = "Core|Persistence")
 	bool QuerySavedConsumedState() const;
 	virtual bool QuerySavedConsumedState_Implementation() const;
@@ -158,6 +159,7 @@ private:
 
 	void EnsurePickupId();
 	void MarkConsumed();
+	UCorePickupStateSubsystem* GetPickupStateSubsystem() const;
 	bool bPersistenceInitialized = false;
 
 	/** 선택 권한과 소유자를 확인하고, 더 이상 유효하지 않은 선택은 정리한다. */

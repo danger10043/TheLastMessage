@@ -83,6 +83,15 @@ void ASwitchGroupBase::CompleteGroup()
 	// 이벤트가 발생하기 전에 완료 상태부터 기록
 	bIsCompleted = true;
 
+	// 조건을 달성한 그룹의 모든 레버 입력 잠금
+	for (AToggleSwitch* Switch : GroupSwitches)
+	{
+		if (IsValid(Switch))
+		{
+			Switch->SetLeverInputLocked(true);
+		}
+	}
+
 	UpdateGroupIndicator();
 
 	// 부모의 상태 변경·연결 장치 전달 처리 사용

@@ -78,7 +78,6 @@ static TAutoConsoleVariable<int32> CVarDebugAim(
 
 APlayerBase::APlayerBase()
 {
-	RangedAimPostProcessClass = FSoftObjectPath(TEXT("/Game/Test_Jihong/Animations/ABP_PlayerRangedReady.ABP_PlayerRangedReady_C"));
 	DefaultLightRangedProjectileClass = FSoftObjectPath(TEXT("/Game/Test_Jihong/Blueprints/Projectile/BP_Projectile_Plasma.BP_Projectile_Plasma_C"));
 	DefaultHeavyRangedProjectileClass = FSoftObjectPath(TEXT("/Game/Test_Jihong/Blueprints/Projectile/BP_Projectile_Railgun.BP_Projectile_Railgun_C"));
 	WeaponChoices.SetNum(4);
@@ -461,14 +460,9 @@ void APlayerBase::BeginPlay()
 	Super::BeginPlay();
 	// Authority must evaluate hand bones even without a rendered viewport to resolve muzzle sockets.
 	if (HasAuthority()) GetMesh()->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
-	if (UClass* AimClass = RangedAimPostProcessClass.LoadSynchronous())
+	if (UClass* AimClass = RangedAimPostProcessClass.Get())
 	{
 		GetMesh()->SetOverridePostProcessAnimBP(AimClass);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Error, TEXT("Failed to load ranged aim animation class: %s"),
-			*RangedAimPostProcessClass.ToSoftObjectPath().ToString());
 	}
 	InitializePlayer();
 	if (HasAuthority() && !bHasCheckpoint) SetCheckpoint(GetActorTransform());

@@ -205,8 +205,8 @@ public:
 	UFUNCTION(BlueprintPure, Category="Player|Aim")
 	bool IsRangedAiming() const;
 	TSubclassOf<AProjectileBase> GetAttackProjectileClass(const UWeaponDataAsset* Data) const;
-	UPROPERTY(EditDefaultsOnly, Category="Player|Aim")
-	TSoftClassPtr<UAnimInstance> RangedAimPostProcessClass;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Player|Aim")
+	TSubclassOf<UAnimInstance> RangedAimPostProcessClass = nullptr;
 	UPROPERTY(EditDefaultsOnly, Category="Player|Weapon|Projectile")
 	TSoftClassPtr<AProjectileBase> DefaultLightRangedProjectileClass;
 	UPROPERTY(EditDefaultsOnly, Category="Player|Weapon|Projectile")

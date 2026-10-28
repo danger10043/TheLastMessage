@@ -98,11 +98,11 @@ public:
 	FGrapplingProbeState ProbeState;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Player|Grappling|Animation")
-	TObjectPtr<UAnimMontage> ThrowMontage;
+	TObjectPtr<UAnimMontage> ThrowMontage = nullptr;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Player|Grappling|Animation")
-	TObjectPtr<UAnimMontage> PullMontage;
+	TObjectPtr<UAnimMontage> PullMontage = nullptr;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Player|Grappling|Animation")
-	TObjectPtr<UAnimMontage> LandMontage;
+	TObjectPtr<UAnimMontage> LandMontage = nullptr;
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Transient, Category="Player|Grappling|Animation")
 	EGrappleAnimationPhase AnimationPhase = EGrappleAnimationPhase::None;
 	// A grapple ending in the air uses normal falling; landing reacts only on real floor contact.

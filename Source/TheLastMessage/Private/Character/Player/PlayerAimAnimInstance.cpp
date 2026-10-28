@@ -19,7 +19,7 @@ void UPlayerAimAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 	if (bRanged)
 	{
 		Ready = Data->RangedIdleAnimation ? Data->RangedIdleAnimation.Get()
-			: (Data->WeaponType == EWeaponType::HeavyRanged ? RifleIdleAnimation : PistolIdleAnimation).LoadSynchronous();
+			: (Data->WeaponType == EWeaponType::HeavyRanged ? RifleIdleAnimation : PistolIdleAnimation).Get();
 	}
 	if (Ready && Ready != RangedReadySequence)
 	{

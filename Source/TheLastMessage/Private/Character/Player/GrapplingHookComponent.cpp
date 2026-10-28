@@ -14,7 +14,6 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Components/SkeletalMeshComponent.h"
-#include "UObject/ConstructorHelpers.h"
 #include "CableComponent.h"
 #include "Materials/MaterialInterface.h"
 #include "Components/StaticMeshComponent.h"
@@ -115,12 +114,7 @@ UGrapplingHookComponent::UGrapplingHookComponent()
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.TickGroup = TG_PrePhysics;
 	SetIsReplicatedByDefault(true);
-	static ConstructorHelpers::FObjectFinder<UAnimMontage> ThrowAsset(TEXT("/Game/Test_Jihong/Animations/Grappling/AM_Grapple_Throw.AM_Grapple_Throw"));
-	static ConstructorHelpers::FObjectFinder<UAnimMontage> PullAsset(TEXT("/Game/Test_Jihong/Animations/Grappling/AM_Grapple_Pull.AM_Grapple_Pull"));
-	static ConstructorHelpers::FObjectFinder<UAnimMontage> LandAsset(TEXT("/Game/Test_Jihong/Animations/Grappling/AM_Grapple_Land.AM_Grapple_Land"));
-	ThrowMontage = ThrowAsset.Object;
-	PullMontage = PullAsset.Object;
-	LandMontage = LandAsset.Object;
+
 }
 
 void UGrapplingHookComponent::BeginPlay()

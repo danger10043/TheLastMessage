@@ -28,6 +28,7 @@ public:
 	UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category="Cinematic") TArray<TObjectPtr<AActor>> CleanupActors;
 	UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category="Cinematic") TObjectPtr<ABossMonster> Boss;
 	UFUNCTION(BlueprintCallable, Category="Cinematic") bool RequestPlay();
+	UFUNCTION(BlueprintCallable, Category="Cinematic") void SkipCinematic(APlayerController* RequestingController);
 	UFUNCTION(BlueprintPure, Category="Cinematic") bool IsPlaying() const { return bPresenting; }
 protected:
 	virtual void BeginPlay() override;

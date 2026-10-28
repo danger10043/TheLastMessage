@@ -40,7 +40,6 @@
 #include "HAL/IConsoleManager.h"
 #include "Engine/DamageEvents.h"
 #include "InputAction.h"
-#include "UObject/ConstructorHelpers.h"
 #include "Engine/World.h"
 #include "Projectile/ProjectileBase.h"
 #include "GameFramework/GameStateBase.h"
@@ -78,8 +77,6 @@ static TAutoConsoleVariable<int32> CVarDebugAim(
 
 APlayerBase::APlayerBase()
 {
-	DefaultLightRangedProjectileClass = FSoftObjectPath(TEXT("/Game/Test_Jihong/Blueprints/Projectile/BP_Projectile_Plasma.BP_Projectile_Plasma_C"));
-	DefaultHeavyRangedProjectileClass = FSoftObjectPath(TEXT("/Game/Test_Jihong/Blueprints/Projectile/BP_Projectile_Railgun.BP_Projectile_Railgun_C"));
 	WeaponChoices.SetNum(4);
 	OwnedWeaponChoices.SetNumZeroed(4);
 	WeaponSelectionActions.SetNum(4);
@@ -87,8 +84,6 @@ APlayerBase::APlayerBase()
 	CombatFeedbackComponent = CreateDefaultSubobject<UCombatFeedbackComponent>(TEXT("CombatFeedbackComponent"));
 	GrapplingHookComponent = CreateDefaultSubobject<UGrapplingHookComponent>(TEXT("GrapplingHookComponent"));
 	AreaMapComponent = CreateDefaultSubobject<UAreaMapComponent>(TEXT("AreaMapComponent"));
-	static ConstructorHelpers::FObjectFinder<UInputAction> GrappleAction(TEXT("/Game/Main/Inputs/Actions/IA_GrapplingHook.IA_GrapplingHook"));
-	GrapplingHookAction = GrappleAction.Object;
 	AbilitySystemComponent = CreateDefaultSubobject<UAbilitySystemComponent>(TEXT("AbilitySystemComponent"));
 	AbilitySystemComponent->SetIsReplicated(true);
 	AbilitySystemComponent->SetReplicationMode(EGameplayEffectReplicationMode::Mixed);
@@ -1109,11 +1104,6 @@ bool APlayerBase::EquipWeapon(EWeaponSlot Slot, UWeaponDataAsset* Data)
 	UWeaponBase* Weapon = bRanged ? static_cast<UWeaponBase*>(NewObject<URangedWeaponBase>(this))
 		: static_cast<UWeaponBase*>(NewObject<UMeleeWeaponBase>(this));
 	if (!Weapon->Initialize(Data)) return false;
-	if (bRanged)
-	{
-		// Warm the shared flash material while equipping/charging, not on its first 0.14-second pulse.
-		if (Data->bUseEnergyFlash) Data->EnergyFlashMaterial.LoadSynchronous();
-	}
 	for (int32 Index = 0; Index < 4; ++Index)
 	{
 		if (GetWeaponChoice(Index) == Data)

@@ -3,7 +3,6 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Materials/MaterialInterface.h"
-#include "UObject/ConstructorHelpers.h"
 #include "Components/AudioComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Engine/OverlapResult.h"
@@ -49,11 +48,6 @@ AJuggernautEnemy::AJuggernautEnemy()
 	TelegraphMesh->bReceivesDecals = false;
 	TelegraphMesh->SetVisibility(false);
 
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> PlaneMesh(TEXT("/Engine/BasicShapes/Plane.Plane"));
-	if (PlaneMesh.Succeeded())
-	{
-		TelegraphMesh->SetStaticMesh(PlaneMesh.Object);
-	}
 }
 
 void AJuggernautEnemy::ApplyEnemyData(const UEnemyDataAsset* Data)

@@ -2,7 +2,6 @@
 #include "UI/StartMenuWidget.h"
 #include "GameFramework/PlayerController.h"
 #include "Kismet/KismetSystemLibrary.h"
-#include "UObject/ConstructorHelpers.h"
 #include "Save/ProgressSaveSubsystem.h"
 #include "Engine/GameInstance.h"
 #include "Kismet/GameplayStatics.h"
@@ -11,9 +10,6 @@
 AStartMenuHUD::AStartMenuHUD()
 {
 	PrimaryActorTick.bCanEverTick = false;
-	static ConstructorHelpers::FClassFinder<UStartMenuWidget> Widget(TEXT("/Game/Main/UI/Menu/WBP_StartMenu"));
-	MenuClass = Widget.Succeeded() ? Widget.Class.Get() : UStartMenuWidget::StaticClass();
-	NewGameMap = TSoftObjectPtr<UWorld>(FSoftObjectPath(TEXT("/Game/Test_Jihong/Prototype/Lv_Factory_Metroidvania.Lv_Factory_Metroidvania")));
 }
 
 void AStartMenuHUD::BeginPlay()

@@ -10,7 +10,6 @@
 #include "Materials/MaterialInstanceDynamic.h"
 #include "EngineUtils.h"
 #include "Net/UnrealNetwork.h"
-#include "UObject/ConstructorHelpers.h"
 #include "Save/ProgressSaveSubsystem.h"
 #include "Engine/GameInstance.h"
 #include "Misc/SecureHash.h"
@@ -43,37 +42,14 @@ APlayerCheckpoint::APlayerCheckpoint()
 	TerminalBody->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	TerminalBody->SetGenerateOverlapEvents(false);
 	TerminalBody->SetCanEverAffectNavigation(false);
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> BodyAsset(TEXT("/Game/Main/Checkpoints/CommunicationTerminal/Meshes/SM_CP_Terminal.SM_CP_Terminal"));
-	TerminalBody->SetStaticMesh(BodyAsset.Object);
 	InteractionOutline = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("InteractionOutline"));
 	InteractionOutline->SetupAttachment(TerminalBody);
-	InteractionOutline->SetStaticMesh(BodyAsset.Object);
 	InteractionOutline->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	InteractionOutline->SetGenerateOverlapEvents(false);
 	InteractionOutline->SetCanEverAffectNavigation(false);
 	InteractionOutline->SetCastShadow(false);
 	InteractionOutline->SetVisibility(false);
-	static ConstructorHelpers::FObjectFinder<UMaterialInterface> OutlineMaterial(TEXT("/Game/Test_Jiho/Gimmick/M_GimmickOutline.M_GimmickOutline"));
-	for (int32 Index = 0; Index < InteractionOutline->GetNumMaterials(); ++Index)
-		InteractionOutline->SetMaterial(Index, OutlineMaterial.Object);
-	auto LoadMaterialSet = [](const TCHAR* State, FCheckpointSignalMaterials& Set)
-	{
-		auto Load = [State](const TCHAR* Slot) -> UMaterialInterface*
-		{
-			const FString Name = FString::Printf(TEXT("MI_CP_%s_%s"), State, Slot);
-			const FString Path = FString::Printf(TEXT("/Game/Main/Checkpoints/CommunicationTerminal/Materials/%s.%s"), *Name, *Name);
-			ConstructorHelpers::FObjectFinder<UMaterialInterface> Asset(*Path);
-			return Asset.Object;
-		};
-		Set.Screen = Load(TEXT("Screen"));
-		Set.Ring = Load(TEXT("Ring"));
-		Set.Core = Load(TEXT("Core"));
-		Set.Beacon = Load(TEXT("Beacon"));
-		Set.BeaconBand = Load(TEXT("BeaconBand"));
-	};
-	LoadMaterialSet(TEXT("Inactive"), InactiveMaterials);
-	LoadMaterialSet(TEXT("Current"), CurrentMaterials);
-	LoadMaterialSet(TEXT("Visited"), VisitedMaterials);
+
 }
 
 void APlayerCheckpoint::OnConstruction(const FTransform& Transform)
@@ -116,14 +92,17 @@ void APlayerCheckpoint::OnRep_VisualState()
 
 void APlayerCheckpoint::RefreshTerminalVisuals()
 {
+	InteractionOutline->SetStaticMesh(TerminalBody->GetStaticMesh());
+	for (int32 Index = 0; Index < InteractionOutline->GetNumMaterials(); ++Index)
+		InteractionOutline->SetMaterial(Index, InteractionOutlineMaterial);
 	bCheckpointActivated = CheckpointVisualState != ECheckpointVisualState::Inactive;
 	const FCheckpointSignalMaterials& Set = CheckpointVisualState == ECheckpointVisualState::Current ? CurrentMaterials
 		: (CheckpointVisualState == ECheckpointVisualState::Visited ? VisitedMaterials : InactiveMaterials);
-	TerminalBody->SetMaterialByName(TEXT("Screen"), Set.Screen);
-	TerminalBody->SetMaterialByName(TEXT("Ring"), Set.Ring);
-	TerminalBody->SetMaterialByName(TEXT("Core"), Set.Core);
-	TerminalBody->SetMaterialByName(TEXT("Beacon"), Set.Beacon);
-	TerminalBody->SetMaterialByName(TEXT("BeaconBand"), Set.BeaconBand);
+	if (Set.Screen) TerminalBody->SetMaterialByName(TEXT("Screen"), Set.Screen);
+	if (Set.Ring) TerminalBody->SetMaterialByName(TEXT("Ring"), Set.Ring);
+	if (Set.Core) TerminalBody->SetMaterialByName(TEXT("Core"), Set.Core);
+	if (Set.Beacon) TerminalBody->SetMaterialByName(TEXT("Beacon"), Set.Beacon);
+	if (Set.BeaconBand) TerminalBody->SetMaterialByName(TEXT("BeaconBand"), Set.BeaconBand);
 }
 
 bool APlayerCheckpoint::ActivateCheckpoint(APlayerBase* Player)
@@ -182,7 +161,7 @@ void APlayerCheckpoint::OnTriggerEndOverlap(UPrimitiveComponent* OverlappedCompo
 
 void APlayerCheckpoint::SetInteractionHighlight(bool bVisible)
 {
-	InteractionOutline->SetVisibility(bVisible);
+	InteractionOutline->SetVisibility(bVisible && InteractionOutlineMaterial && TerminalBody->GetStaticMesh());
 	for (int32 Index = 0; Index < InteractionOutline->GetNumMaterials(); ++Index)
 	{
 		UMaterialInstanceDynamic* Material = Cast<UMaterialInstanceDynamic>(InteractionOutline->GetMaterial(Index));

@@ -16,7 +16,6 @@
 #include "Map/AreaMapComponent.h"
 #include "UI/AreaMapWidget.h"
 #include "Character/Player/PlayerBase.h"
-#include "UObject/ConstructorHelpers.h"
 #include "Save/ProgressSaveSubsystem.h"
 #include "Engine/GameInstance.h"
 #include "InputCoreTypes.h"
@@ -25,13 +24,7 @@
 
 ASideScrollingPlayerController::ASideScrollingPlayerController()
 {
-	static ConstructorHelpers::FObjectFinder<UInputAction> Action(TEXT("/Game/Main/Inputs/Actions/IA_Map.IA_Map"));
-	MapAction = Action.Object;
-	static ConstructorHelpers::FObjectFinder<UInputAction> PauseAction(TEXT("/Game/Main/Inputs/Actions/IA_PauseMenu.IA_PauseMenu"));
-	PauseMenuAction = PauseAction.Object;
 	MapWidgetClass = UAreaMapWidget::StaticClass();
-	PauseMenuClass = TSoftClassPtr<UPauseMenuWidget>(FSoftObjectPath(TEXT("/Game/Main/UI/Menu/WBP_PauseMenu.WBP_PauseMenu_C")));
-	MainMenuMap = TSoftObjectPtr<UWorld>(FSoftObjectPath(TEXT("/Game/Main/Maps/Lv_MainMenu.Lv_MainMenu")));
 }
 
 void ASideScrollingPlayerController::ToggleAreaMap()

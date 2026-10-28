@@ -1,10 +1,13 @@
 #include "Character/Enemy/SentryEnemy.h"
+#include "Components/AudioComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "NiagaraComponent.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
 #include "TimerManager.h"
+#include "Kismet/GameplayStatics.h"
+#include "Sound/SoundBase.h"
 
 ASentryEnemy::ASentryEnemy()
 {
@@ -123,6 +126,13 @@ void ASentryEnemy::StartCharge()
 	PlayAttackMontage();
 	OnChargeStarted();
 
+	if (ChargeSound && GetMesh())
+	{
+		// 총구에 붙여 재생해서 포탑이 돌아도 소리가 따라간다.
+		const FName AttachSocket = GetMesh()->DoesSocketExist(MuzzleSocketName) ? MuzzleSocketName : NAME_None;
+		ChargeAudio = UGameplayStatics::SpawnSoundAttached(ChargeSound, GetMesh(), AttachSocket);
+	}
+
 	// 충전 이펙트를 총구에 붙여 재생한다(총이 돌아도 따라간다).
 	if (ChargeEffect)
 	{
@@ -169,6 +179,11 @@ void ASentryEnemy::FireProjectile()
 
 	SpawnEnemyProjectile(ProjectileConfig, Muzzle);
 	SpawnEffectAtSocket(MuzzleFlashEffect, MuzzleSocketName, MuzzleOffset, FlashRotation);
+
+	if (FireSound)
+	{
+		UGameplayStatics::PlaySoundAtLocation(this, FireSound, Muzzle);
+	}
 	OnFired();
 
 	FinishAttack();
@@ -181,6 +196,13 @@ void ASentryEnemy::CancelCharge()
 
 void ASentryEnemy::StopChargeEffect()
 {
+	// 충전 소리도 충전 이펙트와 함께 멈춘다(발사·취소 때).
+	if (ChargeAudio)
+	{
+		ChargeAudio->Stop();
+		ChargeAudio = nullptr;
+	}
+
 	if (ChargeEffectComponent)
 	{
 		ChargeEffectComponent->Deactivate();

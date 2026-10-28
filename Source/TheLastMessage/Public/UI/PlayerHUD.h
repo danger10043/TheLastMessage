@@ -6,6 +6,7 @@
 class APlayerBase;
 class UPlayerStatusWidget;
 class UWeaponChargeWidget;
+class USaveNotificationWidget;
 
 /** The derived HUD Blueprint chooses the widget Blueprints. */
 UCLASS(Blueprintable)
@@ -27,6 +28,8 @@ protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Player UI") TSubclassOf<UPlayerStatusWidget> StatusWidgetClass;
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Player UI") TSubclassOf<UWeaponChargeWidget> ChargeWidgetClass;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Player UI") TSubclassOf<USaveNotificationWidget> SaveNotificationClass;
+	UPROPERTY(Transient, BlueprintReadOnly, Category="Player UI") TObjectPtr<USaveNotificationWidget> SaveNotification;
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Player UI|Charge") FVector2D ChargeWidgetSize = FVector2D(160, 36);
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Player UI|Charge", meta=(ClampMin="0")) float ChargeHeightAboveCapsule = 22.0f;
 	UPROPERTY(Transient, BlueprintReadOnly, Category="Player UI") TObjectPtr<UPlayerStatusWidget> StatusWidget;
@@ -38,6 +41,7 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category="Player UI|Grappling", meta=(ClampMin="8", ToolTip="그래플링 원형 표시의 반지름"))
 	float GrappleIndicatorRadius = 18.2f;
 private:
+	UFUNCTION() void CheckpointSaveFinished(bool bSuccess);
 	void DrawGrappleIndicator();
 	bool bGrappleWasCoolingDown = false;
 	float GrappleReadyFlashEnd = 0;

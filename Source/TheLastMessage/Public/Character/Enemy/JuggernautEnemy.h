@@ -5,12 +5,18 @@
 #include "JuggernautEnemy.generated.h"
 
 class UNiagaraSystem;
+class UStaticMeshComponent;
+class UMaterialInterface;
+class USoundBase;
+class UAudioComponent;
 
 /**
  * 덩치봇 2: 플레이어 원거리 공격에 받는 피해가 줄어드는(기본 50%) 돌진형 몬스터.
  *
  * 공격 흐름: 윈드업(제자리에서 예고) → 돌진(방향 고정, 직선 이동) → 후딜(경직) → 쿨다운
- * - 돌진 방향은 돌진이 시작되는 순간 정해진다. 윈드업 동안 플레이어가 위치를 바꾸면 피할 수 있다.
+ * - 돌진 방향과 경로는 윈드업이 시작되는 순간 정해진다. 윈드업 동안 플레이어가 위치를 바꾸면 피할 수 있다.
+ * - 윈드업 동안 돌진 경로에 빨간 띠(예고)가 앞에서 벽(또는 최대 돌진 거리)까지 늘어난다. 마지막에 깜빡이고 돌진이 시작되면 사라진다.
+ *   예고 시간은 윈드업 시간(ChargeWindup)을 그대로 따른다. 띠 머티리얼(Telegraph Material)을 지정해야 보인다.
  * - 돌진은 길을 찾는 이동(NavMesh)이 아니라 직접 이동이라 낭떠러지에서 멈추지 않고 그대로 떨어진다.
  *   떨어진 뒤 착지한 곳에 NavMesh가 있어야 이후 AI가 다시 동작한다.
  */
@@ -85,11 +91,58 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Juggernaut|Effects")
 	TObjectPtr<UNiagaraSystem> WindupEffect;
 
+	/**
+	 * 돌진 예고 띠에 쓸 머티리얼(반투명 빨강, Two Sided 권장). 비워 두면 예고 띠를 표시하지 않는다.
+	 * 띠는 카메라 쪽으로 세워진 평면 메시이며, 메시는 코드에서 엔진 기본 Plane을 쓴다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Juggernaut|Telegraph")
+	TObjectPtr<UMaterialInterface> TelegraphMaterial;
+
+	/** 예고 띠 메시(엔진 기본 Plane). 크기·위치는 코드가 정한다. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Juggernaut|Telegraph")
+	TObjectPtr<UStaticMeshComponent> TelegraphMesh;
+
+	/** 예고 띠 높이 보정, 깜빡임 시간·간격은 데이터 에셋에서 정한다. */
+	float TelegraphHeightPadding = 20.f;
+	float TelegraphBlinkDuration = 0.2f;
+	float TelegraphBlinkInterval = 0.05f;
+
+	/**
+	 * 돌진 차지(윈드업) 소리. 윈드업이 시작될 때 재생되고, 돌진이 시작되거나 공격이 취소되거나 죽으면 바로 멈춘다.
+	 * 비워 두면 재생하지 않는다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Juggernaut|Sound")
+	TObjectPtr<USoundBase> ChargeSound;
+
+	/** 플레이어나 벽에 부딪힐 때 재생할 소리. 비워 두면 재생하지 않는다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Juggernaut|Sound")
+	TObjectPtr<USoundBase> ImpactSound;
+
 	/** 플레이어나 벽에 부딪힐 때 재생할 이펙트 */
 	UPROPERTY(EditDefaultsOnly, Category = "Juggernaut|Effects")
 	TObjectPtr<UNiagaraSystem> ImpactEffect;
 
 private:
+	/** 플레이어가 있는 쪽(좌/우)으로 돌진 방향을 정한다. */
+	FVector ComputeChargeDirection() const;
+
+	/** 윈드업 시작: 경로 앞의 벽까지 거리를 재고 예고 띠를 켠다. */
+	void ShowTelegraph();
+	void UpdateTelegraph(float DeltaTime);
+	void HideTelegraph();
+
+	/** 재생 중인 차지 소리(취소될 때 멈추기 위해 들고 있는다) */
+	UPROPERTY(Transient)
+	TObjectPtr<UAudioComponent> ChargeAudio;
+
+	void StopChargeSound();
+
+	bool bTelegraphActive = false;
+	float TelegraphElapsed = 0.f;
+	float TelegraphLength = 0.f;
+	float TelegraphHeight = 0.f;
+	FVector TelegraphStart = FVector::ZeroVector;
+
 	void BeginCharge();
 	void EndCharge(bool bHitWall);
 

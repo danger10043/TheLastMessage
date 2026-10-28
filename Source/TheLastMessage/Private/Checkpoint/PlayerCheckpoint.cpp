@@ -7,9 +7,12 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Materials/MaterialInterface.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "EngineUtils.h"
 #include "Net/UnrealNetwork.h"
-#include "UObject/ConstructorHelpers.h"
+#include "Save/ProgressSaveSubsystem.h"
+#include "Engine/GameInstance.h"
+#include "Misc/SecureHash.h"
 
 APlayerCheckpoint::APlayerCheckpoint()
 {
@@ -21,8 +24,10 @@ APlayerCheckpoint::APlayerCheckpoint()
 	Trigger->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 	Trigger->SetCollisionResponseToAllChannels(ECR_Ignore);
 	Trigger->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
+	Trigger->SetCollisionObjectType(ECC_WorldDynamic);
 	Trigger->SetGenerateOverlapEvents(true);
 	Trigger->OnComponentBeginOverlap.AddDynamic(this, &APlayerCheckpoint::OnTriggerOverlap);
+	Trigger->OnComponentEndOverlap.AddDynamic(this, &APlayerCheckpoint::OnTriggerEndOverlap);
 	RespawnPoint = CreateDefaultSubobject<USceneComponent>(TEXT("RespawnPoint"));
 	RespawnPoint->SetupAttachment(Trigger);
 	RespawnArrow = CreateDefaultSubobject<UArrowComponent>(TEXT("RespawnArrow"));
@@ -37,26 +42,14 @@ APlayerCheckpoint::APlayerCheckpoint()
 	TerminalBody->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	TerminalBody->SetGenerateOverlapEvents(false);
 	TerminalBody->SetCanEverAffectNavigation(false);
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> BodyAsset(TEXT("/Game/Main/Checkpoints/CommunicationTerminal/Meshes/SM_CP_Terminal.SM_CP_Terminal"));
-	TerminalBody->SetStaticMesh(BodyAsset.Object);
-	auto LoadMaterialSet = [](const TCHAR* State, FCheckpointSignalMaterials& Set)
-	{
-		auto Load = [State](const TCHAR* Slot) -> UMaterialInterface*
-		{
-			const FString Name = FString::Printf(TEXT("MI_CP_%s_%s"), State, Slot);
-			const FString Path = FString::Printf(TEXT("/Game/Main/Checkpoints/CommunicationTerminal/Materials/%s.%s"), *Name, *Name);
-			ConstructorHelpers::FObjectFinder<UMaterialInterface> Asset(*Path);
-			return Asset.Object;
-		};
-		Set.Screen = Load(TEXT("Screen"));
-		Set.Ring = Load(TEXT("Ring"));
-		Set.Core = Load(TEXT("Core"));
-		Set.Beacon = Load(TEXT("Beacon"));
-		Set.BeaconBand = Load(TEXT("BeaconBand"));
-	};
-	LoadMaterialSet(TEXT("Inactive"), InactiveMaterials);
-	LoadMaterialSet(TEXT("Current"), CurrentMaterials);
-	LoadMaterialSet(TEXT("Visited"), VisitedMaterials);
+	InteractionOutline = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("InteractionOutline"));
+	InteractionOutline->SetupAttachment(TerminalBody);
+	InteractionOutline->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	InteractionOutline->SetGenerateOverlapEvents(false);
+	InteractionOutline->SetCanEverAffectNavigation(false);
+	InteractionOutline->SetCastShadow(false);
+	InteractionOutline->SetVisibility(false);
+
 }
 
 void APlayerCheckpoint::OnConstruction(const FTransform& Transform)
@@ -68,6 +61,8 @@ void APlayerCheckpoint::OnConstruction(const FTransform& Transform)
 void APlayerCheckpoint::BeginPlay()
 {
 	Super::BeginPlay();
+	SetInteractionHighlight(false);
+	if (GetGameInstance()) GetGameInstance()->GetSubsystem<UProgressSaveSubsystem>()->ApplyCheckpointState(this);
 	RefreshTerminalVisuals();
 }
 
@@ -97,18 +92,22 @@ void APlayerCheckpoint::OnRep_VisualState()
 
 void APlayerCheckpoint::RefreshTerminalVisuals()
 {
+	InteractionOutline->SetStaticMesh(TerminalBody->GetStaticMesh());
+	for (int32 Index = 0; Index < InteractionOutline->GetNumMaterials(); ++Index)
+		InteractionOutline->SetMaterial(Index, InteractionOutlineMaterial);
 	bCheckpointActivated = CheckpointVisualState != ECheckpointVisualState::Inactive;
 	const FCheckpointSignalMaterials& Set = CheckpointVisualState == ECheckpointVisualState::Current ? CurrentMaterials
 		: (CheckpointVisualState == ECheckpointVisualState::Visited ? VisitedMaterials : InactiveMaterials);
-	TerminalBody->SetMaterialByName(TEXT("Screen"), Set.Screen);
-	TerminalBody->SetMaterialByName(TEXT("Ring"), Set.Ring);
-	TerminalBody->SetMaterialByName(TEXT("Core"), Set.Core);
-	TerminalBody->SetMaterialByName(TEXT("Beacon"), Set.Beacon);
-	TerminalBody->SetMaterialByName(TEXT("BeaconBand"), Set.BeaconBand);
+	if (Set.Screen) TerminalBody->SetMaterialByName(TEXT("Screen"), Set.Screen);
+	if (Set.Ring) TerminalBody->SetMaterialByName(TEXT("Ring"), Set.Ring);
+	if (Set.Core) TerminalBody->SetMaterialByName(TEXT("Core"), Set.Core);
+	if (Set.Beacon) TerminalBody->SetMaterialByName(TEXT("Beacon"), Set.Beacon);
+	if (Set.BeaconBand) TerminalBody->SetMaterialByName(TEXT("BeaconBand"), Set.BeaconBand);
 }
 
 bool APlayerCheckpoint::ActivateCheckpoint(APlayerBase* Player)
 {
+	if (GetGameInstance() && GetGameInstance()->GetSubsystem<UProgressSaveSubsystem>()->IsRestoringProgress()) return false;
 	if (!HasAuthority() || !IsValid(Player) || Player->GetWorld() != GetWorld() || !Player->IsPlayerControlled()) return false;
 	if (!Player->SetCheckpoint(RespawnPoint->GetComponentTransform())) return false;
 	// The shared world display has one current respawn beacon; earlier visits stay blue.
@@ -119,12 +118,54 @@ bool APlayerCheckpoint::ActivateCheckpoint(APlayerBase* Player)
 	}
 	SetCheckpointVisualState(ECheckpointVisualState::Current);
 	OnCheckpointActivated.Broadcast(Player);
+	if (UGameInstance* Instance = GetGameInstance())
+		Instance->GetSubsystem<UProgressSaveSubsystem>()->SaveCheckpoint(Player, this);
 	return true;
+}
+
+FGuid APlayerCheckpoint::GetPersistentId() const
+{
+	if (PersistentId.IsValid()) return PersistentId;
+	// Placed actor paths are stable across sessions. Strip the editor's PIE prefix.
+	FGuid Result;
+	FGuid::ParseExact(FMD5::HashAnsiString(*UWorld::RemovePIEPrefix(GetPathName())), EGuidFormats::Digits, Result);
+	return Result;
 }
 
 void APlayerCheckpoint::OnTriggerOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor,
 	UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
 {
 	APlayerBase* Player = Cast<APlayerBase>(OtherActor);
-	if (Player && OtherComp == Player->GetCapsuleComponent()) ActivateCheckpoint(Player);
+	if (Player && OtherComp == Player->GetCapsuleComponent())
+	{
+		if (Player->IsLocallyControlled())
+		{
+			TouchingPlayers.Add(Player);
+			SetInteractionHighlight(true);
+		}
+		ActivateCheckpoint(Player);
+	}
+}
+
+void APlayerCheckpoint::OnTriggerEndOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor,
+	UPrimitiveComponent* OtherComp, int32 OtherBodyIndex)
+{
+	APlayerBase* Player = Cast<APlayerBase>(OtherActor);
+	if (!Player || OtherComp != Player->GetCapsuleComponent()) return;
+	TouchingPlayers.Remove(Player);
+	bool bTouching = false;
+	for (const TWeakObjectPtr<APlayerBase>& TouchingPlayer : TouchingPlayers)
+		bTouching |= TouchingPlayer.IsValid() && TouchingPlayer->IsLocallyControlled();
+	SetInteractionHighlight(bTouching);
+}
+
+void APlayerCheckpoint::SetInteractionHighlight(bool bVisible)
+{
+	InteractionOutline->SetVisibility(bVisible && InteractionOutlineMaterial && TerminalBody->GetStaticMesh());
+	for (int32 Index = 0; Index < InteractionOutline->GetNumMaterials(); ++Index)
+	{
+		UMaterialInstanceDynamic* Material = Cast<UMaterialInstanceDynamic>(InteractionOutline->GetMaterial(Index));
+		if (!Material) Material = InteractionOutline->CreateDynamicMaterialInstance(Index);
+		if (Material) Material->SetScalarParameterValue(TEXT("InteractionGlow"), bVisible ? 1.f : 0.f);
+	}
 }

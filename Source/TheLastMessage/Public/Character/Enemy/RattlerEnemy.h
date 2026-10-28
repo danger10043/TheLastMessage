@@ -5,6 +5,7 @@
 #include "RattlerEnemy.generated.h"
 
 class UNiagaraSystem;
+class USoundBase;
 
 /** 덩치봇 1: 땅을 기어다니며 원거리 연발 공격 */
 UCLASS()
@@ -42,6 +43,10 @@ protected:
 
 	/** 연발 종료 후 다음 공격까지 대기 시간(초) */
 	float BurstCooldown = 1.5f;
+
+	/** 발사할 때 재생할 소리. 총구 위치에서 재생된다. 비워 두면 재생하지 않는다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Rattler|Sound")
+	TObjectPtr<USoundBase> FireSound;
 
 	/** 총구 화염 이펙트 (한 발마다 재생) */
 	UPROPERTY(EditDefaultsOnly, Category = "Rattler|Effects")

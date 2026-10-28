@@ -1,7 +1,6 @@
 #include "Gimmick/FactoryVentFan.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
-#include "UObject/ConstructorHelpers.h"
 
 AFactoryVentFan::AFactoryVentFan()
 {
@@ -9,16 +8,10 @@ AFactoryVentFan::AFactoryVentFan()
     SetRootComponent(CreateDefaultSubobject<USceneComponent>(TEXT("Root")));
     Rotor = CreateDefaultSubobject<USceneComponent>(TEXT("Rotor"));
     Rotor->SetupAttachment(RootComponent);
-    static ConstructorHelpers::FObjectFinder<UStaticMesh> HousingAsset(TEXT("/Game/Test_Jihong/Gimmicks/VentFan/SM_VentHousing.SM_VentHousing"));
-    static ConstructorHelpers::FObjectFinder<UStaticMesh> RotorAsset(TEXT("/Game/Test_Jihong/Gimmicks/VentFan/SM_VentRotor.SM_VentRotor"));
-    static ConstructorHelpers::FObjectFinder<UStaticMesh> DetailAsset(TEXT("/Game/Test_Jihong/Gimmicks/VentFan/SM_VentDetails.SM_VentDetails"));
-    static ConstructorHelpers::FObjectFinder<UStaticMesh> SupportAsset(TEXT("/Game/_ExternalAssets/SciFiFactory/Meshes/SM_Column_B.SM_Column_B"));
-    static ConstructorHelpers::FObjectFinder<UStaticMesh> LampAsset(TEXT("/Game/_ExternalAssets/SciFiFactory/Meshes/SM_Lamp.SM_Lamp"));
-    auto Part = [&](FName Name, USceneComponent* Parent, UStaticMesh* Mesh, FVector Location, FVector Scale, FRotator Rotation, bool bSolid)
+    auto Part = [&](FName Name, USceneComponent* Parent, FVector Location, FVector Scale, FRotator Rotation, bool bSolid)
     {
         UStaticMeshComponent* Component = CreateDefaultSubobject<UStaticMeshComponent>(Name);
         Component->SetupAttachment(Parent);
-        Component->SetStaticMesh(Mesh);
         Component->SetRelativeLocation(Location);
         Component->SetRelativeScale3D(Scale);
         Component->SetRelativeRotation(Rotation);
@@ -26,15 +19,30 @@ AFactoryVentFan::AFactoryVentFan()
         Component->SetCollisionProfileName(bSolid ? TEXT("BlockAll") : TEXT("NoCollision"));
         Component->SetGenerateOverlapEvents(false);
     };
-    Part(TEXT("Housing"), RootComponent, HousingAsset.Object, FVector::ZeroVector, FVector::OneVector, FRotator::ZeroRotator, true);
-    Part(TEXT("FanBlades"), Rotor, RotorAsset.Object, FVector::ZeroVector, FVector::OneVector, FRotator::ZeroRotator, false);
-    Part(TEXT("MotorDetails"), RootComponent, DetailAsset.Object, FVector::ZeroVector, FVector::OneVector, FRotator::ZeroRotator, false);
+    Part(TEXT("Housing"), RootComponent, FVector::ZeroVector, FVector::OneVector, FRotator::ZeroRotator, true);
+    Part(TEXT("FanBlades"), Rotor, FVector::ZeroVector, FVector::OneVector, FRotator::ZeroRotator, false);
+    Part(TEXT("MotorDetails"), RootComponent, FVector::ZeroVector, FVector::OneVector, FRotator::ZeroRotator, false);
     for (int32 Side = -1; Side <= 1; Side += 2)
     {
-        Part(*FString::Printf(TEXT("FactoryMount%d"), Side), RootComponent, SupportAsset.Object,
+        Part(*FString::Printf(TEXT("FactoryMount%d"), Side), RootComponent,
             FVector(Side * 135, 27, -160), FVector(.32, .32, .4), FRotator::ZeroRotator, true);
-        Part(*FString::Printf(TEXT("FactoryLamp%d"), Side), RootComponent, LampAsset.Object,
+        Part(*FString::Printf(TEXT("FactoryLamp%d"), Side), RootComponent,
             FVector(Side * 155, -30, 0), FVector(.3, .16, .3), FRotator(0, -90, 90), false);
+    }
+}
+
+void AFactoryVentFan::OnConstruction(const FTransform& Transform)
+{
+    Super::OnConstruction(Transform);
+    TInlineComponentArray<UStaticMeshComponent*> Parts(this);
+    for (UStaticMeshComponent* Part : Parts)
+    {
+        const FString Name = Part->GetName();
+        if (Name == TEXT("Housing")) Part->SetStaticMesh(HousingMesh);
+        else if (Name == TEXT("FanBlades")) Part->SetStaticMesh(BladesMesh);
+        else if (Name == TEXT("MotorDetails")) Part->SetStaticMesh(MotorMesh);
+        else if (Name.StartsWith(TEXT("FactoryMount"))) Part->SetStaticMesh(MountMesh);
+        else if (Name.StartsWith(TEXT("FactoryLamp"))) Part->SetStaticMesh(LampMesh);
     }
 }
 

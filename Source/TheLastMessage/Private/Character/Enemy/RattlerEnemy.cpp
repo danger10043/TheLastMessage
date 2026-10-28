@@ -1,5 +1,7 @@
 #include "Character/Enemy/RattlerEnemy.h"
 #include "TimerManager.h"
+#include "Kismet/GameplayStatics.h"
+#include "Sound/SoundBase.h"
 
 ARattlerEnemy::ARattlerEnemy()
 {
@@ -80,6 +82,11 @@ void ARattlerEnemy::FireOnce()
 
 	SpawnEnemyProjectile(ProjectileConfig, Muzzle, LockedAimDirection);
 	SpawnEffectAtSocket(MuzzleFlashEffect, MuzzleSocketName, MuzzleOffset, FlashRotation);
+
+	if (FireSound)
+	{
+		UGameplayStatics::PlaySoundAtLocation(this, FireSound, Muzzle);
+	}
 
 	--RemainingBurst;
 	if (RemainingBurst <= 0)

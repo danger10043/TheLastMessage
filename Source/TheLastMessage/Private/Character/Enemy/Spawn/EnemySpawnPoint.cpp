@@ -264,6 +264,18 @@ void AEnemySpawnPoint::ResetSpawn()
 	}
 }
 
+void AEnemySpawnPoint::ResetForPlayerRespawn()
+{
+	DespawnEnemies();
+	bResetArmed = false;
+
+	// 거리 기반이 아닌 구역은 서브시스템이 다시 스폰해 주지 않으므로 여기서 새로 스폰한다.
+	if (!bStreamByDistance)
+	{
+		SpawnEnemies();
+	}
+}
+
 int32 AEnemySpawnPoint::GetAliveEnemyCount() const
 {
 	int32 Alive = 0;

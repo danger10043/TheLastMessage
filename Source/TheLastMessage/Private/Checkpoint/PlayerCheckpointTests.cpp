@@ -7,8 +7,10 @@
 #include "GAS/WeaponGameplayTags.h"
 #include "Components/SceneComponent.h"
 #include "Components/BoxComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
+#include "Engine/LocalPlayer.h"
 #include "GameFramework/WorldSettings.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerState.h"
@@ -31,6 +33,7 @@ bool FPlayerCheckpointTest::RunTest(const FString& Parameters)
 	World->GetWorldSettings()->NotifyBeginPlay();
 	APlayerBase* Player = World->SpawnActor<APlayerBase>();
 	APlayerController* Controller = World->SpawnActor<APlayerController>();
+	Controller->SetPlayer(NewObject<ULocalPlayer>(GEngine));
 	Controller->Possess(Player);
 	Player->SetPlayerState(World->SpawnActor<APlayerState>());
 	UCombatAttributeSet* Stats = Player->GetCombatAttributes();
@@ -63,13 +66,16 @@ bool FPlayerCheckpointTest::RunTest(const FString& Parameters)
 
 	const FVector Saved(1000, 0, 200);
 	APlayerCheckpoint* Checkpoint = World->SpawnActor<APlayerCheckpoint>(Saved, FRotator::ZeroRotator);
-	// Exercise the real capsule overlap path, not only the callable activation API.
+	TestFalse(TEXT("Outline hidden before contact"), Checkpoint->InteractionOutline->IsVisible());
 	Player->SetActorLocation(Saved);
+	TestTrue(TEXT("Contact activates checkpoint"), Checkpoint->CheckpointVisualState == ECheckpointVisualState::Current);
+	TestTrue(TEXT("Outline visible during contact"), Checkpoint->InteractionOutline->IsVisible());
 	Player->SetActorLocation(FVector(1500, 0, 200));
+	TestFalse(TEXT("Outline hidden after leaving"), Checkpoint->InteractionOutline->IsVisible());
 	Player->HandleDeath();
 	TestFalse(TEXT("Dead players cannot change checkpoint"), Player->SetCheckpoint(FTransform::Identity));
 	TestTrue(TEXT("Checkpoint respawn succeeds"), Player->RespawnAtCheckpoint());
-	TestTrue(TEXT("Overlap saved checkpoint location"), Player->GetActorLocation().Equals(Saved, 1));
+	TestTrue(TEXT("Contact saved checkpoint location"), Player->GetActorLocation().Equals(Saved, 1));
 	TestFalse(TEXT("Cannot respawn twice while alive"), Player->RespawnAtCheckpoint());
 
 	Checkpoint->SetActorLocation(FVector(2000, 0, 200));

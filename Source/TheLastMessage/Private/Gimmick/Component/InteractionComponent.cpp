@@ -30,7 +30,7 @@ void UInteractionComponent::RequestInteract()
     AActor* OwnerActor = GetOwner();
     APlayerBase* Player = Cast<APlayerBase>(OwnerActor);
 
-    if (!IsValid(Player) || Player->IsDead() || Player->IsHitReacting())
+    if (!IsValid(Player) || Player->IsDead() || Player->IsHitReacting() || Player->IsCarryTransitionActive())
     {
         return;
     }

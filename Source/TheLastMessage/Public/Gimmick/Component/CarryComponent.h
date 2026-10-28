@@ -52,6 +52,7 @@ public:
     FOnCarriedObjectChanged OnCarriedObjectChanged;
 
 protected:
+    virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
     virtual void BeginPlay() override;
 
     virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -68,6 +69,20 @@ protected:
     FActiveGameplayEffectHandle ActiveCarryEffectHandle;
 
 private:
+    bool CommitPickUp(ACarryableGimmick* Target);
+    void CompletePendingPickup();
+    void CompleteDrop();
+    void CancelPendingPickup();
+    bool FindGroundDropTransform(ACarryableGimmick* Target, FTransform& OutTransform) const;
+    enum class ECarryMotion : uint8 { None, Lift, Lower };
+    ECarryMotion CarryMotion = ECarryMotion::None;
+    UPROPERTY(Transient)
+    TWeakObjectPtr<ACarryableGimmick> PendingPickup;
+    FTimerHandle CarryContactTimer;
+    FTransform MotionStartRelativeTransform;
+    FTransform MotionEndRelativeTransform;
+    float MotionElapsed = 0.0f;
+    float MotionDuration = 0.0f;
     void CacheOwner();
 
     void RestoreObjectState(ACarryableGimmick* Target, bool bRestorePhysics);

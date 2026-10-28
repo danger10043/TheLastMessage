@@ -16,12 +16,14 @@
 #include "Map/AreaMapComponent.h"
 #include "UI/AreaMapWidget.h"
 #include "Character/Player/PlayerBase.h"
-#include "UObject/ConstructorHelpers.h"
+#include "Save/ProgressSaveSubsystem.h"
+#include "Engine/GameInstance.h"
+#include "InputCoreTypes.h"
+#include "Kismet/KismetSystemLibrary.h"
+#include "Misc/PackageName.h"
 
 ASideScrollingPlayerController::ASideScrollingPlayerController()
 {
-	static ConstructorHelpers::FObjectFinder<UInputAction> Action(TEXT("/Game/Main/Inputs/Actions/IA_Map.IA_Map"));
-	MapAction = Action.Object;
 	MapWidgetClass = UAreaMapWidget::StaticClass();
 }
 
@@ -38,6 +40,9 @@ void ASideScrollingPlayerController::ToggleAreaMap()
 
 void ASideScrollingPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	bWaitingForPauseSave = false;
+	ClosePauseMenu();
+	if (GetGameInstance()) GetGameInstance()->GetSubsystem<UProgressSaveSubsystem>()->OnSaveFinished.RemoveDynamic(this, &ASideScrollingPlayerController::PauseSaveFinished);
 	if (AreaMapWidget) AreaMapWidget->CloseMap();
 	AreaMapWidget=nullptr;
 	Super::EndPlay(EndPlayReason);
@@ -59,8 +64,11 @@ void ASideScrollingPlayerController::BeginPlay()
 void ASideScrollingPlayerController::SetupInputComponent()
 {
 	Super::SetupInputComponent();
-	if (UEnhancedInputComponent* Inputs = Cast<UEnhancedInputComponent>(InputComponent); Inputs && MapAction)
-		Inputs->BindAction(MapAction,ETriggerEvent::Started,this,&ASideScrollingPlayerController::ToggleAreaMap);
+	if (UEnhancedInputComponent* Inputs = Cast<UEnhancedInputComponent>(InputComponent))
+	{
+		if (MapAction) Inputs->BindAction(MapAction,ETriggerEvent::Started,this,&ASideScrollingPlayerController::ToggleAreaMap);
+		if (PauseMenuAction) Inputs->BindAction(PauseMenuAction,ETriggerEvent::Started,this,&ASideScrollingPlayerController::TogglePauseMenu);
+	}
 
 	// only add IMCs for local player controllers
 	if (IsLocalPlayerController())
@@ -101,6 +109,99 @@ void ASideScrollingPlayerController::SetupInputComponent()
 
 		}
 
+	}
+}
+
+void ASideScrollingPlayerController::TogglePauseMenu()
+{
+	if (PauseMenuWidget && PauseMenuWidget->IsInViewport()) { HandlePauseAction(EPauseMenuAction::Resume); return; }
+	if (!IsLocalController() || !GetPawn() || !GetGameInstance() || GetWorld()->GetNetMode() != NM_Standalone
+		|| UGameplayStatics::IsGamePaused(this)) return;
+	if (APlayerBase* InGamePlayer = Cast<APlayerBase>(GetPawn())) InGamePlayer->CancelWeaponInputsForUI();
+	UClass* MenuClass = PauseMenuClass.LoadSynchronous();
+	PauseMenuWidget = CreateWidget<UPauseMenuWidget>(this, MenuClass ? MenuClass : UPauseMenuWidget::StaticClass());
+	if (PauseMenuWidget) PauseMenuWidget->SetPauseInputAction(PauseMenuAction);
+	if (!PauseMenuWidget || !PauseMenuWidget->AddToPlayerScreen(200)) { PauseMenuWidget = nullptr; return; }
+	bPausedByMenu = SetPause(true);
+	if (!bPausedByMenu) { PauseMenuWidget->RemoveFromParent(); PauseMenuWidget = nullptr; return; }
+	bPausePreviousCursor = bShowMouseCursor;
+	UProgressSaveSubsystem* Saves = GetGameInstance()->GetSubsystem<UProgressSaveSubsystem>();
+	PauseMenuWidget->OnActionRequested.AddUniqueDynamic(this, &ASideScrollingPlayerController::HandlePauseAction);
+	PauseMenuWidget->OnMenuRemoved.AddUniqueDynamic(this, &ASideScrollingPlayerController::PauseMenuRemoved);
+	PauseMenuWidget->SetCheckpointAvailable(Saves->GetSlotInfo(Saves->GetActiveSlot()).bHasCheckpoint || Saves->IsSaving());
+	Saves->OnSaveFinished.AddUniqueDynamic(this, &ASideScrollingPlayerController::PauseSaveFinished);
+	FInputModeUIOnly Input; Input.SetWidgetToFocus(PauseMenuWidget->TakeWidget());
+	Input.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	SetInputMode(Input); SetShowMouseCursor(true); FlushPressedKeys(); PauseMenuWidget->SetKeyboardFocus();
+}
+
+void ASideScrollingPlayerController::ClosePauseMenu()
+{
+	if (!PauseMenuWidget || bWaitingForPauseSave) return;
+	UPauseMenuWidget* ClosingWidget = PauseMenuWidget;
+	PauseMenuWidget = nullptr;
+	ClosingWidget->OnMenuRemoved.RemoveDynamic(this, &ASideScrollingPlayerController::PauseMenuRemoved);
+	ClosingWidget->OnActionRequested.RemoveDynamic(this, &ASideScrollingPlayerController::HandlePauseAction);
+	ClosingWidget->RemoveFromParent();
+	if (GetWorld() && !GetWorld()->bIsTearingDown)
+	{
+		FInputModeGameAndUI Input; Input.SetHideCursorDuringCapture(false);
+		Input.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+		SetInputMode(Input); SetShowMouseCursor(bPausePreviousCursor); FlushPressedKeys();
+		if (bPausedByMenu) SetPause(false);
+	}
+	bPausedByMenu = false;
+}
+
+void ASideScrollingPlayerController::PauseMenuRemoved()
+{
+	bWaitingForPauseSave = false;
+	ClosePauseMenu();
+}
+
+void ASideScrollingPlayerController::HandlePauseAction(EPauseMenuAction Action)
+{
+	if (!PauseMenuWidget || bWaitingForPauseSave) return;
+	UProgressSaveSubsystem* Saves = GetGameInstance()->GetSubsystem<UProgressSaveSubsystem>();
+	if (Action != EPauseMenuAction::Resume && Saves->IsSaving())
+	{
+		bWaitingForPauseSave = true; PendingPauseAction = Action; PauseMenuWidget->SetBusy(true); return;
+	}
+	ExecutePauseAction(Action);
+}
+
+void ASideScrollingPlayerController::PauseSaveFinished(bool bSuccess)
+{
+	if (!PauseMenuWidget) return;
+	UProgressSaveSubsystem* Saves = GetGameInstance()->GetSubsystem<UProgressSaveSubsystem>();
+	if (Saves->IsSaving()) return; // A second checkpoint snapshot may still be queued.
+	PauseMenuWidget->SetCheckpointAvailable(Saves->GetSlotInfo(Saves->GetActiveSlot()).bHasCheckpoint);
+	if (!bWaitingForPauseSave) return;
+	bWaitingForPauseSave = false;
+	if (!bSuccess) { PauseMenuWidget->ShowError(NSLOCTEXT("Pause", "SaveFailed", "저장에 실패했습니다. 이동을 취소했습니다.")); return; }
+	PauseMenuWidget->SetBusy(false); ExecutePauseAction(PendingPauseAction);
+}
+
+void ASideScrollingPlayerController::ExecutePauseAction(EPauseMenuAction Action)
+{
+	if (Action == EPauseMenuAction::Resume) { ClosePauseMenu(); return; }
+	UProgressSaveSubsystem* Saves = GetGameInstance()->GetSubsystem<UProgressSaveSubsystem>();
+	if (Action == EPauseMenuAction::ReloadCheckpoint)
+	{
+		if (!Saves->ReloadActiveProgress()) { PauseMenuWidget->ShowError(NSLOCTEXT("Pause", "LoadFailed", "체크포인트를 불러오지 못했습니다.")); return; }
+		const FString Map = Saves->GetWorkingProgress()->MapPackage;
+		ClosePauseMenu(); UGameplayStatics::OpenLevel(this, FName(*Map)); return;
+	}
+	if (Action == EPauseMenuAction::MainMenu)
+	{
+		const FString Map = MainMenuMap.ToSoftObjectPath().GetLongPackageName();
+		if (!FPackageName::DoesPackageExist(Map)) { PauseMenuWidget->ShowError(NSLOCTEXT("Pause", "MissingMenu", "시작 화면을 열지 못했습니다.")); return; }
+		if (!Saves->EndSession()) return;
+		ClosePauseMenu(); UGameplayStatics::OpenLevel(this, FName(*Map)); return;
+	}
+	if (Action == EPauseMenuAction::QuitGame)
+	{
+		ClosePauseMenu(); UKismetSystemLibrary::QuitGame(this, this, EQuitPreference::Quit, false);
 	}
 }
 

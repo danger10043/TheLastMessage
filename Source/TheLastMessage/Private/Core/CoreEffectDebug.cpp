@@ -195,8 +195,8 @@ FAutoConsoleCommandWithWorldAndArgs GiveCommand(TEXT("tlm.CoreGive"), TEXT("Acqu
 		APlayerBase* Player = GetPlayer(World);
 		int32 Number = 0;
 		if (!Player || !Player->HasAuthority() || Args.Num() != 1 || !LexTryParseString(Number, *Args[0]) || Number < 2 || Number > 11) return;
-		const TCHAR* Names[] = {TEXT("ImpactDispersionArmor"), TEXT("OverloadOutput"), TEXT("MeleeAmplifier"), TEXT("StableOutputCircuit"), TEXT("EmergencyOutputCircuit"), TEXT("PrecisionAimingCircuit"), TEXT("HighSpeedDrive"), TEXT("ChargeAccelerationCircuit"), TEXT("EfficientDischargeCircuit"), TEXT("FastRechargeCircuit")};
-		UCoreDataAsset* Data = LoadObject<UCoreDataAsset>(nullptr, *FString::Printf(TEXT("/Game/Test_Jihun/Core/Stat/DataAsset/DA_Core_%s.DA_Core_%s"), Names[Number - 2], Names[Number - 2]));
+		const TObjectPtr<UCoreDataAsset>* Configured = Player->GetCoreComponent()->DebugCoreAssets.Find(Number);
+		UCoreDataAsset* Data = Configured ? Configured->Get() : nullptr;
 		Enable(World);
 		const ECoreAcquireResult Result = Data ? Player->GetCoreComponent()->AcquireCore(Data) : ECoreAcquireResult::InvalidData;
 		Message(FString::Printf(TEXT("%d %s: %s (Lv.%d)"), Number, Data ? *Data->CoreName.ToString() : TEXT("missing DA"), *UEnum::GetValueAsString(Result), Data ? Player->GetCoreComponent()->GetCoreLevel(Data->CoreId) : 0));

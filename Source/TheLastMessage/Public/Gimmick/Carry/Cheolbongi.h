@@ -14,5 +14,8 @@ UCLASS(Blueprintable)
 class THELASTMESSAGE_API ACheolbongi : public ACarryableGimmick
 {
 	GENERATED_BODY()
+
+public:
+    virtual bool UsesWideCarryPose() const override { return true; }
 	
 };

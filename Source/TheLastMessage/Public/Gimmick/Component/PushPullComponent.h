@@ -78,4 +78,5 @@ private:
     float AppliedMaxWalkSpeed = 0.0f;
 
     bool bHasWalkSpeedOverride = false;
+    bool bOriginalOrientToMovement = false;
 };

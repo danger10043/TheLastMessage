@@ -166,6 +166,9 @@ void APushPullGimmick::BeginPlay()
         return;
     }
 
+    // 무게 발판 등이 이 물체의 진입과 이탈을 감지하도록 설정
+    PhysicsMesh->SetGenerateOverlapEvents(true);
+
     PhysicsMesh->SetEnableGravity(true);
     PhysicsMesh->SetSimulatePhysics(true);
 

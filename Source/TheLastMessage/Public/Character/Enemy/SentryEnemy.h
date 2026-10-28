@@ -6,6 +6,8 @@
 
 class UNiagaraSystem;
 class UNiagaraComponent;
+class USoundBase;
+class UAudioComponent;
 
 /** 에너지포 봇: 이동 없이 고정된 채 조준 → 충전 → 발사를 반복하는 포탑. 느리고 강력한 원거리 공격. */
 UCLASS()
@@ -93,6 +95,14 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Sentry|Effects")
 	TObjectPtr<UNiagaraSystem> ChargeEffect;
 
+	/** 충전을 시작할 때 재생할 소리. 발사하거나 공격이 취소되면 바로 멈춘다. 비워 두면 재생하지 않는다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Sentry|Sound")
+	TObjectPtr<USoundBase> ChargeSound;
+
+	/** 발사할 때 재생할 소리. 총구 위치에서 재생된다. 비워 두면 재생하지 않는다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Sentry|Sound")
+	TObjectPtr<USoundBase> FireSound;
+
 	/** 발사 순간 총구에서 재생될 화염 이펙트 */
 	UPROPERTY(EditDefaultsOnly, Category = "Sentry|Effects")
 	TObjectPtr<UNiagaraSystem> MuzzleFlashEffect;
@@ -108,6 +118,10 @@ private:
 
 	UPROPERTY()
 	TObjectPtr<UNiagaraComponent> ChargeEffectComponent;
+
+	/** 재생 중인 충전 소리(취소·발사 때 멈추기 위해 들고 있는다) */
+	UPROPERTY(Transient)
+	TObjectPtr<UAudioComponent> ChargeAudio;
 
 	FTimerHandle ChargeTimerHandle;
 };

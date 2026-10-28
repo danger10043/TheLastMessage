@@ -1,10 +1,16 @@
 #include "Character/Enemy/JuggernautEnemy.h"
 #include "Character/Enemy/EnemyAIController.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
+#include "Materials/MaterialInterface.h"
+#include "Components/AudioComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Engine/OverlapResult.h"
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Pawn.h"
+#include "Kismet/GameplayStatics.h"
+#include "Sound/SoundBase.h"
 #include "TimerManager.h"
 
 AJuggernautEnemy::AJuggernautEnemy()
@@ -28,6 +34,20 @@ AJuggernautEnemy::AJuggernautEnemy()
 
 	// 낭떠러지에서 멈추지 않고 그대로 떨어지게 한다.
 	GetCharacterMovement()->bCanWalkOffLedges = true;
+
+	// 돌진 예고 띠: 월드 좌표에 놓는 평면. 몬스터가 움직이거나 회전해도 따라가지 않는다.
+	TelegraphMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("TelegraphMesh"));
+	TelegraphMesh->SetupAttachment(GetRootComponent());
+	TelegraphMesh->SetUsingAbsoluteLocation(true);
+	TelegraphMesh->SetUsingAbsoluteRotation(true);
+	TelegraphMesh->SetUsingAbsoluteScale(true);
+	TelegraphMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	TelegraphMesh->SetGenerateOverlapEvents(false);
+	TelegraphMesh->SetCanEverAffectNavigation(false);
+	TelegraphMesh->SetCastShadow(false);
+	TelegraphMesh->bReceivesDecals = false;
+	TelegraphMesh->SetVisibility(false);
+
 }
 
 void AJuggernautEnemy::ApplyEnemyData(const UEnemyDataAsset* Data)
@@ -54,6 +74,9 @@ void AJuggernautEnemy::ApplyEnemyData(const UEnemyDataAsset* Data)
 	KnockbackHorizontal = S.KnockbackHorizontal;
 	KnockbackUp = S.KnockbackUp;
 	RangedDamageMultiplier = S.RangedDamageMultiplier;
+	TelegraphHeightPadding = S.TelegraphHeightPadding;
+	TelegraphBlinkDuration = S.TelegraphBlinkDuration;
+	TelegraphBlinkInterval = S.TelegraphBlinkInterval;
 }
 
 void AJuggernautEnemy::BeginPlay()
@@ -61,6 +84,11 @@ void AJuggernautEnemy::BeginPlay()
 	Super::BeginPlay();
 
 	DefaultMaxAcceleration = GetCharacterMovement()->MaxAcceleration;
+
+	if (TelegraphMesh && TelegraphMaterial)
+	{
+		TelegraphMesh->SetMaterial(0, TelegraphMaterial);
+	}
 }
 
 void AJuggernautEnemy::StartAttack()
@@ -75,9 +103,20 @@ void AJuggernautEnemy::StartAttack()
 	// 돌진이 끝날 때까지 BT가 추격 이동으로 끼어들지 않게 한다.
 	PauseAI();
 
+	// 돌진 방향은 윈드업이 시작될 때 정한다. 예고 띠가 흔들리지 않고, 플레이어는 띠를 보고 피할 수 있다.
 	FaceTarget();
+	ChargeDirection = ComputeChargeDirection();
+	SetActorRotation(ChargeDirection.Rotation());
+
 	PlayAttackMontage();
 	SpawnEffectAtLocation(WindupEffect, GetActorLocation());
+
+	if (ChargeSound)
+	{
+		ChargeAudio = UGameplayStatics::SpawnSoundAtLocation(this, ChargeSound, GetActorLocation());
+	}
+
+	ShowTelegraph();
 
 	GetWorldTimerManager().SetTimer(WindupTimerHandle, this, &AJuggernautEnemy::BeginCharge, ChargeWindup, false);
 }
@@ -89,25 +128,10 @@ void AJuggernautEnemy::BeginCharge()
 		return;
 	}
 
-	// 방향은 돌진이 시작되는 이 순간에 정한다. 이후에는 플레이어를 따라가지 않는다.
-	FaceTarget();
-
-	FVector Direction = FVector::ForwardVector;
-	if (const AActor* Target = GetCurrentTarget())
-	{
-		const float DeltaX = Target->GetActorLocation().X - GetActorLocation().X;
-		if (!FMath::IsNearlyZero(DeltaX))
-		{
-			Direction = FVector(FMath::Sign(DeltaX), 0.f, 0.f);
-		}
-		else if (GetActorForwardVector().X < 0.f)
-		{
-			Direction = -FVector::ForwardVector;
-		}
-	}
-
-	ChargeDirection = Direction;
-	SetActorRotation(Direction.Rotation());
+	// 방향은 윈드업이 시작될 때 정해 둔 값(ChargeDirection)을 쓴다. 플레이어를 따라가지 않는다.
+	HideTelegraph();
+	StopChargeSound(); // 돌진이 시작되면 차지 소리를 끊는다.
+	SetActorRotation(ChargeDirection.Rotation());
 
 	UCharacterMovementComponent* Movement = GetCharacterMovement();
 	Movement->MaxWalkSpeed = ChargeSpeed;
@@ -129,9 +153,135 @@ void AJuggernautEnemy::BeginCharge()
 	SetActorTickEnabled(true);
 }
 
+FVector AJuggernautEnemy::ComputeChargeDirection() const
+{
+	FVector Direction = FVector::ForwardVector;
+	if (const AActor* Target = GetCurrentTarget())
+	{
+		const float DeltaX = Target->GetActorLocation().X - GetActorLocation().X;
+		if (!FMath::IsNearlyZero(DeltaX))
+		{
+			Direction = FVector(FMath::Sign(DeltaX), 0.f, 0.f);
+		}
+		else if (GetActorForwardVector().X < 0.f)
+		{
+			Direction = -FVector::ForwardVector;
+		}
+	}
+	return Direction;
+}
+
+void AJuggernautEnemy::ShowTelegraph()
+{
+	UWorld* World = GetWorld();
+	if (!TelegraphMesh || !TelegraphMaterial || !World)
+	{
+		return;
+	}
+
+	const UCapsuleComponent* Capsule = GetCapsuleComponent();
+	const float Radius = Capsule->GetScaledCapsuleRadius();
+	const float HalfHeight = Capsule->GetScaledCapsuleHalfHeight();
+	const FVector Origin = GetActorLocation();
+
+	// 돌진 경로 앞에 막는 벽이 있으면 벽까지만 보여 준다. 실제 돌진도 벽에서 끝난다.
+	float Distance = ChargeMaxDistance;
+
+	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(JuggernautTelegraph), false, this);
+	FCollisionObjectQueryParams ObjectParams;
+	ObjectParams.AddObjectTypesToQuery(ECC_WorldStatic);
+	ObjectParams.AddObjectTypesToQuery(ECC_WorldDynamic);
+
+	// 바닥에 걸리지 않게 캡슐을 약간 줄여서 훑는다.
+	const FCollisionShape Shape = FCollisionShape::MakeCapsule(FMath::Max(Radius - 2.f, 1.f), FMath::Max(HalfHeight - 10.f, 1.f));
+
+	TArray<FHitResult> Hits;
+	World->SweepMultiByObjectType(Hits, Origin, Origin + ChargeDirection * ChargeMaxDistance, FQuat::Identity, ObjectParams, Shape, QueryParams);
+	for (const FHitResult& Hit : Hits)
+	{
+		// 트리거처럼 몸을 막지 않는 물체는 벽으로 보지 않는다.
+		const UPrimitiveComponent* HitComponent = Hit.GetComponent();
+		if (HitComponent && HitComponent->GetCollisionResponseToChannel(ECC_Pawn) == ECR_Block)
+		{
+			Distance = FMath::Min(Distance, Hit.Distance);
+			break;
+		}
+	}
+
+	// 띠는 몸 앞쪽 가장자리에서 시작해 벽 표면(또는 최대 돌진 거리 끝)까지 이어진다.
+	TelegraphStart = FVector(Origin.X + ChargeDirection.X * Radius, Origin.Y, Origin.Z);
+	TelegraphLength = FMath::Max(Distance, 1.f);
+	TelegraphHeight = HalfHeight * 2.f + TelegraphHeightPadding;
+	TelegraphElapsed = 0.f;
+	bTelegraphActive = true;
+
+	// 평면 메시를 카메라 쪽(Y 축)을 향해 세운다. 메시의 길이 방향이 월드 X, 높이 방향이 월드 Z가 된다.
+	TelegraphMesh->SetWorldRotation(FRotator(0.f, 0.f, 90.f));
+	TelegraphMesh->SetWorldLocation(TelegraphStart);
+	TelegraphMesh->SetWorldScale3D(FVector(0.01f, TelegraphHeight / 100.f, 1.f));
+	TelegraphMesh->SetVisibility(true);
+
+	// 윈드업 동안 띠를 늘리기 위해 틱을 켠다.
+	SetActorTickEnabled(true);
+}
+
+void AJuggernautEnemy::UpdateTelegraph(float DeltaTime)
+{
+	if (!TelegraphMesh)
+	{
+		return;
+	}
+
+	TelegraphElapsed += DeltaTime;
+
+	// 예고 시간은 윈드업 시간을 따른다. 앞부분은 띠를 늘리고, 마지막 Blink 구간은 끝까지 늘어난 채로 깜빡인다.
+	const float Windup = FMath::Max(ChargeWindup, 0.01f);
+	const float Blink = FMath::Clamp(TelegraphBlinkDuration, 0.f, Windup * 0.5f);
+	const float GrowTime = FMath::Max(Windup - Blink, 0.01f);
+
+	const float Alpha = FMath::Clamp(TelegraphElapsed / GrowTime, 0.f, 1.f);
+	const float Eased = 1.f - FMath::Square(1.f - Alpha); // 처음에 빠르게 뻗고 끝에서 느려진다.
+	const float Length = FMath::Max(TelegraphLength * Eased, 1.f);
+
+	TelegraphMesh->SetWorldLocation(TelegraphStart + ChargeDirection * (Length * 0.5f));
+	TelegraphMesh->SetWorldScale3D(FVector(Length / 100.f, TelegraphHeight / 100.f, 1.f));
+
+	bool bVisible = true;
+	const float BlinkStart = Windup - Blink;
+	if (Blink > 0.f && TelegraphElapsed >= BlinkStart)
+	{
+		const int32 Phase = FMath::FloorToInt((TelegraphElapsed - BlinkStart) / FMath::Max(TelegraphBlinkInterval, 0.01f));
+		bVisible = (Phase % 2) == 0;
+	}
+	TelegraphMesh->SetVisibility(bVisible);
+}
+
+void AJuggernautEnemy::StopChargeSound()
+{
+	if (ChargeAudio)
+	{
+		ChargeAudio->Stop();
+		ChargeAudio = nullptr;
+	}
+}
+
+void AJuggernautEnemy::HideTelegraph()
+{
+	bTelegraphActive = false;
+	if (TelegraphMesh)
+	{
+		TelegraphMesh->SetVisibility(false);
+	}
+}
+
 void AJuggernautEnemy::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+
+	if (bTelegraphActive)
+	{
+		UpdateTelegraph(DeltaTime);
+	}
 
 	if (!bCharging)
 	{
@@ -225,6 +375,10 @@ bool AJuggernautEnemy::TryHitPlayers()
 		}
 
 		SpawnEffectAtLocation(ImpactEffect, Actor->GetActorLocation());
+		if (ImpactSound)
+		{
+			UGameplayStatics::PlaySoundAtLocation(this, ImpactSound, Actor->GetActorLocation());
+		}
 	}
 
 	return bHitAny;
@@ -250,6 +404,10 @@ void AJuggernautEnemy::EndCharge(bool bHitWall)
 	{
 		const float Radius = GetCapsuleComponent()->GetScaledCapsuleRadius();
 		SpawnEffectAtLocation(ImpactEffect, GetActorLocation() + ChargeDirection * Radius);
+		if (ImpactSound)
+		{
+			UGameplayStatics::PlaySoundAtLocation(this, ImpactSound, GetActorLocation() + ChargeDirection * Radius);
+		}
 	}
 
 	const float Recovery = bHitWall ? WallStunTime : ChargeRecoveryTime;
@@ -283,6 +441,8 @@ void AJuggernautEnemy::CancelAttack()
 {
 	GetWorldTimerManager().ClearTimer(WindupTimerHandle);
 	GetWorldTimerManager().ClearTimer(RecoveryTimerHandle);
+	HideTelegraph();
+	StopChargeSound();
 	StopCharging();
 	ResumeAI();
 

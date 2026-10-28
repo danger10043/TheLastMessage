@@ -9,7 +9,6 @@
 #include "Weapon/WeaponImpactFeedback.h"
 #include "Character/Boss/BossMonster.h"
 #include "GAS/WeaponGameplayTags.h"
-#include "UObject/ConstructorHelpers.h"
 #include "Engine/StaticMesh.h"
 #include "DataAsset/WeaponDataAsset.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -20,7 +19,8 @@
 
 AProjectileBase::AProjectileBase()
 {
-	PrimaryActorTick.bCanEverTick = false;
+	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bStartWithTickEnabled = false;
 
 	InitialLifeSpan = 5.f;
 	bReplicates = true;
@@ -38,8 +38,6 @@ AProjectileBase::AProjectileBase()
 	ProjectileMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ProjectileMesh"));
 	ProjectileMesh->SetupAttachment(RootComponent);
 	ProjectileMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> Sphere(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
-	ProjectileMesh->SetStaticMesh(Sphere.Object);
 	ProjectileMesh->SetRelativeScale3D(FVector(0.45f, 0.12f, 0.12f));
 	ProjectileMesh->SetCastShadow(false);
 	FlightEffect = CreateDefaultSubobject<UNiagaraComponent>(TEXT("FlightEffect"));
@@ -57,6 +55,7 @@ AProjectileBase::AProjectileBase()
 void AProjectileBase::BeginPlay()
 {
 	Super::BeginPlay();
+	OnRep_InitialVisibility();
 	OnRep_VisualData();
 	if (!bUseWeaponVisualSettings)
 	{
@@ -81,6 +80,35 @@ void AProjectileBase::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutL
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(AProjectileBase, VisualData);
+	DOREPLIFETIME_CONDITION(AProjectileBase, VisualStartLocation, COND_InitialOnly);
+	DOREPLIFETIME_CONDITION(AProjectileBase, HiddenTravelDistance, COND_InitialOnly);
+}
+
+void AProjectileBase::ConfigureInitialVisibility(float TravelDistance)
+{
+	if (!HasAuthority()) return;
+	VisualStartLocation = GetActorLocation();
+	HiddenTravelDistance = FMath::IsFinite(TravelDistance) ? FMath::Max(0.0f, TravelDistance) : 0.0f;
+	OnRep_InitialVisibility();
+}
+
+void AProjectileBase::OnRep_InitialVisibility()
+{
+	const bool bHideVisuals = HiddenTravelDistance > 0.0f
+		&& FVector::DistSquared(GetActorLocation(), VisualStartLocation) < FMath::Square(HiddenTravelDistance);
+	const bool bWasVisible = CollisionComponent->IsVisible();
+	// Hide rendering only; movement and collision remain active, including for nearby targets.
+	CollisionComponent->SetVisibility(!bHideVisuals, true);
+	// Start the trail at the reveal position instead of exposing a trail back to the body.
+	if (bHideVisuals && FlightEffect->IsActive()) FlightEffect->DeactivateImmediate();
+	else if (!bHideVisuals && !bWasVisible && FlightEffect->GetAsset()) FlightEffect->Activate(true);
+	SetActorTickEnabled(bHideVisuals);
+}
+
+void AProjectileBase::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	OnRep_InitialVisibility();
 }
 
 void AProjectileBase::ConfigureVisuals(UWeaponDataAsset* Data)

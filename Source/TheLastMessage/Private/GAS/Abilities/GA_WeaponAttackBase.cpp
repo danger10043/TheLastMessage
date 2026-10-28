@@ -267,7 +267,7 @@ bool UGA_WeaponAttackBase::ResolveRangedSpawnLocation(APlayerBase* Player,
 	TSubclassOf<AProjectileBase> ProjectileClass, FVector& Location) const
 {
 	if (!IsValid(Player) || !ProjectileClass || !GetWorld()) return false;
-	Location = Player->GetWeaponMuzzleLocation(WeaponSlot);
+	Location = Player->GetActorLocation();
 	const float Radius = ProjectileClass->GetDefaultObject<AProjectileBase>()->GetProjectileCollisionRadius();
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(MuzzleObstruction), false, Player);
 	FHitResult Obstruction;
@@ -315,6 +315,10 @@ bool UGA_WeaponAttackBase::LaunchRangedProjectile(APlayerBase* Player, AProjecti
 	}
 	SourceWeapon->LastSuccessfulFireTime = GetWorld()->GetTimeSeconds();
 	Projectile->ConfigureVisuals(RangedAttack.WeaponData.Get());
+	const float MuzzleDistance = FVector::VectorPlaneProject(
+		Player->GetWeaponMuzzleLocation(WeaponSlot) - Transform.GetLocation(), FVector::YAxisVector).Size();
+	Projectile->ConfigureInitialVisibility(
+		MuzzleDistance * FMath::Max(0.0f, RangedAttack.WeaponData->ProjectileRevealDistanceMultiplier));
 	Projectile->FinishSpawning(Transform);
 	if (!CanContinueRangedAttack(Player))
 	{
@@ -400,7 +404,7 @@ void UGA_WeaponAttackBase::ExecuteAttack()
 			EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
 			return;
 		}
-		ShotDirection = (Player->GetAimTargetLocation() - SpawnLocation).GetSafeNormal();
+		ShotDirection = FVector::VectorPlaneProject(Player->GetAimTargetLocation() - SpawnLocation, FVector::YAxisVector).GetSafeNormal();
 		if (!CaptureRangedAttack(Player, ProjectileClass, ShotDirection))
 		{
 			EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);

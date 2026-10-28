@@ -61,6 +61,12 @@ public:
 
     void InitializeBoss();
 
+    UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Boss|CrossLaser")
+    TObjectPtr<AActor> BossFlyLocator;
+
+    UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Boss|CrossLaser")
+    TObjectPtr<AActor> BossLaserCenter;
+
     UFUNCTION(BlueprintPure, Category = "Boss|Phase")
     EBossPhase GetBossPhase();
 

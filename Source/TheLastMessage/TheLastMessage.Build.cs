@@ -14,7 +14,7 @@ public class TheLastMessage : ModuleRules
                                                             "StateTreeModule", "GameplayStateTreeModule", "UMG", "Slate"});
 
         // UI 입력 처리에 쓰는 FReply와 화면 배치 정보인 FGeometry 등 Slate 기본 타입을 사용한다.
-        PrivateDependencyModuleNames.AddRange(new string[] { "SlateCore", "CableComponent", "LevelSequence", "MovieScene" });
+        PrivateDependencyModuleNames.AddRange(new string[] { "SlateCore", "CableComponent", "LevelSequence", "MovieScene", "ProceduralMeshComponent" });
         if (Target.bBuildEditor)
         {
             PrivateDependencyModuleNames.AddRange(new string[] { "UnrealEd", "UMGEditor", "AssetRegistry", "RenderCore", "RHI", "SlateRHIRenderer", "NiagaraEditor" });

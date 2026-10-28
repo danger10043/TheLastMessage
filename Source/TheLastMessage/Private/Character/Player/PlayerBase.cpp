@@ -11,6 +11,7 @@
 #include "Gimmick/Component/InteractionComponent.h"
 #include "Gimmick/Component/CarryComponent.h"
 #include "Gimmick/Component/GravityStateComponent.h"
+#include "Gimmick/Component/PushPullComponent.h"
 #include "Core/CoreComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -94,6 +95,7 @@ APlayerBase::APlayerBase()
 
 	InteractionComponent = CreateDefaultSubobject<UInteractionComponent>(TEXT("InteractionComponent"));
 	CarryComponent = CreateDefaultSubobject<UCarryComponent>(TEXT("CarryComponent"));
+	PushPullComponent = CreateDefaultSubobject<UPushPullComponent>(TEXT("PushPullComponent"));
 
 	CoreComponent = CreateDefaultSubobject<UCoreComponent>(TEXT("CoreComponent"));
 

@@ -14,6 +14,7 @@ class UCombatAttributeSet;
 class UWeaponSlotAttributeSet;
 class UInteractionComponent;
 class UCarryComponent;
+class UPushPullComponent;
 class UCoreComponent;
 class UGameplayAbility;
 class UGameplayEffect;
@@ -332,6 +333,9 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|Core")
 	TObjectPtr<UCoreComponent> CoreComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|Carry")
+	TObjectPtr<UPushPullComponent> PushPullComponent;
 
 	UPROPERTY(EditDefaultsOnly, Category="Player|GAS")
 	TSubclassOf<UGameplayEffect> InitialCombatStatsEffect;

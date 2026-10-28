@@ -72,6 +72,8 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Checkpoint|Visual|Materials")
 	FCheckpointSignalMaterials InactiveMaterials;
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Checkpoint|Visual|Materials")
+	TObjectPtr<UMaterialInterface> InteractionOutlineMaterial = nullptr;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Checkpoint|Visual|Materials")
 	FCheckpointSignalMaterials CurrentMaterials;
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Checkpoint|Visual|Materials")
 	FCheckpointSignalMaterials VisitedMaterials;

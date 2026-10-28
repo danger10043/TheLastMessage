@@ -25,6 +25,13 @@
 
 namespace GrapplingProbeTest
 {
+const APlayerBase* PlayerAnimationDefaults()
+{
+	UClass* Class = LoadClass<APlayerBase>(nullptr,
+		TEXT("/Game/Test_Jihong/Blueprints/Player/BP_TestPlayer.BP_TestPlayer_C"));
+	return Class ? Class->GetDefaultObject<APlayerBase>() : nullptr;
+}
+
 struct FWorld
 {
 	UWorld* World;
@@ -84,6 +91,14 @@ struct FWorld
 		APlayerBase* Player = World->SpawnActorDeferred<APlayerBase>(APlayerBase::StaticClass(), FTransform::Identity);
 		Player->FindComponentByClass<UGrapplingHookComponent>()->CableMaterial = LoadObject<UMaterialInterface>(nullptr,
 			TEXT("/Game/Test_Jihong/Blueprints/GrapplingCable/Materials/M_GrappleCable.M_GrappleCable"));
+		if (const APlayerBase* Defaults = PlayerAnimationDefaults())
+		{
+			Player->RangedAimPostProcessClass = Defaults->RangedAimPostProcessClass;
+			const UGrapplingHookComponent* Config = Defaults->FindComponentByClass<UGrapplingHookComponent>();
+			UGrapplingHookComponent* Grapple = Player->FindComponentByClass<UGrapplingHookComponent>();
+			Grapple->PullMontage = Config->PullMontage;
+			Grapple->LandMontage = Config->LandMontage;
+		}
 		Player->FinishSpawning(FTransform::Identity);
 		// 기존 훅 동작 검사는 사용 권한을 획득한 플레이어를 기준으로 한다.
 		Player->GetAbilitySystemComponent()->AddLooseGameplayTag(FGameplayTag::RequestGameplayTag(TEXT("Unlock.GrapplingHook")));
@@ -100,8 +115,10 @@ struct FWorld
 	UAnimInstance* EnableGrappleAnimations(APlayerBase* Player)
 	{
 		UGrapplingHookComponent* Grapple = Player->FindComponentByClass<UGrapplingHookComponent>();
-		Grapple->ThrowMontage = LoadObject<UAnimMontage>(nullptr, TEXT("/Game/Test_Jihong/Animations/Grappling/AM_Grapple_Throw.AM_Grapple_Throw"));
-		Player->GetMesh()->SetSkeletalMesh(LoadObject<USkeletalMesh>(nullptr, TEXT("/Game/Test_Jihong/Blueprints/Player/Robbie_01.Robbie_01")));
+		const APlayerBase* Defaults = PlayerAnimationDefaults();
+		if (!Defaults) return nullptr;
+		Grapple->ThrowMontage = Defaults->FindComponentByClass<UGrapplingHookComponent>()->ThrowMontage;
+		Player->GetMesh()->SetSkeletalMesh(Defaults->GetMesh()->GetSkeletalMeshAsset());
 		Player->GetMesh()->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
 		Player->GetMesh()->SetAnimInstanceClass(UAnimInstance::StaticClass());
 		return Player->GetMesh()->GetAnimInstance();

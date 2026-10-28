@@ -19,6 +19,9 @@
 #include "Map/AreaMapComponent.h"
 #include "Components/SceneComponent.h"
 #include "EngineUtils.h"
+#include "Gimmick/GimmickBase.h"
+#include "TimerManager.h"
+#include "Engine/World.h"
 
 FString UProgressSaveSubsystem::GetSaveDirectory() const
 {
@@ -72,6 +75,7 @@ FProgressSlotInfo UProgressSaveSubsystem::GetSlotInfo(int32 SlotId) const
 bool UProgressSaveSubsystem::StartNewGame(int32 SlotId, bool bOverwriteExisting)
 {
 	if (ActiveSlot || bSaving || SlotId < 1 || SlotId > 3 || (HasSave(SlotId) && !bOverwriteExisting)) return false;
+	PendingGimmickRestores.Reset();
 	WorkingProgress = NewObject<UProgressSaveGame>(this);
 	if (UCorePickupStateSubsystem* Pickups = GetGameInstance()->GetSubsystem<UCorePickupStateSubsystem>())
 		Pickups->ResetPickupStates();
@@ -88,6 +92,7 @@ bool UProgressSaveSubsystem::ContinueGame(int32 SlotId)
 	if (ActiveSlot || bSaving) return false;
 	UProgressSaveGame* Loaded = ReadSlot(SlotId);
 	if (!Loaded) return false;
+	PendingGimmickRestores.Reset();
 	WorkingProgress = Loaded;
 	// Restore before travelling: pickups query this registry before their Blueprint BeginPlay.
 	if (UCorePickupStateSubsystem* Pickups = GetGameInstance()->GetSubsystem<UCorePickupStateSubsystem>())
@@ -104,6 +109,7 @@ bool UProgressSaveSubsystem::EndSession()
 	if (IsSaving()) return false;
 	PendingCheckpointSnapshot = nullptr;
 	bRestorePending = false;
+	PendingGimmickRestores.Reset();
 	WorkingProgress = nullptr;
 	if (UCorePickupStateSubsystem* Pickups = GetGameInstance()->GetSubsystem<UCorePickupStateSubsystem>())
 		Pickups->ResetPickupStates();
@@ -118,6 +124,7 @@ bool UProgressSaveSubsystem::ReloadActiveProgress()
 	if (IsSaving() || ActiveSlot < 1 || ActiveSlot > 3) return false;
 	UProgressSaveGame* Loaded = ReadSlot(ActiveSlot);
 	if (!Loaded || !Loaded->CheckpointId.IsValid()) return false;
+	PendingGimmickRestores.Reset();
 	WorkingProgress = Loaded;
 	// Replace unsaved pickups too, so death/reload rolls back to the checkpoint snapshot.
 	if (UCorePickupStateSubsystem* Pickups = GetGameInstance()->GetSubsystem<UCorePickupStateSubsystem>())
@@ -147,6 +154,8 @@ bool UProgressSaveSubsystem::MarkCinematicPlayed(FName Map, FName Cinematic)
 
 bool UProgressSaveSubsystem::SaveCheckpoint(APlayerBase* Player, APlayerCheckpoint* Checkpoint)
 {
+	if (bRestoringGimmicks) return false;
+	if (!PendingGimmickRestores.IsEmpty()) RestoreQueuedGimmicks();
 	if (IsRestoringProgress()) return false;
 	if (!WorkingProgress || !IsValid(Player) || !IsValid(Checkpoint) || !Player->HasAuthority()
 		|| Player->IsDead() || Player->GetWorld() != Checkpoint->GetWorld())
@@ -185,6 +194,21 @@ bool UProgressSaveSubsystem::SaveCheckpoint(APlayerBase* Player, APlayerCheckpoi
 		State.Energy = Stats->GetSharedEnergy(); State.MaxEnergy = Stats->GetSharedMaxEnergy();
 	}
 	FProgressMapState& Map = Snapshot->Maps.FindOrAdd(FName(*UGameplayStatics::GetCurrentLevelName(Player, true)));
+	// Keep records of unloaded streamed actors; update the currently loaded placed actors.
+	TSet<FGuid> CapturedIds;
+	for (TActorIterator<AGimmickBase> It(Player->GetWorld()); It; ++It)
+	{
+		if (!It->ShouldPersist()) continue;
+		const FGuid Id = It->GetPersistentId();
+		if (CapturedIds.Contains(Id))
+		{
+			UE_LOG(LogTemp, Error, TEXT("Duplicate gimmick save ID: %s"), *It->GetPathName());
+			OnCheckpointSaveFinished.Broadcast(false);
+			return false;
+		}
+		CapturedIds.Add(Id);
+		Map.Actors.Add(Id, It->CaptureProgress());
+	}
 	Map.VisitedCheckpoints.Add(Snapshot->CheckpointId);
 	for (TActorIterator<APlayerCheckpoint> It(Player->GetWorld()); It; ++It)
 		if (It->CheckpointVisualState != ECheckpointVisualState::Inactive)
@@ -278,4 +302,39 @@ bool UProgressSaveSubsystem::SaveActiveProgress()
 		});
 	});
 	return true;
+}
+
+void UProgressSaveSubsystem::QueueGimmickRestore(AGimmickBase* Gimmick)
+{
+    if (!IsValid(Gimmick) || !Gimmick->ShouldPersist() || !WorkingProgress) return;
+    PendingGimmickRestores.AddUnique(TWeakObjectPtr<AGimmickBase>(Gimmick));
+    // Every actor in this load wave finishes its derived BeginPlay before either restore pass.
+    Gimmick->GetWorld()->GetTimerManager().SetTimerForNextTick(this, &UProgressSaveSubsystem::RestoreQueuedGimmicks);
+}
+
+void UProgressSaveSubsystem::RestoreQueuedGimmicks()
+{
+    TArray<TWeakObjectPtr<AGimmickBase>> Pending = MoveTemp(PendingGimmickRestores);
+    PendingGimmickRestores.Reset();
+    if (!WorkingProgress) return;
+	TGuardValue<bool> RestoreGuard(bRestoringGimmicks, true);
+    Pending.StableSort([](const TWeakObjectPtr<AGimmickBase>& A, const TWeakObjectPtr<AGimmickBase>& B)
+    {
+        return (A.IsValid() ? A->GetRestorePriority() : -1) < (B.IsValid() ? B->GetRestorePriority() : -1);
+    });
+    // Snapshot records before callbacks so references survive any incidental save requests.
+    TMap<AGimmickBase*, FProgressActorState> Records;
+    for (const TWeakObjectPtr<AGimmickBase>& Weak : Pending)
+    {
+        AGimmickBase* Actor = Weak.Get();
+        if (!IsValid(Actor)) continue;
+        const FName MapName(*UGameplayStatics::GetCurrentLevelName(Actor, true));
+        const FProgressMapState* Map = WorkingProgress->Maps.Find(MapName);
+        const FProgressActorState* State = Map ? Map->Actors.Find(Actor->GetPersistentId()) : nullptr;
+        if (State && State->State == TEXT("GimmickV1")) Records.Add(Actor, *State);
+    }
+    for (const TWeakObjectPtr<AGimmickBase>& Weak : Pending)
+        if (Weak.IsValid()) if (const FProgressActorState* State = Records.Find(Weak.Get())) Weak->RestoreProgress(*State);
+    for (const TWeakObjectPtr<AGimmickBase>& Weak : Pending)
+        if (Weak.IsValid()) if (const FProgressActorState* State = Records.Find(Weak.Get())) Weak->FinishRestoreProgress(*State);
 }

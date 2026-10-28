@@ -9,6 +9,11 @@ struct FProgressActorState
 {
 	GENERATED_BODY()
 	UPROPERTY(SaveGame, BlueprintReadWrite) FName State;
+	UPROPERTY(SaveGame) bool bEnabled = true;
+	UPROPERTY(SaveGame) bool bActive = false;
+	UPROPERTY(SaveGame) bool bCompleted = false;
+	UPROPERTY(SaveGame) FGuid RelatedActorId;
+	UPROPERTY(SaveGame) FTransform ComponentTransform = FTransform::Identity;
 	UPROPERTY(SaveGame, BlueprintReadWrite) FTransform Transform;
 	UPROPERTY(SaveGame, BlueprintReadWrite) TArray<uint8> Payload;
 };

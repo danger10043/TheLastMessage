@@ -268,3 +268,12 @@ void ATimedSwitchGroup::StopSwitchGlow()
 		}
 	}
 }
+
+void ATimedSwitchGroup::RestoreProgress(const FProgressActorState& State)
+{
+    GetWorldTimerManager().ClearTimer(ChallengeTimerHandle);
+    GetWorldTimerManager().ClearTimer(GlowUpdateTimerHandle);
+    bIsTimerRunning = false;
+    StopSwitchGlow();
+    Super::RestoreProgress(State);
+}

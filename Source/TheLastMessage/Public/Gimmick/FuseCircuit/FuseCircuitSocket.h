@@ -19,6 +19,9 @@ class THELASTMESSAGE_API AFuseCircuitSocket : public AGimmickBase
 	GENERATED_BODY()
 	
 public:
+    virtual FProgressActorState CaptureProgress() const override;
+    virtual void FinishRestoreProgress(const FProgressActorState& State) override;
+    virtual int32 GetRestorePriority() const override { return 2; }
     AFuseCircuitSocket();
 
     // 현재 플레이어가 퓨즈를 삽입할 수 있는지 확인

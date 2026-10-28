@@ -19,6 +19,8 @@ class THELASTMESSAGE_API ALaserReflector : public AGimmickBase, public IAttackRe
 	GENERATED_BODY()
 	
 public:
+    virtual FProgressActorState CaptureProgress() const override;
+    virtual void RestoreProgress(const FProgressActorState& State) override;
 	ALaserReflector();
 
 	// 플레이어 상호작용으로 반사판 회전

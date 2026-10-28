@@ -20,6 +20,8 @@ class THELASTMESSAGE_API APushPullGimmick : public AGimmickBase
     GENERATED_BODY()
 
 public:
+    virtual FProgressActorState CaptureProgress() const override;
+    virtual void RestoreProgress(const FProgressActorState& State) override;
     APushPullGimmick();
 
     // 데이터 테이블에서 이동 설정 읽기

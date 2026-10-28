@@ -241,3 +241,27 @@ void APushPullGimmick::SetPushPullMovementEnabled(bool bAllowHorizontalMovement)
     PhysicsMesh->WakeAllRigidBodies();
 }
 
+
+FProgressActorState APushPullGimmick::CaptureProgress() const
+{
+    FProgressActorState State = Super::CaptureProgress();
+    State.Transform = IsValid(PhysicsMesh) ? PhysicsMesh->GetComponentTransform() : LastPlacedWorldTransform;
+    return State;
+}
+
+void APushPullGimmick::RestoreProgress(const FProgressActorState& State)
+{
+    ControllingPlayer.Reset();
+    if (IsValid(PhysicsMesh))
+    {
+        PhysicsMesh->SetWorldTransform(State.Transform, false, nullptr, ETeleportType::TeleportPhysics);
+        if (PhysicsMesh->IsSimulatingPhysics())
+        {
+            PhysicsMesh->SetPhysicsLinearVelocity(FVector::ZeroVector);
+            PhysicsMesh->SetPhysicsAngularVelocityInDegrees(FVector::ZeroVector);
+        }
+    }
+    LastPlacedWorldTransform = State.Transform;
+    SetPushPullMovementEnabled(false);
+    Super::RestoreProgress(State);
+}

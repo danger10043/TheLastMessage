@@ -83,6 +83,8 @@ protected:
 	bool ShouldUseTouchControls() const;
 
 private:
+	void SkipCinematic();
+	UFUNCTION(Server, Reliable) void ServerSkipCinematic();
 	void ClosePauseMenu();
 	void ExecutePauseAction(EPauseMenuAction Action);
 	UFUNCTION() void HandlePauseAction(EPauseMenuAction Action);

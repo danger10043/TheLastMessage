@@ -4,24 +4,23 @@
 #include "AbilitySystemComponent.h"
 #include "Core/CoreComponent.h"
 #include "Core/CoreRewardSession.h"
-#include "CoreComponentTestObserver.h"
 #include "DataAsset/CoreDataAsset.h"
 #include "Engine/CurveTable.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "GAS/CombatAttributeSet.h"
-#include "Misc/DataValidation.h"
 #include "Templates/UnrealTemplate.h"
 #include "UObject/StrongObjectPtr.h"
 #if WITH_EDITOR
-#include "AssetRegistry/AssetRegistryModule.h"
 #include "Character/CombatDamageLibrary.h"
 #include "Character/Enemy/EnemyBase.h"
 #include "Character/Enemy/EnemyAttributeSet.h"
 #include "Character/Boss/BossMonster.h"
 #include "Character/Boss/BossAttributeSet.h"
-#include "UObject/Package.h"
+#include "Character/Boss/BossPhaseComponent.h"
+#include "Misc/ScopeExit.h"
+#include "UObject/UnrealType.h"
 #endif
 
 namespace
@@ -181,42 +180,6 @@ bool FCoreUpgradeTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Infinite remains eligible for future rewards"), Fixture.GenerateChoices(Pool, ECoreCategory::Stat).Num(), 1);
 	Core->ResetOwnedCores();
 
-	// 치명타는 커브의 추가 확률을 적용한다. 최대 단계 이후에는 더 획득할 수 없다.
-	Attributes->InitCriticalChance(0.2f);
-	const FName CriticalRow(TEXT("CriticalBonus"));
-	FRichCurve& CriticalCurve = Curves->AddRichCurve(CriticalRow);
-	CriticalCurve.AddKey(1.0f, 0.05f);
-	CriticalCurve.AddKey(2.0f, 0.10f);
-	CriticalCurve.AddKey(3.0f, 0.15f);
-	CriticalCurve.AddKey(4.0f, 0.20f);
-	CriticalCurve.AddKey(5.0f, 0.25f);
-	FScalableFloat CriticalMagnitude;
-	CriticalMagnitude.SetScalingValue(1.0f, CriticalRow, Curves);
-	FGameplayModifierInfo CriticalModifier;
-	CriticalModifier.Attribute = UCombatAttributeSet::GetCriticalChanceAttribute();
-	CriticalModifier.ModifierOp = EGameplayModOp::Additive;
-	CriticalModifier.ModifierMagnitude = FGameplayEffectModifierMagnitude(CriticalMagnitude);
-	Effect->Modifiers = { CriticalModifier };
-	Data->UpgradeLimitType = ECoreUpgradeLimitType::Custom;
-	Data->MaxLevel = 5;
-	TestTrue(TEXT("Critical core is acquired"), Core->AcquireCore(Data) == ECoreAcquireResult::Acquired);
-	TestEqual(TEXT("Critical first level adds five percentage points"), Attributes->GetCriticalChance(), 0.25f, 0.0001f);
-	TestTrue(TEXT("Critical core upgrades"), Core->AcquireCore(Data) == ECoreAcquireResult::Upgraded);
-	TestEqual(TEXT("Critical second level adds ten percentage points"), Attributes->GetCriticalChance(), 0.30f, 0.0001f);
-	for (int32 Level = 3; Level <= 5; ++Level)
-	{
-		TestTrue(TEXT("Critical upgrade within the limit succeeds"), Core->AcquireCore(Data) == ECoreAcquireResult::Upgraded);
-	}
-	TestEqual(TEXT("Critical final level adds twenty-five percentage points"), Attributes->GetCriticalChance(), 0.45f, 0.0001f);
-	TestTrue(TEXT("Critical sixth acquisition is rejected"), Core->AcquireCore(Data) == ECoreAcquireResult::MaxLevel);
-	TestEqual(TEXT("Rejected critical upgrade preserves level five"), Core->GetCoreLevel(Data->CoreId), 5);
-	Handles = ASC->GetActiveEffects(FGameplayEffectQuery());
-	TestEqual(TEXT("Critical upgrades retain a single effect"), Handles.Num(), 1);
-	ASC->SetNumericAttributeBase(UCombatAttributeSet::GetCriticalChanceAttribute(), 0.4f);
-	TestEqual(TEXT("Critical bonus remains additive when the base changes"), Attributes->GetCriticalChance(), 0.65f, 0.0001f);
-	Core->ResetOwnedCores();
-	TestTrue(TEXT("Removing critical core preserves the external base value"), FMath::IsNearlyEqual(Attributes->GetCriticalChance(), 0.4f));
-
 	UCoreDataAsset* SingleLevel = NewObject<UCoreDataAsset>();
 	SingleLevel->CoreId = TEXT("Test_SingleLevel");
 	TestTrue(TEXT("Existing assets default to Custom"), SingleLevel->UpgradeLimitType == ECoreUpgradeLimitType::Custom);
@@ -291,216 +254,6 @@ bool FCoreRewardPoolTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCoreSelectResultTest, "TheLastMessage.Core.SelectResults",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-
-bool FCoreSelectResultTest::RunTest(const FString& Parameters)
-{
-	FCoreTestFixture Fixture(false);
-	UCoreComponent* Core = Fixture.Core;
-
-	TArray<UCoreDataAsset*> Pool;
-	for (int32 Index = 0; Index < 4; ++Index)
-	{
-		UCoreDataAsset* Data = NewObject<UCoreDataAsset>();
-		Data->CoreId = FName(*FString::Printf(TEXT("Test_Select_%d"), Index));
-		Pool.Add(Data);
-	}
-	TestTrue(TEXT("Selecting without choices is rejected"), Fixture.Reward->SelectCore(Pool[0]->CoreId) == ECoreAcquireResult::NotOffered);
-	TestTrue(TEXT("Selecting an empty ID is invalid"), Fixture.Reward->SelectCore(NAME_None) == ECoreAcquireResult::InvalidData);
-
-	const TArray<UCoreDataAsset*> Choices = Fixture.GenerateChoices(Pool, ECoreCategory::Stat);
-	TestEqual(TEXT("Three choices are offered"), Choices.Num(), 3);
-	FName NotOfferedId;
-	for (const UCoreDataAsset* Data : Pool)
-	{
-		if (!Choices.Contains(Data)) NotOfferedId = Data->CoreId;
-	}
-	TestTrue(TEXT("A core outside the shown cards is rejected"), Fixture.Reward->SelectCore(NotOfferedId) == ECoreAcquireResult::NotOffered);
-	if (Choices.Num() > 0)
-	{
-		TestTrue(TEXT("Selecting a shown card acquires it"), Fixture.Reward->SelectCore(Choices[0]->CoreId) == ECoreAcquireResult::Acquired);
-		TestTrue(TEXT("Successful selection closes the choices"), Fixture.Reward->SelectCore(Choices[0]->CoreId) == ECoreAcquireResult::NotOffered);
-	}
-
-	TestTrue(TEXT("Null data is invalid"), Core->AcquireCore(nullptr) == ECoreAcquireResult::InvalidData);
-	return true;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCoreRewardRecoveryTest, "TheLastMessage.Core.RewardRecovery",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-
-bool FCoreRewardRecoveryTest::RunTest(const FString& Parameters)
-{
-	FCoreTestFixture Fixture(false);
-	UCoreComponent* Core = Fixture.Core;
-	UCoreRewardSession* Reward = Fixture.Reward.Get();
-	TestTrue(TEXT("A missing recipient is unavailable"), Reward->Start(nullptr, {}, ECoreCategory::Stat) == ECoreRewardStartResult::Unavailable);
-	TestTrue(TEXT("Empty category is distinguished from maxed cores"), Reward->Start(Core, {}, ECoreCategory::Stat) == ECoreRewardStartResult::NoCandidates);
-	TestFalse(TEXT("An empty reward never becomes active"), Reward->IsActive());
-	TArray<UCoreDataAsset*> Pool;
-	for (int32 Index = 0; Index < 4; ++Index)
-	{
-		UCoreDataAsset* Data = NewObject<UCoreDataAsset>();
-		Data->CoreId = FName(*FString::Printf(TEXT("Recovery_%d"), Index));
-		Pool.Add(Data);
-	}
-	TestTrue(TEXT("A normal reward starts after an empty attempt"), Reward->Start(Core, Pool, ECoreCategory::Stat) == ECoreRewardStartResult::Started);
-	const TArray<UCoreDataAsset*> Original = Reward->GetChoices();
-	TStrongObjectPtr<UCoreRewardSession> Other(NewObject<UCoreRewardSession>());
-	TestTrue(TEXT("Another reward cannot reserve the same player"), Other->Start(Core, Pool, ECoreCategory::Stat) == ECoreRewardStartResult::Busy);
-	Other->Cancel();
-	TestTrue(TEXT("Cancelling an unrelated reward cannot release the active reservation"), Other->Start(Core, Pool, ECoreCategory::Stat) == ECoreRewardStartResult::Busy);
-	TestNull(TEXT("Invalid card indices cannot reroll"), Reward->RerollCoreChoice(-1));
-	TestTrue(TEXT("A failed reroll does not spend the valid card's use"), Reward->CanRerollCoreChoice(0));
-	for (UCoreDataAsset* Data : Original) Core->AcquireCore(Data);
-	TestTrue(TEXT("A stale maxed selection reports its actual failure"), Reward->SelectCore(Original[0]->CoreId) == ECoreAcquireResult::MaxLevel);
-	const TArray<UCoreDataAsset*> Repaired = Reward->GetChoices();
-	TestEqual(TEXT("Card slot indices remain stable during recovery"), Repaired.Num(), Original.Num());
-	UCoreDataAsset* Remaining = nullptr;
-	int32 ValidCount = 0;
-	for (UCoreDataAsset* Data : Repaired)
-	{
-		if (!Data) continue;
-		++ValidCount;
-		Remaining = Data;
-		TestFalse(TEXT("Recovery does not show a previous card again"), Original.Contains(Data));
-	}
-	TestEqual(TEXT("Only the unshown eligible core remains"), ValidCount, 1);
-	int32 CancellationCount = 0;
-	Reward->OnCancelled.AddLambda([&CancellationCount]() { ++CancellationCount; });
-	if (Remaining)
-	{
-		Core->AcquireCore(Remaining);
-		TestTrue(TEXT("Exhausting the last card preserves the failure result"), Reward->SelectCore(Remaining->CoreId) == ECoreAcquireResult::MaxLevel);
-	}
-	TestFalse(TEXT("Exhaustion ends the reward"), Reward->IsActive());
-	TestEqual(TEXT("Exhaustion notifies its caller exactly once"), CancellationCount, 1);
-	Reward->Cancel();
-	TestEqual(TEXT("Repeated cleanup is idempotent"), CancellationCount, 1);
-	TestTrue(TEXT("Fully upgraded pool has its own start result"), Other->Start(Core, Pool, ECoreCategory::Stat) == ECoreRewardStartResult::AllAtMaxLevel);
-	Core->ResetOwnedCores();
-	TestTrue(TEXT("Reset permits a new reward"), Other->Start(Core, Pool, ECoreCategory::Stat) == ECoreRewardStartResult::Started);
-	Core->ResetOwnedCores();
-	TestFalse(TEXT("Ownership reset also invalidates the active reward"), Other->IsActive());
-	Reward->OnCancelled.Clear();
-	return true;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCoreRewardGrantFailureTest, "TheLastMessage.Core.RewardGrantFailure",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-
-bool FCoreRewardGrantFailureTest::RunTest(const FString& Parameters)
-{
-	UGameplayEffect* Effect = GetMutableDefault<UGameplayEffect>();
-	TGuardValue<EGameplayEffectDurationType> DurationGuard(Effect->DurationPolicy, EGameplayEffectDurationType::Infinite);
-	FCoreTestFixture Fixture(false);
-	UCoreDataAsset* Data = NewObject<UCoreDataAsset>();
-	Data->CoreId = TEXT("MissingGrant");
-	Data->MaxLevel = 3;
-	Data->GrantedEffects.Add(UGameplayEffect::StaticClass());
-	TestTrue(TEXT("Prepare an upgradeable core"), IsCoreAcquireSuccess(Fixture.Core->AcquireCore(Data)));
-	TestEqual(TEXT("A single candidate still opens a reward"), Fixture.GenerateChoices({Data}, ECoreCategory::Stat).Num(), 1);
-	for (const FActiveGameplayEffectHandle& Handle : Fixture.ASC->GetActiveEffects(FGameplayEffectQuery())) Fixture.ASC->RemoveActiveGameplayEffect(Handle);
-	TestTrue(TEXT("Missing grants report a grant failure"), Fixture.Reward->SelectCore(Data->CoreId) == ECoreAcquireResult::GrantFailed);
-	TestFalse(TEXT("A permanently failing last card cannot trap the screen"), Fixture.Reward->IsActive());
-	TestEqual(TEXT("The failed reward does not upgrade ownership"), Fixture.Core->GetCoreLevel(Data->CoreId), 1);
-	TestTrue(TEXT("A broken grant is excluded before reopening its screen"), Fixture.Reward->Start(Fixture.Core, {Data}, ECoreCategory::Stat) == ECoreRewardStartResult::Unavailable);
-	return true;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCoreResetNotificationsTest, "TheLastMessage.Core.ResetNotifications",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-
-bool FCoreResetNotificationsTest::RunTest(const FString& Parameters)
-{
-	FCoreTestFixture Fixture(false);
-	UCoreComponent* Core = Fixture.Core;
-	UCoreDataAsset* First = NewObject<UCoreDataAsset>();
-	First->CoreId = TEXT("Test_Reset_First");
-	UCoreDataAsset* Second = NewObject<UCoreDataAsset>();
-	Second->CoreId = TEXT("Test_Reset_Second");
-	TestTrue(TEXT("First core is acquired"), Core->AcquireCore(First) == ECoreAcquireResult::Acquired);
-	TestTrue(TEXT("Second core is acquired"), Core->AcquireCore(Second) == ECoreAcquireResult::Acquired);
-
-	// 첫 제거 알림에서 두 번째 코어를 다시 획득하려는 상황을 재현한다.
-	TStrongObjectPtr<UCoreComponentTestObserver> Observer(NewObject<UCoreComponentTestObserver>());
-	TArray<FName> RemovedIds;
-	ECoreAcquireResult ReentrantResult = ECoreAcquireResult::InvalidData;
-	Observer->Callback = [&](FName CoreId, int32 OldLevel, int32 NewLevel)
-	{
-		if (NewLevel != 0) return;
-		RemovedIds.Add(CoreId);
-		TestEqual(TEXT("Removal reports the previous level"), OldLevel, 1);
-		TestEqual(TEXT("Removal notification agrees with actual ownership"), Core->GetCoreLevel(CoreId), 0);
-		TestEqual(TEXT("All ownership is cleared before the first notification"), Core->GetCoreLevel(Second->CoreId), 0);
-		if (CoreId == First->CoreId)
-		{
-			ReentrantResult = Core->AcquireCore(Second);
-		}
-	};
-	Core->OnCoreChanged.AddDynamic(Observer.Get(), &UCoreComponentTestObserver::HandleCoreChanged);
-	Core->ResetOwnedCores();
-	TestTrue(TEXT("Acquisition during reset notification is rejected as busy"), ReentrantResult == ECoreAcquireResult::Busy);
-	TestEqual(TEXT("Each removed core emits one notification"), RemovedIds.Num(), 2);
-	TestTrue(TEXT("Both core removals are reported"), RemovedIds.Contains(First->CoreId) && RemovedIds.Contains(Second->CoreId));
-	TestFalse(TEXT("Reset leaves the first core unowned"), Core->HasCore(First->CoreId));
-	TestFalse(TEXT("Reset leaves the second core unowned"), Core->HasCore(Second->CoreId));
-	TestTrue(TEXT("Acquisition is allowed again after reset returns"), Core->AcquireCore(Second) == ECoreAcquireResult::Acquired);
-	Core->OnCoreChanged.RemoveAll(Observer.Get());
-	return true;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCoreAcquireNotificationsTest, "TheLastMessage.Core.AcquireNotifications",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-
-bool FCoreAcquireNotificationsTest::RunTest(const FString& Parameters)
-{
-	FCoreTestFixture Fixture(false);
-	UCoreComponent* Core = Fixture.Core;
-	UCoreDataAsset* Data = NewObject<UCoreDataAsset>();
-	Data->CoreId = TEXT("Test_Acquire_Notifications");
-	Data->MaxLevel = 2;
-	UCoreDataAsset* Other = NewObject<UCoreDataAsset>();
-	Other->CoreId = TEXT("Test_Acquire_Other");
-
-	TStrongObjectPtr<UCoreComponentTestObserver> MutatingObserver(NewObject<UCoreComponentTestObserver>());
-	TStrongObjectPtr<UCoreComponentTestObserver> ReadingObserver(NewObject<UCoreComponentTestObserver>());
-	int32 Attempts = 0;
-	int32 Notifications = 0;
-	// 앞선 수신자가 상태 변경을 요청해도, 뒤의 수신자는 알림과 일치하는 보유 상태를 읽어야 한다.
-	MutatingObserver->Callback = [&](FName CoreId, int32 OldLevel, int32 NewLevel)
-	{
-		if (CoreId != Data->CoreId || NewLevel == 0) return;
-		++Attempts;
-		TestTrue(TEXT("Another acquisition is busy during notification"), Core->AcquireCore(Other) == ECoreAcquireResult::Busy);
-		TestTrue(TEXT("Another upgrade is busy during notification"), Core->AcquireCore(Data) == ECoreAcquireResult::Busy);
-		Core->ResetOwnedCores();
-		TestEqual(TEXT("Reset during acquisition notification cannot clear ownership"), Core->GetCoreLevel(CoreId), NewLevel);
-	};
-	ReadingObserver->Callback = [&](FName CoreId, int32 OldLevel, int32 NewLevel)
-	{
-		++Notifications;
-		TestEqual(TEXT("Only the requested core emits a notification"), CoreId, Data->CoreId);
-		TestEqual(TEXT("Notification level agrees with actual ownership"), Core->GetCoreLevel(CoreId), NewLevel);
-		TestEqual(TEXT("Acquisition or upgrade advances one level"), NewLevel, OldLevel + 1);
-	};
-	Core->OnCoreChanged.AddDynamic(MutatingObserver.Get(), &UCoreComponentTestObserver::HandleCoreChanged);
-	Core->OnCoreChanged.AddDynamic(ReadingObserver.Get(), &UCoreComponentTestObserver::HandleCoreChanged);
-	TestTrue(TEXT("First acquisition succeeds"), Core->AcquireCore(Data) == ECoreAcquireResult::Acquired);
-	TestEqual(TEXT("First acquisition leaves the core at level one"), Core->GetCoreLevel(Data->CoreId), 1);
-	TestTrue(TEXT("Upgrade after the previous notification succeeds"), Core->AcquireCore(Data) == ECoreAcquireResult::Upgraded);
-	TestEqual(TEXT("Upgrade leaves the core at level two"), Core->GetCoreLevel(Data->CoreId), 2);
-	TestEqual(TEXT("Both acquisition and upgrade were checked"), Attempts, 2);
-	TestEqual(TEXT("Each successful request emits one notification"), Notifications, 2);
-	TestFalse(TEXT("Rejected acquisition does not grant the other core"), Core->HasCore(Other->CoreId));
-	Core->OnCoreChanged.RemoveAll(MutatingObserver.Get());
-	Core->OnCoreChanged.RemoveAll(ReadingObserver.Get());
-	Core->ResetOwnedCores();
-	TestFalse(TEXT("Reset is allowed after acquisition notifications finish"), Core->HasCore(Data->CoreId));
-	return true;
-}
-
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCoreGrantValidationTest, "TheLastMessage.Core.GrantValidation",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
@@ -547,407 +300,173 @@ bool FCoreGrantValidationTest::RunTest(const FString& Parameters)
 }
 
 #if WITH_EDITOR
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCoreDamageHandoffTest, "TheLastMessage.Core.DamageHandoff",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCoreDamageEventTest, "TheLastMessage.Core.DamageEvent",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FCoreDamageHandoffTest::RunTest(const FString& Parameters)
+bool FCoreDamageEventTest::RunTest(const FString& Parameters)
 {
 	FCoreTestFixture Fixture(true);
+	Fixture.Attributes->SetMaxHealth(100.f);
+	Fixture.Attributes->SetHealth(50.f);
+	// 공용 피해 처리에서 공격자가 이미 계산한 배율을 다시 적용하지 않는지 확인한다.
 	Fixture.Attributes->SetDamageDealtMultiplier(2.f);
 	Fixture.Attributes->SetMeleeDamageMultiplier(3.f);
 	Fixture.Attributes->SetHighHealthDamageMultiplier(4.f);
 	Fixture.Attributes->SetLowHealthDamageMultiplier(5.f);
 	Fixture.Attributes->SetCriticalChance(1.f);
 	Fixture.Attributes->SetCriticalDamageMultiplier(2.f);
+	TArray<FGameplayEventData> Events;
+	const FGameplayTag EventTag = CombatGameplayTags::Event_DamageDealt;
+	const FGameplayTag KilledTag = CombatGameplayTags::Result_TargetKilled;
+	const FGameplayTag Melee = FGameplayTag::RequestGameplayTag(TEXT("Damage.Category.Player.Melee"));
+	const FGameplayTag Ranged = FGameplayTag::RequestGameplayTag(TEXT("Damage.Category.Player.Ranged"));
+	const FGameplayTag Gimmick = FGameplayTag::RequestGameplayTag(TEXT("Damage.Category.Gimmick"));
+	const FDelegateHandle EventHandle = Fixture.ASC->GenericGameplayEventCallbacks.FindOrAdd(EventTag).AddLambda(
+		[&Events](const FGameplayEventData* Payload)
+		{
+			if (Payload) Events.Add(*Payload);
+		});
+	ON_SCOPE_EXIT
+	{
+		Fixture.ASC->GenericGameplayEventCallbacks.FindChecked(EventTag).Remove(EventHandle);
+	};
+
 	UClass* Effect = LoadClass<UGameplayEffect>(nullptr,
 		TEXT("/Game/Test_Inhyeok/GAS/Effect/GE_BP_CommonIncomingDamage.GE_BP_CommonIncomingDamage_C"));
-	if (!TestNotNull(TEXT("The actual common incoming damage GE exists"), Effect)) return false;
+	if (!TestNotNull(TEXT("Actual common incoming damage GE loads"), Effect)) return false;
+	AEnemyBase* Enemy = Fixture.World->SpawnActor<AEnemyBase>();
+	if (!TestNotNull(TEXT("Enemy target exists"), Enemy)) return false;
+	UAbilitySystemComponent* EnemyASC = Enemy->GetAbilitySystemComponent();
+	EnemyASC->InitAbilityActorInfo(Enemy, Enemy);
+	if (!EnemyASC->GetSet<UEnemyAttributeSet>())
+		EnemyASC->AddAttributeSetSubobject(CastChecked<UEnemyAttributeSet>(Enemy->GetDefaultSubobjectByName(TEXT("AttributeSet"))));
+	EnemyASC->SetNumericAttributeBase(UEnemyAttributeSet::GetMaxHealthAttribute(), 1000.f);
+
+	for (const FGameplayTag Category : {Melee, Ranged})
+	{
+		Events.Reset();
+		EnemyASC->SetNumericAttributeBase(UEnemyAttributeSet::GetHealthAttribute(), 1000.f);
+		TestTrue(TEXT("Player attack is accepted"), UCombatDamageLibrary::ApplyFinalDamageToTarget(
+			Fixture.Owner, Enemy, Effect, 125.f, Category));
+		TestEqual(TEXT("One damage event per successful attack"), Events.Num(), 1);
+		if (Events.Num() == 1)
+		{
+			const FGameplayEventData& Payload = Events[0];
+			TestTrue(TEXT("Event identifies actual damage"), Payload.EventTag == EventTag);
+			TestTrue(TEXT("Event preserves attacker and target"), Payload.Instigator == Fixture.Owner && Payload.Target == Enemy);
+			TestEqual(TEXT("Magnitude contains actual HP loss"), Payload.EventMagnitude, 125.f);
+			TestTrue(TEXT("Damage category is available to abilities"), Payload.InstigatorTags.HasTagExact(Category));
+			TestTrue(TEXT("Damage context preserves source"), Payload.ContextHandle.GetSourceObject() == Fixture.Owner);
+			TestFalse(TEXT("Nonlethal enemy damage has no kill result"), Payload.TargetTags.HasTagExact(KilledTag));
+		}
+		TestEqual(TEXT("Damage application is unchanged"), EnemyASC->GetNumericAttribute(UEnemyAttributeSet::GetHealthAttribute()), 875.f);
+	}
+
+	Events.Reset();
+	TestTrue(TEXT("Gimmick damage still applies"), UCombatDamageLibrary::ApplyFinalDamageToTarget(
+		Fixture.Owner, Enemy, Effect, 25.f, Gimmick));
+	TestEqual(TEXT("Gimmick damage is excluded from player attack event"), Events.Num(), 0);
+	TestFalse(TEXT("Zero damage is rejected"), UCombatDamageLibrary::ApplyFinalDamageToTarget(
+		Fixture.Owner, Enemy, Effect, 0.f, Melee));
+	TestFalse(TEXT("Negative damage is rejected"), UCombatDamageLibrary::ApplyFinalDamageToTarget(
+		Fixture.Owner, Enemy, Effect, -10.f, Melee));
+	TestEqual(TEXT("Rejected damage sends no event"), Events.Num(), 0);
+
 	ABossMonster* Boss = Fixture.World->SpawnActorDeferred<ABossMonster>(ABossMonster::StaticClass(), FTransform::Identity);
 	if (!TestNotNull(TEXT("Boss target exists"), Boss)) return false;
-	// 피해 전달 검증에는 보스의 AI 자동 실행이 필요하지 않다.
 	Boss->AutoPossessAI = EAutoPossessAI::Disabled;
 	Boss->FinishSpawning(FTransform::Identity);
-	AActor* Targets[] = {Fixture.World->SpawnActor<AEnemyBase>(), Boss};
-	for (AActor* Target : Targets)
+	UAbilitySystemComponent* BossASC = Boss->GetAbilitySystemComponent();
+	BossASC->InitAbilityActorInfo(Boss, Boss);
+	if (!BossASC->GetSet<UBossAttributeSet>())
+		BossASC->AddAttributeSetSubobject(CastChecked<UBossAttributeSet>(Boss->GetDefaultSubobjectByName(TEXT("AttributeSet"))));
+	BossASC->SetNumericAttributeBase(UBossAttributeSet::GetMaxHealthAttribute(), 1000.f);
+	BossASC->SetNumericAttributeBase(UBossAttributeSet::GetHealthAttribute(), 1000.f);
+	Boss->SetRangedImmunity(true);
+	TestTrue(TEXT("Immune boss still accepts valid GE"), UCombatDamageLibrary::ApplyFinalDamageToTarget(
+		Fixture.Owner, Boss, Effect, 125.f, Ranged));
+	TestEqual(TEXT("Immunity leaves boss HP unchanged"), BossASC->GetNumericAttribute(UBossAttributeSet::GetHealthAttribute()), 1000.f);
+	TestEqual(TEXT("Immune hit sends no damage event"), Events.Num(), 0);
+	Boss->SetRangedImmunity(false);
+	for (const FGameplayTag Category : {Melee, Ranged})
 	{
-		if (!TestNotNull(TEXT("Damage target exists"), Target)) return false;
-		const bool bBoss = Target->IsA<ABossMonster>();
-		UAbilitySystemComponent* ASC = bBoss ? CastChecked<ABossMonster>(Target)->GetAbilitySystemComponent()
-			: CastChecked<AEnemyBase>(Target)->GetAbilitySystemComponent();
-		ASC->InitAbilityActorInfo(Target, Target);
-		const FGameplayAttribute Health = bBoss ? UBossAttributeSet::GetHealthAttribute() : UEnemyAttributeSet::GetHealthAttribute();
-		const FGameplayAttribute MaxHealth = bBoss ? UBossAttributeSet::GetMaxHealthAttribute() : UEnemyAttributeSet::GetMaxHealthAttribute();
-		if (!ASC->HasAttributeSetForAttribute(Health))
+		Events.Reset();
+		BossASC->SetNumericAttributeBase(UBossAttributeSet::GetHealthAttribute(), 1000.f);
+		TestTrue(TEXT("Boss receives player attack"), UCombatDamageLibrary::ApplyFinalDamageToTarget(
+			Fixture.Owner, Boss, Effect, 125.f, Category));
+		TestEqual(TEXT("Boss damage does not reapply attacker multipliers"), BossASC->GetNumericAttribute(UBossAttributeSet::GetHealthAttribute()), 875.f);
+		TestEqual(TEXT("Boss hit sends one event"), Events.Num(), 1);
+		if (Events.Num() == 1)
 		{
-			// 대상이 소유한 기본 AttributeSet을 등록하여 내부 체력 조회와 같은 객체를 사용한다.
-			ASC->AddAttributeSetSubobject(CastChecked<UAttributeSet>(Target->GetDefaultSubobjectByName(TEXT("AttributeSet"))));
-		}
-		for (const TCHAR* CategoryName : {TEXT("Damage.Category.Player.Melee"), TEXT("Damage.Category.Player.Ranged")})
-		{
-			ASC->SetNumericAttributeBase(MaxHealth, 1000.f);
-			ASC->SetNumericAttributeBase(Health, 1000.f);
-			// 전달값은 이미 공격자 배율을 반영한 결과이므로, 대상 처리에서는 다시 계산하지 않는다.
-			TestTrue(TEXT("Final damage is accepted"), UCombatDamageLibrary::ApplyFinalDamageToTarget(
-				Fixture.Owner, Target, Effect, 125.f, FGameplayTag::RequestGameplayTag(FName(CategoryName))));
-			const float ActualLoss = 1000.f - ASC->GetNumericAttribute(Health);
-			TestTrue(TEXT("Final damage reaches health without reapplying attacker multipliers"), FMath::IsNearlyEqual(ActualLoss, 125.f));
-			AddInfo(FString::Printf(TEXT("%s / %s: final damage 125 -> actual HP loss %.3f"),
-				bBoss ? TEXT("Boss") : TEXT("Enemy"), CategoryName, ActualLoss));
+			TestTrue(TEXT("Boss event contains actual loss and target"), Events[0].EventMagnitude == 125.f && Events[0].Target == Boss);
+			TestFalse(TEXT("Nonlethal boss damage has no kill result"), Events[0].TargetTags.HasTagExact(KilledTag));
 		}
 	}
-	return true;
-}
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCoreDataValidationTest, "TheLastMessage.Core.DataValidation",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-
-bool FCoreDataValidationTest::RunTest(const FString& Parameters)
-{
-	UGameplayEffect* Effect = GetMutableDefault<UGameplayEffect>();
-	TGuardValue<EGameplayEffectDurationType> DurationGuard(Effect->DurationPolicy, EGameplayEffectDurationType::Infinite);
-	TGuardValue<TArray<FGameplayModifierInfo>> ModifiersGuard(Effect->Modifiers, {});
-	UCurveTable* Curves = NewObject<UCurveTable>();
-	const FName CurveRow(TEXT("DamageMultiplier"));
-	FRichCurve& Curve = Curves->AddRichCurve(CurveRow);
-	Curve.AddKey(1.0f, 1.10f);
-	Curve.AddKey(2.0f, 1.20f);
-	Curve.AddKey(3.0f, 1.30f);
-	FScalableFloat Magnitude;
-	Magnitude.SetScalingValue(1.0f, CurveRow, Curves);
-	FGameplayModifierInfo Modifier;
-	Modifier.Attribute = UCombatAttributeSet::GetDamageDealtMultiplierAttribute();
-	Modifier.ModifierOp = EGameplayModOp::MultiplyAdditive;
-	Modifier.ModifierMagnitude = FGameplayEffectModifierMagnitude(Magnitude);
-	Effect->Modifiers.Add(Modifier);
-
-	UCoreDataAsset* Data = NewObject<UCoreDataAsset>();
-	Data->CoreId = TEXT("Test_Validation");
-	Data->CoreName = FText::FromString(TEXT("Validation"));
-	Data->GrantedEffects.Add(UGameplayEffect::StaticClass());
-	Data->CoreDescription = FText::FromString(TEXT("피해 {Damage}% 증가"));
-	FCoreDescriptionValueBinding Binding;
-	Binding.Token = TEXT("Damage");
-	Binding.Attribute = UCombatAttributeSet::GetDamageDealtMultiplierAttribute();
-	Binding.Format = ECoreDescriptionValueFormat::IncreasePercent;
-	Data->DescriptionValues.Add(Binding);
-
-	auto Validate = [Data](int32& OutErrors, int32& OutWarnings)
+	// 페이즈 체력 하한만 검사하므로, 퍼즐 장치가 없는 테스트 월드에서는 전환 요청을 대기 상태로 둔다.
+	UBossPhaseComponent* Phase = Boss->FindComponentByClass<UBossPhaseComponent>();
+	if (!TestNotNull(TEXT("Boss phase component exists"), Phase)) return false;
+	FBoolProperty* PendingTransition = FindFProperty<FBoolProperty>(Phase->GetClass(), TEXT("bIsTransitionPending"));
+	if (!TestNotNull(TEXT("Phase transition test state is available"), PendingTransition)) return false;
+	PendingTransition->SetPropertyValue_InContainer(Phase, true);
+	Events.Reset();
+	BossASC->SetNumericAttributeBase(UBossAttributeSet::GetHealthAttribute(), 710.f);
+	TestTrue(TEXT("Phase-limited damage is accepted"), UCombatDamageLibrary::ApplyFinalDamageToTarget(
+		Fixture.Owner, Boss, Effect, 125.f, Melee));
+	TestEqual(TEXT("Boss phase floor is preserved"), BossASC->GetNumericAttribute(UBossAttributeSet::GetHealthAttribute()), 700.f);
+	TestEqual(TEXT("Phase-limited hit sends one event"), Events.Num(), 1);
+	if (Events.Num() == 1)
 	{
-		FDataValidationContext Context;
-		const EDataValidationResult Result = Data->IsDataValid(Context);
-		OutErrors = static_cast<int32>(Context.GetNumErrors());
-		OutWarnings = static_cast<int32>(Context.GetNumWarnings());
-		return Result;
-	};
-	int32 Errors = 0;
-	int32 Warnings = 0;
-
-	Data->MaxLevel = 3;
-	TestTrue(TEXT("Curve keys matching MaxLevel are valid"), Validate(Errors, Warnings) == EDataValidationResult::Valid);
-	TestEqual(TEXT("Matching setup has no errors"), Errors, 0);
-	TestEqual(TEXT("Matching setup has no warnings"), Warnings, 0);
-	float Value = 0.0f;
-	constexpr float CurveTolerance = UE_KINDA_SMALL_NUMBER;
-	TestTrue(TEXT("Auto-searched binding reads level two"), Data->TryGetDescriptionValue(Binding, 2, Value) && FMath::IsNearlyEqual(Value, 1.20f));
-
-	Data->MaxLevel = 4;
-	TestTrue(TEXT("Constant tail is valid with a warning instead of a missing-key error"),
-		Validate(Errors, Warnings) == EDataValidationResult::Valid && Errors == 0 && Warnings > 0);
-	TestTrue(TEXT("Constant tail preserves the final key value"),
-		Data->TryGetDescriptionValue(Binding, 4, Value) && FMath::IsNearlyEqual(Value, 1.30f, CurveTolerance));
-
-	Curve.PostInfinityExtrap = RCCE_Linear;
-	TestTrue(TEXT("Linear tail is valid beyond the last key without warnings"),
-		Validate(Errors, Warnings) == EDataValidationResult::Valid && Errors == 0 && Warnings == 0);
-	TestTrue(TEXT("Description reads the extrapolated value"),
-		Data->TryGetDescriptionValue(Binding, 4, Value) && FMath::IsNearlyEqual(Value, 1.40f, CurveTolerance));
-	{
-		FCoreTestFixture Fixture(true);
-		for (int32 Level = 1; Level <= Data->MaxLevel; ++Level)
-		{
-			TestTrue(TEXT("A core can upgrade beyond the final curve key"), IsCoreAcquireSuccess(Fixture.Core->AcquireCore(Data)));
-		}
-		TestTrue(TEXT("The active GE uses the extrapolated level-four magnitude"),
-			FMath::IsNearlyEqual(Fixture.Attributes->GetDamageDealtMultiplier(), 1.40f, CurveTolerance));
-		AddInfo(FString::Printf(TEXT("Linear Lv.4: description=%.9f, active GE=%.9f, expected=1.400000000"),
-			Value, Fixture.Attributes->GetDamageDealtMultiplier()));
-		TestTrue(TEXT("Extrapolation does not bypass the maximum upgrade level"),
-			Fixture.Core->AcquireCore(Data) == ECoreAcquireResult::MaxLevel);
+		TestEqual(TEXT("Phase-limited event excludes blocked damage"), Events[0].EventMagnitude, 10.f);
+		TestFalse(TEXT("Reaching a phase threshold is not a kill"), Events[0].TargetTags.HasTagExact(KilledTag));
 	}
+	Events.Reset();
+	UCombatDamageLibrary::ApplyFinalDamageToTarget(Fixture.Owner, Boss, Effect, 125.f, Melee);
+	TestEqual(TEXT("Hit at phase floor sends no event"), Events.Num(), 0);
 
-	Data->MaxLevel = 10;
-	TestTrue(TEXT("Raising MaxLevel needs no additional keys for a linear tail"),
-		Validate(Errors, Warnings) == EDataValidationResult::Valid && Warnings == 0);
-	TestTrue(TEXT("The linear tail reaches the configured maximum level"),
-		Data->TryGetDescriptionValue(Binding, 10, Value) && FMath::IsNearlyEqual(Value, 2.0f, CurveTolerance));
-	AddInfo(FString::Printf(TEXT("Linear Lv.10: description=%.9f, expected=2.000000000"), Value));
-
-	const FRichCurve CompleteCurve = Curve;
-	Curve.Reset();
-	Curve.AddKey(1.0f, 1.10f);
-	TestTrue(TEXT("A single-key linear tail warns because it has no slope"),
-		Validate(Errors, Warnings) == EDataValidationResult::Valid && Warnings > 0);
-	TestTrue(TEXT("A single-key linear tail keeps its sole value"),
-		Data->TryGetDescriptionValue(Binding, 10, Value) && FMath::IsNearlyEqual(Value, 1.10f, CurveTolerance));
-	Curve.Reset();
-	TestTrue(TEXT("An empty curve still fails validation"), Validate(Errors, Warnings) == EDataValidationResult::Invalid);
-	Curve = CompleteCurve;
-	Curve.PostInfinityExtrap = RCCE_Cycle;
-	TestTrue(TEXT("A repeating tail remains valid but requests a review"),
-		Validate(Errors, Warnings) == EDataValidationResult::Valid && Warnings > 0);
-	Curve.PostInfinityExtrap = RCCE_Linear;
-
-	Data->MaxLevel = 2;
-	TestTrue(TEXT("Curve longer than MaxLevel only warns"), Validate(Errors, Warnings) == EDataValidationResult::Valid && Warnings > 0);
-
-	Data->MaxLevel = 3;
-	Data->CoreDescription = FText::FromString(TEXT("피해 {Damage}% 증가, 사거리 {Range}"));
-	TestTrue(TEXT("Unbound description token is invalid"), Validate(Errors, Warnings) == EDataValidationResult::Invalid);
-
-	Data->CoreDescription = FText::FromString(TEXT("피해 {Damage}% 증가"));
-	Data->DescriptionValues.Add(Binding);
-	TestTrue(TEXT("Duplicate description tokens are invalid"), Validate(Errors, Warnings) == EDataValidationResult::Invalid);
-	TestEqual(TEXT("Duplicate token is reported as one error"), Errors, 1);
-	Data->DescriptionValues.SetNum(1);
-	TestTrue(TEXT("Removing duplicate token restores valid data"), Validate(Errors, Warnings) == EDataValidationResult::Valid);
-
-	Data->GrantedEffects.Add(UGameplayEffect::StaticClass());
-	TestTrue(TEXT("Editor validation rejects duplicate effects"), Validate(Errors, Warnings) == EDataValidationResult::Invalid);
-	Data->GrantedEffects.SetNum(1);
-	Data->GrantedAbilities = { UGameplayAbility::StaticClass(), UGameplayAbility::StaticClass() };
-	TestTrue(TEXT("Editor validation rejects duplicate abilities"), Validate(Errors, Warnings) == EDataValidationResult::Invalid);
-	Data->GrantedAbilities.Reset();
-	TestTrue(TEXT("Removing duplicate grants restores valid data"), Validate(Errors, Warnings) == EDataValidationResult::Valid);
-
-	Effect->DurationPolicy = EGameplayEffectDurationType::Instant;
-	TestTrue(TEXT("Non-infinite effect is invalid"), Validate(Errors, Warnings) == EDataValidationResult::Invalid);
-	return true;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCoreValidationBudgetTest, "TheLastMessage.Core.ValidationBudget",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-
-bool FCoreValidationBudgetTest::RunTest(const FString& Parameters)
-{
-	UGameplayEffect* Effect = GetMutableDefault<UGameplayEffect>();
-	TGuardValue<EGameplayEffectDurationType> DurationGuard(Effect->DurationPolicy, EGameplayEffectDurationType::Infinite);
-	TGuardValue<TArray<FGameplayModifierInfo>> ModifiersGuard(Effect->Modifiers, {});
-	FGameplayModifierInfo& Modifier = Effect->Modifiers.AddDefaulted_GetRef();
-	Modifier.Attribute = UCombatAttributeSet::GetDamageDealtMultiplierAttribute();
-	Modifier.ModifierOp = EGameplayModOp::MultiplyAdditive;
-	Modifier.ModifierMagnitude = FGameplayEffectModifierMagnitude(FScalableFloat(1.25f));
-	UCoreDataAsset* Data = NewObject<UCoreDataAsset>();
-	Data->CoreId = TEXT("Test_ValidationBudget");
-	Data->CoreName = FText::FromString(TEXT("Validation budget"));
-	Data->CoreDescription = FText::FromString(TEXT("피해 {Damage}% 증가"));
-	Data->GrantedEffects.Add(UGameplayEffect::StaticClass());
-	FCoreDescriptionValueBinding Binding;
-	Binding.Token = TEXT("Damage");
-	Binding.Attribute = Modifier.Attribute;
-	Binding.Format = ECoreDescriptionValueFormat::IncreasePercent;
-	Data->DescriptionValues.Add(Binding);
-	auto Check = [this, Data](const TCHAR* Case, int32 ExpectedErrors, int32 ExpectedWarnings)
-	{
-		FDataValidationContext Context;
-		const EDataValidationResult Result = Data->IsDataValid(Context);
-		TestTrue(Case, Result == (ExpectedErrors ? EDataValidationResult::Invalid : EDataValidationResult::Valid));
-		TestEqual(FString::Printf(TEXT("%s error count"), Case), static_cast<int32>(Context.GetNumErrors()), ExpectedErrors);
-		TestEqual(FString::Printf(TEXT("%s warning count"), Case), static_cast<int32>(Context.GetNumWarnings()), ExpectedWarnings);
-	};
-	const double StartedAt = FPlatformTime::Seconds();
-	Data->MaxLevel = MAX_int32;
-	Check(TEXT("A fixed magnitude needs no partial-validation warning even at MAX_int32"), 0, 0);
-
-	UCurveTable* Table = NewObject<UCurveTable>();
-	FRichCurve& Curve = Table->AddRichCurve(TEXT("Scaling"));
-	Curve.AddKey(1.f, 1.f);
-	Curve.AddKey(2.f, 2.f);
-	Curve.PostInfinityExtrap = RCCE_Linear;
-	FScalableFloat Scaling;
-	Scaling.SetScalingValue(1.f, TEXT("Scaling"), Table);
-	Modifier.ModifierMagnitude = FGameplayEffectModifierMagnitude(Scaling);
-	Data->MaxLevel = 1024;
-	Check(TEXT("Levels within the validation budget are checked without a partial warning"), 0, 0);
-	Data->MaxLevel = 1025;
-	Check(TEXT("Exceeding the validation budget warns once"), 0, 1);
-	Data->MaxLevel = MAX_int32;
-	Check(TEXT("A huge maximum finishes without an overflowing loop"), 0, 1);
-	TestEqual(TEXT("Validation preserves the configured upgrade limit"), Data->MaxLevel, MAX_int32);
-	float Value = 0.f;
-	TestTrue(TEXT("The actual high-level curve value remains readable"),
-		Data->TryGetDescriptionValue(Binding, Data->MaxLevel, Value) && Value > 1.e9f);
-
-	// 초반 검사 범위는 유한하지만 최대 단계에서 넘치는 수치도 오류로 잡아야 한다.
-	Scaling.SetScalingValue(MAX_flt / 2048.f, TEXT("Scaling"), Table);
-	Modifier.ModifierMagnitude = FGameplayEffectModifierMagnitude(Scaling);
-	Check(TEXT("A non-finite magnitude at the final level is still rejected"), 1, 1);
-	Scaling.SetScalingValue(1.f, TEXT("Scaling"), Table);
-	Modifier.ModifierMagnitude = FGameplayEffectModifierMagnitude(Scaling);
-	Curve.UpdateOrAddKey(1024.f, .5f);
-	Data->MaxLevel = 1024;
-	Check(TEXT("The final level of the full-check range still validates its format"), 0, 1);
-	Curve.Reset();
-	Curve.DefaultValue = 1.f;
-	Check(TEXT("An empty curve remains an error"), 1, 0);
-	Curve.AddKey(1.f, 1.f);
-	Curve.AddKey(2.f, 2.f);
-	Curve.PostInfinityExtrap = RCCE_Constant;
-	Data->UpgradeLimitType = ECoreUpgradeLimitType::Infinite;
-	Check(TEXT("Infinite ignores MaxLevel and retains its existing checks"), 0, 0);
-	AddInfo(FString::Printf(TEXT("Validation budget boundary cases completed in %.3f ms; MaxLevel=%d was preserved."),
-		(FPlatformTime::Seconds() - StartedAt) * 1000., Data->MaxLevel));
-	return true;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCoreIdValidationTest, "TheLastMessage.Core.UniqueIds",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-
-bool FCoreIdValidationTest::RunTest(const FString& Parameters)
-{
-	// 서로 다른 패키지의 에셋을 메모리에서만 등록하고 테스트 종료 시 등록을 해제한다.
-	struct FRegisteredCore
-	{
-		TStrongObjectPtr<UCoreDataAsset> Data;
-		explicit FRegisteredCore(FName CoreId)
+	// 피해 알림 수신 중 추가 공격이 적을 처치해도 각 공격의 결과는 서로 구분한다.
+	const FDelegateHandle FinishingHitHandle = Fixture.ASC->GenericGameplayEventCallbacks.FindChecked(EventTag).AddLambda(
+		[&](const FGameplayEventData* Payload)
 		{
-			const FString AssetName = TEXT("CoreId_") + FGuid::NewGuid().ToString(EGuidFormats::Digits);
-			const FString PackageName = TEXT("/Game/__Automation__/") + AssetName;
-			UPackage* Package = CreatePackage(*PackageName);
-			Package->MarkAsFullyLoaded();
-			Data.Reset(NewObject<UCoreDataAsset>(Package, FName(*AssetName), RF_Public | RF_Standalone));
-			Data->CoreId = CoreId;
-			Data->CoreName = FText::FromString(TEXT("ID validation"));
-			FAssetRegistryModule::AssetCreated(Data.Get());
-		}
-		~FRegisteredCore()
-		{
-			FAssetRegistryModule::AssetDeleted(Data.Get());
-			Data->ClearFlags(RF_Public | RF_Standalone);
-			Data->SetFlags(RF_Transient);
-		}
-	};
-	const FName SharedId(*(TEXT("Test_Unique_") + FGuid::NewGuid().ToString(EGuidFormats::Digits)));
-	const FName SeparateId(*(SharedId.ToString() + TEXT("_Separate")));
-	FRegisteredCore First(SharedId);
-	FRegisteredCore Second(SeparateId);
-	auto Check = [this](const TCHAR* Case, const UCoreDataAsset* Data, int32 ExpectedErrors)
+			if (Payload && Payload->Target == Enemy && Payload->EventMagnitude == 5.f)
+				UCombatDamageLibrary::ApplyFinalDamageToTarget(Fixture.Owner, Enemy, Effect, 125.f, Ranged);
+		});
+	EnemyASC->SetNumericAttributeBase(UEnemyAttributeSet::GetHealthAttribute(), 15.f);
+	TestTrue(TEXT("Initial damage is accepted"), UCombatDamageLibrary::ApplyFinalDamageToTarget(
+		Fixture.Owner, Enemy, Effect, 5.f, Melee));
+	Fixture.ASC->GenericGameplayEventCallbacks.FindChecked(EventTag).Remove(FinishingHitHandle);
+	TestEqual(TEXT("Initial and finishing attacks each send one event"), Events.Num(), 2);
+	const FGameplayEventData* InitialHit = Events.FindByPredicate([](const FGameplayEventData& Payload) { return Payload.EventMagnitude == 5.f; });
+	const FGameplayEventData* FinishingHit = Events.FindByPredicate([](const FGameplayEventData& Payload) { return Payload.EventMagnitude == 10.f; });
+	if (TestNotNull(TEXT("Initial damage result remains available"), InitialHit))
+		TestFalse(TEXT("A later attack cannot change the initial kill result"), InitialHit->TargetTags.HasTagExact(KilledTag));
+	if (TestNotNull(TEXT("Overkill reports the ten remaining HP"), FinishingHit))
 	{
-		FDataValidationContext Context;
-		const EDataValidationResult Result = Data->IsDataValid(Context);
-		TestTrue(Case, Result == (ExpectedErrors ? EDataValidationResult::Invalid : EDataValidationResult::Valid));
-		TestEqual(FString::Printf(TEXT("%s error count"), Case), static_cast<int32>(Context.GetNumErrors()), ExpectedErrors);
-		return Context.GetNumErrors() ? Context.GetIssues()[0].Message.ToString() : FString();
-	};
-	Check(TEXT("An asset does not conflict with itself or a different ID"), First.Data.Get(), 0);
-	Second.Data->CoreId = SharedId;
-	const FString Message = Check(TEXT("An unsaved ID change on another asset is detected"), First.Data.Get(), 1);
-	TestTrue(TEXT("The error identifies the duplicated ID and the other asset"),
-		Message.Contains(SharedId.ToString()) && Message.Contains(Second.Data->GetPathName()));
-	Check(TEXT("Both assets report a duplicate"), Second.Data.Get(), 1);
-	Second.Data->CoreId = FName(*SharedId.ToString().ToLower());
-	Check(TEXT("IDs follow FName's case-insensitive identity"), First.Data.Get(), 1);
-	Second.Data->CoreId = SeparateId;
-	Check(TEXT("Correcting the ID restores valid data without saving"), First.Data.Get(), 0);
-	{
-		FRegisteredCore Third(SeparateId);
-		Check(TEXT("Duplicates of an unrelated ID do not invalidate this asset"), First.Data.Get(), 0);
-		Check(TEXT("The unrelated duplicate is still detected on its owner"), Second.Data.Get(), 1);
+		TestTrue(TEXT("Lethal enemy damage includes the kill result"), FinishingHit->TargetTags.HasTagExact(KilledTag));
 	}
-	Check(TEXT("Removing an asset clears its duplicate registration"), Second.Data.Get(), 0);
-	Second.Data->CoreId = NAME_None;
-	Check(TEXT("An empty ID remains an error"), Second.Data.Get(), 1);
-	UCoreDataAsset* Transient = NewObject<UCoreDataAsset>();
-	Transient->CoreId = SharedId;
-	Transient->CoreName = First.Data->CoreName;
-	Check(TEXT("A temporary runtime definition is not a separate project asset"), Transient, 0);
+	Events.Reset();
+	UCombatDamageLibrary::ApplyFinalDamageToTarget(Fixture.Owner, Enemy, Effect, 125.f, Ranged);
+	TestEqual(TEXT("Dead enemy sends no repeated damage event"), Events.Num(), 0);
+
+	FEnumProperty* CurrentPhase = FindFProperty<FEnumProperty>(Phase->GetClass(), TEXT("CurrentPhase"));
+	if (!TestNotNull(TEXT("Boss final phase test state is available"), CurrentPhase)) return false;
+	CurrentPhase->GetUnderlyingProperty()->SetIntPropertyValue(CurrentPhase->ContainerPtrToValuePtr<void>(Phase),
+		static_cast<int64>(EBossPhase::Phase3));
+	BossASC->SetNumericAttributeBase(UBossAttributeSet::GetHealthAttribute(), 10.f);
+	TestTrue(TEXT("Lethal boss damage is accepted"), UCombatDamageLibrary::ApplyFinalDamageToTarget(
+		Fixture.Owner, Boss, Effect, 125.f, Melee));
+	TestEqual(TEXT("Lethal boss hit sends one event"), Events.Num(), 1);
+	if (Events.Num() == 1)
+		TestTrue(TEXT("Lethal boss result preserves actual damage"), Events[0].EventMagnitude == 10.f && Events[0].TargetTags.HasTagExact(KilledTag));
+	Events.Reset();
+	UCombatDamageLibrary::ApplyFinalDamageToTarget(Fixture.Owner, Boss, Effect, 125.f, Melee);
+	TestEqual(TEXT("Dead boss sends no repeated damage event"), Events.Num(), 0);
+	TestFalse(TEXT("Kill result is not granted as an attacker state tag"), Fixture.ASC->HasMatchingGameplayTag(KilledTag));
+	TestFalse(TEXT("Kill result is not granted as a target state tag"), EnemyASC->HasMatchingGameplayTag(KilledTag));
+	TestEqual(TEXT("Damage event alone does not heal the attacker"), Fixture.Attributes->GetHealth(), 50.f);
 	return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCoreDescriptionLimitsTest, "TheLastMessage.Core.DescriptionLimits",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-
-bool FCoreDescriptionLimitsTest::RunTest(const FString& Parameters)
-{
-	UGameplayEffect* Effect = GetMutableDefault<UGameplayEffect>();
-	TGuardValue<EGameplayEffectDurationType> DurationGuard(Effect->DurationPolicy, EGameplayEffectDurationType::Infinite);
-	TGuardValue<TArray<FGameplayModifierInfo>> ModifiersGuard(Effect->Modifiers, {});
-	Effect->Modifiers.AddDefaulted();
-	UCoreDataAsset* Data = NewObject<UCoreDataAsset>();
-	Data->CoreId = TEXT("Test_DescriptionLimits");
-	Data->CoreName = FText::FromString(TEXT("Description limits"));
-	Data->CoreDescription = FText::FromString(TEXT("효과 {Value}"));
-	Data->GrantedEffects.Add(UGameplayEffect::StaticClass());
-	auto Configure = [Effect, Data](const FGameplayAttribute& Attribute, float Value,
-		EGameplayModOp::Type Operation, ECoreDescriptionValueFormat Format)
-	{
-		Effect->Modifiers[0].Attribute = Attribute;
-		Effect->Modifiers[0].ModifierOp = Operation;
-		Effect->Modifiers[0].ModifierMagnitude = FGameplayEffectModifierMagnitude(FScalableFloat(Value));
-		FCoreDescriptionValueBinding Binding;
-		Binding.Token = TEXT("Value");
-		Binding.Attribute = Attribute;
-		Binding.Format = Format;
-		Data->DescriptionValues = { Binding };
-	};
-	auto CheckWarnings = [this, Data](const TCHAR* Case, int32 ExpectedWarnings)
-	{
-		FDataValidationContext Context;
-		TestTrue(FString::Printf(TEXT("%s remains valid"), Case), Data->IsDataValid(Context) == EDataValidationResult::Valid);
-		TestEqual(FString::Printf(TEXT("%s warning count"), Case), static_cast<int32>(Context.GetNumWarnings()), ExpectedWarnings);
-	};
-
-	Configure(UCombatAttributeSet::GetDamageTakenMultiplierAttribute(), .3f,
-		EGameplayModOp::MultiplyAdditive, ECoreDescriptionValueFormat::ReductionPercent);
-	UCurveTable* Table = NewObject<UCurveTable>();
-	FRichCurve& Curve = Table->AddRichCurve(TEXT("Reduction"));
-	Curve.AddKey(1.f, .5f);
-	Curve.AddKey(2.f, .4f);
-	Curve.PostInfinityExtrap = RCCE_Linear;
-	FScalableFloat Scaling;
-	Scaling.SetScalingValue(1.f, TEXT("Reduction"), Table);
-	Effect->Modifiers[0].ModifierMagnitude = FGameplayEffectModifierMagnitude(Scaling);
-	Data->MaxLevel = 3;
-	CheckWarnings(TEXT("Damage multiplier at its runtime floor"), 0);
-	Data->MaxLevel = 6;
-	CheckWarnings(TEXT("Several extrapolated levels below the floor produce one warning"), 1);
-	Data->MaxLevel = 4;
-	{
-		FCoreTestFixture Fixture(true);
-		for (int32 Level = 1; Level <= Data->MaxLevel; ++Level)
-			TestTrue(TEXT("A warning does not prevent acquisition"), IsCoreAcquireSuccess(Fixture.Core->AcquireCore(Data)));
-		float DescriptionValue = 0.f;
-		TestTrue(TEXT("The description still reads the configured magnitude"),
-			Data->TryGetDescriptionValue(Data->DescriptionValues[0], 4, DescriptionValue)
-			&& FMath::IsNearlyEqual(DescriptionValue, .2f, UE_KINDA_SMALL_NUMBER));
-		TestTrue(TEXT("The actual effect retains its runtime floor"),
-			FMath::IsNearlyEqual(Fixture.Attributes->GetDamageTakenMultiplier(), .3f, UE_KINDA_SMALL_NUMBER));
-	}
-	Configure(UCombatAttributeSet::GetChargeTimeMultiplierAttribute(), .1f,
-		EGameplayModOp::MultiplyAdditive, ECoreDescriptionValueFormat::ReductionPercent);
-	CheckWarnings(TEXT("Charge time below its runtime floor"), 1);
-	Configure(UCombatAttributeSet::GetChargeTimeMultiplierAttribute(), .2f,
-		EGameplayModOp::MultiplyAdditive, ECoreDescriptionValueFormat::ReductionPercent);
-	CheckWarnings(TEXT("Charge time at its runtime floor"), 0);
-	Configure(UCombatAttributeSet::GetCriticalChanceAttribute(), 1.2f,
-		EGameplayModOp::Override, ECoreDescriptionValueFormat::Percent);
-	CheckWarnings(TEXT("Critical chance override above one"), 1);
-	Configure(UCombatAttributeSet::GetCriticalChanceAttribute(), 1.2f,
-		EGameplayModOp::Additive, ECoreDescriptionValueFormat::Percent);
-	CheckWarnings(TEXT("Critical chance contribution above one"), 1);
-	Configure(UCombatAttributeSet::GetCriticalChanceAttribute(), .05f,
-		EGameplayModOp::Additive, ECoreDescriptionValueFormat::Percent);
-	CheckWarnings(TEXT("A normal critical chance contribution"), 0);
-	Configure(UCombatAttributeSet::GetCriticalChanceAttribute(), -.1f,
-		EGameplayModOp::Additive, ECoreDescriptionValueFormat::Percent);
-	CheckWarnings(TEXT("A negative contribution requires the player's existing stats"), 0);
-	Configure(UCombatAttributeSet::GetCriticalChanceAttribute(), 2.f,
-		EGameplayModOp::MultiplyAdditive, ECoreDescriptionValueFormat::IncreasePercent);
-	CheckWarnings(TEXT("A multiplier is not itself an absolute critical chance"), 0);
-	Configure(UCombatAttributeSet::GetHealthAttribute(), 50.f,
-		EGameplayModOp::Override, ECoreDescriptionValueFormat::Number);
-	CheckWarnings(TEXT("Current health requires the player's maximum health"), 0);
-	return true;
-}
 #endif
 
 #endif

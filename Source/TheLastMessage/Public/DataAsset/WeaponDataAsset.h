@@ -233,4 +233,8 @@ public:
 	// 투사체의 발사 속도(cm/초), 기본 사거리와 함께 최대 비행 시간 계산에 사용한다
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon", meta=(ToolTip="투사체의 발사 속도(cm/초), 기본 사거리와 함께 최대 비행 시간 계산에 사용한다"))
 	float ProjectileSpeed;
+
+	// 1: reveal after travelling the center-to-muzzle distance; 0: visible immediately.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Projectile", meta=(ClampMin="0"))
+	float ProjectileRevealDistanceMultiplier = 1.0f;
 };

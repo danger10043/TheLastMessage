@@ -1,6 +1,7 @@
 #include "Character/Enemy/EnemyBase.h"
 #include "Character/Enemy/EnemyAIController.h"
 #include "Character/Enemy/EnemyAttributeSet.h"
+#include "Character/Enemy/Drop/EnemyHealthPickup.h"
 #include "Character/Enemy/EnemyProjectile.h"
 #include "Character/Player/PlayerBase.h"
 #include "Perception/AIPerceptionComponent.h"
@@ -71,6 +72,9 @@ void AEnemyBase::ApplyEnemyData(const UEnemyDataAsset* Data)
 	CorpseLifeSpan = Data->CorpseLifeSpan;
 	HomeReanchorHeight = Data->HomeReanchorHeight;
 	PatrolRadius = Data->PatrolRadius;
+	HealDropChance = Data->HealDropChance;
+	HealDropAmount = Data->HealDropAmount;
+	HealDropHeight = Data->HealDropHeight;
 }
 
 void AEnemyBase::BeginPlay()
@@ -678,6 +682,41 @@ AEnemyProjectile* AEnemyBase::SpawnEnemyProjectile(const FEnemyProjectileConfig&
 	return Projectile;
 }
 
+void AEnemyBase::TryDropHeal()
+{
+	UWorld* World = GetWorld();
+	if (!World || !HasAuthority() || !bCanDropOnDeath || !HealDropClass || HealDropChance <= 0.f)
+	{
+		return;
+	}
+
+	if (FMath::FRand() > HealDropChance)
+	{
+		return;
+	}
+
+	// 죽은 자리 아래의 바닥을 찾아 그 위에 놓는다. 바닥을 못 찾으면(벽·천장에서 죽음 등) 죽은 자리에 그대로 놓는다.
+	FVector Location = GetActorLocation();
+	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(EnemyHealDrop), false, this);
+	FHitResult Hit;
+	if (World->LineTraceSingleByObjectType(Hit, Location, Location - FVector(0.f, 0.f, 500.f),
+		FCollisionObjectQueryParams(ECC_WorldStatic), QueryParams))
+	{
+		Location.Z = Hit.ImpactPoint.Z + HealDropHeight;
+	}
+
+	const FTransform SpawnTransform(FRotator::ZeroRotator, Location);
+	AEnemyHealthPickup* Pickup = World->SpawnActorDeferred<AEnemyHealthPickup>(
+		HealDropClass, SpawnTransform, nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+	if (!Pickup)
+	{
+		return;
+	}
+
+	Pickup->InitPickup(HealDropAmount);
+	Pickup->FinishSpawning(SpawnTransform);
+}
+
 void AEnemyBase::HandleDeath()
 {
 	if (IsDead())
@@ -688,6 +727,7 @@ void AEnemyBase::HandleDeath()
 	SetEnemyState(EEnemyState::Dead);
 	CancelAttack();
 	SetCurrentTarget(nullptr);
+	TryDropHeal();
 	UnbindTargetPlayerEvents(); // 죽은 몬스터가 플레이어 이벤트를 받지 않게 한다.
 	GetWorldTimerManager().ClearTimer(HealthBarTimerHandle);
 	HideHealthBar();
@@ -791,6 +831,7 @@ void AEnemyBase::ResetEnemy()
 	StopAnimMontage();
 
 	// 상태를 처음으로 되돌린다.
+	bCanDropOnDeath = true;
 	CurrentTarget = nullptr;
 	UnbindTargetPlayerEvents();
 	CurrentState = EEnemyState::Patrol;

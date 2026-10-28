@@ -29,8 +29,13 @@ UCombatAttributeSet::UCombatAttributeSet()
 
 	// 코어가 부여하기 전에는 추가 회복과 보조 타격 피해가 없다.
 	InitLifeStealRatio(0.0f);
-	InitKillHealAmount(0.0f);
+	InitKillHealRatio(0.0f);
 	InitAssistStrikeDamageRatio(0.0f);
+
+	// 연속 발사 효과가 없으면 원래 피해의 단발 공격이다.
+	InitRangedBurstShotCount(1.0f);
+	InitRangedBurstTotalDamageMultiplier(1.0f);
+	InitRangedBurstInterval(0.1f);
 }
 
 void UCombatAttributeSet::PreAttributeChange(const FGameplayAttribute& Attribute, float& NewValue)
@@ -53,6 +58,15 @@ void UCombatAttributeSet::PreAttributeChange(const FGameplayAttribute& Attribute
 	{
 		NewValue = FMath::Max(MinChargeTimeMultiplier, NewValue);
 	}
+	else if (Attribute == GetRangedBurstShotCountAttribute())
+	{
+		NewValue = FMath::IsFinite(NewValue) ? FMath::Max(1.0f, FMath::RoundToFloat(NewValue)) : 1.0f;
+	}
+	else if (Attribute == GetRangedBurstIntervalAttribute())
+	{
+		// 타이머가 실행될 수 있도록 양수 간격을 유지한다.
+		NewValue = FMath::IsFinite(NewValue) ? FMath::Max(0.01f, NewValue) : 0.1f;
+	}
 	else if (Attribute == GetCriticalChanceAttribute()
 		|| Attribute == GetHighHealthThresholdRatioAttribute()
 		|| Attribute == GetLowHealthThresholdRatioAttribute())
@@ -68,7 +82,8 @@ void UCombatAttributeSet::PreAttributeChange(const FGameplayAttribute& Attribute
 		|| Attribute == GetEnergyRechargeRateMultiplierAttribute()
 		|| Attribute == GetMoveSpeedMultiplierAttribute()
 		|| Attribute == GetLifeStealRatioAttribute()
-		|| Attribute == GetKillHealAmountAttribute()
+		|| Attribute == GetKillHealRatioAttribute()
+		|| Attribute == GetRangedBurstTotalDamageMultiplierAttribute()
 		|| Attribute == GetAssistStrikeDamageRatioAttribute())
 	{
 		// 음수 배율·회복량은 피해 회복이나 역방향 이동 같은 의도하지 않은 동작을 만든다.

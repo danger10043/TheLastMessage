@@ -21,8 +21,10 @@ class THELASTMESSAGE_API AProjectileBase : public AActor
 
 public:
 	AProjectileBase();
+	virtual void Tick(float DeltaSeconds) override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 	void ConfigureVisuals(UWeaponDataAsset* Data);
+	void ConfigureInitialVisibility(float TravelDistance);
 	float GetProjectileCollisionRadius() const;
 	bool InitializeProjectile(AActor* Source, TSubclassOf<UGameplayEffect> Effect, float InDamage, float Speed, float Range, float InFeedbackStrength = 1.0f);
 
@@ -69,6 +71,12 @@ protected:
 	float Damage = 0.f;
 
 private:
+	UFUNCTION()
+	void OnRep_InitialVisibility();
+	UPROPERTY(Replicated)
+	FVector VisualStartLocation = FVector::ZeroVector;
+	UPROPERTY(ReplicatedUsing=OnRep_InitialVisibility)
+	float HiddenTravelDistance = 0.0f;
 	UFUNCTION(NetMulticast, Unreliable)
 	void MulticastImpact(UWeaponDataAsset* Data, FVector_NetQuantize Location, FVector_NetQuantizeNormal Normal);
 	UFUNCTION()

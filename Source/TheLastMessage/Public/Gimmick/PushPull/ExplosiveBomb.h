@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Gimmick/PushPull/PushPullGimmick.h"
 #include "Gimmick/Data/BombConfigRow.h"
+#include "Interface/AttackReceiverInterface.h"
 #include "ExplosiveBomb.generated.h"
 
 class ABombRespawnPoint;
@@ -13,7 +14,7 @@ class ABombRespawnPoint;
  */
  // 밀고 당길 수 있으며 공격받으면 폭발하는 폭탄
 UCLASS(Blueprintable)
-class THELASTMESSAGE_API AExplosiveBomb : public APushPullGimmick
+class THELASTMESSAGE_API AExplosiveBomb : public APushPullGimmick, public IAttackReceiverInterface
 {
     GENERATED_BODY()
 
@@ -25,9 +26,9 @@ public:
     // 폭발 여부와 설정 상태를 포함한 조작 가능 여부 검사
     virtual bool CanBeMovedBy(ACharacter* Player) const override;
 
-    // 공격이 명중했을 때 무기 쪽에서 호출
+    // 공통 피격 인터페이스를 통해 공격을 전달받음
     UFUNCTION(BlueprintCallable, Category = "Gimmick|Bomb")
-    void ReceiveAttackDamage(float DamageAmount, AActor* DamageCauser);
+    virtual void ReceiveAttackDamage(float DamageAmount, AActor* DamageCauser) override;
 
     // 폭발 실행
     UFUNCTION(BlueprintCallable, Category = "Gimmick|Bomb")

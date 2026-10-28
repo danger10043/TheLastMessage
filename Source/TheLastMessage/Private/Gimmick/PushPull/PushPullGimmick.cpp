@@ -7,6 +7,7 @@
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Gimmick/Component/PushPullComponent.h"
+#include "PhysicsEngine/BodyInstance.h"
 
 APushPullGimmick::APushPullGimmick()
 {
@@ -130,12 +131,22 @@ void APushPullGimmick::BeginPushPull(ACharacter* Player)
 
     ControllingPlayer = Player;
 
+    SetPushPullMovementEnabled(true);
+
     UpdateInteractionHighlight(false);
 }
 
 void APushPullGimmick::EndPushPull()
 {
     ControllingPlayer.Reset();
+
+    SetPushPullMovementEnabled(false);
+
+    // 목표 위치가 아닌 물리 메시의 실제 배치 상태 기록
+    if (IsValid(PhysicsMesh))
+    {
+        LastPlacedWorldTransform = PhysicsMesh->GetComponentTransform();
+    }
 }
 
 UStaticMeshComponent* APushPullGimmick::GetPhysicsMesh() const
@@ -155,6 +166,12 @@ ACharacter* APushPullGimmick::GetControllingPlayer() const
 
 void APushPullGimmick::BeginPlay()
 {
+    // 게임 시작 시 최초 배치 상태 기록
+    InitialWorldTransform = GetActorTransform();
+
+    // 아직 이동하지 않았으므로 최초 배치 상태로 초기화
+    LastPlacedWorldTransform = InitialWorldTransform;
+
     Super::BeginPlay();
 
     LoadPushPullConfig();
@@ -176,5 +193,51 @@ void APushPullGimmick::BeginPlay()
     {
         UE_LOG(LogTemp, Warning, TEXT("%s: 물리 시뮬레이션을 시작하지 못했습니다. 메시의 단순 충돌과 충돌 설정을 확인해주세요."), *GetName());
     }
+
+    // 처음에는 상호작용 없이 수평으로 밀리지 않도록 잠금
+    SetPushPullMovementEnabled(false);
+}
+
+void APushPullGimmick::SetPushPullMovementEnabled(bool bAllowHorizontalMovement)
+{
+    if (!IsValid(PhysicsMesh) || !PhysicsMesh->IsSimulatingPhysics())
+    {
+        return;
+    }
+
+    FBodyInstance& Body = PhysicsMesh->BodyInstance;
+
+    // 조작 중에만 좌우 이동 허용
+    Body.bLockXTranslation = !bAllowHorizontalMovement;
+
+    // 이동 평면을 벗어나지 않도록 깊이 방향 고정
+    Body.bLockYTranslation = true;
+
+    // 중력에 의한 낙하는 유지
+    Body.bLockZTranslation = false;
+
+    // 몸으로 부딪혔을 때 굴러가거나 넘어지는 현상 방지
+    Body.bLockXRotation = true;
+    Body.bLockYRotation = true;
+    Body.bLockZRotation = true;
+
+    // 변경한 축별 잠금 상태를 실제 물리에 적용
+    Body.SetDOFLock(EDOFMode::SixDOF);
+
+    // 조작 종료 시 남아 있는 수평 속도 제거
+    FVector Velocity = PhysicsMesh->GetPhysicsLinearVelocity();
+
+    if (!bAllowHorizontalMovement)
+    {
+        Velocity.X = 0.0;
+    }
+
+    Velocity.Y = 0.0;
+
+    // Z축 속도를 유지해서 떨어지는 도중에도 낙하가 계속되도록 처리
+    PhysicsMesh->SetPhysicsLinearVelocity(Velocity);
+    PhysicsMesh->SetPhysicsAngularVelocityInDegrees(FVector::ZeroVector);
+
+    PhysicsMesh->WakeAllRigidBodies();
 }
 

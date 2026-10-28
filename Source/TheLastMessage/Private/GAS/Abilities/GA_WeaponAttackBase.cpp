@@ -7,6 +7,7 @@
 #include "Character/Enemy/EnemyBase.h"
 #include "Character/Boss/BossMonster.h"
 #include "Character/CombatDamageLibrary.h"
+#include "Interface/AttackReceiverInterface.h"
 #include "Character/Player/PlayerBase.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/PrimitiveComponent.h"
@@ -501,8 +502,8 @@ void UGA_WeaponAttackBase::HandleMeleeHit(FGameplayEventData Payload)
 	if (Direction.IsNearlyZero()) return;
 	const FVector Start = Player->GetActorLocation();
 	const FVector End = Start + Direction * Data->AttackRange;
-	FCollisionObjectQueryParams ObjectParams;
-	ObjectParams.AddObjectTypesToQuery(ECC_Pawn);
+	// Attack receivers can use world/physics/custom object channels, not just Pawn.
+	FCollisionObjectQueryParams ObjectParams(FCollisionObjectQueryParams::AllObjects);
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(WeaponMeleeHit), false, Player);
 	TArray<FHitResult> Hits;
 	Player->GetWorld()->SweepMultiByObjectType(Hits, Start, End, FQuat::Identity, ObjectParams,
@@ -541,7 +542,8 @@ void UGA_WeaponAttackBase::HandleMeleeHit(FGameplayEventData Payload)
 		if (!IsValid(Target) || HitActorsThisAttack.Contains(TargetKey)) continue;
 		const AEnemyBase* Enemy = Cast<AEnemyBase>(Target);
 		ABossMonster* Boss = Cast<ABossMonster>(Target);
-		if ((!Enemy && !Boss) || (Enemy && Enemy->IsDead()) || (Boss && Boss->GetBossState() == EBossState::Dead)) continue;
+		IAttackReceiverInterface* AttackReceiver = Cast<IAttackReceiverInterface>(Target);
+		if ((!Enemy && !Boss && !AttackReceiver) || (Enemy && Enemy->IsDead()) || (Boss && Boss->GetBossState() == EBossState::Dead)) continue;
 		// 대상 자신을 제외하고 사이의 장애물을 검사하여 벽 너머 타격을 막는다.
 		FCollisionQueryParams WallParams(QueryParams);
 		WallParams.AddIgnoredActor(Target);
@@ -563,8 +565,17 @@ void UGA_WeaponAttackBase::HandleMeleeHit(FGameplayEventData Payload)
 			ContactNormal = (Start - ContactPoint).GetSafeNormal();
 		}
 		if (ContactNormal.IsNearlyZero()) ContactNormal = -Direction;
-		const bool bApplied = UCombatDamageLibrary::ApplyFinalDamageToTarget(
-			Player, Target, DamageEffectClass, FinalDamage, WeaponGameplayTags::Damage_PlayerMelee, GetImpactFeedbackStrength());
+		bool bApplied = false;
+		if (!Enemy && !Boss && AttackReceiver)
+		{
+			AttackReceiver->ReceiveAttackDamage(FinalDamage, Player);
+			bApplied = true;
+		}
+		else
+		{
+			bApplied = UCombatDamageLibrary::ApplyFinalDamageToTarget(
+				Player, Target, DamageEffectClass, FinalDamage, WeaponGameplayTags::Damage_PlayerMelee, GetImpactFeedbackStrength());
+		}
 		if (bApplied) Player->MulticastWeaponImpact(const_cast<UWeaponDataAsset*>(Data),
 			ContactPoint, ContactNormal, nullptr, nullptr);
 		// true는 GE 승인 여부이며, 면역으로 실제 체력이 줄지 않아도 이 공격에서는 다시 적용하지 않는다.

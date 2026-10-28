@@ -1,4 +1,5 @@
 #include "Projectile/ProjectileBase.h"
+#include "Interface/AttackReceiverInterface.h"
 #include "GameplayEffect.h"
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -178,7 +179,8 @@ void AProjectileBase::HandleImpact(AActor* OtherActor, bool bBlocking, const FHi
 		|| OtherActor == this || OtherActor == GetOwner() || OtherActor == SourceActor.Get()) return;
 	const AEnemyBase* Enemy = Cast<AEnemyBase>(OtherActor);
 	ABossMonster* Boss = Cast<ABossMonster>(OtherActor);
-	if (!Enemy && !Boss && !bBlocking) return;
+	IAttackReceiverInterface* AttackReceiver = Cast<IAttackReceiverInterface>(OtherActor);
+	if (!Enemy && !Boss && !AttackReceiver && !bBlocking) return;
 	bImpactHandled = true;
 	FVector ContactPoint = GetActorLocation();
 	FVector ContactNormal = -ProjectileMovement->Velocity.GetSafeNormal();
@@ -206,6 +208,10 @@ void AProjectileBase::HandleImpact(AActor* OtherActor, bool bBlocking, const FHi
 	{
 		UCombatDamageLibrary::ApplyFinalDamageToTarget(SourceActor.Get(), OtherActor, DamageEffectClass,
 			Damage, WeaponGameplayTags::Damage_PlayerRanged, FeedbackStrength);
+	}
+	else if (!Enemy && !Boss && AttackReceiver)
+	{
+		AttackReceiver->ReceiveAttackDamage(Damage, SourceActor.Get());
 	}
 	DestroyProjectile();
 }

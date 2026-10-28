@@ -243,29 +243,14 @@ void UGA_WeaponAttackBase::ExecuteAttack()
 	FVector ShotDirection = FVector::ZeroVector;
 	if (bRanged)
 	{
-		FVector SpawnLocation = Player->GetWeaponMuzzleLocation(WeaponSlot);
+		const FVector SpawnLocation = Player->GetActorLocation();
 		const TSubclassOf<AProjectileBase> ProjectileClass = Player->GetAttackProjectileClass(Data);
 		if (!ProjectileClass || ProjectileClass->HasAnyClassFlags(CLASS_Abstract))
 		{
 			EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
 			return;
 		}
-		const float Radius = ProjectileClass->GetDefaultObject<AProjectileBase>()->GetProjectileCollisionRadius();
-		// Sweep the whole projectile from the body to the muzzle so a barrel cannot fire through a wall.
-		FCollisionQueryParams WallParams(SCENE_QUERY_STAT(MuzzleObstruction), false, Player);
-		FHitResult Obstruction;
-		if (!SpawnLocation.Equals(Player->GetActorLocation()) && GetWorld()->SweepSingleByChannel(Obstruction,
-			Player->GetActorLocation(), SpawnLocation, FQuat::Identity, ECC_Visibility,
-			FCollisionShape::MakeSphere(Radius), WallParams))
-		{
-			if (Obstruction.bStartPenetrating)
-			{
-				EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
-				return;
-			}
-			SpawnLocation = Obstruction.Location - (SpawnLocation - Player->GetActorLocation()).GetSafeNormal();
-		}
-		ShotDirection = (Player->GetAimTargetLocation() - SpawnLocation).GetSafeNormal();
+		ShotDirection = FVector::VectorPlaneProject(Player->GetAimTargetLocation() - SpawnLocation, FVector::YAxisVector).GetSafeNormal();
 		float FinalDamage = Data->AttackPower * ChargeDamageMultiplier;
 		FinalDamage *= FMath::Max(0.0f, Player->GetCombatAttributes()->GetDamageDealtMultiplier());
 		FinalDamage *= GetHealthDamageMultiplier();
@@ -296,6 +281,9 @@ void UGA_WeaponAttackBase::ExecuteAttack()
 	{
 		SourceWeapon->LastSuccessfulFireTime = GetWorld()->GetTimeSeconds();
 		Projectile->ConfigureVisuals(SourceWeapon->WeaponData);
+		const float MuzzleDistance = FVector::VectorPlaneProject(
+			Player->GetWeaponMuzzleLocation(WeaponSlot) - SpawnTransform.GetLocation(), FVector::YAxisVector).Size();
+		Projectile->ConfigureInitialVisibility(MuzzleDistance * FMath::Max(0.0f, Data->ProjectileRevealDistanceMultiplier));
 		Projectile->FinishSpawning(SpawnTransform);
 		Player->PlayRangedShotFeedback(WeaponSlot, Data, SpawnTransform);
 		Projectile->LaunchProjectile(ShotDirection);

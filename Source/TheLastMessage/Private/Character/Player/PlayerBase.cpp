@@ -898,6 +898,8 @@ void APlayerBase::BeginWeaponCharge(EWeaponSlot Slot, float Duration)
 void APlayerBase::ClearWeaponCharge(EWeaponSlot Slot)
 {
 	if (!HasAuthority() || WeaponChargeState.Slot != Slot) return;
+	// Do not count the last charging interval toward the next energy recharge tick.
+	LastEnergyRechargeTime = GetWorld()->GetTimeSeconds();
 	WeaponChargeState = FPlayerWeaponChargeState();
 	MulticastWeaponChargeSound(nullptr, EWeaponSlot::None, 0.0f);
 	ForceNetUpdate();
@@ -1131,6 +1133,12 @@ void APlayerBase::RechargeWeaponEnergy()
 	const double Previous = LastEnergyRechargeTime;
 	LastEnergyRechargeTime = Now;
 	if (!HasAuthority() || IsDead()) return;
+	if (IsChargingWeapon())
+	{
+		const UWeaponDataAsset* ChargingWeapon = GetWeaponDataInSlot(WeaponChargeState.Slot);
+		if (ChargingWeapon && (ChargingWeapon->WeaponType == EWeaponType::LightRanged
+			|| ChargingWeapon->WeaponType == EWeaponType::HeavyRanged)) return;
+	}
 	const float RechargeMultiplier = CombatAttributes->GetEnergyRechargeRateMultiplier();
 	if (!FMath::IsFinite(RechargeMultiplier) || RechargeMultiplier <= 0.0f) return;
 	const double Start = FMath::Max(Previous, LastSharedEnergyUseTime + FMath::Max(0.0f, SharedEnergyRechargeDelay));

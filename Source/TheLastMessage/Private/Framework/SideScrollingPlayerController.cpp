@@ -21,10 +21,19 @@
 #include "InputCoreTypes.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Misc/PackageName.h"
+#include "UI/PlayerHUD.h"
+#include "Cinematics/OnceCinematicController.h"
+#include "EngineUtils.h"
 
 ASideScrollingPlayerController::ASideScrollingPlayerController()
 {
 	MapWidgetClass = UAreaMapWidget::StaticClass();
+}
+
+EMouseCursor::Type ASideScrollingPlayerController::GetMouseCursor() const
+{
+	const APlayerHUD* PlayerHUD = Cast<APlayerHUD>(GetHUD());
+	return PlayerHUD && PlayerHUD->ShouldUseGrappleCursor() ? EMouseCursor::None : Super::GetMouseCursor();
 }
 
 void ASideScrollingPlayerController::ToggleAreaMap()
@@ -36,6 +45,20 @@ void ASideScrollingPlayerController::ToggleAreaMap()
 	if (!Map) return;
 	AreaMapWidget = CreateWidget<UAreaMapWidget>(this,MapWidgetClass);
 	if (AreaMapWidget) AreaMapWidget->OpenMap(Map,MapAction);
+}
+
+void ASideScrollingPlayerController::SkipCinematic()
+{
+	if (IsLocalController() && !UGameplayStatics::IsGamePaused(this)) ServerSkipCinematic();
+}
+
+void ASideScrollingPlayerController::ServerSkipCinematic_Implementation()
+{
+	if (UGameplayStatics::IsGamePaused(this)) return;
+	for (TActorIterator<AOnceCinematicController> It(GetWorld()); It; ++It)
+	{
+		if (It->IsPlaying()) It->SkipCinematic(this);
+	}
 }
 
 void ASideScrollingPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -68,6 +91,26 @@ void ASideScrollingPlayerController::SetupInputComponent()
 	{
 		if (MapAction) Inputs->BindAction(MapAction,ETriggerEvent::Started,this,&ASideScrollingPlayerController::ToggleAreaMap);
 		if (PauseMenuAction) Inputs->BindAction(PauseMenuAction,ETriggerEvent::Started,this,&ASideScrollingPlayerController::TogglePauseMenu);
+		// The IMC owns the key mapping. Bind each IA_Skip asset once across enabled contexts.
+		TSet<const UInputAction*> BoundSkipActions;
+		auto BindSkipActions = [&](const TArray<UInputMappingContext*>& Contexts)
+		{
+			for (const UInputMappingContext* Context : Contexts)
+			{
+				if (!Context) continue;
+				for (const FEnhancedActionKeyMapping& Mapping : Context->GetMappings())
+				{
+					const UInputAction* Action = Mapping.Action.Get();
+					if (Action && Action->GetFName() == FName(TEXT("IA_Skip")) && !BoundSkipActions.Contains(Action))
+					{
+						Inputs->BindAction(Action, ETriggerEvent::Started, this, &ASideScrollingPlayerController::SkipCinematic);
+						BoundSkipActions.Add(Action);
+					}
+				}
+			}
+		};
+		BindSkipActions(DefaultMappingContexts);
+		if (!ShouldUseTouchControls()) BindSkipActions(MobileExcludedMappingContexts);
 	}
 
 	// only add IMCs for local player controllers

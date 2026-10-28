@@ -18,6 +18,7 @@ class THELASTMESSAGE_API AElectricDoor : public AGimmickBase
 	GENERATED_BODY()
 
 public:
+    virtual void RefreshRestoredState() override;
     AElectricDoor();
 
     UFUNCTION(BlueprintCallable, Category = "Gimmick|Door")

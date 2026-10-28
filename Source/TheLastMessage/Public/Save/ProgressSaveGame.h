@@ -9,6 +9,11 @@ struct FProgressActorState
 {
 	GENERATED_BODY()
 	UPROPERTY(SaveGame, BlueprintReadWrite) FName State;
+	UPROPERTY(SaveGame) bool bEnabled = true;
+	UPROPERTY(SaveGame) bool bActive = false;
+	UPROPERTY(SaveGame) bool bCompleted = false;
+	UPROPERTY(SaveGame) FGuid RelatedActorId;
+	UPROPERTY(SaveGame) FTransform ComponentTransform = FTransform::Identity;
 	UPROPERTY(SaveGame, BlueprintReadWrite) FTransform Transform;
 	UPROPERTY(SaveGame, BlueprintReadWrite) TArray<uint8> Payload;
 };
@@ -56,5 +61,7 @@ public:
 	UPROPERTY(SaveGame) FTransform RespawnTransform;
 	UPROPERTY(SaveGame) FVector RespawnGravity = FVector(0, 0, -1);
 	UPROPERTY(SaveGame) FProgressPlayerState Player;
+	/** Placed pickup IDs captured with the checkpoint, independently of owned core types/levels. */
+	UPROPERTY(SaveGame) TMap<FGuid, bool> CorePickupStates;
 	UPROPERTY(SaveGame) TMap<FName, FProgressMapState> Maps;
 };

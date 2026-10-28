@@ -22,6 +22,7 @@ class UEnemyHealthBarWidget;
 class APlayerBase;
 class AEnemyBase;
 class AEnemyProjectile;
+class AEnemyHealthPickup;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEnemyStateChangedSignature, EEnemyState, NewState);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEnemyDamagedSignature, float, Damage);
@@ -229,7 +230,7 @@ protected:
 	/** 타겟 방향(수평)으로 몸을 돌린다 */
 	void FaceTarget();
 
-	/** 총구에서 현재 타겟까지의 조준 방향(단위 벡터, Y 평면 고정이라 Y는 0). 타겟이 없으면 ZeroVector. */
+	/** 총구에서 현재 타겟까지의 조준 방향(단위 벡터). 타겟이 없으면 ZeroVector. */
 	FVector ComputeAimDirection(const FVector& MuzzleLocation) const;
 
 	/**
@@ -339,6 +340,25 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Enemy")
 	TArray<TSubclassOf<UGameplayAbility>> DefaultAbilities;
+
+	/** 죽었을 때 일정 확률로 떨어뜨릴 체력 회복 아이템 블루프린트. 비워 두면 아무것도 떨어뜨리지 않는다. 확률·회복량은 데이터 에셋에서 정한다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Drop")
+	TSubclassOf<AEnemyHealthPickup> HealDropClass;
+
+	/** 체력 회복 아이템을 떨어뜨릴 확률(0~1) */
+	float HealDropChance = 0.f;
+
+	/** 아이템 하나가 회복시키는 체력 */
+	float HealDropAmount = 20.f;
+
+	/** 바닥에서 아이템이 떠 있는 높이(cm). 죽은 자리 아래의 바닥을 찾아 그 위에 놓는다. */
+	float HealDropHeight = 40.f;
+
+	/** false면 죽어도 아이템을 떨어뜨리지 않는다(예: 신더가 스스로 자폭할 때). 풀에서 재사용될 때 true로 돌아간다. */
+	bool bCanDropOnDeath = true;
+
+	/** 확률에 따라 체력 회복 아이템을 죽은 자리에 떨어뜨린다(서버). */
+	void TryDropHeal();
 
 private:
 	/** 레벨에 맞춰 MaxHealth·Health·DamageMultiplier Attribute를 설정한다. */

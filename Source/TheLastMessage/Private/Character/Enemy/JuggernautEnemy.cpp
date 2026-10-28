@@ -3,6 +3,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Materials/MaterialInterface.h"
+#include "UObject/ConstructorHelpers.h"
 #include "Components/AudioComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Engine/OverlapResult.h"
@@ -48,6 +49,11 @@ AJuggernautEnemy::AJuggernautEnemy()
 	TelegraphMesh->bReceivesDecals = false;
 	TelegraphMesh->SetVisibility(false);
 
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> PlaneMesh(TEXT("/Engine/BasicShapes/Plane.Plane"));
+	if (PlaneMesh.Succeeded())
+	{
+		TelegraphMesh->SetStaticMesh(PlaneMesh.Object);
+	}
 }
 
 void AJuggernautEnemy::ApplyEnemyData(const UEnemyDataAsset* Data)
@@ -176,7 +182,14 @@ void AJuggernautEnemy::ShowTelegraph()
 	UWorld* World = GetWorld();
 	if (!TelegraphMesh || !TelegraphMaterial || !World)
 	{
+		UE_LOG(LogTemp, Warning, TEXT("[Juggernaut] %s: 돌진 예고 띠를 표시하지 못했습니다. TelegraphMesh=%s, TelegraphMaterial=%s"),
+			*GetName(), TelegraphMesh ? TEXT("있음") : TEXT("없음"), TelegraphMaterial ? TEXT("있음") : TEXT("없음(BP의 Telegraph Material 미지정)"));
 		return;
+	}
+
+	if (!TelegraphMesh->GetStaticMesh())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[Juggernaut] %s: 예고 띠 메시(엔진 기본 Plane)를 불러오지 못했습니다."), *GetName());
 	}
 
 	const UCapsuleComponent* Capsule = GetCapsuleComponent();
@@ -199,6 +212,12 @@ void AJuggernautEnemy::ShowTelegraph()
 	World->SweepMultiByObjectType(Hits, Origin, Origin + ChargeDirection * ChargeMaxDistance, FQuat::Identity, ObjectParams, Shape, QueryParams);
 	for (const FHitResult& Hit : Hits)
 	{
+		// 시작부터 겹쳐 있던 물체(바닥에 닿은 캡슐 등)는 경로를 막는 벽이 아니다. 거리가 0이 되어 띠가 사라지는 것을 막는다.
+		if (Hit.bStartPenetrating)
+		{
+			continue;
+		}
+
 		// 트리거처럼 몸을 막지 않는 물체는 벽으로 보지 않는다.
 		const UPrimitiveComponent* HitComponent = Hit.GetComponent();
 		if (HitComponent && HitComponent->GetCollisionResponseToChannel(ECC_Pawn) == ECR_Block)
@@ -212,6 +231,9 @@ void AJuggernautEnemy::ShowTelegraph()
 	TelegraphStart = FVector(Origin.X + ChargeDirection.X * Radius, Origin.Y, Origin.Z);
 	TelegraphLength = FMath::Max(Distance, 1.f);
 	TelegraphHeight = HalfHeight * 2.f + TelegraphHeightPadding;
+
+	UE_LOG(LogTemp, Log, TEXT("[Juggernaut] %s: 돌진 예고 길이=%.0f 높이=%.0f 방향X=%.0f 윈드업=%.2f"),
+		*GetName(), TelegraphLength, TelegraphHeight, ChargeDirection.X, ChargeWindup);
 	TelegraphElapsed = 0.f;
 	bTelegraphActive = true;
 

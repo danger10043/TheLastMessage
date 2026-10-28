@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Gimmick/GimmickBase.h"
+#include "Interface/AttackReceiverInterface.h"
 #include "LaserReflector.generated.h"
 
 class ACharacter;
@@ -13,15 +14,20 @@ class UStaticMeshComponent;
  * 
  */
 UCLASS(Blueprintable)
-class THELASTMESSAGE_API ALaserReflector : public AGimmickBase
+class THELASTMESSAGE_API ALaserReflector : public AGimmickBase, public IAttackReceiverInterface
 {
 	GENERATED_BODY()
 	
 public:
+    virtual FProgressActorState CaptureProgress() const override;
+    virtual void RestoreProgress(const FProgressActorState& State) override;
 	ALaserReflector();
 
 	// 플레이어 상호작용으로 반사판 회전
 	virtual void PerformInteraction(ACharacter* Player) override;
+
+	// 플레이어 공격을 받으면 반사판 회전
+	virtual void ReceiveAttackDamage(float DamageAmount, AActor* DamageCauser) override;
 
 	// 지정한 로컬 축으로 설정된 각도만큼 회전
 	UFUNCTION(BlueprintCallable, Category = "Gimmick|Laser")

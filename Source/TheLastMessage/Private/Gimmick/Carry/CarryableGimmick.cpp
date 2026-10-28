@@ -208,6 +208,9 @@ void ACarryableGimmick::OnTransferred()
         ObjectMesh->BodyInstance.SetDOFLock(EDOFMode::SixDOF);
     }
 
+    // 회로에 부착된 월드 배치 상태 기록
+    LastPlacedWorldTransform = GetActorTransform();
+
     UpdateInteractionHighlight(false);
 }
 
@@ -235,6 +238,12 @@ ACharacter* ACarryableGimmick::GetCarrier() const
 
 void ACarryableGimmick::BeginPlay()
 {
+    // 게임 시작 시 최초 배치 상태 기록
+    InitialWorldTransform = GetActorTransform();
+
+    // 아직 이동하지 않았으므로 최초 배치 상태로 초기화
+    LastPlacedWorldTransform = InitialWorldTransform;
+
     // 부모의 시작 처리 전에 최초 월드 Y 좌표 기록
     InitialWorldY = GetActorLocation().Y;
     bHasInitialWorldY = true;
@@ -391,6 +400,9 @@ void ACarryableGimmick::UpdateDropFall(float DeltaSeconds)
                 false,
                 nullptr,
                 ETeleportType::TeleportPhysics);
+
+            // 정상적으로 착지한 월드 배치 상태 기록
+            LastPlacedWorldTransform = GetActorTransform();
         }
 
         // 착지하면 현재 위치에 고정
@@ -403,4 +415,26 @@ void ACarryableGimmick::UpdateDropFall(float DeltaSeconds)
     // 장애물이 없으면 X와 Y는 유지하고 아래로만 이동
     SetActorLocation(GetActorLocation() + MoveDelta, false, nullptr, ETeleportType::TeleportPhysics);
 
+}
+
+FProgressActorState ACarryableGimmick::CaptureProgress() const
+{
+    FProgressActorState State = Super::CaptureProgress();
+    State.Transform = LastPlacedWorldTransform;
+    return State;
+}
+
+void ACarryableGimmick::RestoreProgress(const FProgressActorState& State)
+{
+    ReservedCarrier.Reset();
+    Carrier.Reset();
+    DropIgnoredPlayer.Reset();
+    bIsDropFalling = false;
+    DropFallSpeed = 0.0f;
+    DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+    SetActorTransform(State.Transform, false, nullptr, ETeleportType::TeleportPhysics);
+    LastPlacedWorldTransform = State.Transform;
+    InitialWorldY = State.Transform.GetLocation().Y;
+    bHasInitialWorldY = true;
+    Super::RestoreProgress(State);
 }

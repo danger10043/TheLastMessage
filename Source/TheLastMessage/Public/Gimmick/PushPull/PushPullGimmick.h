@@ -20,6 +20,8 @@ class THELASTMESSAGE_API APushPullGimmick : public AGimmickBase
     GENERATED_BODY()
 
 public:
+    virtual FProgressActorState CaptureProgress() const override;
+    virtual void RestoreProgress(const FProgressActorState& State) override;
     APushPullGimmick();
 
     // 데이터 테이블에서 이동 설정 읽기
@@ -54,6 +56,20 @@ public:
         return PushPullConfig;
     }
 
+    // 게임 시작 시 최초 배치 상태 반환
+    UFUNCTION(BlueprintPure, Category = "Gimmick|Checkpoint")
+    FTransform GetInitialWorldTransform() const
+    {
+        return InitialWorldTransform;
+    }
+
+    // 마지막으로 기록한 배치 상태 반환
+    UFUNCTION(BlueprintPure, Category = "Gimmick|Checkpoint")
+    FTransform GetLastPlacedWorldTransform() const
+    {
+        return LastPlacedWorldTransform;
+    }
+
 protected:
     virtual void BeginPlay() override;
 
@@ -81,7 +97,18 @@ protected:
     UPROPERTY(Transient)
     FPushPullConfigRow PushPullConfig;
 
+    // 게임 시작 시 최초 배치 상태
+    UPROPERTY(Transient, VisibleInstanceOnly, BlueprintReadOnly, Category = "Gimmick|Checkpoint")
+    FTransform InitialWorldTransform = FTransform::Identity;
+
+    // 상호작용으로 이동한 뒤의 월드 배치 상태
+    UPROPERTY(Transient, VisibleInstanceOnly, BlueprintReadOnly, Category = "Gimmick|Checkpoint")
+    FTransform LastPlacedWorldTransform = FTransform::Identity;
+
 private:
     // 설정이 정상적으로 로딩됐는지 확인
     bool bHasValidPushPullConfig = false;
+
+    // 조작 여부에 따라 수평 이동 잠금 상태 변경
+    void SetPushPullMovementEnabled(bool bAllowHorizontalMovement);
 };

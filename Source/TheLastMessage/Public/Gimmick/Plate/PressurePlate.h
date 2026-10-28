@@ -18,6 +18,10 @@ class THELASTMESSAGE_API APressurePlate : public AGimmickBase
 	GENERATED_BODY()
 	
 public:
+    virtual FProgressActorState CaptureProgress() const override;
+    virtual void RefreshRestoredState() override;
+    virtual void FinishRestoreProgress(const FProgressActorState& State) override;
+    virtual int32 GetRestorePriority() const override { return 3; }
 	APressurePlate();
 
 	// 해당 액터가 발판을 누를 수 있는지 검사

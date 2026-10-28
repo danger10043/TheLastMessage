@@ -79,6 +79,17 @@ bool AOnceCinematicController::RequestPlay()
 	return true;
 }
 
+void AOnceCinematicController::SkipCinematic(APlayerController* RequestingController)
+{
+	if (!HasAuthority() || !bPresenting || !RequestingController || Controller.Get() != RequestingController) return;
+	if (ULevelSequencePlayer* Sequence = SequenceActor ? SequenceActor->GetSequencePlayer() : nullptr)
+	{
+		// Evaluate the final scene state and release sequence camera control before cleanup.
+		Sequence->GoToEndAndStop();
+	}
+	SequenceEnded();
+}
+
 void AOnceCinematicController::RestorePresentation()
 {
 	if (!bPresenting) return;

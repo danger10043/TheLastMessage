@@ -5,6 +5,7 @@
 
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Character/Player/PlayerBase.h"
 
 ALaserReflector::ALaserReflector()
 {
@@ -51,6 +52,25 @@ void ALaserReflector::PerformInteraction(ACharacter* Player)
 	}
 
 	RotateReflector();
+}
+
+void ALaserReflector::ReceiveAttackDamage(float DamageAmount, AActor* DamageCauser)
+{
+		if (!HasAuthority() || !bIsEnabled || !FMath::IsFinite(DamageAmount) || DamageAmount <= 0.0f)
+		{
+			return;
+		}
+
+		// 플레이어의 공격만 허용
+		const APlayerBase* Player = Cast<APlayerBase>(DamageCauser);
+
+		if (!IsValid(Player) || Player->IsDead())
+		{
+			return;
+		}
+
+		// 기존 상호작용과 같은 각도만큼 회전
+		RotateReflector();
 }
 
 void ALaserReflector::RotateReflector()
@@ -102,4 +122,16 @@ FVector ALaserReflector::GetReflectedDirection(const FVector& IncomingDirection,
 	}
 
 	return FMath::GetReflectionVector(Direction, Normal).GetSafeNormal();
+}
+FProgressActorState ALaserReflector::CaptureProgress() const
+{
+    FProgressActorState State = Super::CaptureProgress();
+    State.ComponentTransform = ReflectorPivot->GetRelativeTransform();
+    return State;
+}
+
+void ALaserReflector::RestoreProgress(const FProgressActorState& State)
+{
+    ReflectorPivot->SetRelativeTransform(State.ComponentTransform);
+    Super::RestoreProgress(State);
 }

@@ -1,4 +1,5 @@
 #include "Projectile/ProjectileBase.h"
+#include "Interface/AttackReceiverInterface.h"
 #include "GameplayEffect.h"
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -19,7 +20,8 @@
 
 AProjectileBase::AProjectileBase()
 {
-	PrimaryActorTick.bCanEverTick = false;
+	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bStartWithTickEnabled = false;
 
 	InitialLifeSpan = 5.f;
 	bReplicates = true;
@@ -54,6 +56,7 @@ AProjectileBase::AProjectileBase()
 void AProjectileBase::BeginPlay()
 {
 	Super::BeginPlay();
+	OnRep_InitialVisibility();
 	OnRep_VisualData();
 	if (!bUseWeaponVisualSettings)
 	{
@@ -78,6 +81,35 @@ void AProjectileBase::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutL
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(AProjectileBase, VisualData);
+	DOREPLIFETIME_CONDITION(AProjectileBase, VisualStartLocation, COND_InitialOnly);
+	DOREPLIFETIME_CONDITION(AProjectileBase, HiddenTravelDistance, COND_InitialOnly);
+}
+
+void AProjectileBase::ConfigureInitialVisibility(float TravelDistance)
+{
+	if (!HasAuthority()) return;
+	VisualStartLocation = GetActorLocation();
+	HiddenTravelDistance = FMath::IsFinite(TravelDistance) ? FMath::Max(0.0f, TravelDistance) : 0.0f;
+	OnRep_InitialVisibility();
+}
+
+void AProjectileBase::OnRep_InitialVisibility()
+{
+	const bool bHideVisuals = HiddenTravelDistance > 0.0f
+		&& FVector::DistSquared(GetActorLocation(), VisualStartLocation) < FMath::Square(HiddenTravelDistance);
+	const bool bWasVisible = CollisionComponent->IsVisible();
+	// Hide rendering only; movement and collision remain active, including for nearby targets.
+	CollisionComponent->SetVisibility(!bHideVisuals, true);
+	// Start the trail at the reveal position instead of exposing a trail back to the body.
+	if (bHideVisuals && FlightEffect->IsActive()) FlightEffect->DeactivateImmediate();
+	else if (!bHideVisuals && !bWasVisible && FlightEffect->GetAsset()) FlightEffect->Activate(true);
+	SetActorTickEnabled(bHideVisuals);
+}
+
+void AProjectileBase::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	OnRep_InitialVisibility();
 }
 
 void AProjectileBase::ConfigureVisuals(UWeaponDataAsset* Data)
@@ -147,7 +179,8 @@ void AProjectileBase::HandleImpact(AActor* OtherActor, bool bBlocking, const FHi
 		|| OtherActor == this || OtherActor == GetOwner() || OtherActor == SourceActor.Get()) return;
 	const AEnemyBase* Enemy = Cast<AEnemyBase>(OtherActor);
 	ABossMonster* Boss = Cast<ABossMonster>(OtherActor);
-	if (!Enemy && !Boss && !bBlocking) return;
+	IAttackReceiverInterface* AttackReceiver = Cast<IAttackReceiverInterface>(OtherActor);
+	if (!Enemy && !Boss && !AttackReceiver && !bBlocking) return;
 	bImpactHandled = true;
 	FVector ContactPoint = GetActorLocation();
 	FVector ContactNormal = -ProjectileMovement->Velocity.GetSafeNormal();
@@ -175,6 +208,10 @@ void AProjectileBase::HandleImpact(AActor* OtherActor, bool bBlocking, const FHi
 	{
 		UCombatDamageLibrary::ApplyFinalDamageToTarget(SourceActor.Get(), OtherActor, DamageEffectClass,
 			Damage, WeaponGameplayTags::Damage_PlayerRanged, FeedbackStrength);
+	}
+	else if (!Enemy && !Boss && AttackReceiver)
+	{
+		AttackReceiver->ReceiveAttackDamage(Damage, SourceActor.Get());
 	}
 	DestroyProjectile();
 }

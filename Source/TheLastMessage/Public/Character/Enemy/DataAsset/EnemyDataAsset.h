@@ -68,6 +68,18 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Enemy")
 	float PatrolRadius = 600.f;
 
+	/** 죽었을 때 체력 회복 아이템을 떨어뜨릴 확률(0~1). 0이면 떨어뜨리지 않는다. 아이템 블루프린트는 몬스터 BP의 Heal Drop Class에서 지정한다. */
+	UPROPERTY(EditAnywhere, Category = "Enemy|Drop", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float HealDropChance = 0.2f;
+
+	/** 아이템 하나가 회복시키는 체력 */
+	UPROPERTY(EditAnywhere, Category = "Enemy|Drop", meta = (ClampMin = "0.0"))
+	float HealDropAmount = 20.f;
+
+	/** 바닥에서 아이템이 떠 있는 높이(cm) */
+	UPROPERTY(EditAnywhere, Category = "Enemy|Drop", meta = (ClampMin = "0.0"))
+	float HealDropHeight = 40.f;
+
 	// ---- 몬스터 종류별 수치 ----
 
 	/** Rattler 전용 수치. Rattler 몬스터만 읽는다. 다른 몬스터의 에셋에서는 건드리지 않아도 된다. */

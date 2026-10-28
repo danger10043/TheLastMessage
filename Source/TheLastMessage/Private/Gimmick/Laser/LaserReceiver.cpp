@@ -178,3 +178,21 @@ void ALaserReceiver::UpdateReceiverIndicator()
 
 	ReceiverIndicatorMaterial->SetVectorParameterValue(TEXT("EmissiveColor"), LightColor);
 }
+FProgressActorState ALaserReceiver::CaptureProgress() const
+{
+    FProgressActorState State = Super::CaptureProgress();
+    State.bActive = false; // Contacts are rebuilt from the restored world, not latched from the save.
+    return State;
+}
+
+void ALaserReceiver::RefreshRestoredState()
+{
+    ActiveEmitters.Reset();
+    UpdateReceiverState();
+}
+
+void ALaserReceiver::FinishRestoreProgress(const FProgressActorState& State)
+{
+    UpdateReceiverState();
+    Super::FinishRestoreProgress(State);
+}

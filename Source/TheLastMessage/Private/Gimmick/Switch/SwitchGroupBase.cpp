@@ -83,6 +83,15 @@ void ASwitchGroupBase::CompleteGroup()
 	// 이벤트가 발생하기 전에 완료 상태부터 기록
 	bIsCompleted = true;
 
+	// 조건을 달성한 그룹의 모든 레버 입력 잠금
+	for (AToggleSwitch* Switch : GroupSwitches)
+	{
+		if (IsValid(Switch))
+		{
+			Switch->SetLeverInputLocked(true);
+		}
+	}
+
 	UpdateGroupIndicator();
 
 	// 부모의 상태 변경·연결 장치 전달 처리 사용
@@ -212,4 +221,38 @@ void ASwitchGroupBase::HandleGroupSwitchStateChanged(AGimmickBase* Source, bool 
 	// 판정 결과에 맞는 색상 표시
 	UpdateGroupIndicator();
 
+}
+
+FProgressActorState ASwitchGroupBase::CaptureProgress() const
+{
+    FProgressActorState State = Super::CaptureProgress();
+    State.bCompleted = bIsCompleted;
+    if (!bIsCompleted && ResetIncompleteOnLoad()) State.bActive = false;
+    return State;
+}
+
+void ASwitchGroupBase::RestoreProgress(const FProgressActorState& State)
+{
+    bIsCompleted = State.bCompleted;
+    bIsResetting = false;
+    Super::RestoreProgress(State);
+}
+
+void ASwitchGroupBase::RefreshRestoredState()
+{
+    UpdateGroupIndicator();
+    UpdateInteractionHighlight(false);
+}
+
+void ASwitchGroupBase::FinishRestoreProgress(const FProgressActorState& State)
+{
+    if (bIsCompleted || ResetIncompleteOnLoad())
+        for (AToggleSwitch* Switch : GroupSwitches)
+            if (IsValid(Switch))
+            {
+                Switch->RestoreLinkedActiveState(bIsCompleted);
+                Switch->FinishRestoreProgress(Switch->CaptureProgress());
+            }
+    UpdateGroupIndicator();
+    Super::FinishRestoreProgress(State);
 }

@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Engine/DataTable.h"
 #include "GameFramework/Actor.h"
+#include "Save/ProgressSaveGame.h"
 #include "GimmickBase.generated.h"
 
 class ACharacter;
@@ -28,6 +29,25 @@ class THELASTMESSAGE_API AGimmickBase : public AActor
 public:	
 	// Sets default values for this actor's properties
 	AGimmickBase();
+	virtual void OnConstruction(const FTransform& Transform) override;
+	virtual void PostLoad() override;
+#if WITH_EDITOR
+	virtual void PostEditImport() override;
+#endif
+	UFUNCTION(BlueprintPure, Category="Gimmick|Save") FGuid GetPersistentId() const { return PersistentId; }
+	bool ShouldPersist() const { return bPersistState && PersistentId.IsValid(); }
+	virtual FProgressActorState CaptureProgress() const;
+	virtual void RestoreProgress(const FProgressActorState& State);
+	virtual void FinishRestoreProgress(const FProgressActorState& State);
+	void RestoreLinkedActiveState(bool bActive);
+	virtual int32 GetRestorePriority() const { return 0; }
+protected:
+	virtual void RefreshRestoredState();
+	UPROPERTY(EditAnywhere, Category="Gimmick|Save") bool bPersistState = true;
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="Gimmick|Save") FGuid PersistentId;
+private:
+	void EnsurePersistentId();
+public:
 
 	// BPI CanInteract에서 호출
 	UFUNCTION(BlueprintPure, Category = "Gimmick|Interaction")

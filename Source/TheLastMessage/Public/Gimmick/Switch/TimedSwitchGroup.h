@@ -17,6 +17,8 @@ class THELASTMESSAGE_API ATimedSwitchGroup : public ASwitchGroupBase
 	GENERATED_BODY()
 	
 public:
+    virtual bool ResetIncompleteOnLoad() const override { return true; }
+    virtual void RestoreProgress(const FProgressActorState& State) override;
 	// 데이터 테이블에서 제한 시간 설정 읽기
 	UFUNCTION(BlueprintCallable, Category = "Gimmick|TimedSwitchGroup")
 	bool LoadTimedSwitchConfig();

@@ -61,6 +61,9 @@ public:
 
     void InitializeBoss();
 
+    UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Boss|AI")
+    TObjectPtr<class ATriggerBox> TargetDetectionBox;
+
     UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Boss|CrossLaser")
     TObjectPtr<AActor> BossFlyLocator;
 

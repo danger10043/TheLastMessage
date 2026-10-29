@@ -48,6 +48,10 @@ public:
     ABossMonster();
     virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
 
+    // 체력/페이즈/기믹/쿨타임을 초기화한다. 위치 이동은 호출자가 처리한다.
+    UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Boss|Lifecycle")
+    bool ResetBoss(bool bRestartAI = false);
+
     UPROPERTY(BlueprintReadOnly, Transient, Category = "Boss|GunBurst")
     bool bGunBurstAiming = false;
 
@@ -60,6 +64,9 @@ public:
     UStaticMeshComponent* GetGunMesh() const { return GunMesh.Get(); }
 
     void InitializeBoss();
+
+    UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Boss|AI")
+    TObjectPtr<class ATriggerBox> TargetDetectionBox;
 
     UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Boss|CrossLaser")
     TObjectPtr<AActor> BossFlyLocator;
@@ -139,6 +146,23 @@ public:
     FOnBossDiedSignature OnBossDied;
 
 protected:
+    UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Boss|Phase|Cinematic")
+    TObjectPtr<class ALevelSequenceActor> Phase70SequenceActor;
+
+    UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Boss|Phase|Cinematic")
+    TObjectPtr<class ALevelSequenceActor> Phase30SequenceActor;
+
+    void PlayPhaseSequence(EBossPuzzleType PuzzleType);
+    void StopPhaseSequence();
+
+    UFUNCTION()
+    void HandlePhaseSequenceFinished();
+
+    UPROPERTY(Transient)
+    TObjectPtr<class ULevelSequencePlayer> ActivePhaseSequencePlayer;
+
+    bool bPhaseSequencePlaying = false;
+
     UPROPERTY(EditDefaultsOnly, Category = "Boss|Death")
     TObjectPtr<UAnimMontage> DeathMontage;
 
@@ -271,6 +295,8 @@ protected:
 
     UPROPERTY(EditDefaultsOnly, Category = "Boss|UI")
     TSubclassOf<UBossUIWidget> BossUIWidgetClass;
+
+    bool bIsResettingBoss = false;
 
     UPROPERTY(Transient)
     TObjectPtr<UBossUIWidget> BossUIWidget;

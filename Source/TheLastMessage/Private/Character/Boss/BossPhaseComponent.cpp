@@ -2,6 +2,22 @@
 #include "Character/Boss/BossMonster.h"
 #include "AbilitySystemComponent.h"
 
+void UBossPhaseComponent::ResetPhase()
+{
+    ABossMonster* Boss = Cast<ABossMonster>(GetOwner());
+    if (!IsValid(Boss) || !Boss->HasAuthority())
+    {
+        return;
+    }
+
+    CurrentPhase = EBossPhase::Phase1;
+    PendingPhase = EBossPhase::Phase1;
+    bPhase2Unlocked = false;
+    bPhase3Unlocked = false;
+    bIsTransitionPending = false;
+    ApplyPhaseSettings(CurrentPhase);
+}
+
 EBossPhase UBossPhaseComponent::GetCurrentPhase()
 {
     return CurrentPhase;

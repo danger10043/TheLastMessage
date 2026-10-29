@@ -38,6 +38,7 @@ public:
 	 * 성공하면 Acquired 또는 Upgraded를, 실패하면 원인을 반환한다. IsCoreAcquireSuccess로 성공 여부를 확인한다.
 	 * 변경 알림이 모두 끝나기 전의 추가 획득 요청은 Busy로 거부하고, 초기화 요청은 처리하지 않는다.
 	 */
+	UFUNCTION(BlueprintCallable)
 	ECoreAcquireResult AcquireCore(UCoreDataAsset* CoreData);
 
 	/** 해당 CoreId의 코어를 보유하고 있는지 확인한다. 강화 가능 여부와는 별개다. */

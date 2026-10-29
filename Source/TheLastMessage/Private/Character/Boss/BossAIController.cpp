@@ -12,6 +12,8 @@
 #include "Misc/ScopeExit.h"
 #include "Character/Player/PlayerBase.h"
 #include "AbilitySystemComponent.h"
+#include "Engine/TriggerBox.h"
+#include "Components/BoxComponent.h"
 
 ABossAIController::ABossAIController()
 {
@@ -134,16 +136,29 @@ void ABossAIController::RefreshTargetFromPerception()
         return;
     }
 
-    const float DetectionRadius = TargetDetectionRadius;
+    ATriggerBox* DetectionBox = ControlledBoss->TargetDetectionBox.Get();
+    const UBoxComponent* DetectionComponent = IsValid(DetectionBox)
+        ? Cast<UBoxComponent>(DetectionBox->GetCollisionComponent())
+        : nullptr;
 
     if (ControlledBoss->GetBossState() == EBossState::Dead
-        || !FMath::IsFinite(DetectionRadius) || DetectionRadius <= 0.f)
+        || !IsValid(DetectionComponent))
     {
         UpdateTargetActor(nullptr);
         return;
     }
 
-    const float DetectionRadiusSquared = FMath::Square(DetectionRadius);
+    const FTransform BoxTransform = DetectionComponent->GetComponentTransform();
+    const FVector BoxExtent = DetectionComponent->GetUnscaledBoxExtent();
+
+    if (BoxTransform.ContainsNaN() || BoxExtent.ContainsNaN()
+        || BoxExtent.GetMin() <= 0.f
+        || BoxTransform.GetScale3D().GetAbsMin() <= KINDA_SMALL_NUMBER)
+    {
+        UpdateTargetActor(nullptr);
+        return;
+    }
+
     const FVector BossLocation = ControlledBoss->GetActorLocation();
 
     AActor* CurrentTarget = ControlledBoss->GetCurrentTarget();
@@ -162,15 +177,15 @@ void ABossAIController::RefreshTargetFromPerception()
         const float DistanceSquared = FVector::DistSquared(
             BossLocation, PlayerPawn->GetActorLocation());
 
-        const bool bKeepCrossLaserTarget =
-            ControlledBoss->GetBossState() == EBossState::Attacking
-            && GetBlackboardComponent()->GetValueAsEnum(TEXT("SelectedAttack"))
-            == static_cast<uint8>(EBossAttackType::CrossLaser)
-            && PlayerPawn == CurrentTarget;
+        const FVector LocalPlayerLocation =
+            BoxTransform.InverseTransformPosition(PlayerPawn->GetActorLocation());
 
-        if (!FMath::IsFinite(DistanceSquared)
-            || (!bKeepCrossLaserTarget
-                && DistanceSquared > DetectionRadiusSquared))
+        const bool bInsideDetectionBox =
+            FMath::Abs(LocalPlayerLocation.X) <= BoxExtent.X
+            && FMath::Abs(LocalPlayerLocation.Y) <= BoxExtent.Y
+            && FMath::Abs(LocalPlayerLocation.Z) <= BoxExtent.Z;
+
+        if (!FMath::IsFinite(DistanceSquared) || !bInsideDetectionBox)
         {
             continue;
         }

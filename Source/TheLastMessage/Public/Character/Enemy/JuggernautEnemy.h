@@ -18,7 +18,7 @@ class UAudioComponent;
  * - 윈드업 동안 돌진 경로에 빨간 띠(예고)가 앞에서 벽(또는 최대 돌진 거리)까지 늘어난다. 마지막에 깜빡이고 돌진이 시작되면 사라진다.
  *   예고 시간은 윈드업 시간(ChargeWindup)을 그대로 따른다. 띠 머티리얼(Telegraph Material)을 지정해야 보인다.
  * - 돌진은 길을 찾는 이동(NavMesh)이 아니라 직접 이동이라 낭떠러지에서 멈추지 않고 그대로 떨어진다.
- *   떨어진 뒤 착지한 곳에 NavMesh가 있어야 이후 AI가 다시 동작한다.
+ *   떨어진 뒤 착지한 곳에 NavMesh가 있어야 이후 AI가 다시 동작한다
  */
 UCLASS()
 class THELASTMESSAGE_API AJuggernautEnemy : public AEnemyBase

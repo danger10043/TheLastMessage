@@ -46,6 +46,8 @@ public:
 	/** 로드 직후 적용한다. true면 소모 기록을 유지하고 보상 없이 액터를 제거한다. false는 미소모 픽업을 유지한다. */
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Core|Persistence")
 	void RestoreConsumedState(bool bWasConsumed);
+	void RestoreCheckpointConsumption(bool bWasConsumed);
+	void HideConsumedPickup();
 
 	/** 저장 담당자가 ID -> true를 기록할 연결점. 고정형/선택형 모두 실제 지급 성공 시 한 번 발생한다. */
 	UPROPERTY(BlueprintAssignable, Category = "Core|Persistence")

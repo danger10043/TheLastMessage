@@ -8,6 +8,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "TimerManager.h"
+#include "Interface/AttackReceiverInterface.h"
 
 AFleaEnemy::AFleaEnemy()
 {
@@ -92,29 +93,64 @@ void AFleaEnemy::ExecuteAreaAttack()
 		return;
 	}
 
+	// 플레이어와 일반 기믹의 충돌 타입을 함께 검색
 	TArray<TEnumAsByte<EObjectTypeQuery>> ObjectTypes;
 	ObjectTypes.Add(UEngineTypes::ConvertToObjectType(ECC_Pawn));
+	ObjectTypes.Add(UEngineTypes::ConvertToObjectType(ECC_WorldStatic));
+	ObjectTypes.Add(UEngineTypes::ConvertToObjectType(ECC_WorldDynamic));
+	ObjectTypes.Add(UEngineTypes::ConvertToObjectType(ECC_PhysicsBody));
 
 	TArray<AActor*> ActorsToIgnore;
 	ActorsToIgnore.Add(this);
 
 	TArray<AActor*> Overlapped;
-	UKismetSystemLibrary::SphereOverlapActors(this, GetActorLocation(), AreaAttackRadius, ObjectTypes,
-		APawn::StaticClass(), ActorsToIgnore, Overlapped);
 
-	// 한 번의 공격에서 같은 대상에게 피해가 중복 적용되지 않도록 한다.
+	// 폭탄도 찾을 수 있도록 클래스 필터를 일반 액터로 확장
+	UKismetSystemLibrary::SphereOverlapActors(
+		this,
+		GetActorLocation(),
+		AreaAttackRadius,
+		ObjectTypes,
+		AActor::StaticClass(),
+		ActorsToIgnore,
+		Overlapped);
+
+	// 한 번의 공격에서 같은 대상은 한 번만 처리
 	TSet<AActor*> DamagedActors;
+
 	for (AActor* Actor : Overlapped)
 	{
-		const APawn* Pawn = Cast<APawn>(Actor);
-		if (!Pawn || !Pawn->IsPlayerControlled() || DamagedActors.Contains(Actor))
+		if (!IsValid(Actor) || DamagedActors.Contains(Actor))
 		{
 			continue;
 		}
 
+		const APawn* Pawn = Cast<APawn>(Actor);
+
+		const bool bIsPlayer =
+			Pawn && Pawn->IsPlayerControlled();
+
+		const bool bIsAttackReceiver =
+			Actor->Implements<UAttackReceiverInterface>();
+
+		// 플레이어 또는 공격을 받는 기믹만 허용
+		if (!bIsPlayer && !bIsAttackReceiver)
+		{
+			continue;
+		}
+
+		// 공격 전달 전에 중복 명중 기록
 		DamagedActors.Add(Actor);
 
-		ApplyEnemyDamage(Actor, GetScaledDamage(GetStatConfig().AttackDamage));
+		ApplyEnemyDamage(
+			Actor,
+			GetScaledDamage(GetStatConfig().AttackDamage));
+
+		// 폭탄의 폭발로 사망하거나 공격이 중단되면 종료
+		if (!IsValid(this) || IsDead() || !IsAttacking())
+		{
+			return;
+		}
 	}
 
 	SpawnShockwaveEffect();

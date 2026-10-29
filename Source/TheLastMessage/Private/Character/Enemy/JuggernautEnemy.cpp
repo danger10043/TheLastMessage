@@ -13,6 +13,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "Sound/SoundBase.h"
 #include "TimerManager.h"
+#include "Interface/AttackReceiverInterface.h"
 
 AJuggernautEnemy::AJuggernautEnemy()
 {
@@ -321,7 +322,15 @@ void AJuggernautEnemy::Tick(float DeltaTime)
 	// bForce: AI가 이동 입력을 막아 두어도 돌진 입력은 적용한다. 공중에서도 입력을 계속 넣는다.
 	AddMovementInput(ChargeDirection, 1.f, true);
 
-	if (TryHitPlayers() && bEndChargeOnHit)
+	const bool bHitTarget = TryHitPlayers();
+
+	// 공격 전달 중 폭탄의 폭발로 사망하거나 돌진이 취소될 수 있음
+	if (!IsValid(this) || IsActorBeingDestroyed() || IsDead() || !bCharging)
+	{
+		return;
+	}
+
+	if (bHitTarget && bEndChargeOnHit)
 	{
 		EndCharge(false);
 		return;
@@ -355,51 +364,104 @@ void AJuggernautEnemy::Tick(float DeltaTime)
 bool AJuggernautEnemy::TryHitPlayers()
 {
 	UWorld* World = GetWorld();
-	if (!World)
+	if (!World || IsDead() || !bCharging)
 	{
 		return false;
 	}
 
 	const UCapsuleComponent* Capsule = GetCapsuleComponent();
-	const FCollisionShape Shape = FCollisionShape::MakeCapsule(
-		Capsule->GetScaledCapsuleRadius() + ChargeHitMargin, Capsule->GetScaledCapsuleHalfHeight());
 
-	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(JuggernautCharge), false, this);
+	const FCollisionShape Shape = FCollisionShape::MakeCapsule(
+		Capsule->GetScaledCapsuleRadius() + ChargeHitMargin,
+		Capsule->GetScaledCapsuleHalfHeight());
+
+	FCollisionQueryParams QueryParams(
+		SCENE_QUERY_STAT(JuggernautCharge),
+		false,
+		this);
+
+	// 플레이어와 일반 기믹의 충돌 타입을 함께 검색
+	FCollisionObjectQueryParams ObjectParams;
+	ObjectParams.AddObjectTypesToQuery(ECC_Pawn);
+	ObjectParams.AddObjectTypesToQuery(ECC_WorldStatic);
+	ObjectParams.AddObjectTypesToQuery(ECC_WorldDynamic);
+	ObjectParams.AddObjectTypesToQuery(ECC_PhysicsBody);
 
 	TArray<FOverlapResult> Overlaps;
-	World->OverlapMultiByObjectType(Overlaps, GetActorLocation(), FQuat::Identity,
-		FCollisionObjectQueryParams(ECC_Pawn), Shape, QueryParams);
+
+	World->OverlapMultiByObjectType(
+		Overlaps,
+		GetActorLocation(),
+		FQuat::Identity,
+		ObjectParams,
+		Shape,
+		QueryParams);
 
 	bool bHitAny = false;
+
 	for (const FOverlapResult& Overlap : Overlaps)
 	{
 		AActor* Actor = Overlap.GetActor();
-		const APawn* Pawn = Cast<APawn>(Actor);
 
-		// 플레이어에게만, 한 번의 돌진에 한 번만 피해를 준다.
-		if (!Pawn || !Pawn->IsPlayerControlled() || HitActors.Contains(Actor))
+		if (!IsValid(Actor))
 		{
 			continue;
 		}
 
-		HitActors.Add(Actor);
+		const TWeakObjectPtr<AActor> ActorKey(Actor);
+
+		if (HitActors.Contains(ActorKey))
+		{
+			continue;
+		}
+
+		const APawn* Pawn = Cast<APawn>(Actor);
+
+		const bool bIsPlayer = Pawn && Pawn->IsPlayerControlled();
+
+		const bool bIsAttackReceiver = Actor->Implements<UAttackReceiverInterface>();
+
+		// 플레이어 또는 공격을 받는 기믹만 허용
+		if (!bIsPlayer && !bIsAttackReceiver)
+		{
+			continue;
+		}
+
+		// 공격 전달 중 폭탄이 파괴될 수 있으므로 위치를 먼저 기록
+		const FVector HitLocation = Actor->GetActorLocation();
+
+		// 한 번의 돌진에서 같은 대상은 한 번만 처리
+		HitActors.Add(ActorKey);
 		bHitAny = true;
 
 		ApplyEnemyDamage(Actor, GetScaledDamage(GetStatConfig().AttackDamage));
 
-		if (KnockbackHorizontal > 0.f || KnockbackUp > 0.f)
+		// 폭탄의 폭발로 사망하거나 돌진이 취소되면 종료
+		if (!IsValid(this) || IsActorBeingDestroyed() || IsDead() || !bCharging)
+		{
+			return bHitAny;
+		}
+
+		// 기존 플레이어 넉백 유지
+		if (bIsPlayer && IsValid(Actor) && (KnockbackHorizontal > 0.f || KnockbackUp > 0.f))
 		{
 			if (ACharacter* Character = Cast<ACharacter>(Actor))
 			{
 				Character->LaunchCharacter(
-					FVector(ChargeDirection.X * KnockbackHorizontal, 0.f, KnockbackUp), true, true);
+					FVector(ChargeDirection.X * KnockbackHorizontal,
+						0.f,
+						KnockbackUp),
+					true,
+					true);
 			}
 		}
 
-		SpawnEffectAtLocation(ImpactEffect, Actor->GetActorLocation());
+		// 대상이 파괴되어도 미리 기록한 위치로 효과 재생
+		SpawnEffectAtLocation(ImpactEffect, HitLocation);
+
 		if (ImpactSound)
 		{
-			UGameplayStatics::PlaySoundAtLocation(this, ImpactSound, Actor->GetActorLocation());
+			UGameplayStatics::PlaySoundAtLocation(this, ImpactSound, HitLocation);
 		}
 	}
 

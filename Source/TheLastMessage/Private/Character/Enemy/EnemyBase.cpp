@@ -20,6 +20,7 @@
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Interface/AttackReceiverInterface.h"
 
 AEnemyBase::AEnemyBase()
 {
@@ -162,6 +163,16 @@ void AEnemyBase::ApplyEnemyDamage(AActor* Target, float Damage, FGameplayTag Dam
 {
 	if (!Target || Damage <= 0.f)
 	{
+		return;
+	}
+
+	// 공격 수신 기믹이면 인터페이스로 공격 전달
+	if (IAttackReceiverInterface* Receiver = Cast<IAttackReceiverInterface>(Target))
+	{
+		// this는 공격한 몬스터 자신
+		Receiver->ReceiveAttackDamage(Damage, this);
+
+		// 기믹 처리가 끝났으므로 아래의 일반 피해 처리는 생략
 		return;
 	}
 

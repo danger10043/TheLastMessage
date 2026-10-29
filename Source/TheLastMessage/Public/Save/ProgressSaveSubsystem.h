@@ -36,6 +36,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Save") bool SaveActiveProgress();
 	bool SaveCheckpoint(class APlayerBase* Player, class APlayerCheckpoint* Checkpoint);
 	bool RestorePlayerIfPending(APlayerBase* Player);
+	bool RestoreCheckpointInPlace(APlayerBase* Player);
 	void QueueGimmickRestore(class AGimmickBase* Gimmick);
 	bool IsRestoringGimmicks() const { return bRestoringGimmicks; }
 	void ApplyCheckpointState(APlayerCheckpoint* Checkpoint) const;
@@ -61,6 +62,7 @@ private:
 	friend class FCinematicControllerTest;
 	FString AutomationSaveDirectory;
 #endif
+	bool RestoreLoadedCheckpointInPlace(APlayerBase* Player);
 	UProgressSaveGame* ReadSlot(int32 SlotId) const;
 	FString GetSlotPath(int32 SlotId) const;
 	UPROPERTY(Transient) TObjectPtr<UProgressSaveGame> WorkingProgress;

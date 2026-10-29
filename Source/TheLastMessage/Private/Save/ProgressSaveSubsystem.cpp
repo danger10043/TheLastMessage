@@ -1,3 +1,6 @@
+#include "Core/CorePickup.h"
+#include "Character/Boss/BossMonster.h"
+#include "Projectile/ProjectileBase.h"
 #include "Save/ProgressSaveSubsystem.h"
 #include "Async/Async.h"
 #include "HAL/FileManager.h"
@@ -337,4 +340,36 @@ void UProgressSaveSubsystem::RestoreQueuedGimmicks()
         if (Weak.IsValid()) if (const FProgressActorState* State = Records.Find(Weak.Get())) Weak->RestoreProgress(*State);
     for (const TWeakObjectPtr<AGimmickBase>& Weak : Pending)
         if (Weak.IsValid()) if (const FProgressActorState* State = Records.Find(Weak.Get())) Weak->FinishRestoreProgress(*State);
+}
+
+bool UProgressSaveSubsystem::RestoreCheckpointInPlace(APlayerBase* Player)
+{
+ if (!Player || !Player->IsDead() || !Player->HasAuthority() || IsSaving()) return false;
+ // Boss combat has no complete in-place reset contract yet. Keep the safe travel path.
+ for (TActorIterator<ABossMonster> It(Player->GetWorld()); It; ++It)
+  if (It->GetBossState() != EBossState::Idle) return false;
+ const UProgressSaveGame* Disk = ReadSlot(ActiveSlot);
+ if (!Disk || Disk->MapPackage != UWorld::RemovePIEPrefix(Player->GetWorld()->GetOutermost()->GetName())) return false;
+ // Missing records cannot safely undo an actor created after the checkpoint.
+ const FProgressMapState* Map = Disk->Maps.Find(FName(*UGameplayStatics::GetCurrentLevelName(Player,true)));
+ for (TActorIterator<AGimmickBase> It(Player->GetWorld()); It; ++It)
+  if (It->ShouldPersist() && (!Map || !Map->Actors.Contains(It->GetPersistentId()))) return false;
+ if (!ReloadActiveProgress()) return false;
+ return RestoreLoadedCheckpointInPlace(Player);
+}
+
+bool UProgressSaveSubsystem::RestoreLoadedCheckpointInPlace(APlayerBase* Player)
+{
+ const double Start = FPlatformTime::Seconds();
+ if (!Player || !Player->IsDead() || !WorkingProgress || !bRestorePending) return false;
+ // Keep the guard through teleport/overlap callbacks and both gimmick restore passes.
+ TGuardValue<bool> Guard(bRestoringGimmicks, true);
+ for (TActorIterator<AProjectileBase> It(Player->GetWorld()); It; ++It) It->DestroyProjectile();
+ for (TActorIterator<AGimmickBase> It(Player->GetWorld()); It; ++It) QueueGimmickRestore(*It);
+ RestoreQueuedGimmicks();
+ if (!Player->RespawnAtCheckpoint() || !RestorePlayerIfPending(Player)) return false;
+ for (TActorIterator<ACorePickup> It(Player->GetWorld()); It; ++It)
+  It->RestoreCheckpointConsumption(WorkingProgress->CorePickupStates.FindRef(It->GetPickupId()));
+ UE_LOG(LogTemp, Log, TEXT("In-place checkpoint restore: %.1f ms"), (FPlatformTime::Seconds()-Start)*1000.0);
+ return true;
 }

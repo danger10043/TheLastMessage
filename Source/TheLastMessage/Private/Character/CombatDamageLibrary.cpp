@@ -11,6 +11,7 @@
 namespace CombatGameplayTags
 {
     UE_DEFINE_GAMEPLAY_TAG(Event_DamageDealt, "Event.Combat.DamageDealt");
+    UE_DEFINE_GAMEPLAY_TAG(Event_MeleeAttackFinished, "Event.Combat.MeleeAttackFinished");
     UE_DEFINE_GAMEPLAY_TAG(Result_TargetKilled, "Combat.Result.TargetKilled");
 }
 

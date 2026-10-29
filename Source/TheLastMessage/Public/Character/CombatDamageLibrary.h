@@ -4,9 +4,13 @@
 #include "Kismet/BlueprintFunctionLibrary.h"
 #include "GameplayTagContainer.h"
 #include "NativeGameplayTags.h"
+#include "Weapon/WeaponTypes.h"
 #include "CombatDamageLibrary.generated.h"
 
 class UGameplayEffect;
+class UAnimMontage;
+class USkeletalMesh;
+class UWeaponDataAsset;
 struct FGameplayEffectSpec;
 
 namespace CombatGameplayTags
@@ -15,9 +19,57 @@ namespace CombatGameplayTags
     // InstigatorTags는 근접/원거리 피해 분류이며 Instigator와 Target은 공격자와 피격 대상이다.
     THELASTMESSAGE_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Event_DamageDealt);
 
+    // 근접 공격의 정상 종료 알림. EventMagnitude는 대상에게 적용하기 전의 계산된 피해,
+    // OptionalObject는 UMeleeAttackEventData이며 명중 여부와 관계없이 공격당 한 번 전달한다.
+    THELASTMESSAGE_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Event_MeleeAttackFinished);
+
     // 이번 피해로 체력이 0이 된 결과. 이벤트의 TargetTags에만 담는다.
     THELASTMESSAGE_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_TargetKilled);
 }
+
+/** 근접 공격 종료 후에도 원래 무기·모션·공격 위치를 사용할 수 있도록 보관하는 정보다. */
+UCLASS(BlueprintType)
+class THELASTMESSAGE_API UMeleeAttackEventData : public UObject
+{
+    GENERATED_BODY()
+
+public:
+    UPROPERTY(BlueprintReadOnly, Category = "Combat|Melee")
+    TObjectPtr<UWeaponDataAsset> WeaponData = nullptr;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Combat|Melee")
+    TObjectPtr<UAnimMontage> AttackMontage = nullptr;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Combat|Melee")
+    FName AttackSection = NAME_None;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Combat|Melee")
+    EWeaponSlot WeaponSlot = EWeaponSlot::None;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Combat|Melee")
+    TObjectPtr<USkeletalMesh> SkeletalMesh = nullptr;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Combat|Melee")
+    FTransform ActorTransform = FTransform::Identity;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Combat|Melee")
+    FTransform MeshTransform = FTransform::Identity;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Combat|Melee")
+    FVector Direction = FVector::ZeroVector;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Combat|Melee")
+    float AttackRange = 0.0f;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Combat|Melee")
+    float HitRadius = 0.0f;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Combat|Melee")
+    TSubclassOf<UGameplayEffect> DamageEffectClass;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Combat|Melee")
+    float FeedbackStrength = 1.0f;
+};
 
 UCLASS()
 class THELASTMESSAGE_API UCombatDamageLibrary : public UBlueprintFunctionLibrary

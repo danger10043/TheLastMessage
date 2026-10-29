@@ -22,6 +22,7 @@
 #include "Projectile/ProjectileBase.h"
 #include "GAS/WeaponGameplayTags.h"
 #include "Weapon/WeaponBase.h"
+#include "UObject/StrongObjectPtr.h"
 
 #if ENABLE_DRAW_DEBUG
 static TAutoConsoleVariable<int32> CVarDebugMelee(
@@ -125,6 +126,8 @@ void UGA_WeaponAttackBase::ActivateAbility(const FGameplayAbilitySpecHandle Hand
 	ChargeDuration = 0.0f;
 	HitActorsThisAttack.Reset();
 	RangedAttack = FWeaponRangedAttackSnapshot{};
+	MeleeAttack = nullptr;
+	RecordedMeleeDamage = 0.0f;
 	RemainingBurstShots = 0;
 	bAttackMontageFinished = false;
 	APlayerBase* Player = ActorInfo ? Cast<APlayerBase>(ActorInfo->AvatarActor.Get()) : nullptr;
@@ -379,6 +382,43 @@ void UGA_WeaponAttackBase::HandleWeaponDataChanged()
 	}
 }
 
+float UGA_WeaponAttackBase::CalculateMeleeDamage() const
+{
+	const UWeaponDataAsset* Data = SourceWeapon ? SourceWeapon->WeaponData.Get() : nullptr;
+	const UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo();
+	if (!Data || !ASC) return 0.0f;
+
+	float Damage = FMath::Max(0.0f, Data->AttackPower) * ChargeDamageMultiplier;
+	if (ASC->HasAttributeSetForAttribute(UCombatAttributeSet::GetDamageDealtMultiplierAttribute()))
+		Damage *= FMath::Max(0.0f, ASC->GetNumericAttribute(UCombatAttributeSet::GetDamageDealtMultiplierAttribute()));
+	if (ASC->HasAttributeSetForAttribute(UCombatAttributeSet::GetMeleeDamageMultiplierAttribute()))
+		Damage *= FMath::Max(0.0f, ASC->GetNumericAttribute(UCombatAttributeSet::GetMeleeDamageMultiplierAttribute()));
+	Damage *= GetHealthDamageMultiplier();
+	Damage *= CriticalHitDamageMultiplier;
+	return FMath::IsFinite(Damage) && Damage > 0.0f ? Damage : 0.0f;
+}
+
+void UGA_WeaponAttackBase::CaptureMeleeAttack(APlayerBase* Player, FName AttackSection)
+{
+	const UWeaponDataAsset* Data = SourceWeapon ? SourceWeapon->WeaponData.Get() : nullptr;
+	if (!Player || !Data || (Data->WeaponType != EWeaponType::LightMelee && Data->WeaponType != EWeaponType::HeavyMelee)) return;
+
+	MeleeAttack = NewObject<UMeleeAttackEventData>(this);
+	MeleeAttack->WeaponData = SourceWeapon->WeaponData;
+	MeleeAttack->AttackMontage = Data->AttackMontage;
+	MeleeAttack->AttackSection = AttackSection;
+	MeleeAttack->WeaponSlot = WeaponSlot;
+	MeleeAttack->SkeletalMesh = Player->GetMesh()->GetSkeletalMeshAsset();
+	MeleeAttack->ActorTransform = Player->GetActorTransform();
+	MeleeAttack->MeshTransform = Player->GetMesh()->GetComponentTransform();
+	MeleeAttack->Direction = FVector::VectorPlaneProject(Player->GetActorForwardVector(), FVector::YAxisVector).GetSafeNormal();
+	MeleeAttack->AttackRange = Data->AttackRange;
+	MeleeAttack->HitRadius = MeleeHitRadius;
+	MeleeAttack->DamageEffectClass = DamageEffectClass;
+	MeleeAttack->FeedbackStrength = GetImpactFeedbackStrength();
+	RecordedMeleeDamage = CalculateMeleeDamage();
+}
+
 void UGA_WeaponAttackBase::ExecuteAttack()
 {
 	if (!IsActive() || bFinishingAttack || bAttackExecuted) return;
@@ -468,6 +508,7 @@ void UGA_WeaponAttackBase::ExecuteAttack()
 			const int32 SectionIndex = FMath::RandRange(0, Data->AttackMontage->GetNumSections() - 1);
 			AttackSection = Data->AttackMontage->GetSectionName(SectionIndex);
 		}
+		if (!bRanged) CaptureMeleeAttack(Player, AttackSection);
 		UAbilityTask_PlayMontageAndWait* MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
 			this, NAME_None, Data->AttackMontage, 1.0f, AttackSection, true, 1.0f, 0.0f, true);
 		// 블렌드아웃 도중 중단돼도 OnInterrupted로 공격 상태를 정리한다.
@@ -521,20 +562,17 @@ void UGA_WeaponAttackBase::HandleMeleeHit(FGameplayEventData Payload)
 
 	UAbilitySystemComponent* SourceASC = GetAbilitySystemComponentFromActorInfo();
 	if (!SourceASC) return;
-	// 공통 함수는 공격자 배율을 계산하지 않으므로 여기서 한 번만 적용한다.
-	float FinalDamage = FMath::Max(0.0f, Data->AttackPower) * ChargeDamageMultiplier;
-	if (SourceASC->HasAttributeSetForAttribute(UCombatAttributeSet::GetDamageDealtMultiplierAttribute()))
+	const float FinalDamage = CalculateMeleeDamage();
+	if (FinalDamage <= 0.0f) return;
+	// 명중 대상이 없어도 타격 프레임의 피해와 위치를 보관한다.
+	if (MeleeAttack)
 	{
-		FinalDamage *= FMath::Max(0.0f, SourceASC->GetNumericAttribute(UCombatAttributeSet::GetDamageDealtMultiplierAttribute()));
+		RecordedMeleeDamage = FinalDamage;
+		MeleeAttack->ActorTransform = Player->GetActorTransform();
+		MeleeAttack->MeshTransform = Player->GetMesh()->GetComponentTransform();
+		MeleeAttack->Direction = Direction;
+		MeleeAttack->FeedbackStrength = GetImpactFeedbackStrength();
 	}
-	// 근접 공격의 피해량에 근접 전용 배율을 적용한다.
-	if (SourceASC->HasAttributeSetForAttribute(UCombatAttributeSet::GetMeleeDamageMultiplierAttribute()))
-	{
-		FinalDamage *= FMath::Max(0.0f, SourceASC->GetNumericAttribute(UCombatAttributeSet::GetMeleeDamageMultiplierAttribute()));
-	}
-	FinalDamage *= GetHealthDamageMultiplier();
-	FinalDamage *= CriticalHitDamageMultiplier;
-	if (!FMath::IsFinite(FinalDamage) || FinalDamage <= 0.0f) return;
 	for (const FHitResult& Hit : Hits)
 	{
 		AActor* Target = Hit.GetActor();
@@ -611,6 +649,12 @@ void UGA_WeaponAttackBase::EndAbility(const FGameplayAbilitySpecHandle Handle,
 {
 	if (bFinishingAttack || !IsEndAbilityValid(Handle, ActorInfo)) return;
 	bFinishingAttack = true;
+	APlayerBase* CompletedPlayer = ActorInfo ? Cast<APlayerBase>(ActorInfo->AvatarActor.Get()) : nullptr;
+	UAbilitySystemComponent* CompletedASC = ActorInfo ? ActorInfo->AbilitySystemComponent.Get() : nullptr;
+	// 종료 알림에서 다음 공격이 시작돼도 이번 공격의 정보는 독립적으로 유지한다.
+	TStrongObjectPtr<UMeleeAttackEventData> CompletedAttack(
+		!bWasCancelled && bAttackExecuted && bAttackMontageFinished && RecordedMeleeDamage > 0.0f ? MeleeAttack.Get() : nullptr);
+	const float CompletedDamage = RecordedMeleeDamage;
 	if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(ChargeStartTimer);
@@ -640,7 +684,21 @@ void UGA_WeaponAttackBase::EndAbility(const FGameplayAbilitySpecHandle Handle,
 	SourceWeapon = nullptr;
 	DamageEffectClass = nullptr;
 	RangedAttack = FWeaponRangedAttackSnapshot{};
+	MeleeAttack = nullptr;
+	RecordedMeleeDamage = 0.0f;
 	RemainingBurstShots = 0;
 	bAttackMontageFinished = false;
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
+	// 본체의 공격 상태를 해제한 뒤 후속 능력에 알리므로 본체 후딜을 늘리지 않는다.
+	if (CompletedAttack.IsValid() && IsValid(CompletedPlayer) && CompletedPlayer->HasAuthority()
+		&& !CompletedPlayer->IsDead() && IsValid(CompletedASC) && CompletedASC->GetAvatarActor() == CompletedPlayer)
+	{
+		FGameplayEventData Payload;
+		Payload.EventTag = CombatGameplayTags::Event_MeleeAttackFinished;
+		Payload.Instigator = CompletedPlayer;
+		Payload.EventMagnitude = CompletedDamage;
+		Payload.InstigatorTags.AddTag(WeaponGameplayTags::Damage_PlayerMelee);
+		Payload.OptionalObject = CompletedAttack.Get();
+		CompletedASC->HandleGameplayEvent(Payload.EventTag, &Payload);
+	}
 }

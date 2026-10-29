@@ -45,6 +45,12 @@ class THELASTMESSAGE_API APlayerCheckpoint : public AActor
 
 public:
 	APlayerCheckpoint();
+    UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category="Checkpoint|Fast Travel")
+    bool bAllowFastTravel = false;
+    UFUNCTION(BlueprintPure, Category="Checkpoint|Fast Travel") bool HasBeenVisited() const;
+    UFUNCTION(BlueprintPure, Category="Checkpoint|Fast Travel") bool CanFastTravel() const;
+    bool FastTravel(APlayerBase* Player);
+
 	virtual void OnConstruction(const FTransform& Transform) override;
 	virtual void BeginPlay() override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
@@ -105,6 +111,7 @@ public:
 
 private:
 	TSet<TWeakObjectPtr<APlayerBase>> TouchingPlayers;
+	bool bVisitedThisSession = false;
 	void RefreshTerminalVisuals();
 	UFUNCTION()
 	void OnRep_VisualState();

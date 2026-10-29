@@ -16,7 +16,7 @@
 UGA_CoreAssistStrikeArm::UGA_CoreAssistStrikeArm()
 {
 	static ConstructorHelpers::FClassFinder<ACoreAssistAfterimage> AfterimagePreset(
-		TEXT("/Game/Test_Jihun/Core/VFX/BP_CoreAssistAfterimage"));
+		TEXT("/Game/Test_Jihun/Core/VFX/AssistStrikeArm/BP_CoreAssistAfterimage"));
 	AfterimageClass = AfterimagePreset.Class ? AfterimagePreset.Class.Get() : ACoreAssistAfterimage::StaticClass();
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
 	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::ServerOnly;
@@ -40,6 +40,7 @@ bool UGA_CoreAssistStrikeArm::TryPrepareStrike(const FGameplayAbilityActorInfo* 
 		|| ASC->GetAvatarActor() != Player || !Payload
 		|| Payload->EventTag != CombatGameplayTags::Event_MeleeAttackFinished || Payload->Instigator != Player
 		|| !Payload->InstigatorTags.HasTagExact(WeaponGameplayTags::Damage_PlayerMelee)
+		|| Payload->InstigatorTags.HasTagExact(CombatGameplayTags::Source_AssistStrike)
 		|| Payload->InstigatorTags.HasTagExact(WeaponGameplayTags::Damage_PlayerRanged)) return false;
 
 	const UMeleeAttackEventData* Attack = Cast<UMeleeAttackEventData>(Payload->OptionalObject.Get());

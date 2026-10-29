@@ -5,14 +5,19 @@
 #include "Animation/AnimSingleNodeInstance.h"
 #include "Character/CombatDamageLibrary.h"
 #include "Character/Player/PlayerBase.h"
+#include "Character/Enemy/EnemyBase.h"
+#include "Character/Boss/BossMonster.h"
+#include "Components/PrimitiveComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Core/CoreComponent.h"
 #include "DataAsset/WeaponDataAsset.h"
 #include "Engine/World.h"
+#include "GAS/WeaponGameplayTags.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Net/UnrealNetwork.h"
+#include "UObject/StrongObjectPtr.h"
 
 ACoreAssistAfterimage::ACoreAssistAfterimage()
 {
@@ -94,6 +99,11 @@ void ACoreAssistAfterimage::BeginPlay()
 {
 	Super::BeginPlay();
 	AbilitySystemComponent->InitAbilityActorInfo(this, this);
+	if (HasAuthority())
+	{
+		MeleeHitHandle = AbilitySystemComponent->GenericGameplayEventCallbacks.FindOrAdd(WeaponGameplayTags::Event_MeleeHit)
+			.AddUObject(this, &ACoreAssistAfterimage::HandleMeleeHit);
+	}
 	StartPresentation();
 }
 
@@ -187,6 +197,64 @@ void ACoreAssistAfterimage::Tick(float DeltaSeconds)
 	}
 }
 
+void ACoreAssistAfterimage::HandleMeleeHit(const FGameplayEventData* Payload)
+{
+	APlayerBase* Player = SourcePlayer.Get();
+	UCoreComponent* Core = SourceCore.Get();
+	if (!HasAuthority() || IsActorBeingDestroyed() || !bPresentationStarted || !IsValid(Player) || Player->IsDead()
+		|| !IsValid(Core) || !Core->HasCore(SourceCoreId) || !IsValid(AttackRecord) || !AttackRecord->DamageEffectClass
+		|| !Payload || Payload->EventTag != WeaponGameplayTags::Event_MeleeHit
+		|| Payload->Instigator != this || Payload->OptionalObject != Appearance.Montage
+		|| !FMath::IsFinite(AttackRecord->AttackRange) || AttackRecord->AttackRange <= 0.0f
+		|| !FMath::IsFinite(AttackRecord->HitRadius) || AttackRecord->HitRadius <= 0.0f) return;
+
+	const FVector Direction = FVector::VectorPlaneProject(GetActorForwardVector(), FVector::YAxisVector).GetSafeNormal();
+	if (Direction.IsNearlyZero()) return;
+	const FVector Start = GetActorLocation();
+	FCollisionQueryParams Query(SCENE_QUERY_STAT(CoreAssistStrike), false, this);
+	Query.AddIgnoredActor(Player);
+	TArray<FHitResult> Hits;
+	GetWorld()->SweepMultiByObjectType(Hits, Start, Start + Direction * AttackRecord->AttackRange, FQuat::Identity,
+		FCollisionObjectQueryParams(FCollisionObjectQueryParams::AllObjects), FCollisionShape::MakeSphere(AttackRecord->HitRadius), Query);
+	// 피해 알림 중 초기화·사망으로 잔상이 제거되어도 이번 호출의 공격 정보는 유지한다.
+	TStrongObjectPtr<UMeleeAttackEventData> Record(AttackRecord);
+	for (const FHitResult& Hit : Hits)
+	{
+		AActor* Target = Hit.GetActor();
+		const TWeakObjectPtr<AActor> Key(Target);
+		if (!IsValid(Target) || HitActors.Contains(Key)) continue;
+		const AEnemyBase* Enemy = Cast<AEnemyBase>(Target);
+		ABossMonster* Boss = Cast<ABossMonster>(Target);
+		if ((!Enemy && !Boss) || (Enemy && Enemy->IsDead()) || (Boss && Boss->GetBossState() == EBossState::Dead)) continue;
+		FCollisionQueryParams WallQuery(Query);
+		WallQuery.AddIgnoredActor(Target);
+		FHitResult WallHit;
+		if (GetWorld()->LineTraceSingleByChannel(WallHit, Start, Target->GetActorLocation(), ECC_Visibility, WallQuery)) continue;
+
+		FVector Contact = Hit.ImpactPoint;
+		FVector Normal = Hit.ImpactNormal;
+		if (Hit.bStartPenetrating)
+		{
+			Contact = Target->GetActorLocation();
+			if (UPrimitiveComponent* Component = Hit.GetComponent())
+			{
+				FVector Closest;
+				if (Component->GetClosestPointOnCollision(Start, Closest) > 0.0f) Contact = Closest;
+			}
+			Normal = (Start - Contact).GetSafeNormal();
+		}
+		if (Normal.IsNearlyZero()) Normal = -Direction;
+		// 이벤트가 같은 타격 알림을 재호출해도 중복 피해가 발생하지 않도록 먼저 기록한다.
+		HitActors.Add(Key);
+		const bool bApplied = UCombatDamageLibrary::ApplyFinalDamageToTarget(Player, Target, Record->DamageEffectClass,
+			StrikeDamage, WeaponGameplayTags::Damage_PlayerMelee, Record->FeedbackStrength, CombatGameplayTags::Source_AssistStrike);
+		if (IsActorBeingDestroyed() || !IsValid(Player) || Player->IsDead() || !SourceCore.IsValid() || !Core->HasCore(SourceCoreId)) break;
+		if (bApplied) Player->MulticastWeaponImpact(Record->WeaponData, Contact, Normal, nullptr, nullptr);
+		else HitActors.Remove(Key);
+		if (IsActorBeingDestroyed() || !IsValid(Player) || Player->IsDead()) break;
+	}
+}
+
 void ACoreAssistAfterimage::HandleMontageEnded(UAnimMontage* Montage, bool bInterrupted)
 {
 	if (Montage == Appearance.Montage) Destroy();
@@ -209,6 +277,11 @@ void ACoreAssistAfterimage::HandleCoreChanged(FName CoreId, int32 OldLevel, int3
 
 void ACoreAssistAfterimage::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (MeleeHitHandle.IsValid())
+	{
+		if (auto* Events = AbilitySystemComponent->GenericGameplayEventCallbacks.Find(WeaponGameplayTags::Event_MeleeHit)) Events->Remove(MeleeHitHandle);
+		MeleeHitHandle.Reset();
+	}
 	if (APlayerBase* Player = SourcePlayer.Get())
 	{
 		Player->OnPlayerDied.RemoveDynamic(this, &ACoreAssistAfterimage::HandlePlayerDied);
@@ -221,6 +294,7 @@ void ACoreAssistAfterimage::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		Animation->Montage_SetEndDelegate(Empty, Appearance.Montage);
 	}
 	AttackRecord = nullptr;
+	HitActors.Reset();
 	VisualMaterial = nullptr;
 	Super::EndPlay(EndPlayReason);
 }

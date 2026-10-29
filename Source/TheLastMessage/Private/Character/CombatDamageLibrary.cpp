@@ -12,6 +12,7 @@ namespace CombatGameplayTags
 {
     UE_DEFINE_GAMEPLAY_TAG(Event_DamageDealt, "Event.Combat.DamageDealt");
     UE_DEFINE_GAMEPLAY_TAG(Event_MeleeAttackFinished, "Event.Combat.MeleeAttackFinished");
+    UE_DEFINE_GAMEPLAY_TAG(Source_AssistStrike, "Damage.Source.AssistStrike");
     UE_DEFINE_GAMEPLAY_TAG(Result_TargetKilled, "Combat.Result.TargetKilled");
 }
 
@@ -50,12 +51,13 @@ bool UCombatDamageLibrary::TryGetDamageCategory(
 bool UCombatDamageLibrary::ApplyFinalDamageToTarget(
     AActor* SourceActor, AActor* Target,
     TSubclassOf<UGameplayEffect> DamageEffectClass,
-    float FinalDamage, FGameplayTag DamageCategory, float FeedbackStrength)
+    float FinalDamage, FGameplayTag DamageCategory, float FeedbackStrength, FGameplayTag DamageSource)
 {
     if (!IsValid(SourceActor) || !IsValid(Target)
         || !SourceActor->HasAuthority() || !Target->HasAuthority()
         || !FMath::IsFinite(FinalDamage) || FinalDamage <= 0.f
-        || !IsSupportedDamageCategory(DamageCategory) || !DamageEffectClass)
+        || !IsSupportedDamageCategory(DamageCategory) || !DamageEffectClass
+        || (DamageSource.IsValid() && IsSupportedDamageCategory(DamageSource)))
     {
         return false;
     }
@@ -99,6 +101,7 @@ bool UCombatDamageLibrary::ApplyFinalDamageToTarget(
 
     Spec.Data->SetSetByCallerMagnitude(DamageTag, FinalDamage);
     Spec.Data->AddDynamicAssetTag(DamageCategory);
+    if (DamageSource.IsValid()) Spec.Data->AddDynamicAssetTag(DamageSource);
     const FGameplayAttribute HealthAttribute = TargetASC->GetSet<UBossAttributeSet>()
         ? UBossAttributeSet::GetHealthAttribute() : UEnemyAttributeSet::GetHealthAttribute();
     const bool bHasHealth = TargetASC->HasAttributeSetForAttribute(HealthAttribute);
@@ -125,6 +128,7 @@ bool UCombatDamageLibrary::ApplyFinalDamageToTarget(
             Payload.Target = Target;
             Payload.EventMagnitude = ActualDamage;
             Payload.InstigatorTags.AddTag(DamageCategory);
+            if (DamageSource.IsValid()) Payload.InstigatorTags.AddTag(DamageSource);
             Payload.ContextHandle = Context;
             if (bTargetKilled)
                 Payload.TargetTags.AddTag(CombatGameplayTags::Result_TargetKilled);

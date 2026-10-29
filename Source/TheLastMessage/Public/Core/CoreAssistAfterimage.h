@@ -16,6 +16,7 @@ class USkeletalMesh;
 class USkeletalMeshComponent;
 class UStaticMesh;
 class UStaticMeshComponent;
+struct FGameplayEventData;
 
 /** 잔상의 외형과 공격 모션을 각 화면에서 동일하게 재생하기 위한 정보다. */
 USTRUCT()
@@ -82,6 +83,8 @@ protected:
 private:
 	void StartPresentation();
 	void HandleMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+	/** 잔상의 타격 시점에 범위를 다시 검사하고, 대상마다 한 번 피해를 적용한다. */
+	void HandleMeleeHit(const FGameplayEventData* Payload);
 
 	UFUNCTION() void OnRep_Appearance();
 	UFUNCTION() void HandlePlayerDied(APlayerBase* Player);
@@ -106,4 +109,6 @@ private:
 	FName SourceCoreId = NAME_None;
 	float PresentationEndTime = 0.0f;
 	bool bPresentationStarted = false;
+	FDelegateHandle MeleeHitHandle;
+	TSet<TWeakObjectPtr<AActor>> HitActors;
 };

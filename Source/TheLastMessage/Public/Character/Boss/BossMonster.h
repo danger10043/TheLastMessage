@@ -142,6 +142,23 @@ public:
     FOnBossDiedSignature OnBossDied;
 
 protected:
+    UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Boss|Phase|Cinematic")
+    TObjectPtr<class ALevelSequenceActor> Phase70SequenceActor;
+
+    UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Boss|Phase|Cinematic")
+    TObjectPtr<class ALevelSequenceActor> Phase30SequenceActor;
+
+    void PlayPhaseSequence(EBossPuzzleType PuzzleType);
+    void StopPhaseSequence();
+
+    UFUNCTION()
+    void HandlePhaseSequenceFinished();
+
+    UPROPERTY(Transient)
+    TObjectPtr<class ULevelSequencePlayer> ActivePhaseSequencePlayer;
+
+    bool bPhaseSequencePlaying = false;
+
     UPROPERTY(EditDefaultsOnly, Category = "Boss|Death")
     TObjectPtr<UAnimMontage> DeathMontage;
 

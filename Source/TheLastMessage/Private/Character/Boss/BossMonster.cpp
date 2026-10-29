@@ -27,6 +27,8 @@
 #include "Materials/MaterialInterface.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
+#include "LevelSequenceActor.h"
+#include "LevelSequencePlayer.h"
 
 ABossMonster::ABossMonster()
 {
@@ -563,6 +565,7 @@ void ABossMonster::HandleBossDeath()
 
     // 취소·체력 알림·이벤트 콜백보다 먼저 사망 상태를 확정한다.
     CurrentState = EBossState::Dead;
+    StopPhaseSequence();
     EndHitFlash();
     UpdatePuzzlePresentation();
     CurrentTarget = nullptr;
@@ -733,6 +736,12 @@ void ABossMonster::CompleteShieldPuzzle()
         return;
     }
     OnBossPuzzleCompleted.Broadcast(PuzzleType);
+
+    if (!IsActorBeingDestroyed()
+        && CurrentState == EBossState::Cinematic)
+    {
+        PlayPhaseSequence(PuzzleType);
+    }
 }
 
 void ABossMonster::StartPhaseCinematic(EBossPhase NextPhase)
@@ -795,11 +804,112 @@ void ABossMonster::StartPhaseCinematic(EBossPhase NextPhase)
     // 실제 Sequence 종료 이벤트에서 FinishPhaseCinematic을 호출하도록 연결한다.
 }
 
+void ABossMonster::PlayPhaseSequence(EBossPuzzleType PuzzleType)
+{
+    if (!HasAuthority() || CurrentState != EBossState::Cinematic
+        || bPhaseSequencePlaying)
+    {
+        return;
+    }
+
+    ALevelSequenceActor* SequenceActor = nullptr;
+    switch (PuzzleType)
+    {
+    case EBossPuzzleType::LaserPuzzle:
+        SequenceActor = Phase70SequenceActor.Get();
+        break;
+    case EBossPuzzleType::CorePuzzle:
+        SequenceActor = Phase30SequenceActor.Get();
+        break;
+    default:
+        break;
+    }
+
+    ULevelSequencePlayer* Player = IsValid(SequenceActor)
+        ? SequenceActor->GetSequencePlayer() : nullptr;
+
+    if (!IsValid(Player) || !IsValid(Player->GetSequence())
+        || Player->IsPlaying() || Player->IsPaused())
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("Boss phase sequence is unavailable or already in use: %s"),
+            *GetNameSafe(SequenceActor));
+        FinishPhaseCinematic();
+        return;
+    }
+
+    // 기존 그로기 종료 몽타주가 시퀀스 애니메이션과 겹치지 않게 한다.
+    if (UAnimInstance* Anim = PuzzleAnimInstance.Get())
+    {
+        if (IsValid(ActivePuzzleMontage.Get()))
+        {
+            Anim->Montage_Stop(0.f, ActivePuzzleMontage.Get());
+        }
+    }
+
+    if (CurrentState != EBossState::Cinematic || IsActorBeingDestroyed())
+    {
+        return;
+    }
+
+    ActivePhaseSequencePlayer = Player;
+    bPhaseSequencePlaying = true;
+    Player->OnFinished.AddUniqueDynamic(
+        this, &ABossMonster::HandlePhaseSequenceFinished);
+    Player->OnStop.AddUniqueDynamic(
+        this, &ABossMonster::HandlePhaseSequenceFinished);
+
+    UE_LOG(LogTemp, Log, TEXT("Boss phase sequence started: %s"),
+        *GetNameSafe(SequenceActor));
+    Player->Play();
+}
+
+void ABossMonster::HandlePhaseSequenceFinished()
+{
+    if (!bPhaseSequencePlaying)
+    {
+        return;
+    }
+
+    StopPhaseSequence();
+
+    if (HasAuthority() && CurrentState == EBossState::Cinematic
+        && !IsActorBeingDestroyed())
+    {
+        UE_LOG(LogTemp, Log, TEXT("Boss phase sequence ended."));
+        FinishPhaseCinematic();
+    }
+}
+
+void ABossMonster::StopPhaseSequence()
+{
+    ULevelSequencePlayer* Player = ActivePhaseSequencePlayer.Get();
+    ActivePhaseSequencePlayer = nullptr;
+    bPhaseSequencePlaying = false;
+
+    if (IsValid(Player))
+    {
+        Player->OnFinished.RemoveDynamic(
+            this, &ABossMonster::HandlePhaseSequenceFinished);
+        Player->OnStop.RemoveDynamic(
+            this, &ABossMonster::HandlePhaseSequenceFinished);
+
+        if (Player->IsPlaying() || Player->IsPaused())
+        {
+            Player->Stop();
+        }
+    }
+}
+
 void ABossMonster::FinishPhaseCinematic()
 {
     if (!HasAuthority())
     {
         UE_LOG(LogTemp, Verbose, TEXT("BossMonster::FinishPhaseCinematic - 실행 권한이 없습니다."));
+        return;
+    }
+    if (bPhaseSequencePlaying)
+    {
         return;
     }
     if (CurrentState != EBossState::Cinematic)
@@ -823,10 +933,17 @@ void ABossMonster::FinishPhaseCinematic()
         UE_LOG(LogTemp, Error, TEXT("BossMonster::FinishPhaseCinematic - ShieldComponent가 없습니다."));
         return;
     }
-    if (ShieldComponent->IsShieldActive() || bPuzzleExitPending)
+    if (ShieldComponent->IsShieldActive())
     {
         UE_LOG(LogTemp, Warning,
-            TEXT("BossMonster::FinishPhaseCinematic - 실드 또는 종료 몽타주 정리가 아직 완료되지 않았습니다."));
+            TEXT("BossMonster::FinishPhaseCinematic - 실드 정리가 아직 완료되지 않았습니다."));
+        return;
+    }
+
+    if (bPuzzleExitPending)
+    {
+        GetWorld()->GetTimerManager().SetTimerForNextTick(
+            this, &ABossMonster::FinishPhaseCinematic);
         return;
     }
     EBossPhase NextPhase;
@@ -1159,22 +1276,17 @@ void ABossMonster::Tick(float DeltaSeconds)
     PuzzleAnimInstance.Reset();
 
     bPuzzleExitPending = false;
-    if (HasAuthority())
+    if (HasAuthority() && CurrentState == EBossState::Combat)
     {
-        if (CurrentState == EBossState::Cinematic)
-        {
-            FinishPhaseCinematic();
-        }
-        else if (CurrentState == EBossState::Combat)
-        {
-            ResumeCombatAfterPuzzleBlend();
-        }
+        ResumeCombatAfterPuzzleBlend();
     }
 
 }
 
 void ABossMonster::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+    StopPhaseSequence();
+
     if (IsValid(AbilitySystemComponent.Get())
         && HealthChangedDelegateHandle.IsValid())
     {

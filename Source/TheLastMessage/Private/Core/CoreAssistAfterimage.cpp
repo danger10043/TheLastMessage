@@ -34,7 +34,9 @@ ACoreAssistAfterimage::ACoreAssistAfterimage()
 	CharacterMesh->SetGenerateOverlapEvents(false);
 	CharacterMesh->SetCastShadow(false);
 	CharacterMesh->SetHiddenInGame(true);
+	CharacterMesh->SetVisibility(false, false);
 	CharacterMesh->SetDisablePostProcessBlueprint(true);
+	// 몸체가 보이지 않아도 손 소켓과 타격 노티파이를 갱신한다.
 	CharacterMesh->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
 	CharacterMesh->bEnableUpdateRateOptimizations = false;
 	WeaponMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("WeaponMesh"));
@@ -140,7 +142,6 @@ void ACoreAssistAfterimage::StartPresentation()
 	VisualMaterial->SetVectorParameterValue(TEXT("Tint"), Tint);
 	VisualMaterial->SetScalarParameterValue(TEXT("Brightness"), FMath::Max(0.0f, Brightness));
 	VisualMaterial->SetScalarParameterValue(TEXT("Opacity"), FMath::Clamp(Opacity, 0.0f, 1.0f));
-	for (int32 Index = 0; Index < CharacterMesh->GetNumMaterials(); ++Index) CharacterMesh->SetMaterial(Index, VisualMaterial);
 	for (int32 Index = 0; Index < WeaponMesh->GetNumMaterials(); ++Index) WeaponMesh->SetMaterial(Index, VisualMaterial);
 
 	CharacterMesh->SetAnimationMode(EAnimationMode::AnimationSingleNode);
@@ -178,7 +179,10 @@ void ACoreAssistAfterimage::StartPresentation()
 	// 첫 화면부터 선택한 공격 자세를 표시한다.
 	CharacterMesh->TickAnimation(0.0f, false);
 	CharacterMesh->RefreshBoneTransforms();
-	CharacterMesh->SetHiddenInGame(false);
+	// 무기의 표시 상태는 유지하고 몸체만 숨긴다.
+	CharacterMesh->SetVisibility(false, false);
+	CharacterMesh->SetHiddenInGame(true, false);
+	WeaponMesh->SetVisibility(true, false);
 	WeaponMesh->SetHiddenInGame(false);
 	SetActorTickEnabled(true);
 	// 종료 알림과 별도로 수명 상한을 두어 잔상이 남지 않도록 한다.
@@ -192,8 +196,9 @@ void ACoreAssistAfterimage::Tick(float DeltaSeconds)
 	const float Remaining = PresentationEndTime - GetWorld()->GetTimeSeconds();
 	if (Remaining < FadeOutDuration)
 	{
-		VisualMaterial->SetScalarParameterValue(TEXT("Opacity"), FMath::Clamp(Opacity, 0.0f, 1.0f)
-			* FMath::Clamp(Remaining / FadeOutDuration, 0.0f, 1.0f));
+		const float FadeOpacity = FMath::Clamp(Opacity, 0.0f, 1.0f)
+			* FMath::Clamp(Remaining / FadeOutDuration, 0.0f, 1.0f);
+		VisualMaterial->SetScalarParameterValue(TEXT("Opacity"), FadeOpacity);
 	}
 }
 

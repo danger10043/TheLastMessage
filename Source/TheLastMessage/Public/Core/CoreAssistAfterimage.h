@@ -33,7 +33,7 @@ struct FCoreAfterimageAppearance
 	UPROPERTY() FTransform WeaponTransform = FTransform::Identity;
 };
 
-/** 본체의 행동 상태와 분리하여 근접 공격 모션을 한 번 재생하는 잔상이다. */
+/** 몸체를 숨긴 채 근접 공격 모션을 재생하고, 손 소켓에 연결한 무기만 표시하는 잔상이다. */
 UCLASS()
 class THELASTMESSAGE_API ACoreAssistAfterimage : public AActor, public IAbilitySystemInterface
 {

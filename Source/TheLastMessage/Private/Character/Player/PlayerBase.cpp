@@ -1642,3 +1642,8 @@ bool APlayerBase::IsRespawnProtected() const
 {
  return !IsDead() && GetWorld() && GetWorld()->GetTimeSeconds() < RespawnProtectedUntil;
 }
+
+UStaticMeshComponent* APlayerBase::GetWeaponVisualMesh(EWeaponSlot Slot) const
+{
+ return Slot == EWeaponSlot::Secondary ? SecondaryWeaponMesh.Get() : PrimaryWeaponMesh.Get();
+}

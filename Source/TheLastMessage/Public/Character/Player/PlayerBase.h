@@ -237,6 +237,7 @@ public:
 
 	// 공격 시작 시 남은 입력을 지운다. 지상에서는 정지하고 공중에서는 기존 속도를 유지한다.
 	void StopMovementForAttack();
+	UStaticMeshComponent* GetWeaponVisualMesh(EWeaponSlot Slot) const;
 
 	UCoreComponent* GetCoreComponent() const;
 

@@ -10,6 +10,7 @@
 
 class UBoxComponent;
 class UStaticMeshComponent;
+class UNiagaraComponent;
 /**
  * 
  */
@@ -45,6 +46,10 @@ protected:
     // 데이터 테이블에서 읽은 설정
     UPROPERTY(Transient, VisibleInstanceOnly, BlueprintReadOnly, Category = "Gimmick|DamagePlate")
     FDamagePlateConfigRow DamageConfig;
+
+    // 데미지 발판의 시각 효과
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Gimmick|Components")
+    TObjectPtr<UNiagaraComponent> DamagePlateEffect;
 
 private:
     // 범위 안의 플레이어에게 피해 적용

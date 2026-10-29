@@ -11,6 +11,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
 #include "GameplayEffect.h"
+#include "NiagaraComponent.h"
 
 ADamagePlate::ADamagePlate()
 {
@@ -35,6 +36,15 @@ ADamagePlate::ADamagePlate()
     DamageTrigger->SetCollisionResponseToAllChannels(ECR_Ignore);
     DamageTrigger->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
     DamageTrigger->SetGenerateOverlapEvents(true);
+
+    DamagePlateEffect = CreateDefaultSubobject<UNiagaraComponent>(TEXT("DamagePlateEffect"));
+
+    DamagePlateEffect->SetupAttachment(SceneRoot);
+    DamagePlateEffect->SetRelativeLocation(FVector::ZeroVector);
+    DamagePlateEffect->SetRelativeRotation(FRotator::ZeroRotator);
+
+    // 게임 시작 시 자동 재생
+    DamagePlateEffect->SetAutoActivate(true);
 }
 
 bool ADamagePlate::LoadDamageConfig()

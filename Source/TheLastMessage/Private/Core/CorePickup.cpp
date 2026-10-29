@@ -109,7 +109,7 @@ void ACorePickup::RestoreConsumedState(bool bWasConsumed)
 	SetActorEnableCollision(false);
 	SetActorTickEnabled(false);
 	// BeginPlay 처리 중이라면 엔진이 BeginPlay 종료 직후 안전하게 파괴한다.
-	Destroy();
+	HideConsumedPickup();
 }
 
 void ACorePickup::MarkConsumed()
@@ -357,7 +357,7 @@ void ACorePickup::HandleCoreSelected(UCoreDataAsset* SelectedCore)
 	// 코어는 선택 화면을 열기 전에 이미 빨려 들어갔으므로 바로 제거한다.
 	MarkConsumed();
 	ClearChoiceReward(true);
-	Destroy();
+	HideConsumedPickup();
 }
 
 void ACorePickup::HandleCoreReroll(int32 ChoiceIndex)
@@ -473,7 +473,7 @@ void ACorePickup::BeginPlay()
 	Super::BeginPlay();
 	if (bConsumed)
 	{
-		Destroy();
+		HideConsumedPickup();
 		return;
 	}
 	if (IsActorBeingDestroyed()) return;
@@ -575,7 +575,7 @@ void ACorePickup::FinishAbsorb()
 	AbsorbTarget.Reset();
 	if (!bOpenChoiceAfterAbsorb)
 	{
-		Destroy();
+		HideConsumedPickup();
 		return;
 	}
 
@@ -594,4 +594,29 @@ void ACorePickup::SetEmissive(float Value)
 	{
 		CoreMaterial->SetScalarParameterValue(EmissiveParameter, Value);
 	}
+}
+
+void ACorePickup::HideConsumedPickup()
+{
+ SetActorHiddenInGame(true);
+ SetActorEnableCollision(false);
+ SetActorTickEnabled(false);
+}
+
+void ACorePickup::RestoreCheckpointConsumption(bool bWasConsumed)
+{
+ if (!HasAuthority() || bIsGrantingReward) return;
+ bOpenChoiceAfterAbsorb = false;
+ bHiddenForChoice = false;
+ bIsAbsorbing = false;
+ AbsorbTarget.Reset();
+ ClearChoiceReward();
+ bConsumed = bWasConsumed;
+ SetActorLocation(IdleBaseLocation);
+ SetActorScale3D(IdleBaseScale);
+ SetEmissive(IdleEmissive);
+ SetActorHiddenInGame(bConsumed);
+ SetActorEnableCollision(!bConsumed);
+ SetActorTickEnabled(!bConsumed);
+ PickupCollision->SetCollisionEnabled(bConsumed ? ECollisionEnabled::NoCollision : ECollisionEnabled::QueryOnly);
 }

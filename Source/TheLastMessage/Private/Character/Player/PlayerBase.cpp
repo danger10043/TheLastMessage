@@ -1,3 +1,5 @@
+#include "UI/LoadingTransitionSubsystem.h"
+#include "Engine/GameInstance.h"
 #include "Character/Player/PlayerBase.h"
 #include "Character/Player/GrapplingHookComponent.h"
 #include "Map/AreaMapComponent.h"
@@ -1381,7 +1383,7 @@ void APlayerBase::HandleDeath(FName ReactionSection)
 	OnPlayerDied.Broadcast(this);
 	if (bAutoRespawn && IsValid(this) && DeathState.bDead)
 	{
-		GetWorldTimerManager().SetTimer(RespawnTimer, this, &APlayerBase::TryAutoRespawn, FMath::Max(0.1f, RespawnDelay), false);
+		if (!GetGameInstance() || !GetGameInstance()->GetSubsystem<ULoadingTransitionSubsystem>()->BeginDeath(this, RespawnDelay)) GetWorldTimerManager().SetTimer(RespawnTimer, this, &APlayerBase::TryAutoRespawn, FMath::Max(0.1f, RespawnDelay), false);
 	}
 }
 

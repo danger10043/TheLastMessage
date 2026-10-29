@@ -10,6 +10,7 @@ class UWeaponBase;
 class UWeaponDataAsset;
 class APlayerBase;
 class AProjectileBase;
+class UMeleeAttackEventData;
 
 /** 한 번의 원거리 공격에서 모든 탄환이 공유하는 발사 정보다. */
 USTRUCT()
@@ -102,6 +103,9 @@ protected:
 
 private:
 	void ExecuteAttack();
+	/** 타격 시점의 계산 결과를 사용하며, 대상의 체력·방어 처리는 포함하지 않는다. */
+	float CalculateMeleeDamage() const;
+	void CaptureMeleeAttack(APlayerBase* Player, FName AttackSection);
 	bool CaptureRangedAttack(APlayerBase* Player, TSubclassOf<AProjectileBase> ProjectileClass, const FVector& Direction);
 	bool ResolveRangedSpawnLocation(APlayerBase* Player, TSubclassOf<AProjectileBase> ProjectileClass, FVector& Location) const;
 	bool CanContinueRangedAttack(const APlayerBase* Player) const;
@@ -129,6 +133,10 @@ private:
 	/** 실제 발사 시점에 확정하며, 공격 종료 시 참조와 수치를 함께 비운다. */
 	UPROPERTY(Transient)
 	FWeaponRangedAttackSnapshot RangedAttack;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMeleeAttackEventData> MeleeAttack;
+	float RecordedMeleeDamage = 0.0f;
 
 	bool bWaitingForRelease = false;
 	bool bAttackExecuted = false;

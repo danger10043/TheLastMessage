@@ -3,6 +3,21 @@
 #include "AbilitySystemComponent.h"
 #include "Engine/World.h"
 
+void UBossPatternComponent::ResetPattern()
+{
+    ABossMonster* Boss = Cast<ABossMonster>(GetOwner());
+    if (!IsValid(Boss) || !Boss->HasAuthority())
+    {
+        return;
+    }
+
+    CancelCurrentAttack();
+    CooldownEndTimes.Reset();
+    CurrentAttackType = EBossAttackType::None;
+    bIsAttackExecuting = false;
+    bUseCircularMissileNext = true;
+}
+
 FBossMissileConfig UBossPatternComponent::GetMissileConfig(EBossPhase Phase)
 {
     switch (Phase)

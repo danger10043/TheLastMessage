@@ -117,6 +117,19 @@ bool FCheckpointSaveFlowTest::RunTest(const FString& Parameters)
 		Player->SetActorLocation(FVector(3000, 0, 200)); Player->HandleDeath();
 		TestTrue(TEXT("Loaded checkpoint becomes respawn location"), Player->RespawnAtCheckpoint());
 		TestTrue(TEXT("Death respawn uses loaded checkpoint"), Player->GetActorLocation().Equals(Loaded->RespawnTransform.GetLocation(), 1));
+        UWorld* OriginalWorld = Player->GetWorld();
+        APlayerBase* OriginalPlayer = Player;
+        Player->GetCombatAttributes()->SetHealth(12.f);
+        Player->SetActorLocation(FVector(3500, 0, 200));
+        Player->HandleDeath();
+        Saves->WorkingProgress = Loaded;
+        Saves->bRestorePending = true;
+        TestTrue(TEXT("In-place restore succeeds"), Saves->RestoreLoadedCheckpointInPlace(Player));
+        TestTrue(TEXT("In-place restore retains world and player"), Player == OriginalPlayer && Player->GetWorld() == OriginalWorld);
+        TestTrue(TEXT("In-place restore returns to saved position"), Player->GetActorLocation().Equals(Loaded->RespawnTransform.GetLocation(), 1));
+        TestEqual(TEXT("In-place restore uses saved health instead of full heal"), Player->GetCombatAttributes()->GetHealth(), 68.f);
+        TestFalse(TEXT("In-place restore completes pending state"), Saves->IsRestoringProgress());
+
 	}
 	TestFalse(TEXT("No slot one created"), Saves->HasSave(1)); TestFalse(TEXT("No slot three created"), Saves->HasSave(3));
 	USaveNotificationWidget* Popup = CreateWidget<USaveNotificationWidget>(PC, USaveNotificationWidget::StaticClass());

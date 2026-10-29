@@ -46,7 +46,7 @@ void ULoadingTransitionSubsystem::PreLoad(const FString& Map)
  [SNew(SHorizontalBox)+SHorizontalBox::Slot().AutoWidth().Padding(10,0)[SNew(SThrobber)]
  +SHorizontalBox::Slot().AutoWidth()[SNew(STextBlock).Text(NSLOCTEXT("Loading","Loading","불러오는 중…"))]]]];
  if(GetGameInstance()->GetGameViewportClient()) GetGameInstance()->GetGameViewportClient()->AddViewportWidgetContent(Overlay.ToSharedRef(),10000);
- if(IsMoviePlayerEnabled()) {FLoadingScreenAttributes Screen; Screen.bAutoCompleteWhenLoadingCompletes=true; Screen.WidgetLoadingScreen=Overlay; GetMoviePlayer()->SetupLoadingScreen(Screen);}
+ if(!Map.IsEmpty() && IsMoviePlayerEnabled()) {FLoadingScreenAttributes Screen; Screen.bAutoCompleteWhenLoadingCompletes=true; Screen.WidgetLoadingScreen=Overlay; GetMoviePlayer()->SetupLoadingScreen(Screen);}
 }
 void ULoadingTransitionSubsystem::OnMapLoaded(UWorld* World)
 {
@@ -79,7 +79,16 @@ bool ULoadingTransitionSubsystem::Tick(float Delta)
   {
    auto* Saves=GetGameInstance()->GetSubsystem<UProgressSaveSubsystem>(); if(Saves->IsSaving()) return true;
    bDeath=false;
-   if(Saves->ReloadActiveProgress()) UGameplayStatics::OpenLevel(GetGameInstance(),FName(*Saves->GetWorkingProgress()->MapPackage));
+   if(Saves->RestoreCheckpointInPlace(Player))
+   {
+    if(PC) if(auto* Camera=Cast<ASideScrollingCameraManager>(PC->PlayerCameraManager)) Camera->CurrentZoom=OriginalZoom;
+    if(auto* Arm=Player->FindComponentByClass<USpringArmComponent>()) Arm->TargetArmLength=OriginalArm;
+    else if(auto* Camera=Player->FindComponentByClass<UCameraComponent>()){auto Location=Camera->GetRelativeLocation();Location.Y=OriginalArm;Camera->SetRelativeLocation(Location);}
+    // Reuse the overlay/fade without scheduling another map load.
+    PreLoad(TEXT("")); bArrived=true;
+    if(PC && PC->PlayerCameraManager) PC->PlayerCameraManager->SetManualCameraFade(0,FLinearColor::Black,false);
+   }
+   else if(Saves->ReloadActiveProgress()) UGameplayStatics::OpenLevel(GetGameInstance(),FName(*Saves->GetWorkingProgress()->MapPackage));
    else {if(PC) if(auto* Camera=Cast<ASideScrollingCameraManager>(PC->PlayerCameraManager)) Camera->CurrentZoom=OriginalZoom; if(PC && PC->PlayerCameraManager) PC->PlayerCameraManager->SetManualCameraFade(0,FLinearColor::Black,false); if(auto* Arm=Player->FindComponentByClass<USpringArmComponent>()) Arm->TargetArmLength=OriginalArm; Player->RespawnAtCheckpoint(); UE_LOG(LogTemp,Error,TEXT("Checkpoint load failed; used in-memory respawn"));}
    return true;
   }

@@ -116,7 +116,7 @@ void Draw(UCanvas* Canvas, APlayerController*)
 	Lines.Add(TEXT("Target HP loss includes ALL damage sources; shields/overkill affect the result."));
 	Lines.Add(FString::Printf(TEXT("Life steal %.1f%% | Kill recovery %.1f%% max HP"), Stats->GetLifeStealRatio() * 100.f, Stats->GetKillHealRatio() * 100.f));
 	Lines.Add(FString::Printf(TEXT("Burst: %.0f shots | total damage x%.2f | interval %.2fs"), Stats->GetRangedBurstShotCount(), Stats->GetRangedBurstTotalDamageMultiplier(), Stats->GetRangedBurstInterval()));
-	Lines.Add(TEXT("tlm.CoreGive 2..14 | tlm.CoreHealth 80 | tlm.CoreHit 100 | tlm.CoreReset"));
+	Lines.Add(TEXT("tlm.CoreGive <2..14/DA path> | tlm.CoreHealth 80 | tlm.CoreHit 100 | tlm.CoreReset"));
 	if (!Monitor.Message.IsEmpty()) Lines.Add(Monitor.Message);
 
 	const FVector2D Origin(24.0f, 120.0f);
@@ -155,17 +155,28 @@ FAutoConsoleCommandWithWorldAndArgs ShowCommand(TEXT("tlm.CoreDebug"), TEXT("Sho
 		else Enable(World);
 	}), ECVF_Cheat);
 
-FAutoConsoleCommandWithWorldAndArgs GiveCommand(TEXT("tlm.CoreGive"), TEXT("Acquire a real core by test-list number 2..14. 9: charge acceleration, 11: energy recharge, 12: power absorption, 13: residual power recovery, 14: burst fire. Existing cores are kept."),
+FAutoConsoleCommandWithWorldAndArgs GiveCommand(TEXT("tlm.CoreGive"), TEXT("Acquire a real core by test-list number 2..14 or a /Game/.../DA_Name.DA_Name asset path. Existing cores are kept."),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
 	{
 		APlayerBase* Player = GetPlayer(World);
 		int32 Number = 0;
-		if (!Player || !Player->HasAuthority() || Args.Num() != 1 || !LexTryParseString(Number, *Args[0]) || Number < 2 || Number > 14) return;
-		const TObjectPtr<UCoreDataAsset>* Configured = Player->GetCoreComponent()->DebugCoreAssets.Find(Number);
-		UCoreDataAsset* Data = Configured ? Configured->Get() : nullptr;
+		if (!Player || !Player->HasAuthority() || Args.Num() != 1) return;
+		UCoreDataAsset* Data = nullptr;
+		if (LexTryParseString(Number, *Args[0]))
+		{
+			if (Number < 2 || Number > 14) return;
+			const TObjectPtr<UCoreDataAsset>* Configured = Player->GetCoreComponent()->DebugCoreAssets.Find(Number);
+			Data = Configured ? Configured->Get() : nullptr;
+		}
+		else if (Args[0].StartsWith(TEXT("/Game/")))
+		{
+			Data = LoadObject<UCoreDataAsset>(nullptr, *Args[0]);
+		}
+		else return;
 		Enable(World);
 		const ECoreAcquireResult Result = Data ? Player->GetCoreComponent()->AcquireCore(Data) : ECoreAcquireResult::InvalidData;
-		Message(FString::Printf(TEXT("%d %s: %s (Lv.%d)"), Number, Data ? *Data->CoreName.ToString() : TEXT("missing DA"), *UEnum::GetValueAsString(Result), Data ? Player->GetCoreComponent()->GetCoreLevel(Data->CoreId) : 0));
+		const FString Prefix = Number > 0 ? FString::Printf(TEXT("%d "), Number) : FString();
+		Message(FString::Printf(TEXT("%s%s: %s (Lv.%d)"), *Prefix, Data ? *Data->CoreName.ToString() : TEXT("missing DA"), *UEnum::GetValueAsString(Result), Data ? Player->GetCoreComponent()->GetCoreLevel(Data->CoreId) : 0));
 	}), ECVF_Cheat);
 
 FAutoConsoleCommandWithWorldAndArgs ResetCommand(TEXT("tlm.CoreReset"), TEXT("Remove ALL acquired cores in this play session. Does not edit assets."),

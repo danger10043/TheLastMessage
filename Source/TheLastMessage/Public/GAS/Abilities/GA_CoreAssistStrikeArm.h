@@ -5,8 +5,9 @@
 #include "GA_CoreAssistStrikeArm.generated.h"
 
 class UMeleeAttackEventData;
+class ACoreAssistAfterimage;
 
-/** 정상 종료한 근접 공격을 받아 보조 타격의 공격 정보와 피해를 준비하는 능력이다. */
+/** 정상 종료한 근접 공격의 정보와 피해로 독립된 보조 타격 잔상을 생성하는 능력이다. */
 UCLASS()
 class THELASTMESSAGE_API UGA_CoreAssistStrikeArm : public UGameplayAbility
 {
@@ -16,6 +17,9 @@ public:
 	UGA_CoreAssistStrikeArm();
 
 protected:
+	UPROPERTY(EditDefaultsOnly, Category = "Core|AssistStrike")
+	TSubclassOf<ACoreAssistAfterimage> AfterimageClass;
+
 	virtual bool ShouldAbilityRespondToEvent(const FGameplayAbilityActorInfo* ActorInfo,
 		const FGameplayEventData* Payload) const override;
 

@@ -3,13 +3,21 @@
 #include "AbilitySystemComponent.h"
 #include "Character/CombatDamageLibrary.h"
 #include "Character/Player/PlayerBase.h"
+#include "Core/CoreAssistAfterimage.h"
+#include "Core/CoreComponent.h"
+#include "DataAsset/CoreDataAsset.h"
 #include "DataAsset/WeaponDataAsset.h"
+#include "Engine/World.h"
 #include "GAS/CombatAttributeSet.h"
 #include "GAS/WeaponGameplayTags.h"
+#include "UObject/ConstructorHelpers.h"
 #include "UObject/StrongObjectPtr.h"
 
 UGA_CoreAssistStrikeArm::UGA_CoreAssistStrikeArm()
 {
+	static ConstructorHelpers::FClassFinder<ACoreAssistAfterimage> AfterimagePreset(
+		TEXT("/Game/Test_Jihun/Core/VFX/BP_CoreAssistAfterimage"));
+	AfterimageClass = AfterimagePreset.Class ? AfterimagePreset.Class.Get() : ACoreAssistAfterimage::StaticClass();
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
 	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::ServerOnly;
 	NetSecurityPolicy = EGameplayAbilityNetSecurityPolicy::ServerOnly;
@@ -79,12 +87,22 @@ void UGA_CoreAssistStrikeArm::ActivateAbility(const FGameplayAbilitySpecHandle H
 	}
 	if (!IsActive()) return;
 
-	const APlayerBase* Player = ActorInfo ? Cast<APlayerBase>(ActorInfo->AvatarActor.Get()) : nullptr;
-	if (!IsValid(Player) || Player->IsDead())
+	APlayerBase* Player = ActorInfo ? Cast<APlayerBase>(ActorInfo->AvatarActor.Get()) : nullptr;
+	const UCoreDataAsset* CoreData = Cast<UCoreDataAsset>(GetSourceObject(Handle, ActorInfo));
+	if (!IsValid(Player) || Player->IsDead() || !IsValid(CoreData) || !AfterimageClass
+		|| !Player->GetCoreComponent() || !Player->GetCoreComponent()->HasCore(CoreData->CoreId))
 	{
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
-	UE_LOG(LogTemp, VeryVerbose, TEXT("보조 타격 준비: 피해 %.3f, 무기 %s"), Damage, *GetNameSafe(AttackRecord->WeaponData));
-	EndAbility(Handle, ActorInfo, ActivationInfo, true, false);
+	ACoreAssistAfterimage* Afterimage = GetWorld()->SpawnActorDeferred<ACoreAssistAfterimage>(AfterimageClass,
+		AttackRecord->ActorTransform, Player, Player, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+	if (!Afterimage || !Afterimage->Initialize(Player, AttackRecord.Get(), Damage, CoreData->CoreId))
+	{
+		if (Afterimage) Afterimage->Destroy();
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
+	Afterimage->FinishSpawning(AttackRecord->ActorTransform);
+	EndAbility(Handle, ActorInfo, ActivationInfo, true, !IsValid(Afterimage));
 }

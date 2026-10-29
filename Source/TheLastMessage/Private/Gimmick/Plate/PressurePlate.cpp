@@ -210,3 +210,21 @@ void APressurePlate::HandlePressingActorEndPlay(AActor * Actor, EEndPlayReason::
 
     UpdatePressedState();
 }
+
+FProgressActorState APressurePlate::CaptureProgress() const
+{
+    FProgressActorState State = Super::CaptureProgress();
+    State.bActive = false; // Contacts are rebuilt from the restored world, not latched from the save.
+    return State;
+}
+
+void APressurePlate::RefreshRestoredState()
+{
+    RebuildPressingActors();
+}
+
+void APressurePlate::FinishRestoreProgress(const FProgressActorState& State)
+{
+    RebuildPressingActors();
+    Super::FinishRestoreProgress(State);
+}

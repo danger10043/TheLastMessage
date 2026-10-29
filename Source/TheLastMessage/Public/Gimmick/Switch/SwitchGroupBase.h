@@ -18,6 +18,12 @@ class THELASTMESSAGE_API ASwitchGroupBase : public AGimmickBase
 	GENERATED_BODY()
 	
 public:
+	virtual FProgressActorState CaptureProgress() const override;
+	virtual void RestoreProgress(const FProgressActorState& State) override;
+	virtual void FinishRestoreProgress(const FProgressActorState& State) override;
+	virtual void RefreshRestoredState() override;
+	virtual int32 GetRestorePriority() const override { return 1; }
+	virtual bool ResetIncompleteOnLoad() const { return false; }
 	ASwitchGroupBase();
 
 	// 등록된 모든 스위치가 커져 있는지 확인

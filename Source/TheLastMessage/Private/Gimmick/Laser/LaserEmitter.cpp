@@ -1,4 +1,6 @@
 #include "Gimmick/Laser/LaserEmitter.h"
+#include "Save/ProgressSaveSubsystem.h"
+#include "Engine/GameInstance.h"
 
 #include "Character/Player/PlayerBase.h"
 #include "CollisionQueryParams.h"
@@ -197,7 +199,8 @@ void ALaserEmitter::UpdateLaserPath()
 		// 플레이어에 닿으면 즉시 사망 처리
 		if (APlayerBase* Player = Cast<APlayerBase>(Hit.GetActor()))
 		{
-			KillPlayerImmediately(Player);
+			const UProgressSaveSubsystem* Saves = GetGameInstance() ? GetGameInstance()->GetSubsystem<UProgressSaveSubsystem>() : nullptr;
+			if (!Saves || !Saves->IsRestoringGimmicks()) KillPlayerImmediately(Player);
 			break;
 		}
 
@@ -570,4 +573,15 @@ void ALaserEmitter::UpdateEmitterIndicator()
 	{
 		LensMaterial->SetVectorParameterValue(TEXT("EmissiveColor"), LightColor);
 	}
+}
+
+void ALaserEmitter::FinishRestoreProgress(const FProgressActorState& State)
+{
+    if (bIsEnabled && bIsActive)
+    {
+        UpdateLaserPath();
+        UpdateReceiverContacts();
+        UpdateLaserVisuals();
+    }
+    Super::FinishRestoreProgress(State);
 }

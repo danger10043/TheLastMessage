@@ -2,6 +2,7 @@
 
 
 #include "Gimmick/FuseCircuit/FuseCircuitSocket.h"
+#include "EngineUtils.h"
 
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -103,4 +104,28 @@ bool AFuseCircuitSocket::TryInsertFuse(ACharacter * Player)
     ApplyActiveState(true);
 
     return true;
+}
+
+FProgressActorState AFuseCircuitSocket::CaptureProgress() const
+{
+    FProgressActorState State = Super::CaptureProgress();
+    if (IsValid(InstalledFuse)) State.RelatedActorId = InstalledFuse->GetPersistentId();
+    return State;
+}
+
+void AFuseCircuitSocket::FinishRestoreProgress(const FProgressActorState& State)
+{
+    InstalledFuse = nullptr;
+    bIsInserting = false;
+    if (State.RelatedActorId.IsValid())
+        for (TActorIterator<AFuseItem> It(GetWorld()); It; ++It)
+            if (It->GetPersistentId() == State.RelatedActorId)
+            {
+                InstalledFuse = *It;
+                InstalledFuse->GetObjectMesh()->SetSimulatePhysics(false);
+                InstalledFuse->AttachToComponent(FuseMountPoint, FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+                InstalledFuse->OnTransferred();
+                break;
+            }
+    Super::FinishRestoreProgress(State);
 }

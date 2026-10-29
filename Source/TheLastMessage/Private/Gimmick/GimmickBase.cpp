@@ -8,6 +8,9 @@
 #include "GameFramework/Character.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "NiagaraComponent.h"
+#include "Save/ProgressSaveSubsystem.h"
+#include "Engine/GameInstance.h"
+#include "Engine/World.h"
 
 // Sets default values
 AGimmickBase::AGimmickBase()
@@ -50,6 +53,11 @@ void AGimmickBase::ApplyActiveState(bool bNewActive)
 	}
 
 	bIsActive = bNewActive;
+	if (GetGameInstance())
+	{
+		const UProgressSaveSubsystem* Saves = GetGameInstance()->GetSubsystem<UProgressSaveSubsystem>();
+		if (Saves && Saves->IsRestoringGimmicks()) return;
+	}
 
 	// 스위치 그룹 등 상태를 관찰하는 대상에 알림
 	OnActiveStateChanged.Broadcast(this, bNewActive);
@@ -109,6 +117,13 @@ bool AGimmickBase::ApplyConfigOverride(FName ConfigSlot, const FDataTableRowHand
 void AGimmickBase::BeginPlay()
 {
 	Super::BeginPlay();
+	if (HasAuthority() && bPersistState && GetGameInstance())
+	{
+		if (!PersistentId.IsValid() && HasAnyFlags(RF_WasLoaded))
+			UE_LOG(LogTemp, Warning, TEXT("Gimmick has no persistent ID; open and save its map in the editor: %s"), *GetPathName());
+		if (UProgressSaveSubsystem* Saves = GetGameInstance()->GetSubsystem<UProgressSaveSubsystem>())
+			Saves->QueueGimmickRestore(this);
+	}
 	
 	// 자식 Blueprint에 추가된 메시 컴포넌트까지 수집
 	TArray<UMeshComponent*> MeshComponents;
@@ -168,4 +183,73 @@ void AGimmickBase::SetGimmickEnabled(bool bNewEnabled)
 		UpdateInteractionHighlight(false);
 		ApplyActiveState(false);
 	}
+}
+void AGimmickBase::EnsurePersistentId()
+{
+    if (IsTemplate() || PersistentId.IsValid()) return;
+    // Runtime-spawned actors have no matching placed instance on the next map load.
+    if (GetWorld() && GetWorld()->IsGameWorld()) return;
+#if WITH_EDITOR
+    if (GetActorGuid().IsValid()) { PersistentId = GetActorGuid(); return; }
+    PersistentId = FGuid::NewGuid();
+#endif
+}
+
+void AGimmickBase::OnConstruction(const FTransform& Transform)
+{
+    Super::OnConstruction(Transform);
+    EnsurePersistentId();
+}
+
+void AGimmickBase::PostLoad()
+{
+    Super::PostLoad();
+#if WITH_EDITOR
+    EnsurePersistentId();
+#endif
+}
+
+#if WITH_EDITOR
+void AGimmickBase::PostEditImport()
+{
+    Super::PostEditImport();
+    if (!IsTemplate()) PersistentId = FGuid::NewGuid();
+}
+#endif
+
+FProgressActorState AGimmickBase::CaptureProgress() const
+{
+    FProgressActorState State;
+    State.State = TEXT("GimmickV1");
+    State.Transform = GetActorTransform();
+    State.bEnabled = bIsEnabled;
+    State.bActive = bIsActive;
+    return State;
+}
+
+void AGimmickBase::RestoreProgress(const FProgressActorState& State)
+{
+    bIsEnabled = State.bEnabled;
+    bIsActive = State.bActive;
+    RefreshRestoredState();
+}
+
+void AGimmickBase::RefreshRestoredState()
+{
+    // State already matches, so the base event broadcaster returns without emitting events.
+    ApplyActiveState(bIsActive);
+    UpdateInteractionHighlight(false);
+}
+
+void AGimmickBase::RestoreLinkedActiveState(bool bActive)
+{
+    bIsActive = bActive && bIsEnabled;
+    RefreshRestoredState();
+}
+
+void AGimmickBase::FinishRestoreProgress(const FProgressActorState& State)
+{
+    // Native device references can be synchronized without replaying interaction/BP events.
+    for (AActor* Device : LinkedDevices)
+        if (AGimmickBase* Gimmick = Cast<AGimmickBase>(Device)) Gimmick->RestoreLinkedActiveState(bIsActive);
 }

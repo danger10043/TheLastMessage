@@ -333,3 +333,15 @@ void AToggleSwitch::UpdateLeverRotation(float Alpha)
 
 	LeverPivotComponent->SetRelativeRotation(Rotation);
 }
+
+void AToggleSwitch::RefreshRestoredState()
+{
+    bLeverInputLocked = false;
+    bIsTimerGlowActive = false;
+    TimerGlowAlpha = 0.0f;
+    LeverTimeline->Stop();
+    LeverTimeline->SetPlaybackPosition(bIsActive ? 1.0f : 0.0f, false, false);
+    UpdateLeverRotation(bIsActive ? 1.0f : 0.0f);
+    UpdateSwitchIndicator();
+    UpdateInteractionHighlight(false);
+}

@@ -36,6 +36,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Save") bool SaveActiveProgress();
 	bool SaveCheckpoint(class APlayerBase* Player, class APlayerCheckpoint* Checkpoint);
 	bool RestorePlayerIfPending(APlayerBase* Player);
+	void QueueGimmickRestore(class AGimmickBase* Gimmick);
+	bool IsRestoringGimmicks() const { return bRestoringGimmicks; }
 	void ApplyCheckpointState(APlayerCheckpoint* Checkpoint) const;
 	bool IsRestoringProgress() const { return bRestorePending || bRestoring; }
 	bool IsLoadedSession() const { return bLoadedSession; }
@@ -72,4 +74,7 @@ private:
 	bool bCinematicHistoryDirty = false;
 	UPROPERTY(Transient) TObjectPtr<UProgressSaveGame> PendingCheckpointSnapshot;
 	void WriteCheckpointSnapshot(UProgressSaveGame* Snapshot);
+	TArray<TWeakObjectPtr<class AGimmickBase>> PendingGimmickRestores;
+	void RestoreQueuedGimmicks();
+	bool bRestoringGimmicks = false;
 };

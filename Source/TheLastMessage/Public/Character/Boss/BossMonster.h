@@ -48,6 +48,10 @@ public:
     ABossMonster();
     virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
 
+    // 체력/페이즈/기믹/쿨타임을 초기화한다. 위치 이동은 호출자가 처리한다.
+    UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Boss|Lifecycle")
+    bool ResetBoss(bool bRestartAI = false);
+
     UPROPERTY(BlueprintReadOnly, Transient, Category = "Boss|GunBurst")
     bool bGunBurstAiming = false;
 
@@ -291,6 +295,8 @@ protected:
 
     UPROPERTY(EditDefaultsOnly, Category = "Boss|UI")
     TSubclassOf<UBossUIWidget> BossUIWidgetClass;
+
+    bool bIsResettingBoss = false;
 
     UPROPERTY(Transient)
     TObjectPtr<UBossUIWidget> BossUIWidget;

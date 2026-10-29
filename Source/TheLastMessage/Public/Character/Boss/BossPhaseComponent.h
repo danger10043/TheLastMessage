@@ -11,6 +11,8 @@ class THELASTMESSAGE_API UBossPhaseComponent : public UActorComponent
     GENERATED_BODY()
 
 public:
+    void ResetPhase();
+
     void CheckPhaseThreshold(float HealthPercent);
 
     void RequestPhaseTransition(EBossPhase NextPhase);

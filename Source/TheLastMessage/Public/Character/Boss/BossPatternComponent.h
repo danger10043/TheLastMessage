@@ -11,6 +11,8 @@ class THELASTMESSAGE_API UBossPatternComponent : public UActorComponent
     GENERATED_BODY()
 
 public:
+    void ResetPattern();
+
     EBossAttackType SelectAttackPattern(EBossPhase Phase, float TargetDistance);
 
     bool ExecuteAttackPattern(EBossAttackType AttackType);

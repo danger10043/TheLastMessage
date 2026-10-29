@@ -29,6 +29,11 @@
 #include "NiagaraSystem.h"
 #include "LevelSequenceActor.h"
 #include "LevelSequencePlayer.h"
+#include "Character/Boss/BossActivationCore.h"
+#include "BehaviorTree/BehaviorTreeComponent.h"
+#include "EngineUtils.h"
+#include "Framework/ActorPoolSubsystem.h"
+#include "Interface/PoolableInterface.h"
 
 ABossMonster::ABossMonster()
 {
@@ -309,6 +314,172 @@ void ABossMonster::InitializeBoss()
     }
 }
 
+bool ABossMonster::ResetBoss(bool bRestartAI)
+{
+    UWorld* World = GetWorld();
+    ABossAIController* AI = Cast<ABossAIController>(GetController());
+    UCharacterMovementComponent* Movement = GetCharacterMovement();
+
+    if (!HasAuthority() || !HasActorBegunPlay() || IsActorBeingDestroyed()
+        || bIsResettingBoss || bInitializationInProgress || !bInitialStatsApplied
+        || !World || !IsValid(AI) || !IsValid(Movement)
+        || !IsValid(GetMesh()) || !IsValid(AbilitySystemComponent.Get())
+        || !IsValid(AttributeSet.Get()) || !IsValid(PhaseComponent.Get())
+        || !IsValid(PatternComponent.Get()) || !IsValid(ShieldComponent.Get())
+        || !IsValid(CorePuzzleComponent.Get())
+        || !IsValid(PuzzleShieldMesh.Get()) || !IsValid(GunMesh.Get())
+        || !IsValid(ShieldMesh.Get()))
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("ResetBoss: authority, initialization or component check failed."));
+        return false;
+    }
+
+    const float MaxHealth = AttributeSet->GetMaxHealth();
+    const float MoveSpeed = AttributeSet->GetMoveSpeed();
+    UActorPoolSubsystem* Pool = World->GetSubsystem<UActorPoolSubsystem>();
+    if (!IsValid(Pool) || !FMath::IsFinite(MaxHealth) || MaxHealth <= 0.f
+        || !FMath::IsFinite(MoveSpeed) || MoveSpeed < 0.f)
+    {
+        return false;
+    }
+
+    const TCHAR* RequiredTags[] = {
+        TEXT("Boss.State.Dead"), TEXT("Boss.Immunity.Shield"),
+        TEXT("Boss.Immunity.Ranged"), TEXT("Boss.Phase.One"),
+        TEXT("Boss.Phase.Two"), TEXT("Boss.Phase.Three")
+    };
+    for (const TCHAR* Name : RequiredTags)
+    {
+        if (!FGameplayTag::RequestGameplayTag(FName(Name), false).IsValid())
+        {
+            UE_LOG(LogTemp, Error, TEXT("ResetBoss: missing tag %s"), Name);
+            return false;
+        }
+    }
+
+    TGuardValue<bool> ResetGuard(bIsResettingBoss, true);
+
+    // 사망 상태에서도 초기화를 허용한다. 중간 콜백에는 전투 불가 상태를 노출한다.
+    CurrentState = EBossState::Cinematic;
+    if (UBrainComponent* Brain = AI->GetBrainComponent())
+    {
+        if (UBehaviorTreeComponent* BT = Cast<UBehaviorTreeComponent>(Brain))
+        {
+            BT->StopTree(EBTStopMode::Forced);
+        }
+        else
+        {
+            Brain->StopLogic(TEXT("Boss reset"));
+        }
+    }
+    AI->StopMovement();
+    StopPhaseSequence();
+    World->GetTimerManager().ClearAllTimersForObject(this);
+    EndHitFlash();
+
+    PatternComponent->ResetPattern();
+    ShieldComponent->DeactivateShield();
+    CorePuzzleComponent->EndCorePuzzle();
+    for (ABossActivationCore* Core : ActivationCores)
+    {
+        if (IsValid(Core))
+        {
+            Core->ResetCore();
+        }
+    }
+
+    // 취소 후에도 남은, 이 보스 소유의 풀링 액터만 회수한다.
+    TArray<TWeakObjectPtr<AActor>> RemainingActors;
+    for (TActorIterator<AActor> It(World); It; ++It)
+    {
+        AActor* Actor = *It;
+        if (IsValid(Actor) && Actor->GetOwner() == this
+            && Cast<IPoolableInterface>(Actor))
+        {
+            RemainingActors.Add(Actor);
+        }
+    }
+    for (const TWeakObjectPtr<AActor>& Entry : RemainingActors)
+    {
+        if (AActor* Actor = Entry.Get())
+        {
+            if (Actor->GetOwner() == this)
+            {
+                Pool->ReleaseActor(Actor);
+            }
+        }
+    }
+
+    GetMesh()->bPauseAnims = false;
+    if (UAnimInstance* Anim = GetMesh()->GetAnimInstance())
+    {
+        Anim->StopAllMontages(0.f);
+    }
+    PuzzleMontageInstanceID = INDEX_NONE;
+    ActivePuzzleMontage = nullptr;
+    PuzzleAnimInstance.Reset();
+    bPuzzlePresentationActive = false;
+    bPuzzleExitPending = false;
+    PuzzleShieldMesh->SetVisibility(false, true);
+    PuzzleShieldMesh->SetHiddenInGame(true, true);
+    bGunBurstAiming = false;
+    GunBurstAimAngle = 0.f;
+
+    const FGameplayTag DeadTag = FGameplayTag::RequestGameplayTag(
+        FName(TEXT("Boss.State.Dead")), false);
+    AbilitySystemComponent->SetLooseGameplayTagCount(DeadTag, 0);
+    AbilitySystemComponent->SetNumericAttributeBase(
+        UBossAttributeSet::GetIncomingDamageAttribute(), 0.f);
+    AbilitySystemComponent->SetNumericAttributeBase(
+        UBossAttributeSet::GetHealthAttribute(), MaxHealth);
+    PhaseComponent->ResetPhase();
+    UpdateEquipmentForPhase(EBossPhase::Phase1);
+    AI->UpdateTargetActor(nullptr);
+
+    Movement->StopMovementImmediately();
+    Movement->MaxWalkSpeed = MoveSpeed;
+    Movement->SetMovementMode(MOVE_Walking);
+    SetActorEnableCollision(true);
+    SetActorTickEnabled(true);
+    CurrentState = EBossState::Idle;
+
+    if (UBlackboardComponent* BB = AI->GetBlackboardComponent())
+    {
+        BB->SetValueAsEnum(TEXT("BossState"), static_cast<uint8>(EBossState::Idle));
+        BB->SetValueAsEnum(TEXT("BossPhase"), static_cast<uint8>(EBossPhase::Phase1));
+        BB->SetValueAsEnum(TEXT("SelectedAttack"), static_cast<uint8>(EBossAttackType::None));
+        BB->SetValueAsEnum(TEXT("PuzzleType"), static_cast<uint8>(EBossPuzzleType::None));
+        const TCHAR* BoolKeys[] = {
+            TEXT("bIsInCombatRange"), TEXT("bIsInAttackRange"),
+            TEXT("bCanUseCircularMissile"), TEXT("bNeedsTurn180"),
+            TEXT("bIsTurning"), TEXT("bIsShieldActive"), TEXT("bIsPuzzleActive")
+        };
+        for (const TCHAR* Key : BoolKeys)
+        {
+            BB->SetValueAsBool(FName(Key), false);
+        }
+        BB->ResumeObserverNotifications(false);
+    }
+
+    UpdateBossUI();
+    OnBossPhaseChanged.Broadcast(EBossPhase::Phase1);
+    OnBossStateChanged.Broadcast(EBossState::Idle);
+
+    if (bRestartAI)
+    {
+        AI->StartBossAI();
+        if (UBrainComponent* Brain = AI->GetBrainComponent())
+        {
+            Brain->ResumeLogic(TEXT("Boss reset completed"));
+        }
+    }
+
+    UE_LOG(LogTemp, Log, TEXT("ResetBoss completed: %s, RestartAI=%d"),
+        *GetName(), bRestartAI);
+    return true;
+}
+
 FBossMissileConfig ABossMonster::GetMissileConfig(EBossPhase Phase)
 {
     if (!IsValid(PatternComponent.Get()))
@@ -339,6 +510,11 @@ EBossState ABossMonster::GetBossState()
 
 void ABossMonster::SetBossState(EBossState NewState)
 {
+    if (bIsResettingBoss)
+    {
+        return;
+    }
+
     if (NewState == EBossState::Dead)
     {
         HandleBossDeath();
@@ -866,7 +1042,7 @@ void ABossMonster::PlayPhaseSequence(EBossPuzzleType PuzzleType)
 
 void ABossMonster::HandlePhaseSequenceFinished()
 {
-    if (!bPhaseSequencePlaying)
+    if (!bPhaseSequencePlaying || bIsResettingBoss)
     {
         return;
     }
@@ -908,7 +1084,7 @@ void ABossMonster::FinishPhaseCinematic()
         UE_LOG(LogTemp, Verbose, TEXT("BossMonster::FinishPhaseCinematic - 실행 권한이 없습니다."));
         return;
     }
-    if (bPhaseSequencePlaying)
+    if (bPhaseSequencePlaying || bIsResettingBoss)
     {
         return;
     }

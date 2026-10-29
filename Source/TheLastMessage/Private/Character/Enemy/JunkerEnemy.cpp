@@ -12,6 +12,7 @@
 #include "TimerManager.h"
 #include "Kismet/GameplayStatics.h"
 #include "Sound/SoundBase.h"
+#include "Interface/AttackReceiverInterface.h"
 
 AJunkerEnemy::AJunkerEnemy()
 {
@@ -421,24 +422,60 @@ void AJunkerEnemy::DoMeleeHit()
 
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(JunkerMelee), false, this);
 
+	// 캐릭터와 일반 기믹의 충돌 타입을 함께 검색
+	FCollisionObjectQueryParams ObjectParams;
+	ObjectParams.AddObjectTypesToQuery(ECC_Pawn);
+	ObjectParams.AddObjectTypesToQuery(ECC_WorldStatic);
+	ObjectParams.AddObjectTypesToQuery(ECC_WorldDynamic);
+	ObjectParams.AddObjectTypesToQuery(ECC_PhysicsBody);
+
 	TArray<FOverlapResult> Overlaps;
-	World->OverlapMultiByObjectType(Overlaps, Center, FQuat::Identity,
-		FCollisionObjectQueryParams(ECC_Pawn), FCollisionShape::MakeSphere(MeleeRadius), QueryParams);
+	World->OverlapMultiByObjectType(
+		Overlaps,
+		Center,
+		FQuat::Identity,
+		ObjectParams,
+		FCollisionShape::MakeSphere(MeleeRadius),
+		QueryParams);
 
 	// 한 번의 주먹질에서 같은 대상에게 피해가 중복되지 않게 한다.
 	TSet<AActor*> Damaged;
 	for (const FOverlapResult& Overlap : Overlaps)
 	{
 		AActor* Actor = Overlap.GetActor();
-		const APawn* Pawn = Cast<APawn>(Actor);
-		if (!Pawn || !Pawn->IsPlayerControlled() || Damaged.Contains(Actor))
+
+		if (!IsValid(Actor) || Damaged.Contains(Actor))
 		{
 			continue;
 		}
 
+		const APawn* Pawn = Cast<APawn>(Actor);
+
+		const bool bIsPlayer = Pawn && Pawn->IsPlayerControlled();
+
+		const bool bIsAttackReceiver = Actor->Implements<UAttackReceiverInterface>();
+
+		// 플레이어 또는 공격을 받는 기믹만 허용
+		if (!bIsPlayer && !bIsAttackReceiver)
+		{
+			continue;
+		}
+
+		// 공격 전달 중 폭탄이 파괴될 수 있으므로 위치를 먼저 기록
+		const FVector HitLocation = Actor->GetActorLocation();
+
+		// 공격 전달 전에 중복 명중 기록
 		Damaged.Add(Actor);
+
 		ApplyEnemyDamage(Actor, GetScaledDamage(GetStatConfig().SecondaryAttackDamage));
-		SpawnEffectAtLocation(MeleeHitEffect, Actor->GetActorLocation());
+
+		// 폭탄의 폭발로 Junker가 죽거나 공격이 중단될 수 있음
+		if (!IsValid(this) || IsDead() || Phase != EJunkerPhase::Melee)
+		{
+			return;
+		}
+
+		SpawnEffectAtLocation(MeleeHitEffect, HitLocation);
 	}
 }
 

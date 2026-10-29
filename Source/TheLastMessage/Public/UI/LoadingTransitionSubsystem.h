@@ -19,6 +19,9 @@ private:
  FTSTicker::FDelegateHandle TickHandle;
  TSharedPtr<class SWidget> Overlay;
  TWeakObjectPtr<class APlayerBase> DyingPlayer;
+ TWeakObjectPtr<class APlayerBase> PendingDeathPlayer;
+ float PendingDeathDelay=0;
+ friend class FRespawnTransitionReentryTest;
  double Started=0, ReadyAt=0, IndicatorAt=0;
  float DeathDelay=0, OriginalArm=0, OriginalZoom=0;
  bool bLoading=false, bArrived=false, bDeath=false, bFading=false;

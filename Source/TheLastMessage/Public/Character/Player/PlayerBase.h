@@ -174,6 +174,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category="Player|Checkpoint")
 	bool RespawnAtCheckpoint();
+    void BeginRespawnProtection();
+    UFUNCTION(BlueprintPure, Category="Player|Checkpoint") bool IsRespawnProtected() const;
+
 	bool RestoreCheckpointProgress(const UProgressSaveGame* Save);
 
 	virtual void FellOutOfWorld(const UDamageType& DamageType) override;
@@ -258,6 +261,10 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Player|Checkpoint", meta=(ClampMin="0.1", Units="s"))
 	float RespawnDelay = 2.0f;
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Player|Checkpoint", meta=(ClampMin="0", Units="s"))
+    float RespawnInvulnerabilityDuration = 1.0f;
+    double RespawnProtectedUntil = 0.0;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Player|Grappling")
 	TObjectPtr<UGrapplingHookComponent> GrapplingHookComponent;
 

@@ -177,3 +177,25 @@ void UCombatAttributeSet::OnRep_MoveSpeedMultiplier(const FGameplayAttributeData
 {
 	GAMEPLAYATTRIBUTE_REPNOTIFY(UCombatAttributeSet, MoveSpeedMultiplier, OldValue);
 }
+
+bool UCombatAttributeSet::PreGameplayEffectExecute(FGameplayEffectModCallbackData& Data)
+{
+ if (!Super::PreGameplayEffectExecute(Data)) return false;
+ const auto* ASC = GetOwningAbilitySystemComponent();
+ const auto* Player = ASC ? Cast<APlayerBase>(ASC->GetAvatarActor()) : nullptr;
+ if (!Player || !Player->IsRespawnProtected()) return true;
+ if (Data.EvaluatedData.Attribute == GetIncomingDamageAttribute() && Data.EvaluatedData.Magnitude > 0.f) return false;
+ if (Data.EvaluatedData.Attribute == GetHealthAttribute())
+ {
+  const float Value = Data.EvaluatedData.Magnitude;
+  switch (Data.EvaluatedData.ModifierOp)
+  {
+   case EGameplayModOp::Additive: return Value >= 0.f;
+   case EGameplayModOp::Multiplicitive: return GetHealth()*Value >= GetHealth();
+   case EGameplayModOp::Division: return Value > 0.f && GetHealth()/Value >= GetHealth();
+   case EGameplayModOp::Override: return Value >= GetHealth();
+   default: break;
+  }
+ }
+ return true;
+}

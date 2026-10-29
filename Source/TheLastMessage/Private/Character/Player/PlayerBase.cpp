@@ -1434,6 +1434,7 @@ bool APlayerBase::RespawnAtCheckpoint()
 	const bool bGravityReversed = AbilitySystemComponent->HasMatchingGameplayTag(
 		FGameplayTag::RequestGameplayTag(TEXT("State.Gravity.Reversed")));
 	// ToggleGravityState requires a living player; reset movement after restoring gravity.
+	BeginRespawnProtection();
 	DeathState.bDead = false;
 	AbilitySystemComponent->RemoveLooseGameplayTag(WeaponGameplayTags::State_Dead, 1, EGameplayTagReplicationState::TagAndCountToAll);
 	if (bGravityReversed != bCheckpointGravityReversed)
@@ -1631,4 +1632,13 @@ void APlayerBase::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	GetWorldTimerManager().ClearTimer(EnergyRechargeTimerHandle);
 	AbilitySystemComponent->CancelAllAbilities();
 	Super::EndPlay(EndPlayReason);
+}
+
+void APlayerBase::BeginRespawnProtection()
+{
+ if (HasAuthority() && GetWorld()) RespawnProtectedUntil = GetWorld()->GetTimeSeconds() + FMath::Max(0.f,RespawnInvulnerabilityDuration);
+}
+bool APlayerBase::IsRespawnProtected() const
+{
+ return !IsDead() && GetWorld() && GetWorld()->GetTimeSeconds() < RespawnProtectedUntil;
 }

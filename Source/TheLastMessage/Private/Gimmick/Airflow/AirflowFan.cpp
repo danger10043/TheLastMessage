@@ -12,6 +12,8 @@
 #include "Character/Player/PlayerBase.h"
 #include "Components/CapsuleComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/RotatingMovementComponent.h"
+#include "Materials/MaterialInstanceDynamic.h"
 
 AAirflowFan::AAirflowFan()
 {
@@ -30,6 +32,27 @@ AAirflowFan::AAirflowFan()
 	FanMesh->SetMobility(EComponentMobility::Movable);
 	FanMesh->SetCollisionProfileName(TEXT("BlockAllDynamic"));
 	FanMesh->SetGenerateOverlapEvents(false);
+
+	RotorMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("RotorMesh"));
+
+	RotorMesh->SetupAttachment(FanMesh);
+	RotorMesh->SetMobility(EComponentMobility::Movable);
+
+	// 로터는 시각적인 회전만 담당
+	RotorMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	RotorMesh->SetGenerateOverlapEvents(false);
+	RotorMesh->SetCanEverAffectNavigation(false);
+
+	RotorMovement = CreateDefaultSubobject<URotatingMovementComponent>(TEXT("RotorMovement"));
+
+	// 작동 상태에 따라 직접 활성화
+	RotorMovement->SetAutoActivate(false);
+
+	// 로터 자신의 축을 기준으로 회전
+	RotorMovement->bRotationInLocalSpace = true;
+
+	// 기본값: 로터의 로컬 Z축으로 초당 720도 회전
+	RotorMovement->RotationRate = FRotator(0.0f, 720.0f, 0.0f);
 
 	AirflowArea = CreateDefaultSubobject<UBoxComponent>(TEXT("AirflowArea"));
 
@@ -146,6 +169,23 @@ void AAirflowFan::BeginPlay()
 {
 	Super::BeginPlay();
 
+	// 환풍기 전체가 아닌 로터 메시만 회전
+	RotorMovement->SetUpdatedComponent(RotorMesh);
+	RotorMovement->Deactivate();
+
+	// 부모에서 생성한 동적 머티리얼 재사용
+	IndicatorMaterial = Cast<UMaterialInstanceDynamic>(FanMesh->GetMaterial(IndicatorMaterialIndex));
+
+	if (!IsValid(IndicatorMaterial))
+	{
+		IndicatorMaterial = FanMesh->CreateDynamicMaterialInstance(IndicatorMaterialIndex);
+	}
+
+	if (!IsValid(IndicatorMaterial))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("%s: FanMesh의 표시등 머티리얼 슬롯을 확인해주세요."), *GetName());
+	}
+
 	// 플레이어 진입·이탈 이벤트 연결
 	AirflowArea->OnComponentBeginOverlap.AddUniqueDynamic(this, &AAirflowFan::OnAirflowBeginOverlap);
 
@@ -253,6 +293,9 @@ void AAirflowFan::RefreshAirflowState()
 {
 	const bool bShouldRun = bIsEnabled && bIsActive && bAirflowConfigLoaded && IsValid(AirflowArea);
 
+	// 기류와 같은 작동 조건으로 로터와 표시등 제어
+	UpdateFanVisuals(bShouldRun);
+
 	// 나이아가라가 없어도 기류는 작동
 	if (IsValid(AirflowEffect))
 	{
@@ -340,5 +383,30 @@ void AAirflowFan::OnAirflowEndOverlap(UPrimitiveComponent * OverlappedComponent,
 	if (AffectedPlayers.IsEmpty())
 	{
 		SetActorTickEnabled(false);
+	}
+}
+
+void AAirflowFan::UpdateFanVisuals(bool bShouldRun)
+{
+	if (IsValid(RotorMovement))
+	{
+		if (bShouldRun)
+		{
+			if (!RotorMovement->IsActive())
+			{
+				RotorMovement->Activate();
+			}
+		}
+		else
+		{
+			RotorMovement->Deactivate();
+		}
+	}
+
+	if (IsValid(IndicatorMaterial))
+	{
+		const FLinearColor LightColor = bShouldRun ? FLinearColor::Green : FLinearColor::Black;
+
+		IndicatorMaterial->SetVectorParameterValue(TEXT("EmissiveColor"), LightColor);
 	}
 }

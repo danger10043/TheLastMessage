@@ -61,7 +61,7 @@ bool ACoreAssistAfterimage::Initialize(APlayerBase* Player, const UMeleeAttackEv
 	Visual.WeaponMesh = Attack->WeaponData->WeaponMesh;
 	Visual.Montage = Attack->AttackMontage;
 	Visual.Section = Attack->AttackSection;
-	Visual.CharacterTransform = Attack->MeshTransform.GetRelativeTransform(Attack->ActorTransform);
+	Visual.CharacterTransform = Player->GetMesh()->GetComponentTransform().GetRelativeTransform(GetActorTransform());
 	Visual.WeaponSocket = Attack->WeaponData->AttachSocketName;
 	Visual.WeaponTransform = Attack->WeaponData->AttachOffset;
 	// 실제 장착된 메시에서 소켓과 보정을 가져와 플레이어의 대체 소켓 설정도 반영한다.

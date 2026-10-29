@@ -95,14 +95,16 @@ void UGA_CoreAssistStrikeArm::ActivateAbility(const FGameplayAbilitySpecHandle H
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
+	// 잔상은 추가 공격이 시작되는 순간의 플레이어 위치와 방향에서 생성한다.
+	const FTransform SpawnTransform = Player->GetActorTransform();
 	ACoreAssistAfterimage* Afterimage = GetWorld()->SpawnActorDeferred<ACoreAssistAfterimage>(AfterimageClass,
-		AttackRecord->ActorTransform, Player, Player, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+		SpawnTransform, Player, Player, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
 	if (!Afterimage || !Afterimage->Initialize(Player, AttackRecord.Get(), Damage, CoreData->CoreId))
 	{
 		if (Afterimage) Afterimage->Destroy();
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
-	Afterimage->FinishSpawning(AttackRecord->ActorTransform);
+	Afterimage->FinishSpawning(SpawnTransform);
 	EndAbility(Handle, ActorInfo, ActivationInfo, true, !IsValid(Afterimage));
 }

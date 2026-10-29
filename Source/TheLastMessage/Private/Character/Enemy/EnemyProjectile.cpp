@@ -11,6 +11,7 @@
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
 #include "Sound/SoundBase.h"
+#include "Interface/AttackReceiverInterface.h"
 
 AEnemyProjectile::AEnemyProjectile()
 {
@@ -116,7 +117,7 @@ void AEnemyProjectile::LaunchProjectile(FVector Direction)
 void AEnemyProjectile::HandleProjectileImpact(AActor* HitActor)
 {
 	// 발사(LaunchProjectile) 전에는 발사자·피해량이 아직 설정되지 않았으므로 충돌을 처리하지 않는다.
-	if (!bLaunched || bImpactHandled || !HitActor || HitActor == this || HitActor == SourceEnemy)
+	if (!bLaunched || bInPool || bImpactHandled || !IsValid(HitActor) || HitActor == this || HitActor == SourceEnemy)
 	{
 		return;
 	}
@@ -129,21 +130,40 @@ void AEnemyProjectile::HandleProjectileImpact(AActor* HitActor)
 
 	bImpactHandled = true;
 
-	// 플레이어 폰에만 피해를 준다.
 	const APawn* HitPawn = Cast<APawn>(HitActor);
-	if (HitPawn && HitPawn->IsPlayerControlled())
+
+	const bool bIsPlayer = HitPawn && HitPawn->IsPlayerControlled();
+
+	IAttackReceiverInterface* Receiver = Cast<IAttackReceiverInterface>(HitActor);
+
+	// 플레이어 또는 공격을 받는 기믹에 피해 전달
+	if (bIsPlayer || Receiver)
 	{
-		if (SourceEnemy)
+		if (IsValid(SourceEnemy))
 		{
+			// 앞에서 수정한 공통 피해 함수 사용
 			SourceEnemy->ApplyEnemyDamage(HitActor, Damage);
+		}
+		else if (Receiver)
+		{
+			// 발사자가 사라졌어도 기믹에는 공격 전달
+			// 공격자는 투사체 자신으로 전달
+			Receiver->ReceiveAttackDamage(Damage, this);
 		}
 		else
 		{
-			// 발사한 몬스터가 이미 사라졌다면 엔진 기본 피해로 대신한다.
+			// 발사자가 사라진 경우 플레이어 피해의 예비 경로
 			UGameplayStatics::ApplyDamage(HitActor, Damage, nullptr, this, nullptr);
 		}
 	}
 
+	// 공격 처리 중 투사체가 파괴되었다면 추가 처리 중지
+	if (!IsValid(this) || IsActorBeingDestroyed())
+	{
+		return;
+	}
+
+	// 기존 착탄 효과와 풀 반환 처리 사용
 	DestroyProjectile();
 }
 

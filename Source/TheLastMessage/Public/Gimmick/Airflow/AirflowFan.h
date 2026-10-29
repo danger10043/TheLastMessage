@@ -13,6 +13,8 @@ class UBoxComponent;
 class UNiagaraComponent;
 class UPrimitiveComponent;
 class UStaticMeshComponent;
+class URotatingMovementComponent;
+class UMaterialInstanceDynamic;
 /**
  * 
  */
@@ -70,6 +72,18 @@ protected:
 	UPROPERTY(Transient, VisibleInstanceOnly, Category = "Gimmick|Airflow")
 	TArray<TWeakObjectPtr<APlayerBase>> AffectedPlayers;
 
+	// 회전하는 날개 메시
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Gimmick|Components")
+	TObjectPtr<UStaticMeshComponent> RotorMesh;
+
+	// 로터의 회전을 담당
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Gimmick|Components")
+	TObjectPtr<URotatingMovementComponent> RotorMovement;
+
+	// FanMesh에서 표시등 재질이 들어 있는 슬롯 번호
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Airflow|Visual", meta = (ClampMin = "0"))
+	int32 IndicatorMaterialIndex = 1;
+
 private:
 	bool bAirflowConfigLoaded = false;
 
@@ -92,4 +106,10 @@ private:
 		UPrimitiveComponent* OtherComp,
 		int32 OtherBodyIndex);
 
+	// 로터와 표시등을 실제 작동 상태에 맞춰 갱신
+	void UpdateFanVisuals(bool bShouldRun);
+
+	// 표시등 재질을 실행 중에 변경하기 위한 인스턴스
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> IndicatorMaterial;
 };

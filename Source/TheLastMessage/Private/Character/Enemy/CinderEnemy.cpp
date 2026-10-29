@@ -12,6 +12,7 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Pawn.h"
 #include "TimerManager.h"
+#include "Interface/AttackReceiverInterface.h"
 
 ACinderEnemy::ACinderEnemy()
 {
@@ -671,28 +672,64 @@ void ACinderEnemy::Detonate()
 
 	bExploded = true;
 
+	// 피해 전달 전에 폭발 위치와 피해량 기록
+	const FVector ExplosionLocation = GetActorLocation();
+
+	const float ExplosionDamage = GetScaledDamage(GetStatConfig().SecondaryAttackDamage);
+
 	// 범위 안의 플레이어에게 피해를 준다. 한 대상에게 한 번만 적용한다.
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(CinderExplosion), false, this);
 
+	// 플레이어와 일반 기믹의 충돌 타입을 함께 검색
+	FCollisionObjectQueryParams ObjectParams;
+	ObjectParams.AddObjectTypesToQuery(ECC_Pawn);
+	ObjectParams.AddObjectTypesToQuery(ECC_WorldStatic);
+	ObjectParams.AddObjectTypesToQuery(ECC_WorldDynamic);
+	ObjectParams.AddObjectTypesToQuery(ECC_PhysicsBody);
+
 	TArray<FOverlapResult> Overlaps;
-	World->OverlapMultiByObjectType(Overlaps, GetActorLocation(), FQuat::Identity,
-		FCollisionObjectQueryParams(ECC_Pawn), FCollisionShape::MakeSphere(ExplosionRadius), QueryParams);
+
+	World->OverlapMultiByObjectType(
+		Overlaps,
+		ExplosionLocation,
+		FQuat::Identity,
+		ObjectParams,
+		FCollisionShape::MakeSphere(ExplosionRadius),
+		QueryParams);
 
 	TSet<AActor*> Damaged;
 	for (const FOverlapResult& Overlap : Overlaps)
 	{
 		AActor* Actor = Overlap.GetActor();
-		const APawn* Pawn = Cast<APawn>(Actor);
-		if (!Pawn || !Pawn->IsPlayerControlled() || Damaged.Contains(Actor))
+		if (!IsValid(Actor) || Damaged.Contains(Actor))
 		{
 			continue;
 		}
 
+		const APawn* Pawn = Cast<APawn>(Actor);
+
+		const bool bIsPlayer = Pawn && Pawn->IsPlayerControlled();
+
+		const bool bIsAttackReceiver = Actor->Implements<UAttackReceiverInterface>();
+
+		// 플레이어 또는 공격을 받는 기믹만 허용
+		if (!bIsPlayer && !bIsAttackReceiver)
+		{
+			continue;
+		}
+
+		// 피해 전달 전에 중복 명중 기록
 		Damaged.Add(Actor);
-		ApplyEnemyDamage(Actor, GetScaledDamage(GetStatConfig().SecondaryAttackDamage), ExplosionDamageTag);
+
+		ApplyEnemyDamage(Actor, ExplosionDamage, ExplosionDamageTag);
+
+		if (!IsValid(this) || IsActorBeingDestroyed())
+		{
+			return;
+		}
 	}
 
-	SpawnEffectAtLocation(ExplosionEffect, GetActorLocation(), FRotator::ZeroRotator, FVector(ExplosionEffectScale));
+	SpawnEffectAtLocation(ExplosionEffect, ExplosionLocation, FRotator::ZeroRotator, FVector(ExplosionEffectScale));
 
 	if (ExplosionSound)
 	{

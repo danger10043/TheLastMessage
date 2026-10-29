@@ -24,10 +24,6 @@ class THELASTMESSAGE_API UCoreComponent : public UActorComponent
 	GENERATED_BODY()
 
 public:
-	/** Console core-give slots; configure asset references on the owning Blueprint. */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Core|Debug")
-	TMap<int32, TObjectPtr<UCoreDataAsset>> DebugCoreAssets;
-
 	UCoreComponent();
 
 	/**

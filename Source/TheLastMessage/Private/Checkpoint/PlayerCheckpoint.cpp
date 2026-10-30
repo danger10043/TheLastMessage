@@ -1,4 +1,6 @@
 #include "Checkpoint/PlayerCheckpoint.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "Kismet/GameplayStatics.h"
 #include "Character/Player/PlayerBase.h"
 #include "Components/BoxComponent.h"
 #include "Components/ArrowComponent.h"
@@ -110,6 +112,7 @@ bool APlayerCheckpoint::ActivateCheckpoint(APlayerBase* Player)
 	if (GetGameInstance() && GetGameInstance()->GetSubsystem<UProgressSaveSubsystem>()->IsRestoringProgress()) return false;
 	if (!HasAuthority() || !IsValid(Player) || Player->GetWorld() != GetWorld() || !Player->IsPlayerControlled()) return false;
 	if (!Player->SetCheckpoint(RespawnPoint->GetComponentTransform())) return false;
+	bVisitedThisSession = true;
 	// The shared world display has one current respawn beacon; earlier visits stay blue.
 	for (TActorIterator<APlayerCheckpoint> It(GetWorld()); It; ++It)
 	{
@@ -168,4 +171,31 @@ void APlayerCheckpoint::SetInteractionHighlight(bool bVisible)
 		if (!Material) Material = InteractionOutline->CreateDynamicMaterialInstance(Index);
 		if (Material) Material->SetScalarParameterValue(TEXT("InteractionGlow"), bVisible ? 1.f : 0.f);
 	}
+}
+
+bool APlayerCheckpoint::HasBeenVisited() const
+{
+ if (const UGameInstance* Instance = GetGameInstance())
+  if (const auto* Saves = Instance->GetSubsystem<UProgressSaveSubsystem>())
+   if (const auto* Save = Saves->GetWorkingProgress())
+    if (const auto* Map = Save->Maps.Find(FName(*UGameplayStatics::GetCurrentLevelName(this,true))))
+     return Map->VisitedCheckpoints.Contains(GetPersistentId()) || bVisitedThisSession;
+ return bVisitedThisSession;
+}
+bool APlayerCheckpoint::CanFastTravel() const
+{
+ return bAllowFastTravel && HasBeenVisited();
+}
+bool APlayerCheckpoint::FastTravel(APlayerBase* Player)
+{
+ if (!CanFastTravel() || !HasAuthority() || !IsValid(Player) || Player->IsDead()
+     || Player->GetWorld()!=GetWorld() || !Player->IsPlayerControlled() || GetWorld()->GetNetMode()!=NM_Standalone) return false;
+ if (auto* Instance=GetGameInstance())
+  if (auto* Saves=Instance->GetSubsystem<UProgressSaveSubsystem>())
+   if (Saves->IsSaving() || Saves->IsRestoringProgress()) return false;
+ Player->CancelWeaponInputsForUI();
+ if (!Player->TeleportTo(RespawnPoint->GetComponentLocation(),RespawnPoint->GetComponentRotation())) return false;
+ Player->GetCharacterMovement()->StopMovementImmediately();
+ // Arrival becomes the current checkpoint, using the same save/visual path as contact.
+ return ActivateCheckpoint(Player);
 }

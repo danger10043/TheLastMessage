@@ -52,6 +52,9 @@ public:
     UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Boss|Lifecycle")
     bool ResetBoss(bool bRestartAI = false);
 
+    // 플레이어 사망 후 체크포인트 제자리 복구용. 시작 위치로 되돌린 뒤 ResetBoss(true)를 수행한다.
+    bool ResetBossForCheckpoint();
+
     UPROPERTY(BlueprintReadOnly, Transient, Category = "Boss|GunBurst")
     bool bGunBurstAiming = false;
 
@@ -301,6 +304,9 @@ protected:
     TSubclassOf<UBossUIWidget> BossUIWidgetClass;
 
     bool bIsResettingBoss = false;
+
+    // BeginPlay 시점의 배치 위치. 체크포인트 제자리 복구에서 사용한다.
+    FTransform InitialTransform;
 
     UPROPERTY(Transient)
     TObjectPtr<UBossUIWidget> BossUIWidget;

@@ -1,4 +1,8 @@
 #include "GAS/Abilities/GA_WeaponAttackBase.h"
+#include "Weapon/MeleeSweep.h"
+#include "Animation/AnimNotifyState_MeleeTrail.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
 #include "AbilitySystemComponent.h"
@@ -50,7 +54,7 @@ bool UGA_WeaponAttackBase::CanActivateAbility(const FGameplayAbilitySpecHandle H
 	const APlayerBase* Player = ActorInfo ? Cast<APlayerBase>(ActorInfo->AvatarActor.Get()) : nullptr;
 	const UWeaponBase* Weapon = Player ? Player->GetWeaponInSlot(WeaponSlot) : nullptr;
 	const UWeaponDataAsset* Data = IsValid(Weapon) ? Weapon->WeaponData.Get() : nullptr;
-	if (!Player || Player->IsDead() || !IsValid(Data) || !FMath::IsFinite(Data->AttackPower) || Data->AttackPower <= 0.0f) return false;
+	if (!Player || Player->IsDead() || Player->IsHandlingGimmick() || !IsValid(Data) || !FMath::IsFinite(Data->AttackPower) || Data->AttackPower <= 0.0f) return false;
 	if (!Data->AttackMontage && Weapon->NextAttackAllowedTime > GetWorld()->GetTimeSeconds()) return false;
 	if (Data->AttackMontage && !Player->GetMesh()->GetAnimInstance()) return false;
 	if (Data->WeaponType == EWeaponType::LightRanged || Data->WeaponType == EWeaponType::HeavyRanged)
@@ -62,7 +66,7 @@ bool UGA_WeaponAttackBase::CanActivateAbility(const FGameplayAbilitySpecHandle H
 			&& FMath::IsFinite(Data->EnergyPerShot) && Data->EnergyPerShot >= 0.0f;
 	}
 	return IsValid(Data->AttackMontage) && Player->GetMesh()->GetAnimInstance()
-		&& Data->AttackRange > 0.0f && MeleeHitRadius > 0.0f;
+		&& FMath::IsFinite(Data->MeleeTraceRadius) && Data->MeleeTraceRadius > 0.0f;
 }
 
 bool UGA_WeaponAttackBase::CheckCost(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo,
@@ -117,6 +121,7 @@ void UGA_WeaponAttackBase::ActivateAbility(const FGameplayAbilitySpecHandle Hand
 	const FGameplayEventData* TriggerEventData)
 {
 	bFinishingAttack = false;
+	bMeleeWindowOpen=false; bHasPreviousMeleeTransform=false;
 	bWaitingForRelease = false;
 	bChargeStarted = false;
 	bAttackExecuted = false;
@@ -542,23 +547,45 @@ void UGA_WeaponAttackBase::HandleMeleeHit(FGameplayEventData Payload)
 	const FVector Direction = FVector::VectorPlaneProject(Player->GetActorForwardVector(), FVector::YAxisVector).GetSafeNormal();
 	if (Direction.IsNearlyZero()) return;
 	const FVector Start = Player->GetActorLocation();
-	const FVector End = Start + Direction * Data->AttackRange;
-	// Attack receivers can use world/physics/custom object channels, not just Pawn.
-	FCollisionObjectQueryParams ObjectParams(FCollisionObjectQueryParams::AllObjects);
-	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(WeaponMeleeHit), false, Player);
-	TArray<FHitResult> Hits;
-	Player->GetWorld()->SweepMultiByObjectType(Hits, Start, End, FQuat::Identity, ObjectParams,
-		FCollisionShape::MakeSphere(MeleeHitRadius), QueryParams);
 
+    const int32 Phase=FMath::RoundToInt(Payload.EventMagnitude);
+    if(Phase==0)
+    {
+        // Assets with a notify window must never also execute their old range hit.
+        for(const FAnimNotifyEvent& Event:Data->AttackMontage->Notifies)
+            if(Event.NotifyStateClass && Event.NotifyStateClass->IsA<UAnimNotifyState_MeleeTrail>()) return;
+    }
+    if(Phase==1){bMeleeWindowOpen=true;bHasPreviousMeleeTransform=false;}
+    if(Phase>=2 && !bMeleeWindowOpen) return;
+    UStaticMeshComponent* WeaponMesh=Player->GetWeaponVisualMesh(WeaponSlot);
+    if(!WeaponMesh || !WeaponMesh->GetStaticMesh()) return;
+    FVector LocalStart=Data->MeleeTraceStart,LocalEnd=Data->MeleeTraceEnd;
+    if(!Data->bCustomMeleeTrace)
+    {
+        const FBox Bounds=WeaponMesh->GetStaticMesh()->GetBoundingBox();
+        const FVector Extent=Bounds.GetExtent();
+        int32 Axis=Extent.X>=Extent.Y && Extent.X>=Extent.Z ? 0 : (Extent.Y>=Extent.Z ? 1 : 2);
+        LocalStart=LocalEnd=Bounds.GetCenter();
+        LocalStart[Axis]=FMath::Lerp(Bounds.Min[Axis],Bounds.Max[Axis],0.15f);
+        LocalEnd[Axis]=FMath::Lerp(Bounds.Min[Axis],Bounds.Max[Axis],0.95f);
+        if(Data->WeaponType==EWeaponType::HeavyMelee)
+        {
+            const float Tip=Data->MeleeTrailOffset.GetLocation()[Axis];
+            if(Tip<Bounds.GetCenter()[Axis]){LocalStart[Axis]=Bounds.Min[Axis];LocalEnd[Axis]=FMath::Lerp(Bounds.Min[Axis],Bounds.Max[Axis],0.35f);}
+            else LocalStart[Axis]=FMath::Lerp(Bounds.Min[Axis],Bounds.Max[Axis],0.65f);
+        }
+    }
+    const FTransform Current=WeaponMesh->GetComponentTransform();
+    if(!bHasPreviousMeleeTransform) PreviousMeleeTransform=Current;
+    TArray<FHitResult> Hits;
+    bool bDebug=false;
 #if ENABLE_DRAW_DEBUG
-	if (CVarDebugMelee.GetValueOnGameThread() != 0)
-	{
-		// 구체를 Start~End로 훑으면 캡슐 모양의 검사 영역이 된다.
-		DrawDebugCapsule(Player->GetWorld(), (Start + End) * 0.5f,
-			Data->AttackRange * 0.5f + MeleeHitRadius, MeleeHitRadius,
-			FQuat::FindBetweenNormals(FVector::UpVector, Direction), FColor::Cyan, false, 1.0f);
-	}
+    bDebug=CVarDebugMelee.GetValueOnGameThread()!=0;
 #endif
+    MeleeSweep::Trace(Player->GetWorld(),Player,LocalStart,LocalEnd,Data->MeleeTraceRadius,PreviousMeleeTransform,Current,Hits,bDebug);
+    PreviousMeleeTransform=Current;bHasPreviousMeleeTransform=Phase!=0;
+    if(Phase==3){bMeleeWindowOpen=false;bHasPreviousMeleeTransform=false;}
+    FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(WeaponMeleeWall),false,Player);
 
 	UAbilitySystemComponent* SourceASC = GetAbilitySystemComponentFromActorInfo();
 	if (!SourceASC) return;
@@ -672,6 +699,7 @@ void UGA_WeaponAttackBase::EndAbility(const FGameplayAbilitySpecHandle Handle,
 			&& (SourceWeapon->WeaponData->WeaponType == EWeaponType::LightMelee || SourceWeapon->WeaponData->WeaponType == EWeaponType::HeavyMelee))
 			Player->MulticastStopMeleeAttackFeedback(WeaponSlot);
 	}
+	bMeleeWindowOpen=false; bHasPreviousMeleeTransform=false;
 	bWaitingForRelease = false;
 	bChargeStarted = false;
 	bAttackExecuted = false;

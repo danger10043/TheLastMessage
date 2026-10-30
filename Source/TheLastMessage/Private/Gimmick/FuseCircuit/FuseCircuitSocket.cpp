@@ -9,6 +9,7 @@
 #include "Character/Player/PlayerBase.h"
 #include "Gimmick/Carry/FuseItem.h"
 #include "Gimmick/Component/CarryComponent.h"
+#include "Materials/MaterialInstanceDynamic.h"
 
 AFuseCircuitSocket::AFuseCircuitSocket()
 {
@@ -60,6 +61,13 @@ void AFuseCircuitSocket::PerformInteraction(ACharacter* Player)
     TryInsertFuse(Player);
 }
 
+void AFuseCircuitSocket::ApplyActiveState(bool bNewActive)
+{
+    Super::ApplyActiveState(bNewActive);
+
+    UpdateCircuitIndicator();
+}
+
 bool AFuseCircuitSocket::TryInsertFuse(ACharacter * Player)
 {
     if (!HasAuthority() || !CanInteractInternal(Player))
@@ -106,6 +114,42 @@ bool AFuseCircuitSocket::TryInsertFuse(ACharacter * Player)
     return true;
 }
 
+void AFuseCircuitSocket::BeginPlay()
+{
+    Super::BeginPlay();
+
+    // 부모에서 생성한 동적 머티리얼 재사용
+    CircuitIndicatorMaterial = Cast<UMaterialInstanceDynamic>(CircuitMesh->GetMaterial(IndicatorMaterialIndex));
+
+    if (!IsValid(CircuitIndicatorMaterial))
+    {
+        CircuitIndicatorMaterial = CircuitMesh->CreateDynamicMaterialInstance(IndicatorMaterialIndex);
+    }
+
+    if (!IsValid(CircuitIndicatorMaterial))
+    {
+        UE_LOG(LogTemp, Warning,TEXT("%s: CircuitMesh의 표시등 재질 슬롯을 확인해주세요."), *GetName());
+    }
+
+    // 처음부터 재질의 기본 초록불이 켜져 있지 않도록 초기화
+    UpdateCircuitIndicator();
+}
+
+void AFuseCircuitSocket::UpdateCircuitIndicator()
+{
+    if (!IsValid(CircuitIndicatorMaterial))
+    {
+        return;
+    }
+
+    // 실제 퓨즈가 장착되고 회로가 활성화된 경우에만 점등
+    const bool bShouldLight = bIsEnabled && bIsActive && IsValid(InstalledFuse);
+
+    const FLinearColor LightColor = bShouldLight ? FLinearColor::Green : FLinearColor::Black;
+
+    CircuitIndicatorMaterial->SetVectorParameterValue(TEXT("IndicatorColor"), LightColor);
+}
+
 FProgressActorState AFuseCircuitSocket::CaptureProgress() const
 {
     FProgressActorState State = Super::CaptureProgress();
@@ -128,4 +172,7 @@ void AFuseCircuitSocket::FinishRestoreProgress(const FProgressActorState& State)
                 break;
             }
     Super::FinishRestoreProgress(State);
+
+    // 복원된 퓨즈 장착 상태에 맞춰 표시등 갱신
+    UpdateCircuitIndicator();
 }

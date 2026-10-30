@@ -66,13 +66,26 @@ bool FPlayerCheckpointTest::RunTest(const FString& Parameters)
 
 	const FVector Saved(1000, 0, 200);
 	APlayerCheckpoint* Checkpoint = World->SpawnActor<APlayerCheckpoint>(Saved, FRotator::ZeroRotator);
-	TestFalse(TEXT("Outline hidden before contact"), Checkpoint->InteractionOutline->IsVisible());
+	TestFalse(TEXT("Fast travel disabled by default"), Checkpoint->CanFastTravel());
+    Checkpoint->bAllowFastTravel = true;
+    TestFalse(TEXT("Unvisited enabled checkpoint cannot travel"), Checkpoint->CanFastTravel());
+    TestFalse(TEXT("Unvisited destination rejects travel"), Checkpoint->FastTravel(Player));
+    TestFalse(TEXT("Outline hidden before contact"), Checkpoint->InteractionOutline->IsVisible());
 	Player->SetActorLocation(Saved);
 	TestTrue(TEXT("Contact activates checkpoint"), Checkpoint->CheckpointVisualState == ECheckpointVisualState::Current);
 	TestTrue(TEXT("Outline visible during contact"), Checkpoint->InteractionOutline->IsVisible());
 	Player->SetActorLocation(FVector(1500, 0, 200));
 	TestFalse(TEXT("Outline hidden after leaving"), Checkpoint->InteractionOutline->IsVisible());
+    TestTrue(TEXT("Visited enabled checkpoint permits fast travel"), Checkpoint->CanFastTravel());
+    Checkpoint->bAllowFastTravel = false;
+    TestFalse(TEXT("Ordinary visited checkpoint rejects fast travel"), Checkpoint->FastTravel(Player));
+    Checkpoint->bAllowFastTravel = true;
+    TestTrue(TEXT("Visited destination teleports player"), Checkpoint->FastTravel(Player));
+    TestTrue(TEXT("Fast travel reaches checkpoint"), Player->GetActorLocation().Equals(Saved,1));
+    Player->SetActorLocation(FVector(1500,0,200));
+
 	Player->HandleDeath();
+    TestFalse(TEXT("Dead player cannot fast travel"), Checkpoint->FastTravel(Player));
 	TestFalse(TEXT("Dead players cannot change checkpoint"), Player->SetCheckpoint(FTransform::Identity));
 	TestTrue(TEXT("Checkpoint respawn succeeds"), Player->RespawnAtCheckpoint());
 	TestTrue(TEXT("Contact saved checkpoint location"), Player->GetActorLocation().Equals(Saved, 1));

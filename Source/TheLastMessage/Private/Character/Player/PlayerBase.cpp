@@ -1,6 +1,6 @@
+#include "Character/Player/PlayerBase.h"
 #include "UI/LoadingTransitionSubsystem.h"
 #include "Engine/GameInstance.h"
-#include "Character/Player/PlayerBase.h"
 #include "Character/Player/GrapplingHookComponent.h"
 #include "Map/AreaMapComponent.h"
 #include "Character/Player/CombatFeedbackComponent.h"
@@ -343,6 +343,7 @@ void APlayerBase::Tick(float DeltaSeconds)
 	}
 	UpdateRangedFacing();
 	UpdateGimmickAnimation();
+	UpdateWeaponGimmickTransition(DeltaSeconds);
 	if (IsLocallyControlled() && !HasAuthority() && bHasAimTarget && !IsDead())
 	{
 		AimSendElapsed += DeltaSeconds;
@@ -426,7 +427,7 @@ void APlayerBase::CheckJumpInput(float DeltaTime)
 	if (bHadGrappleJump && !bGrappleCancelJumpAvailable && Movement->IsFalling())
 	{
 		// Normal jumping replaces vertical speed. A tether release adds lift to its momentum.
-		Movement->Velocity = Movement->ConstrainDirectionToPlane(IncomingVelocity + FVector::UpVector * Movement->JumpZVelocity);
+		Movement->Velocity = Movement->ConstrainDirectionToPlane(IncomingVelocity - Movement->GetGravityDirection() * Movement->JumpZVelocity);
 	}
 }
 
@@ -610,7 +611,12 @@ void APlayerBase::CancelWeaponInputsForUI()
 
 void APlayerBase::AbilityInputPressed(FGameplayTag InputTag)
 {
-	if (IsCarryTransitionActive()) return;
+	// 기믹 조작 중에는 공격과 무기 슬롯 지정 클릭을 모두 무시한다.
+	if (IsHandlingGimmick())
+	{
+		ClearPendingAttack();
+		return;
+	}
 	const EWeaponSlot AssignmentSlot = InputTag == WeaponGameplayTags::Input_Primary ? EWeaponSlot::Primary
 		: InputTag == WeaponGameplayTags::Input_Secondary ? EWeaponSlot::Secondary : EWeaponSlot::None;
 	const int32 Choice = GetHeldWeaponChoice();
@@ -739,8 +745,65 @@ void APlayerBase::RefreshPrimaryWeaponVisual()
 	// 클라이언트 외형은 시작 장비 데이터로도 구성할 수 있다. 무기 UObject는 서버 소유다.
 	const UWeaponDataAsset* PrimaryData = PrimaryWeapon ? PrimaryWeapon->WeaponData.Get() : InitialPrimaryWeaponData.Get();
 	const UWeaponDataAsset* SecondaryData = SecondaryWeapon ? SecondaryWeapon->WeaponData.Get() : InitialSecondaryWeaponData.Get();
-	RefreshWeaponVisual(PrimaryData, PrimaryWeaponMesh, VisibleWeaponSlot == EWeaponSlot::Primary);
-	RefreshWeaponVisual(SecondaryData, SecondaryWeaponMesh, VisibleWeaponSlot == EWeaponSlot::Secondary);
+	// 기믹 조작 중 사라짐 연출이 끝나면 무기를 숨긴다. 장착 정보는 유지된다.
+	const bool bHideForGimmick = bWeaponHiddenForGimmick && WeaponGimmickBlend >= 1.0f;
+	RefreshWeaponVisual(PrimaryData, PrimaryWeaponMesh, !bHideForGimmick && VisibleWeaponSlot == EWeaponSlot::Primary);
+	RefreshWeaponVisual(SecondaryData, SecondaryWeaponMesh, !bHideForGimmick && VisibleWeaponSlot == EWeaponSlot::Secondary);
+	ApplyWeaponGimmickBlend();
+}
+
+void APlayerBase::UpdateWeaponGimmickTransition(float DeltaSeconds)
+{
+	const bool bWantHidden = IsHandlingGimmick();
+	if (bWantHidden != bWeaponHiddenForGimmick)
+	{
+		bWeaponHiddenForGimmick = bWantHidden;
+		// 사망으로 운반이 강제 해제될 때는 연출 없이 바로 되돌린다.
+		if (IsDead()) WeaponGimmickBlend = bWantHidden ? 1.0f : 0.0f;
+		else PlayWeaponGimmickTransitionFeedback(bWantHidden);
+		// 등장 연출은 숨겨 둔 메시를 먼저 켠 뒤 크기 0에서 시작한다.
+		if (!bWantHidden) RefreshPrimaryWeaponVisual();
+	}
+	const float Target = bWeaponHiddenForGimmick ? 1.0f : 0.0f;
+	if (WeaponGimmickBlend == Target) return;
+	const float Duration = bWeaponHiddenForGimmick ? WeaponHideDuration : WeaponShowDuration;
+	WeaponGimmickBlend = Duration <= KINDA_SMALL_NUMBER ? Target
+		: FMath::FInterpConstantTo(WeaponGimmickBlend, Target, DeltaSeconds, 1.0f / Duration);
+	if (bWeaponHiddenForGimmick && WeaponGimmickBlend >= 1.0f) RefreshPrimaryWeaponVisual();
+	else ApplyWeaponGimmickBlend();
+}
+
+void APlayerBase::ApplyWeaponGimmickBlend()
+{
+	const UWeaponDataAsset* PrimaryData = PrimaryWeapon ? PrimaryWeapon->WeaponData.Get() : InitialPrimaryWeaponData.Get();
+	const UWeaponDataAsset* SecondaryData = SecondaryWeapon ? SecondaryWeapon->WeaponData.Get() : InitialSecondaryWeaponData.Get();
+	const float Visible = 1.0f - WeaponGimmickBlend;
+	// 사라질 때는 빠르게 줄어들고, 나타날 때는 살짝 커졌다가 원래 크기로 돌아온다.
+	const float Scale = bWeaponHiddenForGimmick ? FMath::InterpEaseIn(0.0f, 1.0f, Visible, 2.0f)
+		: FMath::Lerp(0.0f, 1.0f, Visible) + FMath::Sin(Visible * UE_PI) * 0.15f;
+	const auto Apply = [this, Scale](const UWeaponDataAsset* Data, UStaticMeshComponent* WeaponMesh)
+	{
+		if (!IsValid(Data) || !IsValid(WeaponMesh) || !WeaponMesh->GetStaticMesh()) return;
+		if (bScaleWeaponOnGimmickTransition)
+			WeaponMesh->SetRelativeScale3D(Data->AttachOffset.GetScale3D() * FMath::Max(Scale, 0.01f));
+		if (!WeaponDissolveParameterName.IsNone())
+			WeaponMesh->SetScalarParameterValueOnMaterials(WeaponDissolveParameterName, WeaponGimmickBlend);
+	};
+	Apply(PrimaryData, PrimaryWeaponMesh);
+	Apply(SecondaryData, SecondaryWeaponMesh);
+}
+
+void APlayerBase::PlayWeaponGimmickTransitionFeedback(bool bHiding)
+{
+	if (GetNetMode() == NM_DedicatedServer) return;
+	UStaticMeshComponent* WeaponMesh = VisibleWeaponSlot == EWeaponSlot::Secondary ? SecondaryWeaponMesh.Get() : PrimaryWeaponMesh.Get();
+	if (!IsValid(WeaponMesh) || !WeaponMesh->GetStaticMesh()) return;
+	// 메시 원점 대신 바운드 중심에서 재생해 손잡이 쪽으로 쏠리지 않게 한다.
+	const FVector Location = WeaponMesh->Bounds.Origin;
+	if (UNiagaraSystem* Effect = bHiding ? WeaponHideEffect.Get() : WeaponShowEffect.Get())
+		UNiagaraFunctionLibrary::SpawnSystemAtLocation(this, Effect, Location, WeaponMesh->GetComponentRotation());
+	if (USoundBase* Sound = bHiding ? WeaponHideSound.Get() : WeaponShowSound.Get())
+		UGameplayStatics::PlaySoundAtLocation(this, Sound, Location);
 }
 
 void APlayerBase::ShowWeaponInSlot(EWeaponSlot Slot)
@@ -803,7 +866,7 @@ int32 APlayerBase::GetHeldWeaponChoice() const
 void APlayerBase::SetWeaponChoiceHeld(int32 Index, bool bHeld)
 {
 	if (Index < 0 || Index >= 4) return;
-	if (bHeld && !IsDead()) HeldWeaponChoices.Add(Index);
+	if (bHeld && !IsDead() && !IsHandlingGimmick()) HeldWeaponChoices.Add(Index);
 	else HeldWeaponChoices.Remove(Index);
 }
 
@@ -815,7 +878,7 @@ void APlayerBase::ServerAssignWeaponChoice_Implementation(int32 Index, EWeaponSl
 bool APlayerBase::AssignWeaponChoice(int32 Index, EWeaponSlot Slot)
 {
 	UWeaponDataAsset* Data = GetWeaponChoice(Index);
-	if (!HasAuthority() || IsDead() || IsHitReacting() || !IsValid(Data) || !HasWeaponChoice(Index)
+	if (!HasAuthority() || IsDead() || IsHitReacting() || IsHandlingGimmick() || !IsValid(Data) || !HasWeaponChoice(Index)
 		|| (Slot != EWeaponSlot::Primary && Slot != EWeaponSlot::Secondary)) return false;
 	// Keep a running swing/charge bound to its captured weapon until it finishes.
 	if (AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking)) return false;
@@ -1207,7 +1270,12 @@ void APlayerBase::RefreshWeaponVisual(const UWeaponDataAsset* Data, UStaticMeshC
 		return;
 	}
 
-	WeaponMesh->SetStaticMesh(Data->WeaponMesh);
+	if (WeaponMesh->GetStaticMesh() != Data->WeaponMesh)
+	{
+		// 디졸브용 동적 머티리얼이 이전 무기 메시에 남지 않게 한다.
+		WeaponMesh->EmptyOverrideMaterials();
+		WeaponMesh->SetStaticMesh(Data->WeaponMesh);
+	}
 	WeaponMesh->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale, SocketName);
 	WeaponMesh->SetRelativeTransform(Data->AttachOffset);
 	WeaponMesh->SetVisibility(true);
@@ -1255,6 +1323,18 @@ bool APlayerBase::IsHitReacting() const
 	return AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_HitReacting);
 }
 
+bool APlayerBase::IsHandlingGimmick() const
+{
+	return bPlayingCarryTransition
+		|| (IsValid(CarryComponent) && CarryComponent->HasCarriedObject())
+		|| (IsValid(PushPullComponent) && PushPullComponent->IsPushPulling());
+}
+
+bool APlayerBase::IsAttacking() const
+{
+	return AbilitySystemComponent && AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking);
+}
+
 FName APlayerBase::GetDamageReactionSection(const FGameplayEffectContextHandle& Context) const
 {
 	FVector DirectionToSource = FVector::ZeroVector;
@@ -1279,6 +1359,16 @@ void APlayerBase::HandleHitReaction(FName ReactionSection)
 	bGrappleCancelJumpAvailable = false;
 	// Actual damage interrupts grappling even when no reaction montage is assigned.
 	GrapplingHookComponent->ClearAnchor();
+	// 실제 피해를 받으면 피격 몽타주·피격 무적 시간과 관계없이 기믹 조작도 즉시 해제한다.
+	if (IsValid(PushPullComponent) && PushPullComponent->IsPushPulling())
+	{
+		PushPullComponent->StopPushPull();
+	}
+	// 들고 있던 물체는 현재 위치에서 놓여 떨어진다. 집기·내려놓기 동작 중이어도 취소한다.
+	if (IsValid(CarryComponent) && (CarryComponent->HasCarriedObject() || IsCarryTransitionActive()))
+	{
+		CarryComponent->ClearCarryState();
+	}
 	if (IsHitReacting() || !HitReactMontage || GetWorld()->GetTimeSeconds() < HitReactionImmunityEndTime) return;
 	const FName Section = PlayerReaction::ResolveSection(HitReactMontage, ReactionSection);
 	const int32 SectionIndex = HitReactMontage->GetSectionIndex(Section);
@@ -1434,6 +1524,7 @@ bool APlayerBase::RespawnAtCheckpoint()
 	const bool bGravityReversed = AbilitySystemComponent->HasMatchingGameplayTag(
 		FGameplayTag::RequestGameplayTag(TEXT("State.Gravity.Reversed")));
 	// ToggleGravityState requires a living player; reset movement after restoring gravity.
+	BeginRespawnProtection();
 	DeathState.bDead = false;
 	AbilitySystemComponent->RemoveLooseGameplayTag(WeaponGameplayTags::State_Dead, 1, EGameplayTagReplicationState::TagAndCountToAll);
 	if (bGravityReversed != bCheckpointGravityReversed)
@@ -1631,4 +1722,18 @@ void APlayerBase::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	GetWorldTimerManager().ClearTimer(EnergyRechargeTimerHandle);
 	AbilitySystemComponent->CancelAllAbilities();
 	Super::EndPlay(EndPlayReason);
+}
+
+void APlayerBase::BeginRespawnProtection()
+{
+ if (HasAuthority() && GetWorld()) RespawnProtectedUntil = GetWorld()->GetTimeSeconds() + FMath::Max(0.f,RespawnInvulnerabilityDuration);
+}
+bool APlayerBase::IsRespawnProtected() const
+{
+ return !IsDead() && GetWorld() && GetWorld()->GetTimeSeconds() < RespawnProtectedUntil;
+}
+
+UStaticMeshComponent* APlayerBase::GetWeaponVisualMesh(EWeaponSlot Slot) const
+{
+ return Slot == EWeaponSlot::Secondary ? SecondaryWeaponMesh.Get() : PrimaryWeaponMesh.Get();
 }

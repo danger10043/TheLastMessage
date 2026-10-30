@@ -28,7 +28,8 @@ bool UCarryComponent::TryPickUp(ACarryableGimmick* Target)
 {
     CacheOwner();
     APlayerBase* Player = OwnerPlayer.Get();
-    if (!IsValid(Player) || !Player->HasAuthority() || Player->IsDead() || Player->IsHitReacting()
+    // 공격·차지 중에는 집지 않는다. 운반 중 공격 금지와 짝을 맞춘다.
+    if (!IsValid(Player) || !Player->HasAuthority() || Player->IsDead() || Player->IsHitReacting() || Player->IsAttacking()
         || Player->IsCarryTransitionActive() || HasCarriedObject() || PendingPickup.IsValid()
         || bIsChangingCarryState || bIsClearingCarryState || !IsValid(Target)
         || !Player->GetCharacterMovement()->IsMovingOnGround() || !Target->ReserveForPickup(Player)) return false;

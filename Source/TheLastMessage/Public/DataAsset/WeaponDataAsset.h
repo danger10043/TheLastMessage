@@ -214,6 +214,17 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon", meta=(ToolTip="근거리 타격 검사의 전방 거리(cm), 검사 두께는 공격 능력의 MeleeHitRadius에서 설정한다"))
 	float AttackRange;
 
+    /** Use explicit mesh-local endpoints for the striking surface; otherwise infer from mesh bounds. */
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Melee Collision")
+    bool bCustomMeleeTrace = false;
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Melee Collision", meta=(EditCondition="bCustomMeleeTrace"))
+    FVector MeleeTraceStart = FVector::ZeroVector;
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Melee Collision", meta=(EditCondition="bCustomMeleeTrace"))
+    FVector MeleeTraceEnd = FVector(0,0,100);
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Melee Collision", meta=(ClampMin="1", ClampMax="50", Units="cm"))
+    float MeleeTraceRadius = 8.f;
+
+
 	// 원거리 투사체의 기본 최대 이동 거리(cm), 투사체 BP에서 사거리 덮어쓰기를 켜면 BP 설정을 사용한다
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon", meta=(ToolTip="원거리 투사체의 기본 최대 이동 거리(cm), 투사체 BP에서 사거리 덮어쓰기를 켜면 BP 설정을 사용한다"))
 	float Range;

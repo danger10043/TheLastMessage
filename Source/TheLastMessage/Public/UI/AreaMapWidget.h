@@ -33,6 +33,9 @@ private:
 	TWeakObjectPtr<APlayerController> InputOwner;
 	TWeakObjectPtr<APawn> ObservedPawn;
 	TArray<FKey> ToggleKeys;
+	FText TravelStatus;
+	FVector2D PressPosition = FVector2D::ZeroVector;
+	bool bTravelClick = false;
 	FVector2D Pan = FVector2D::ZeroVector;
 	float Zoom = 1;
 	bool bDragging = false;

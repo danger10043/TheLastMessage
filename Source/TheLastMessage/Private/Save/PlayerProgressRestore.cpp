@@ -64,6 +64,7 @@ bool APlayerBase::RestoreCheckpointProgress(const UProgressSaveGame* Save)
 	if (AbilitySystemComponent->HasMatchingGameplayTag(GravityTag) != bSavedReversed && GravityStateComponent)
 		GravityStateComponent->ToggleGravityState();
 	GetCharacterMovement()->SetGravityDirection(Save->RespawnGravity.GetSafeNormal(SMALL_NUMBER, FVector(0, 0, -1)));
+	BeginRespawnProtection();
 	if (!TeleportTo(Save->RespawnTransform.GetLocation(), Save->RespawnTransform.Rotator())) return false;
 	GetCharacterMovement()->StopMovementImmediately();
 	GetCharacterMovement()->SetMovementMode(MOVE_Falling);

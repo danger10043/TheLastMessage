@@ -36,7 +36,9 @@ bool UPushPullComponent::StartPushPull(APushPullGimmick* Target)
 
     APlayerBase* Player = OwnerPlayer.Get();
 
-    if (!IsValid(Player) || Player->IsDead() || Player->IsHitReacting() || !IsValid(Target) /* || !IsValid(PhysicsHandle)*/)
+    // 공격·차지 중에는 조작을 시작하지 않는다.
+    if (!IsValid(Player) || Player->IsDead() || Player->IsHitReacting() || Player->IsAttacking()
+        || Player->IsCarryTransitionActive() || !IsValid(Target) /* || !IsValid(PhysicsHandle)*/)
     {
         return false;
     }

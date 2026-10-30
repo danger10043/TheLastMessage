@@ -124,6 +124,10 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Boss|Lifecycle")
     void HandleBossDeath();
 
+    // 저장 및 로드에 사용할 보스 처치 여부.
+    UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, SaveGame, Category = "Boss|Lifecycle")
+    bool bIsDefeated = false;
+
     // 명세 6.12의 UI 중계 함수.
     UFUNCTION(BlueprintPure, Category = "Boss|Puzzle")
     float GetRemainingPuzzleTime() const;

@@ -1359,6 +1359,16 @@ void APlayerBase::HandleHitReaction(FName ReactionSection)
 	bGrappleCancelJumpAvailable = false;
 	// Actual damage interrupts grappling even when no reaction montage is assigned.
 	GrapplingHookComponent->ClearAnchor();
+	// 실제 피해를 받으면 피격 몽타주·피격 무적 시간과 관계없이 기믹 조작도 즉시 해제한다.
+	if (IsValid(PushPullComponent) && PushPullComponent->IsPushPulling())
+	{
+		PushPullComponent->StopPushPull();
+	}
+	// 들고 있던 물체는 현재 위치에서 놓여 떨어진다. 집기·내려놓기 동작 중이어도 취소한다.
+	if (IsValid(CarryComponent) && (CarryComponent->HasCarriedObject() || IsCarryTransitionActive()))
+	{
+		CarryComponent->ClearCarryState();
+	}
 	if (IsHitReacting() || !HitReactMontage || GetWorld()->GetTimeSeconds() < HitReactionImmunityEndTime) return;
 	const FName Section = PlayerReaction::ResolveSection(HitReactMontage, ReactionSection);
 	const int32 SectionIndex = HitReactMontage->GetSectionIndex(Section);

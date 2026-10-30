@@ -741,6 +741,7 @@ void ABossMonster::HandleBossDeath()
 
     // 취소·체력 알림·이벤트 콜백보다 먼저 사망 상태를 확정한다.
     CurrentState = EBossState::Dead;
+    bIsDefeated = true;
     StopPhaseSequence();
     EndHitFlash();
     UpdatePuzzlePresentation();

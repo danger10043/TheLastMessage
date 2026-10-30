@@ -426,7 +426,7 @@ void APlayerBase::CheckJumpInput(float DeltaTime)
 	if (bHadGrappleJump && !bGrappleCancelJumpAvailable && Movement->IsFalling())
 	{
 		// Normal jumping replaces vertical speed. A tether release adds lift to its momentum.
-		Movement->Velocity = Movement->ConstrainDirectionToPlane(IncomingVelocity + FVector::UpVector * Movement->JumpZVelocity);
+		Movement->Velocity = Movement->ConstrainDirectionToPlane(IncomingVelocity - Movement->GetGravityDirection() * Movement->JumpZVelocity);
 	}
 }
 

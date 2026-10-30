@@ -1,6 +1,6 @@
+#include "Animation/AnimNotifyState_MeleeTrail.h"
 #include "AbilitySystemBlueprintLibrary.h"
 #include "GAS/WeaponGameplayTags.h"
-#include "Animation/AnimNotifyState_MeleeTrail.h"
 #include "Character/Player/PlayerBase.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/World.h"

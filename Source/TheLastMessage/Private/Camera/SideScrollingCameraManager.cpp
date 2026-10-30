@@ -1,120 +1,102 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
-
-
 #include "Camera/SideScrollingCameraManager.h"
-#include "GameFramework/Pawn.h"
-#include "Engine/HitResult.h"
-#include "CollisionQueryParams.h"
+#include "GameFramework/Character.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/PlayerController.h"
 #include "Engine/World.h"
+#include "CollisionQueryParams.h"
 
 void ASideScrollingCameraManager::UpdateViewTarget(FTViewTarget& OutVT, float DeltaTime)
 {
-	// ensure the view target is a pawn
-	APawn* TargetPawn = Cast<APawn>(OutVT.Target);
-	if (!IsValid(TargetPawn))
+	APawn* Pawn = Cast<APawn>(OutVT.Target);
+	if (!IsValid(Pawn))
 	{
+		bSetup = true;
+		FollowedPawn.Reset();
 		Super::UpdateViewTarget(OutVT, DeltaTime);
 		return;
 	}
 
-	// is our target valid?
-	if (IsValid(TargetPawn))
+	OutVT.POV.Rotation = FRotator(0.0f, -90.0f, 0.0f);
+	OutVT.POV.FOV = 65.0f;
+	const FVector Position = Pawn->GetActorLocation();
+	const ACharacter* Character = Cast<ACharacter>(Pawn);
+	const UCharacterMovementComponent* Movement = Character ? Character->GetCharacterMovement() : nullptr;
+	const FVector Gravity = Movement ? Movement->GetGravityDirection() : FVector(0, 0, -1);
+	const float UpSign = Gravity.Z > 0.0f ? -1.0f : 1.0f;
+	const bool bGrounded = Movement && Movement->IsMovingOnGround();
+	const bool bReset = bSetup || FollowedPawn.Get() != Pawn
+		|| FVector::DistSquared(Position, PreviousTargetLocation) > FMath::Square(2500.0f);
+
+	int32 Width = 0, Height = 0;
+	if (PCOwner) PCOwner->GetViewportSize(Width, Height);
+	const float Aspect = Width > 0 && Height > 0 ? float(Width) / Height : 16.0f / 9.0f;
+	const float ViewHeight = 2.0f * FMath::Max(CurrentZoom, 1.0f)
+		* FMath::Tan(FMath::DegreesToRadians(OutVT.POV.FOV * 0.5f)) / Aspect;
+	float DesiredOffset = UpSign * FMath::Max(CameraZOffset, (PlayerScreenHeight - 0.5f) * ViewHeight);
+
+	// Probe beyond the current support, rather than treating every platform as the bottom of a level.
+	// Only physical world geometry counts; enemies and effects cannot change the framing.
+	TerrainProbeTimer -= DeltaTime;
+	if (bGrounded && (bReset || TerrainProbeTimer <= 0.0f))
 	{
-		// set the view target FOV and rotation
-		OutVT.POV.Rotation = FRotator(0.0f, -90.0f, 0.0f);
-		OutVT.POV.FOV = 65.0f;
-
-		// cache the current location
-		FVector CurrentActorLocation = OutVT.Target->GetActorLocation();
-
-		// copy the current camera location
-		FVector CurrentCameraLocation = UnmodifiedCameraLocation;
-
-		// calculate the "zoom distance" - in reality the distance we want to keep to the target
-		float CurrentY = CurrentZoom + CurrentActorLocation.Y;
-
-		// do first-time setup
-		if (bSetup)
+		TerrainProbeTimer = 0.15f;
+		bHasLowerTerrain = false;
+		FCollisionQueryParams Params(SCENE_QUERY_STAT(CameraLowerTerrain), false, Pawn);
+		Params.AddIgnoredComponent(Movement->CurrentFloor.HitResult.GetComponent());
+		FCollisionObjectQueryParams Objects;
+		Objects.AddObjectTypesToQuery(ECC_WorldStatic);
+		Objects.AddObjectTypesToQuery(ECC_WorldDynamic);
+		const FVector Floor = Movement->CurrentFloor.HitResult.ImpactPoint;
+		for (const float OffsetX : {-0.35f, 0.0f, 0.35f})
 		{
-			// lower the setup flag
-			bSetup = false;
-
-			// initialize the camera viewpoint and return
-			OutVT.POV.Location.X = CurrentActorLocation.X;
-			OutVT.POV.Location.Y = CurrentY;
-			OutVT.POV.Location.Z = CurrentActorLocation.Z + CameraZOffset;
-
-			// save the current camera height
-			CurrentZ = OutVT.POV.Location.Z;
-			FinalizeViewTarget(OutVT, DeltaTime);
-
-			// skip the rest of the calculations
-			return;
-		}
-
-		// check if the camera needs to update its height
-		bool bZUpdate = false;
-
-		// is the character moving vertically?
-		if (FMath::IsNearlyZero(TargetPawn->GetVelocity().Z))
-		{
-			// determine if we need to do a height update
-			bZUpdate = FMath::IsNearlyEqual(CurrentZ, CurrentCameraLocation.Z, 25.0f);
-
-		} else {
-
-			// run a trace below the character to determine if we need to do a height update
-			FHitResult OutHit;
-
-			const FVector End = CurrentActorLocation + FVector(0.0f, 0.0f, -1000.0f);
-
-			FCollisionQueryParams QueryParams;
-			QueryParams.AddIgnoredActor(TargetPawn);
-
-			// only update height if we're not about to hit ground
-			bZUpdate = !GetWorld()->LineTraceSingleByChannel(OutHit, CurrentActorLocation, End, ECC_Visibility, QueryParams);
-
-		}
-
-		// do we need to do a height update?
-		if (bZUpdate)
-		{
-
-			// set the height goal from the actor location
-			CurrentZ = CurrentActorLocation.Z;
-
-		} else {
-
-			// are we close enough to the target height?
-			if (FMath::IsNearlyEqual(CurrentZ, CurrentActorLocation.Z, 100.0f))
+			const FVector Start = Floor + FVector(OffsetX * ViewHeight, 0, 0) + Gravity * 30.0f;
+			FHitResult Hit;
+			if (GetWorld()->LineTraceSingleByObjectType(Hit, Start, Start + Gravity * ViewHeight * 0.7f, Objects, Params)
+				&& FVector::DotProduct(Hit.ImpactNormal, -Gravity) > 0.5f)
 			{
-				// set the height goal from the actor location
-				CurrentZ = CurrentActorLocation.Z;
-
-			} else {
-
-				// blend the height towards the actor location
-				CurrentZ = FMath::FInterpTo(CurrentZ, CurrentActorLocation.Z, DeltaTime, 2.0f);
-				
+				bHasLowerTerrain = true;
+				break;
 			}
-
 		}
-
-		// clamp the X axis to the min and max camera bounds
-		float CurrentX = FMath::Clamp(CurrentActorLocation.X, CameraXMinBounds, CameraXMaxBounds);
-
-		// blend towards the new camera location and update the output
-		FVector TargetCameraLocation(CurrentX, CurrentY, CurrentZ);
-
-		OutVT.POV.Location = FMath::VInterpTo(CurrentCameraLocation, TargetCameraLocation, DeltaTime, 2.0f);
-		FinalizeViewTarget(OutVT, DeltaTime);
 	}
+	if (bGrounded && !bHasLowerTerrain)
+	{
+		const float FloorZ = Movement->CurrentFloor.HitResult.ImpactPoint.Z;
+		const float FloorOffset = (0.5f - GroundBackgroundFraction) * ViewHeight;
+		DesiredOffset = UpSign * FMath::Max(FMath::Abs(DesiredOffset),
+			FloorOffset - UpSign * (Position.Z - FloorZ));
+	}
+
+	if (bReset)
+	{
+		CurrentZ = Position.Z;
+		SmoothedFramingOffset = DesiredOffset;
+	}
+	else
+	{
+		// Small jumps stay inside a vertical window; landing recenters smoothly.
+		const float DeadZone = ViewHeight * VerticalDeadZoneFraction;
+		CurrentZ = bGrounded ? Position.Z : FMath::Clamp(CurrentZ, Position.Z - DeadZone, Position.Z + DeadZone);
+		SmoothedFramingOffset = FMath::FInterpTo(SmoothedFramingOffset, DesiredOffset, DeltaTime, 2.0f);
+	}
+	const FVector Goal(FMath::Clamp(Position.X, CameraXMinBounds, CameraXMaxBounds),
+		Position.Y + CurrentZoom, CurrentZ + SmoothedFramingOffset);
+	if (bReset) OutVT.POV.Location = Goal;
+	else
+	{
+		OutVT.POV.Location = FMath::VInterpTo(UnmodifiedCameraLocation, Goal, DeltaTime, 2.0f);
+		OutVT.POV.Location.Z = FMath::FInterpTo(UnmodifiedCameraLocation.Z, Goal.Z, DeltaTime, VerticalFollowSpeed);
+	}
+	bSetup = false;
+	FollowedPawn = Pawn;
+	PreviousTargetLocation = Position;
+	FinalizeViewTarget(OutVT, DeltaTime);
 }
 
 void ASideScrollingCameraManager::FinalizeViewTarget(FTViewTarget& OutVT, float DeltaTime)
 {
 	UnmodifiedCameraLocation = OutVT.POV.Location;
-	// This override bypasses the base implementation, so run its final modifier stage here.
 	ApplyCameraModifiers(DeltaTime, OutVT.POV);
 	SetActorLocationAndRotation(OutVT.POV.Location, OutVT.POV.Rotation, false);
 	UpdateCameraLensEffects(OutVT);

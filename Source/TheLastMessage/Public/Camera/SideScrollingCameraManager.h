@@ -31,7 +31,7 @@ public:
 
 	/** Position from the top of the screen, mirrored when gravity reverses. */
 	UPROPERTY(EditAnywhere, Category="Side Scrolling Camera|Framing", meta=(ClampMin="0.5", ClampMax="0.8"))
-	float PlayerScreenHeight = 0.65f;
+	float PlayerScreenHeight = 0.75f;
 
 	/** Keep this fraction of the view beyond the supporting floor when no lower floor is found. */
 	UPROPERTY(EditAnywhere, Category="Side Scrolling Camera|Framing", meta=(ClampMin="0.1", ClampMax="0.4"))

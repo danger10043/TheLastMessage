@@ -407,6 +407,6 @@ void AAirflowFan::UpdateFanVisuals(bool bShouldRun)
 	{
 		const FLinearColor LightColor = bShouldRun ? FLinearColor::Green : FLinearColor::Black;
 
-		IndicatorMaterial->SetVectorParameterValue(TEXT("EmissiveColor"), LightColor);
+		IndicatorMaterial->SetVectorParameterValue(TEXT("IndicatorColor"), LightColor);
 	}
 }

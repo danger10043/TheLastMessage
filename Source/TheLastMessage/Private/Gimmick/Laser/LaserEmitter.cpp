@@ -563,7 +563,7 @@ void ALaserEmitter::UpdateEmitterIndicator()
 	// 표시등 재질 갱신
 	if (IsValid(EmitterIndicatorMaterial))
 	{
-		EmitterIndicatorMaterial->SetVectorParameterValue(TEXT("EmissiveColor"), LightColor);
+		EmitterIndicatorMaterial->SetVectorParameterValue(TEXT("IndicatorColor"), LightColor);
 	}
 
 	// 현재 발신기 에셋의 렌즈 재질은 1번 슬롯

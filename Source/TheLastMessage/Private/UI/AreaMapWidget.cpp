@@ -1,6 +1,6 @@
+#include "UI/AreaMapWidget.h"
 #include "Checkpoint/PlayerCheckpoint.h"
 #include "EngineUtils.h"
-#include "UI/AreaMapWidget.h"
 #include "Map/AreaMapComponent.h"
 #include "Character/Player/PlayerBase.h"
 #include "EnhancedInputSubsystems.h"

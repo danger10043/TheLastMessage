@@ -1,6 +1,6 @@
+#include "Checkpoint/PlayerCheckpoint.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
-#include "Checkpoint/PlayerCheckpoint.h"
 #include "Character/Player/PlayerBase.h"
 #include "Components/BoxComponent.h"
 #include "Components/ArrowComponent.h"

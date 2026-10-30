@@ -6,6 +6,7 @@ void UPlayerResourceBarWidget::NativePreConstruct()
 {
 	Super::NativePreConstruct();
 	if (ValueBar) ValueBar->SetFillColorAndOpacity(FillColor);
+	if (LabelText) LabelText->SetText(ResourceLabel);
 	SetResourceValues(CurrentValue, MaximumValue);
 }
 

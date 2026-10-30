@@ -11,54 +11,19 @@
 #include "Components/WidgetSwitcher.h"
 #include "InputCoreTypes.h"
 
-namespace
-{
-UTextBlock* AddText(UWidgetTree* Tree, UVerticalBox* Box, FName Name, const FText& Label, int32 FontSize)
-{
-	UTextBlock* Text = Tree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), Name);
-	Text->SetText(Label);
-	FSlateFontInfo Font = Text->GetFont();
-	Font.Size = FontSize;
-	Text->SetFont(Font);
-	Text->SetJustification(ETextJustify::Center);
-	Text->SetAutoWrapText(true);
-	Box->AddChildToVerticalBox(Text)->SetPadding(FMargin(0, 12));
-	return Text;
-}
-
-void AddButton(UWidgetTree* Tree, UVerticalBox* Box, FName Name, FName TextName, const FText& Label)
-{
-	USizeBox* Size = Tree->ConstructWidget<USizeBox>();
-	Size->SetHeightOverride(72);
-	Box->AddChildToVerticalBox(Size)->SetPadding(FMargin(0, 8));
-	UButton* Button = Tree->ConstructWidget<UButton>(UButton::StaticClass(), Name);
-	Size->AddChild(Button);
-	UTextBlock* Text = Tree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TextName);
-	Text->SetText(Label);
-	FSlateFontInfo Font = Text->GetFont(); Font.Size = 22; Text->SetFont(Font);
-	Text->SetColorAndOpacity(FSlateColor(FLinearColor::Black));
-	Text->SetJustification(ETextJustify::Center);
-	Button->AddChild(Text);
+#include "UI/FactoryMenuStyle.h"
+namespace {
+UTextBlock* AddText(UWidgetTree* Tree, UVerticalBox* Box, FName Name, const FText& Label, int32 FontSize) { return FactoryMenuStyle::AddText(Tree, Box, Name, Label, FontSize); }
+void AddButton(UWidgetTree* Tree, UVerticalBox* Box, FName Name, FName TextName, const FText& Label) {
+ const bool bCompact = Name != TEXT("NewGameButton") && Name != TEXT("LoadGameButton") && Name != TEXT("ExitButton");
+ FactoryMenuStyle::AddButton(Tree, Box, Name, TextName, Label, bCompact);
 }
 }
-
 void UStartMenuWidget::BuildDefaultLayout(UWidgetTree* Tree)
 {
-	UCanvasPanel* Canvas = Tree->ConstructWidget<UCanvasPanel>(UCanvasPanel::StaticClass(), TEXT("Root"));
-	Tree->RootWidget = Canvas;
-	UBorder* Background = Tree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("Background"));
-	Background->SetBrushColor(FLinearColor(0.025f, 0.025f, 0.025f, 1));
-	UCanvasPanelSlot* BGSlot = Canvas->AddChildToCanvas(Background);
-	BGSlot->SetAnchors(FAnchors(0, 0, 1, 1)); BGSlot->SetOffsets(FMargin(0));
-	USizeBox* Content = Tree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("MenuSize"));
-	Content->SetWidthOverride(520); Content->SetHeightOverride(600);
-	UCanvasPanelSlot* Slot = Canvas->AddChildToCanvas(Content);
-	Slot->SetAnchors(FAnchors(0.5f)); Slot->SetAlignment(FVector2D(0.5f)); Slot->SetAutoSize(true);
-	UWidgetSwitcher* Switcher = Tree->ConstructWidget<UWidgetSwitcher>(UWidgetSwitcher::StaticClass(), TEXT("Pages"));
-	Content->AddChild(Switcher);
+	UWidgetSwitcher* Switcher = FactoryMenuStyle::BuildShell(Tree, false);
 	UVerticalBox* Main = Tree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("MainPage"));
 	Switcher->AddChild(Main);
-	AddText(Tree, Main, TEXT("TitleText"), FText::FromString(TEXT("The Last Message")), 36);
 	AddButton(Tree, Main, TEXT("NewGameButton"), TEXT("NewGameText"), NSLOCTEXT("StartMenu", "New", "새 게임"));
 	AddButton(Tree, Main, TEXT("LoadGameButton"), TEXT("LoadGameText"), NSLOCTEXT("StartMenu", "Load", "불러오기"));
 	AddButton(Tree, Main, TEXT("ExitButton"), TEXT("ExitText"), NSLOCTEXT("StartMenu", "Exit", "나가기"));
@@ -228,3 +193,5 @@ FReply UStartMenuWidget::NativeOnKeyDown(const FGeometry& Geometry, const FKeyEv
 	}
 	return Super::NativeOnKeyDown(Geometry, Event);
 }
+
+void UStartMenuWidget::NativeTick(const FGeometry& Geometry, float DeltaTime) { Super::NativeTick(Geometry, DeltaTime); FactoryMenuStyle::UpdateFocus(WidgetTree); }

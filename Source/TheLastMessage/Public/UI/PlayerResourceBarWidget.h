@@ -16,10 +16,13 @@ public:
 	void SetResourceValues(float Current, float Maximum);
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Appearance")
 	FLinearColor FillColor = FLinearColor(0.9f, 0.0f, 0.0f, 1.0f);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Appearance")
+	FText ResourceLabel = FText::FromString(TEXT("HP"));
 	UPROPERTY(BlueprintReadOnly, Category="Player UI") float CurrentValue = 0;
 	UPROPERTY(BlueprintReadOnly, Category="Player UI") float MaximumValue = 0;
 protected:
 	virtual void NativePreConstruct() override;
 	UPROPERTY(meta=(BindWidgetOptional), BlueprintReadOnly) TObjectPtr<UProgressBar> ValueBar;
 	UPROPERTY(meta=(BindWidgetOptional), BlueprintReadOnly) TObjectPtr<UTextBlock> ValueText;
+	UPROPERTY(meta=(BindWidgetOptional), BlueprintReadOnly) TObjectPtr<UTextBlock> LabelText;
 };

@@ -339,6 +339,66 @@ bool BuildPauseMenu()
 	return CompileSave(BP);
 }
 
+bool BuildHUDResourceBars()
+{
+	UWidgetBlueprint* Existing = LoadObject<UWidgetBlueprint>(nullptr, BarPath);
+	float Width = 600.0f;
+	if (Existing)
+		if (const USizeBox* Size = Existing->WidgetTree->FindWidget<USizeBox>(TEXT("ResourceSize"))) Width = Size->GetWidthOverride();
+	UTexture2D* FrameTexture = LoadObject<UTexture2D>(nullptr, TEXT("/Game/Main/UI/HUD/Textures/T_HUD_ResourceFrame.T_HUD_ResourceFrame"));
+	UTexture2D* FillTexture = LoadObject<UTexture2D>(nullptr, TEXT("/Game/Main/UI/HUD/Textures/T_HUD_ResourceFill.T_HUD_ResourceFill"));
+	if (!FrameTexture || !FillTexture) return false;
+	UWidgetBlueprint* BP = Blueprint(BarPath, UPlayerResourceBarWidget::StaticClass());
+	UWidgetTree* Tree = BP->WidgetTree;
+	USizeBox* Size = Widget<USizeBox>(Tree, TEXT("ResourceSize"));
+	Size->SetWidthOverride(Width); Size->SetHeightOverride(46);
+	Tree->RootWidget = Size;
+	UOverlay* Overlay = Widget<UOverlay>(Tree, TEXT("ResourceOverlay")); Size->AddChild(Overlay);
+	UImage* Frame = Widget<UImage>(Tree, TEXT("ResourceFrame")); Frame->SetBrushFromTexture(FrameTexture);
+	FSlateBrush FrameBrush = Frame->GetBrush();
+	FrameBrush.SetUVRegion(FBox2f(FVector2f(0.015f, 0.303f), FVector2f(0.985f, 0.690f)));
+	Frame->SetBrush(FrameBrush);
+	UOverlaySlot* FrameSlot = Overlay->AddChildToOverlay(Frame);
+	FrameSlot->SetHorizontalAlignment(HAlign_Fill); FrameSlot->SetVerticalAlignment(VAlign_Fill);
+	UProgressBar* Bar = Widget<UProgressBar>(Tree, TEXT("ValueBar"));
+	FProgressBarStyle Style;
+	Style.BackgroundImage.DrawAs = ESlateBrushDrawType::NoDrawType;
+	Style.FillImage.DrawAs = ESlateBrushDrawType::Image;
+	Style.FillImage.SetResourceObject(FillTexture);
+	Style.FillImage.SetUVRegion(FBox2f(FVector2f(0.026f, 0.472f), FVector2f(0.974f, 0.529f)));
+	Style.FillImage.TintColor = FLinearColor::White;
+	Bar->SetWidgetStyle(Style);
+	Bar->SetBarFillType(EProgressBarFillType::LeftToRight);
+	Bar->SetBarFillStyle(EProgressBarFillStyle::Mask);
+	Bar->SetBorderPadding(FVector2D::ZeroVector); Bar->SetPercent(1);
+	UOverlaySlot* FillSlot = Overlay->AddChildToOverlay(Bar);
+	FillSlot->SetHorizontalAlignment(HAlign_Fill); FillSlot->SetVerticalAlignment(VAlign_Fill);
+	FillSlot->SetPadding(FMargin(14, 10));
+	UTextBlock* Label = Text(Tree, TEXT("LabelText"), 17); Label->SetText(FText::FromString(TEXT("HP")));
+	Label->SetColorAndOpacity(FLinearColor(0.95f, 0.94f, 0.87f));
+	Label->SetShadowOffset(FVector2D(1, 1)); Label->SetShadowColorAndOpacity(FLinearColor::Black);
+	UOverlaySlot* LabelSlot = Overlay->AddChildToOverlay(Label);
+	LabelSlot->SetHorizontalAlignment(HAlign_Left); LabelSlot->SetVerticalAlignment(VAlign_Center); LabelSlot->SetPadding(FMargin(22, 0));
+	UTextBlock* Value = Text(Tree, TEXT("ValueText"), 18); Value->SetText(FText::FromString(TEXT("100 / 100")));
+	Value->SetColorAndOpacity(FLinearColor(0.95f, 0.94f, 0.87f));
+	Value->SetShadowOffset(FVector2D(1, 1)); Value->SetShadowColorAndOpacity(FLinearColor::Black);
+	UOverlaySlot* ValueSlot = Overlay->AddChildToOverlay(Value);
+	ValueSlot->SetHorizontalAlignment(HAlign_Right); ValueSlot->SetVerticalAlignment(VAlign_Center); ValueSlot->SetPadding(FMargin(22, 0));
+	BP->WidgetVariableNameToGuidMap.Reset();
+	Tree->ForEachWidget([BP](UWidget* Control) { Control->bIsVariable = true; BP->WidgetVariableNameToGuidMap.Add(Control->GetFName(), FGuid::NewGuid()); });
+	if (!CompileSave(BP)) return false;
+	UWidgetBlueprint* Panel = LoadObject<UWidgetBlueprint>(nullptr, PanelPath);
+	if (!Panel) return false;
+	Backup(PanelPath);
+	UPlayerResourceBarWidget* HP = Cast<UPlayerResourceBarWidget>(Panel->WidgetTree->FindWidget(TEXT("HealthResource")));
+	UPlayerResourceBarWidget* Energy = Cast<UPlayerResourceBarWidget>(Panel->WidgetTree->FindWidget(TEXT("EnergyResource")));
+	if (!HP || !Energy) return false;
+	HP->FillColor = FLinearColor(0.85f, 0.055f, 0.025f); HP->ResourceLabel = FText::FromString(TEXT("HP"));
+	Energy->FillColor = FLinearColor(0.025f, 0.65f, 0.95f); Energy->ResourceLabel = FText::FromString(TEXT("ENERGY"));
+	Energy->SetVisibility(ESlateVisibility::Hidden);
+	return CompileSave(Panel);
+}
+
 bool BuildMenuScaffold(bool bPreview)
 {
 	const TCHAR* Path = TEXT("/Game/Main/UI/Menu/WBP_StartMenu");
@@ -394,6 +454,8 @@ bool BuildMenuScaffold(bool bPreview)
 	UWidgetSwitcher* Pages = Cast<UWidgetSwitcher>(Panel->WidgetTree->FindWidget(TEXT("Pages")));
 	UButton* Slot1 = Cast<UButton>(Panel->WidgetTree->FindWidget(TEXT("Slot1Button")));
 	if (!Pages || !Slot1 || Pages->GetActiveWidgetIndex() != 0) return false;
+	FTextureCompilingManager::Get().FinishAllCompilation();
+	FlushRenderingCommands();
 	auto Render = [&](const TCHAR* Name)
 	{
 		SlateWidget->SlatePrepass(1.0f);
@@ -434,6 +496,25 @@ bool BuildMenuScaffold(bool bPreview)
 	bOK = Pages->GetActiveWidgetIndex() == 1 && !Slot1->GetIsEnabled() && bOK;
 	Panel->SetBusy(false);
 	Panel->RemoveFromParent();
+	UPauseMenuWidget* PausePanel = CreateWidget<UPauseMenuWidget>(World,
+		LoadClass<UPauseMenuWidget>(nullptr, TEXT("/Game/Main/UI/Menu/WBP_PauseMenu.WBP_PauseMenu_C")));
+	if (!PausePanel) return false;
+	SlateWidget = PausePanel->TakeWidget();
+	FTextureCompilingManager::Get().FinishAllCompilation();
+	FlushRenderingCommands();
+	PausePanel->SetCheckpointAvailable(false);
+	UButton* Reload = CastChecked<UButton>(PausePanel->WidgetTree->FindWidget(TEXT("ReloadButton")));
+	bOK = !Reload->GetIsEnabled() && Render(TEXT("Pause.png")) && bOK;
+	PausePanel->SetCheckpointAvailable(true);
+	Reload->OnClicked.Broadcast();
+	UWidgetSwitcher* PausePages = CastChecked<UWidgetSwitcher>(PausePanel->WidgetTree->FindWidget(TEXT("PausePages")));
+	bOK = PausePages->GetActiveWidgetIndex() == 1 && Render(TEXT("PauseConfirm.png")) && bOK;
+	CastChecked<UButton>(PausePanel->WidgetTree->FindWidget(TEXT("CancelButton")))->OnClicked.Broadcast();
+	bOK = PausePages->GetActiveWidgetIndex() == 0 && bOK;
+	CastChecked<UButton>(PausePanel->WidgetTree->FindWidget(TEXT("SettingsButton")))->OnClicked.Broadcast();
+	bOK = PausePages->GetActiveWidgetIndex() == 2 && Render(TEXT("PauseSettings.png")) && bOK;
+	CastChecked<UButton>(PausePanel->WidgetTree->FindWidget(TEXT("SettingsBackButton")))->OnClicked.Broadcast();
+	PausePanel->RemoveFromParent();
 	World->DestroyWorld(false); GEngine->DestroyWorldContext(World);
 	UE_LOG(LogTemp, Display, TEXT("START_MENU_SCAFFOLD: editable widget, menu map, navigation/selection/empty-slot checks: %s"), bOK ? TEXT("PASS") : TEXT("FAIL"));
 	return bOK;
@@ -478,6 +559,8 @@ bool Preview()
 	}
 	Textures.Add(LoadObject<UTexture2D>(nullptr, TEXT("/Game/Main/UI/Icons/T_UI_MouseLeft.T_UI_MouseLeft")));
 	Textures.Add(LoadObject<UTexture2D>(nullptr, TEXT("/Game/Main/UI/Icons/T_UI_MouseRight.T_UI_MouseRight")));
+	Textures.Add(LoadObject<UTexture2D>(nullptr, TEXT("/Game/Main/UI/HUD/Textures/T_HUD_ResourceFrame.T_HUD_ResourceFrame")));
+	Textures.Add(LoadObject<UTexture2D>(nullptr, TEXT("/Game/Main/UI/HUD/Textures/T_HUD_ResourceFill.T_HUD_ResourceFill")));
 	TArray<UTexture*> CompileTextures;
 	for (UTexture2D* Texture : Textures) if (Texture) CompileTextures.Add(Texture);
 	FTextureCompilingManager::Get().FinishCompilation(CompileTextures);
@@ -513,6 +596,10 @@ bool Preview()
 	Player->GetWeaponSlotAttributes()->SetSharedEnergy(37);
 	Player->GetCombatAttributes()->SetHealth(63);
 	bResult = Render(TEXT("MissingWeapon.png")) && bResult;
+	Player->ShowWeaponInSlot(EWeaponSlot::Secondary);
+	bResult = Render(TEXT("RangedResources.png")) && bResult;
+	Player->ShowWeaponInSlot(EWeaponSlot::Primary);
+	bResult = Render(TEXT("MeleeResources.png")) && bResult;
 	Panel->SetObservedPlayer(nullptr);
 	World->EndPlay(EEndPlayReason::Quit); World->DestroyWorld(false); GEngine->DestroyWorldContext(World);
 	return bResult;
@@ -527,6 +614,28 @@ UIntegratePlayerUICommandlet::UIntegratePlayerUICommandlet()
 
 int32 UIntegratePlayerUICommandlet::Main(const FString& Params)
 {
+#if WITH_EDITOR
+	if (FParse::Param(*Params, TEXT("HUDResources")))
+	{
+		if (!PlayerUIBuild::BuildHUDResourceBars()) return 1;
+		return FParse::Param(*Params, TEXT("Preview")) ? (PlayerUIBuild::Preview() ? 0 : 1) : 0;
+	}
+	if (FParse::Param(*Params, TEXT("FactoryMenus")))
+	{
+		// Rebuild only the two menu Widget Blueprints; gameplay HUDs and maps are untouched.
+		UWidgetBlueprint* Main = PlayerUIBuild::Blueprint(TEXT("/Game/Main/UI/Menu/WBP_StartMenu"), UStartMenuWidget::StaticClass());
+		UStartMenuWidget::BuildDefaultLayout(Main->WidgetTree);
+		Main->WidgetVariableNameToGuidMap.Reset();
+		Main->WidgetTree->ForEachWidget([Main](UWidget* Control) { Control->bIsVariable = true; Main->WidgetVariableNameToGuidMap.Add(Control->GetFName(), FGuid::NewGuid()); });
+		if (!PlayerUIBuild::CompileSave(Main)) return 1;
+		UWidgetBlueprint* Pause = PlayerUIBuild::Blueprint(TEXT("/Game/Main/UI/Menu/WBP_PauseMenu"), UPauseMenuWidget::StaticClass());
+		UPauseMenuWidget::BuildDefaultLayout(Pause->WidgetTree);
+		Pause->WidgetVariableNameToGuidMap.Reset();
+		Pause->WidgetTree->ForEachWidget([Pause](UWidget* Control) { Control->bIsVariable = true; Pause->WidgetVariableNameToGuidMap.Add(Control->GetFName(), FGuid::NewGuid()); });
+		if (!PlayerUIBuild::CompileSave(Pause)) return 1;
+		return FParse::Param(*Params, TEXT("Preview")) ? (PlayerUIBuild::BuildMenuScaffold(true) ? 0 : 1) : 0;
+	}
+#endif
 #if WITH_EDITOR
 	if (FParse::Param(*Params, TEXT("PauseMenu"))) return PlayerUIBuild::BuildPauseMenu() ? 0 : 1;
 	if (FParse::Param(*Params, TEXT("CheckpointPopup"))) return PlayerUIBuild::BuildSaveNotification() ? 0 : 1;

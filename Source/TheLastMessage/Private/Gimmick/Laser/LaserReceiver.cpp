@@ -176,7 +176,7 @@ void ALaserReceiver::UpdateReceiverIndicator()
 
 	const FLinearColor LightColor = bIsEnabled && bIsActive ? FLinearColor::Green : FLinearColor::Black;
 
-	ReceiverIndicatorMaterial->SetVectorParameterValue(TEXT("EmissiveColor"), LightColor);
+	ReceiverIndicatorMaterial->SetVectorParameterValue(TEXT("IndicatorColor"), LightColor);
 }
 FProgressActorState ALaserReceiver::CaptureProgress() const
 {

@@ -9,7 +9,8 @@
 class APlayerBase;
 class APushPullGimmick;
 class UCharacterMovementComponent;
-class UPhysicsHandleComponent;
+class UStaticMeshComponent;
+//class UPhysicsHandleComponent;
 
 UCLASS(Blueprintable, ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
 class THELASTMESSAGE_API UPushPullComponent : public UActorComponent
@@ -24,6 +25,10 @@ public:
     bool StartPushPull(APushPullGimmick* Target);
 
     // 이동 입력을 받아 물리 핸들의 목표 위치 갱신
+    //FUNCTION(BlueprintCallable, Category = "Gimmick|PushPull")
+    //void UpdatePushPull(const FVector& MoveDirection, float DeltaTime);
+
+    // 이동 입력에 따라 물체의 수평 속도를 제어
     UFUNCTION(BlueprintCallable, Category = "Gimmick|PushPull")
     void UpdatePushPull(const FVector& MoveDirection, float DeltaTime);
 
@@ -49,8 +54,8 @@ protected:
     TWeakObjectPtr<APushPullGimmick> CurrentTarget;
 
     // 물체를 잡고 움직일 물리 핸들
-    UPROPERTY(Transient)
-    TObjectPtr<UPhysicsHandleComponent> PhysicsHandle;
+    //UPROPERTY(Transient)
+    //TObjectPtr<UPhysicsHandleComponent> PhysicsHandle;
 
     // 플레이어에게 이동 평면 설정이 없을 때 사용할 법선
     // Y축을 법선으로 사용하면 X·Z 평면에서 이동
@@ -65,8 +70,8 @@ private:
     TWeakObjectPtr<APlayerBase> OwnerPlayer;
 
     // 물리 핸들이 유지할 목표 위치와 회전
-    FVector TargetLocation = FVector::ZeroVector;
-    FRotator TargetRotation = FRotator::ZeroRotator;
+    //FVector TargetLocation = FVector::ZeroVector;
+    //FRotator TargetRotation = FRotator::ZeroRotator;
 
     // 이번 조작에서 사용하는 이동 평면
     FVector ActivePlaneNormal = FVector(0.0f, 1.0f, 0.0f);
@@ -79,4 +84,7 @@ private:
 
     bool bHasWalkSpeedOverride = false;
     bool bOriginalOrientToMovement = false;
+
+    // 낮은 턱을 넘을 수 있는지 검사하고, 가능하면 위치 보정
+    bool TryStepUp(UStaticMeshComponent* Mesh, double DirectionSign, double ForwardDistance);
 };

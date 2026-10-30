@@ -93,6 +93,7 @@ void ABossMonster::UpdateEquipmentForPhase(EBossPhase Phase)
 void ABossMonster::BeginPlay()
 {
     Super::BeginPlay();
+    InitialTransform = GetActorTransform();
     UpdateEquipmentForPhase(GetBossPhase());
     InitializeBoss();
 
@@ -378,6 +379,11 @@ bool ABossMonster::ResetBoss(bool bRestartAI)
     World->GetTimerManager().ClearAllTimersForObject(this);
     EndHitFlash();
 
+    // 진행 중인 공격 GA와 레이저 퍼즐 기믹도 정리한다. 상태 변경은 ResetGuard가 막는다.
+    AbilitySystemComponent->CancelAllAbilities();
+    StopLaserPuzzle();
+    SetRangedImmunity(false);
+
     PatternComponent->ResetPattern();
     ShieldComponent->DeactivateShield();
     CorePuzzleComponent->EndCorePuzzle();
@@ -478,6 +484,24 @@ bool ABossMonster::ResetBoss(bool bRestartAI)
     UE_LOG(LogTemp, Log, TEXT("ResetBoss completed: %s, RestartAI=%d"),
         *GetName(), bRestartAI);
     return true;
+}
+
+bool ABossMonster::ResetBossForCheckpoint()
+{
+    if (!HasAuthority() || InitialTransform.ContainsNaN())
+    {
+        return false;
+    }
+
+    if (!TeleportTo(InitialTransform.GetLocation(), InitialTransform.Rotator(), false, true))
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("ResetBossForCheckpoint: failed to teleport %s to its initial transform."),
+            *GetName());
+        return false;
+    }
+
+    return ResetBoss(true);
 }
 
 FBossMissileConfig ABossMonster::GetMissileConfig(EBossPhase Phase)

@@ -29,6 +29,20 @@ public:
 	UPROPERTY(EditAnywhere, Category="Side Scrolling Camera", meta=(ClampMin=0, ClampMax=10000, Units="cm"))
 	float CameraZOffset = 100.0f;
 
+	/** Position from the top of the screen, mirrored when gravity reverses. */
+	UPROPERTY(EditAnywhere, Category="Side Scrolling Camera|Framing", meta=(ClampMin="0.5", ClampMax="0.8"))
+	float PlayerScreenHeight = 0.65f;
+
+	/** Keep this fraction of the view beyond the supporting floor when no lower floor is found. */
+	UPROPERTY(EditAnywhere, Category="Side Scrolling Camera|Framing", meta=(ClampMin="0.1", ClampMax="0.4"))
+	float GroundBackgroundFraction = 0.23f;
+
+	UPROPERTY(EditAnywhere, Category="Side Scrolling Camera|Framing", meta=(ClampMin="0.0", ClampMax="0.25"))
+	float VerticalDeadZoneFraction = 0.10f;
+
+	UPROPERTY(EditAnywhere, Category="Side Scrolling Camera|Framing", meta=(ClampMin="0.1"))
+	float VerticalFollowSpeed = 3.0f;
+
 	/** Minimum camera scrolling bounds in world space */
 	UPROPERTY(EditAnywhere, Category="Side Scrolling Camera", meta=(ClampMin=-100000, ClampMax=100000, Units="cm"))
 	float CameraXMinBounds = -400.0f;
@@ -47,4 +61,9 @@ protected:
 
 	/** First-time update camera setup flag */
 	bool bSetup = true;
+	TWeakObjectPtr<APawn> FollowedPawn;
+	FVector PreviousTargetLocation = FVector::ZeroVector;
+	float SmoothedFramingOffset = 0.0f;
+	float TerrainProbeTimer = 0.0f;
+	bool bHasLowerTerrain = true;
 };

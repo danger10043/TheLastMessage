@@ -137,6 +137,10 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UMeleeAttackEventData> MeleeAttack;
 	float RecordedMeleeDamage = 0.0f;
+    bool bMeleeWindowOpen = false;
+    bool bHasPreviousMeleeTransform = false;
+    FTransform PreviousMeleeTransform;
+
 
 	bool bWaitingForRelease = false;
 	bool bAttackExecuted = false;

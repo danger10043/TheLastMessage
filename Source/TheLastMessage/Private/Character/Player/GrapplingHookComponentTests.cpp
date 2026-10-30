@@ -655,4 +655,42 @@ bool FGrapplingAuthoredFactoryMeshTest::RunTest(const FString& Parameters)
 	}
 	return !HasAnyErrors();
 }
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGrapplingGravityOrientationTest, "TheLastMessage.Grappling.GravityOrientation",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FGrapplingGravityOrientationTest::RunTest(const FString& Parameters)
+{
+	for (const float GravitySign : { -1.0f, 1.0f })
+	{
+		for (const float FacingSign : { -1.0f, 1.0f })
+		{
+			GrapplingProbeTest::FWorld Fixture;
+			APlayerBase* Player = Fixture.SpawnPlayer();
+			UCharacterMovementComponent* Movement = Player->GetCharacterMovement();
+			UGrapplingHookComponent* Grapple = Player->FindComponentByClass<UGrapplingHookComponent>();
+			Movement->SetGravityDirection(FVector(0, 0, GravitySign));
+			Grapple->bDrawDebug = false;
+			Fixture.MakeSurface(FacingSign * 800)->ComponentTags.Add(TEXT("Grappleable"));
+			Player->UpdateAimFromWorldRay(FVector(FacingSign * 800, 500, 0), FVector(0, -1, 0));
+			Player->RequestGrapplingHook();
+			TestTrue(TEXT("Hook starts in either gravity and facing direction"), Grapple->IsPulling());
+			const FVector ExpectedUp(0, 0, -GravitySign);
+			TestTrue(TEXT("Throw preserves gravity-aligned animation basis"), Player->GetActorUpVector().Equals(ExpectedUp, 0.001f));
+			TestTrue(TEXT("Hook faces the target"), Player->GetActorForwardVector().Equals(FVector(FacingSign, 0, 0), 0.001f));
+			Fixture.TickFrames(3);
+			TestTrue(TEXT("Pull keeps animations gravity-aligned"), Player->GetActorUpVector().Equals(ExpectedUp, 0.001f));
+			Player->ReleaseGrapplingHook();
+			TestTrue(TEXT("Release keeps gravity alignment for subsequent animations"), Player->GetActorUpVector().Equals(ExpectedUp, 0.001f));
+			Player->GrantGrappleCancelJump();
+			const FVector BeforeJump = Movement->Velocity;
+			Player->DoJumpStart();
+			Fixture.TickFrames(1);
+			TestTrue(TEXT("Cancel jump launches against the current gravity"),
+				FVector::DotProduct(Movement->Velocity - BeforeJump, ExpectedUp) > 0.0f);
+			TestTrue(TEXT("Jump animation basis stays inverted when gravity is reversed"),
+				Player->GetActorUpVector().Equals(ExpectedUp, 0.001f));
+		}
+	}
+	return !HasAnyErrors();
+}
 #endif

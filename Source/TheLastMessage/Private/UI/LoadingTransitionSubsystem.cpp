@@ -55,8 +55,14 @@ void ULoadingTransitionSubsystem::OnMapLoaded(UWorld* World)
 bool ULoadingTransitionSubsystem::BeginDeath(APlayerBase* Player,float Delay)
 {
  auto* Saves=GetGameInstance()->GetSubsystem<UProgressSaveSubsystem>();
- if(bDeath || bLoading) return true;
- if(!Player || !Player->GetController() || GetWorld()->GetNetMode()!=NM_Standalone || !Saves->GetSlotInfo(Saves->GetActiveSlot()).bHasCheckpoint) return false;
+ if (!IsValid(Player) || !Player->IsDead()) return false;
+ if(bDeath) return DyingPlayer.Get()==Player;
+ if(bLoading)
+ {
+  PendingDeathPlayer=Player; PendingDeathDelay=Delay;
+  return true;
+ }
+ if(!Saves || !Player || !Player->GetController() || GetWorld()->GetNetMode()!=NM_Standalone || !Saves->GetSlotInfo(Saves->GetActiveSlot()).bHasCheckpoint) return false;
  if(auto* PC=Cast<APlayerController>(Player->GetController())) if(auto* Camera=Cast<ASideScrollingCameraManager>(PC->PlayerCameraManager)) OriginalZoom=Camera->CurrentZoom;
  DyingPlayer=Player; DeathDelay=FMath::Max(Delay,0.5f); Started=FPlatformTime::Seconds(); bDeath=true;
  if(auto* Arm=Player->FindComponentByClass<USpringArmComponent>()) OriginalArm=Arm->TargetArmLength;
@@ -66,6 +72,12 @@ bool ULoadingTransitionSubsystem::BeginDeath(APlayerBase* Player,float Delay)
 bool ULoadingTransitionSubsystem::Tick(float Delta)
 {
  const double Now=FPlatformTime::Seconds();
+ if(!bLoading && PendingDeathPlayer.IsValid())
+ {
+  APlayerBase* Pending=PendingDeathPlayer.Get(); PendingDeathPlayer.Reset();
+  if(Pending->IsDead() && !BeginDeath(Pending,PendingDeathDelay))
+   if (!Pending->RespawnAtCheckpoint()) { PendingDeathPlayer=Pending; }
+ }
  if(bDeath)
  {
   auto* Player=DyingPlayer.Get(); if(!Player){bDeath=false;return true;}
@@ -78,7 +90,7 @@ bool ULoadingTransitionSubsystem::Tick(float Delta)
   if(Elapsed>=DeathDelay+0.4f)
   {
    auto* Saves=GetGameInstance()->GetSubsystem<UProgressSaveSubsystem>(); if(Saves->IsSaving()) return true;
-   bDeath=false;
+   bDeath=false; bLoading=true;
    if(Saves->RestoreCheckpointInPlace(Player))
    {
     if(PC) if(auto* Camera=Cast<ASideScrollingCameraManager>(PC->PlayerCameraManager)) Camera->CurrentZoom=OriginalZoom;
@@ -89,7 +101,7 @@ bool ULoadingTransitionSubsystem::Tick(float Delta)
     if(PC && PC->PlayerCameraManager) PC->PlayerCameraManager->SetManualCameraFade(0,FLinearColor::Black,false);
    }
    else if(Saves->ReloadActiveProgress()) UGameplayStatics::OpenLevel(GetGameInstance(),FName(*Saves->GetWorkingProgress()->MapPackage));
-   else {if(PC) if(auto* Camera=Cast<ASideScrollingCameraManager>(PC->PlayerCameraManager)) Camera->CurrentZoom=OriginalZoom; if(PC && PC->PlayerCameraManager) PC->PlayerCameraManager->SetManualCameraFade(0,FLinearColor::Black,false); if(auto* Arm=Player->FindComponentByClass<USpringArmComponent>()) Arm->TargetArmLength=OriginalArm; Player->RespawnAtCheckpoint(); UE_LOG(LogTemp,Error,TEXT("Checkpoint load failed; used in-memory respawn"));}
+   else {bLoading=false; if(PC) if(auto* Camera=Cast<ASideScrollingCameraManager>(PC->PlayerCameraManager)) Camera->CurrentZoom=OriginalZoom; if(PC && PC->PlayerCameraManager) PC->PlayerCameraManager->SetManualCameraFade(0,FLinearColor::Black,false); if(auto* Arm=Player->FindComponentByClass<USpringArmComponent>()) Arm->TargetArmLength=OriginalArm; Player->RespawnAtCheckpoint(); UE_LOG(LogTemp,Error,TEXT("Checkpoint load failed; used in-memory respawn"));}
    return true;
   }
  }

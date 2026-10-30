@@ -20,6 +20,7 @@
 #include "GameFramework/GameStateBase.h"
 #include "UObject/UObjectIterator.h"
 #include "Gimmick/SideScrollingSoftPlatform.h"
+#include "Math/RotationMatrix.h"
 
 namespace
 {
@@ -386,8 +387,14 @@ void UGrapplingHookComponent::BeginPull()
 	PullElapsedTime = 0.0f;
 	StalledTime = 0.0f;
 	LastDistanceToTarget = FVector::Distance(Player->GetActorLocation(), GetPullDestination());
-	const FVector FacingDirection = FVector::VectorPlaneProject(ProbeState.AnchorPoint - Player->GetActorLocation(), FVector::UpVector).GetSafeNormal();
-	if (!FacingDirection.IsNearlyZero()) Player->SetActorRotation(FacingDirection.Rotation());
+	// Preserve gravity alignment for every montage, including throw, pull and landing.
+	const FVector UpDirection = -Movement->GetGravityDirection();
+	const FVector FacingDirection = FVector::VectorPlaneProject(
+		ProbeState.AnchorPoint - Player->GetActorLocation(), UpDirection).GetSafeNormal();
+	if (!FacingDirection.IsNearlyZero())
+	{
+		Player->SetActorRotation(FRotationMatrix::MakeFromXZ(FacingDirection, UpDirection).ToQuat());
+	}
 	Player->StopJumping();
 	Player->StopMovementForAttack();
 	Movement->StopMovementImmediately();

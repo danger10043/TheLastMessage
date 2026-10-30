@@ -345,9 +345,7 @@ void UProgressSaveSubsystem::RestoreQueuedGimmicks()
 bool UProgressSaveSubsystem::RestoreCheckpointInPlace(APlayerBase* Player)
 {
  if (!Player || !Player->IsDead() || !Player->HasAuthority() || IsSaving()) return false;
- // Boss combat has no complete in-place reset contract yet. Keep the safe travel path.
- for (TActorIterator<ABossMonster> It(Player->GetWorld()); It; ++It)
-  if (It->GetBossState() != EBossState::Idle) return false;
+ // Bosses are reset in RestoreLoadedCheckpointInPlace; a failed reset falls back to the travel path.
  const UProgressSaveGame* Disk = ReadSlot(ActiveSlot);
  if (!Disk || Disk->MapPackage != UWorld::RemovePIEPrefix(Player->GetWorld()->GetOutermost()->GetName())) return false;
  // Missing records cannot safely undo an actor created after the checkpoint.
@@ -367,6 +365,9 @@ bool UProgressSaveSubsystem::RestoreLoadedCheckpointInPlace(APlayerBase* Player)
  for (TActorIterator<AProjectileBase> It(Player->GetWorld()); It; ++It) It->DestroyProjectile();
  for (TActorIterator<AGimmickBase> It(Player->GetWorld()); It; ++It) QueueGimmickRestore(*It);
  RestoreQueuedGimmicks();
+ // Reset after gimmicks so boss-owned puzzle gimmicks end hidden. The player is still dead, so the AI cannot retarget yet.
+ for (TActorIterator<ABossMonster> It(Player->GetWorld()); It; ++It)
+  if (It->GetBossState() != EBossState::Idle && !It->ResetBossForCheckpoint()) return false;
  if (!Player->RespawnAtCheckpoint() || !RestorePlayerIfPending(Player)) return false;
  for (TActorIterator<ACorePickup> It(Player->GetWorld()); It; ++It)
   It->RestoreCheckpointConsumption(WorkingProgress->CorePickupStates.FindRef(It->GetPickupId()));

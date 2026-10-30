@@ -1,4 +1,5 @@
 #include "UI/PauseMenuWidget.h"
+#include "UI/FactoryMenuStyle.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/Border.h"
 #include "Components/Button.h"
@@ -17,37 +18,12 @@
 
 void UPauseMenuWidget::BuildDefaultLayout(UWidgetTree* Tree)
 {
-	UCanvasPanel* Root = Tree->ConstructWidget<UCanvasPanel>(UCanvasPanel::StaticClass(), TEXT("Root"));
-	Tree->RootWidget = Root;
-	UBorder* Shade = Tree->ConstructWidget<UBorder>(UBorder::StaticClass(), TEXT("Background"));
-	Shade->SetBrushColor(FLinearColor(0, 0, 0, 0.85f));
-	UCanvasPanelSlot* ShadePosition = Root->AddChildToCanvas(Shade);
-	ShadePosition->SetAnchors(FAnchors(0, 0, 1, 1)); ShadePosition->SetOffsets(FMargin(0));
-	USizeBox* Size = Tree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("MenuSize"));
-	Size->SetWidthOverride(540); Size->SetHeightOverride(660);
-	UCanvasPanelSlot* Position = Root->AddChildToCanvas(Size);
-	Position->SetAnchors(FAnchors(0.5f)); Position->SetAlignment(FVector2D(0.5f)); Position->SetAutoSize(true);
-	UWidgetSwitcher* Switcher = Tree->ConstructWidget<UWidgetSwitcher>(UWidgetSwitcher::StaticClass(), TEXT("PausePages"));
-	Size->AddChild(Switcher);
-	auto Text = [&](UVerticalBox* Box, FName Name, const FText& Label, int32 FontSize)
-	{
-		UTextBlock* Item = Tree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), Name);
-		Item->SetText(Label); Item->SetAutoWrapText(true); Item->SetJustification(ETextJustify::Center);
-		FSlateFontInfo Font = Item->GetFont(); Font.Size = FontSize; Item->SetFont(Font);
-		Box->AddChildToVerticalBox(Item)->SetPadding(FMargin(0, 10));
-		return Item;
-	};
-	auto Button = [&](UVerticalBox* Box, FName Name, const FText& Label)
-	{
-		USizeBox* ButtonSize = Tree->ConstructWidget<USizeBox>(); ButtonSize->SetHeightOverride(64);
-		Box->AddChildToVerticalBox(ButtonSize)->SetPadding(FMargin(0, 6));
-		UButton* Item = Tree->ConstructWidget<UButton>(UButton::StaticClass(), Name); ButtonSize->AddChild(Item);
-		UTextBlock* Caption = Tree->ConstructWidget<UTextBlock>(); Caption->SetText(Label);
-		FSlateFontInfo Font = Caption->GetFont(); Font.Size = 22; Caption->SetFont(Font);
-		Caption->SetColorAndOpacity(FSlateColor(FLinearColor::Black)); Item->AddChild(Caption);
-	};
+ UWidgetSwitcher* Switcher = FactoryMenuStyle::BuildShell(Tree, true);
+ auto Text = [&](UVerticalBox* Box, FName Name, const FText& Label, int32 FontSize) { return FactoryMenuStyle::AddText(Tree, Box, Name, Label, FontSize); };
+ auto Button = [&](UVerticalBox* Box, FName Name, const FText& Label) { FactoryMenuStyle::AddButton(Tree, Box, Name, FName(*(Name.ToString() + TEXT("Text"))), Label, true); };
 	UVerticalBox* Main = Tree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("PausePage")); Switcher->AddChild(Main);
-	Text(Main, TEXT("Heading"), NSLOCTEXT("Pause", "Title", "일시정지"), 32);
+	Text(Main, TEXT("PausedLabel"), FText::FromString(TEXT("P A U S E D")), 16);
+	Text(Main, TEXT("Heading"), NSLOCTEXT("Pause", "Title", "일시정지"), 54);
 	Button(Main, TEXT("ResumeButton"), NSLOCTEXT("Pause", "Resume", "재개"));
 	Button(Main, TEXT("ReloadButton"), NSLOCTEXT("Pause", "Reload", "마지막 체크포인트 불러오기"));
 	Button(Main, TEXT("SettingsButton"), NSLOCTEXT("Pause", "Settings", "설정"));
@@ -155,4 +131,14 @@ FReply UPauseMenuWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, const
 		return FReply::Handled();
 	}
 	return Super::NativeOnPreviewKeyDown(Geometry, Event);
+}
+
+void UPauseMenuWidget::NativeTick(const FGeometry& Geometry, float DeltaTime) { Super::NativeTick(Geometry, DeltaTime); FactoryMenuStyle::UpdateFocus(WidgetTree); }
+
+FReply UPauseMenuWidget::NativeOnFocusReceived(const FGeometry& Geometry, const FFocusEvent& Event)
+{
+	if (!bWorking && Pages && Pages->GetActiveWidgetIndex() == 0)
+		if (UWidget* ResumeButton = WidgetTree->FindWidget(TEXT("ResumeButton")))
+			return FReply::Handled().SetUserFocus(ResumeButton->TakeWidget(), EFocusCause::SetDirectly);
+	return Super::NativeOnFocusReceived(Geometry, Event);
 }

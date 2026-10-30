@@ -394,6 +394,8 @@ bool BuildMenuScaffold(bool bPreview)
 	UWidgetSwitcher* Pages = Cast<UWidgetSwitcher>(Panel->WidgetTree->FindWidget(TEXT("Pages")));
 	UButton* Slot1 = Cast<UButton>(Panel->WidgetTree->FindWidget(TEXT("Slot1Button")));
 	if (!Pages || !Slot1 || Pages->GetActiveWidgetIndex() != 0) return false;
+	FTextureCompilingManager::Get().FinishAllCompilation();
+	FlushRenderingCommands();
 	auto Render = [&](const TCHAR* Name)
 	{
 		SlateWidget->SlatePrepass(1.0f);
@@ -434,6 +436,25 @@ bool BuildMenuScaffold(bool bPreview)
 	bOK = Pages->GetActiveWidgetIndex() == 1 && !Slot1->GetIsEnabled() && bOK;
 	Panel->SetBusy(false);
 	Panel->RemoveFromParent();
+	UPauseMenuWidget* PausePanel = CreateWidget<UPauseMenuWidget>(World,
+		LoadClass<UPauseMenuWidget>(nullptr, TEXT("/Game/Main/UI/Menu/WBP_PauseMenu.WBP_PauseMenu_C")));
+	if (!PausePanel) return false;
+	SlateWidget = PausePanel->TakeWidget();
+	FTextureCompilingManager::Get().FinishAllCompilation();
+	FlushRenderingCommands();
+	PausePanel->SetCheckpointAvailable(false);
+	UButton* Reload = CastChecked<UButton>(PausePanel->WidgetTree->FindWidget(TEXT("ReloadButton")));
+	bOK = !Reload->GetIsEnabled() && Render(TEXT("Pause.png")) && bOK;
+	PausePanel->SetCheckpointAvailable(true);
+	Reload->OnClicked.Broadcast();
+	UWidgetSwitcher* PausePages = CastChecked<UWidgetSwitcher>(PausePanel->WidgetTree->FindWidget(TEXT("PausePages")));
+	bOK = PausePages->GetActiveWidgetIndex() == 1 && Render(TEXT("PauseConfirm.png")) && bOK;
+	CastChecked<UButton>(PausePanel->WidgetTree->FindWidget(TEXT("CancelButton")))->OnClicked.Broadcast();
+	bOK = PausePages->GetActiveWidgetIndex() == 0 && bOK;
+	CastChecked<UButton>(PausePanel->WidgetTree->FindWidget(TEXT("SettingsButton")))->OnClicked.Broadcast();
+	bOK = PausePages->GetActiveWidgetIndex() == 2 && Render(TEXT("PauseSettings.png")) && bOK;
+	CastChecked<UButton>(PausePanel->WidgetTree->FindWidget(TEXT("SettingsBackButton")))->OnClicked.Broadcast();
+	PausePanel->RemoveFromParent();
 	World->DestroyWorld(false); GEngine->DestroyWorldContext(World);
 	UE_LOG(LogTemp, Display, TEXT("START_MENU_SCAFFOLD: editable widget, menu map, navigation/selection/empty-slot checks: %s"), bOK ? TEXT("PASS") : TEXT("FAIL"));
 	return bOK;
@@ -527,6 +548,23 @@ UIntegratePlayerUICommandlet::UIntegratePlayerUICommandlet()
 
 int32 UIntegratePlayerUICommandlet::Main(const FString& Params)
 {
+#if WITH_EDITOR
+	if (FParse::Param(*Params, TEXT("FactoryMenus")))
+	{
+		// Rebuild only the two menu Widget Blueprints; gameplay HUDs and maps are untouched.
+		UWidgetBlueprint* Main = PlayerUIBuild::Blueprint(TEXT("/Game/Main/UI/Menu/WBP_StartMenu"), UStartMenuWidget::StaticClass());
+		UStartMenuWidget::BuildDefaultLayout(Main->WidgetTree);
+		Main->WidgetVariableNameToGuidMap.Reset();
+		Main->WidgetTree->ForEachWidget([Main](UWidget* Control) { Control->bIsVariable = true; Main->WidgetVariableNameToGuidMap.Add(Control->GetFName(), FGuid::NewGuid()); });
+		if (!PlayerUIBuild::CompileSave(Main)) return 1;
+		UWidgetBlueprint* Pause = PlayerUIBuild::Blueprint(TEXT("/Game/Main/UI/Menu/WBP_PauseMenu"), UPauseMenuWidget::StaticClass());
+		UPauseMenuWidget::BuildDefaultLayout(Pause->WidgetTree);
+		Pause->WidgetVariableNameToGuidMap.Reset();
+		Pause->WidgetTree->ForEachWidget([Pause](UWidget* Control) { Control->bIsVariable = true; Pause->WidgetVariableNameToGuidMap.Add(Control->GetFName(), FGuid::NewGuid()); });
+		if (!PlayerUIBuild::CompileSave(Pause)) return 1;
+		return FParse::Param(*Params, TEXT("Preview")) ? (PlayerUIBuild::BuildMenuScaffold(true) ? 0 : 1) : 0;
+	}
+#endif
 #if WITH_EDITOR
 	if (FParse::Param(*Params, TEXT("PauseMenu"))) return PlayerUIBuild::BuildPauseMenu() ? 0 : 1;
 	if (FParse::Param(*Params, TEXT("CheckpointPopup"))) return PlayerUIBuild::BuildSaveNotification() ? 0 : 1;

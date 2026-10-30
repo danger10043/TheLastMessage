@@ -54,7 +54,7 @@ bool UGA_WeaponAttackBase::CanActivateAbility(const FGameplayAbilitySpecHandle H
 	const APlayerBase* Player = ActorInfo ? Cast<APlayerBase>(ActorInfo->AvatarActor.Get()) : nullptr;
 	const UWeaponBase* Weapon = Player ? Player->GetWeaponInSlot(WeaponSlot) : nullptr;
 	const UWeaponDataAsset* Data = IsValid(Weapon) ? Weapon->WeaponData.Get() : nullptr;
-	if (!Player || Player->IsDead() || !IsValid(Data) || !FMath::IsFinite(Data->AttackPower) || Data->AttackPower <= 0.0f) return false;
+	if (!Player || Player->IsDead() || Player->IsHandlingGimmick() || !IsValid(Data) || !FMath::IsFinite(Data->AttackPower) || Data->AttackPower <= 0.0f) return false;
 	if (!Data->AttackMontage && Weapon->NextAttackAllowedTime > GetWorld()->GetTimeSeconds()) return false;
 	if (Data->AttackMontage && !Player->GetMesh()->GetAnimInstance()) return false;
 	if (Data->WeaponType == EWeaponType::LightRanged || Data->WeaponType == EWeaponType::HeavyRanged)

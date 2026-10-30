@@ -76,6 +76,11 @@ public:
 	bool IsCarryTransitionActive() const { return bPlayingCarryTransition; }
 	float GetCarryTransitionDuration() const { return CarryTransitionDuration; }
 	void CancelCarryTransition();
+	/** 집기/내려놓기 동작, 운반, 밀고 당기기 중이면 true. 공격·무기 전환을 막고 무기 메시를 숨긴다. */
+	UFUNCTION(BlueprintPure, Category="Player|Gimmick Animation")
+	bool IsHandlingGimmick() const;
+	UFUNCTION(BlueprintPure, Category="Player|Combat")
+	bool IsAttacking() const;
 	APlayerBase();
 	virtual void Tick(float DeltaSeconds) override;
 	virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
@@ -340,6 +345,34 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Weapon")
 	FName FallbackWeaponSocketName = TEXT("SK_Weapon");
 
+	// 기믹 조작 시작 시 무기가 사라지는 시간. 0이면 즉시 숨긴다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Weapon|Gimmick Transition", meta = (ClampMin = "0", Units = "s"))
+	float WeaponHideDuration = 0.15f;
+
+	// 기믹 조작 종료 시 무기가 다시 나타나는 시간. 0이면 즉시 표시한다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Weapon|Gimmick Transition", meta = (ClampMin = "0", Units = "s"))
+	float WeaponShowDuration = 0.2f;
+
+	// 사라지는 동안 무기 크기를 줄이고, 나타날 때 살짝 튀어나오듯 키운다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Weapon|Gimmick Transition")
+	bool bScaleWeaponOnGimmickTransition = true;
+
+	// 무기 머티리얼의 스칼라 파라미터 이름. 0 = 완전히 보임, 1 = 완전히 사라짐. None이면 사용하지 않는다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Weapon|Gimmick Transition")
+	FName WeaponDissolveParameterName = NAME_None;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Weapon|Gimmick Transition")
+	TObjectPtr<UNiagaraSystem> WeaponHideEffect;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Weapon|Gimmick Transition")
+	TObjectPtr<UNiagaraSystem> WeaponShowEffect;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Weapon|Gimmick Transition")
+	TObjectPtr<USoundBase> WeaponHideSound;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Weapon|Gimmick Transition")
+	TObjectPtr<USoundBase> WeaponShowSound;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Player|Interaction")
 	TObjectPtr<UInteractionComponent> InteractionComponent;
 
@@ -468,6 +501,13 @@ private:
 	TObjectPtr<UAnimMontage> PullMontage = nullptr;
 	UPROPERTY(Transient)
 	TObjectPtr<UAnimMontage> GimmickMontage;
+	// 기믹 조작으로 무기 메시를 숨긴 상태. 변할 때만 외형을 갱신한다.
+	bool bWeaponHiddenForGimmick = false;
+	// 0 = 무기 완전히 보임, 1 = 완전히 사라짐.
+	float WeaponGimmickBlend = 0.0f;
+	void UpdateWeaponGimmickTransition(float DeltaSeconds);
+	void ApplyWeaponGimmickBlend();
+	void PlayWeaponGimmickTransitionFeedback(bool bHiding);
 	bool bRangedFacingOverride = false;
 	bool bRestoreOrientToMovement = true;
 	TWeakObjectPtr<UWeaponBase> PendingAttackWeapon;

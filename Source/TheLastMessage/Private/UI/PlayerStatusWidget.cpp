@@ -5,6 +5,7 @@
 #include "GAS/WeaponSlotAttributeSet.h"
 #include "UI/PlayerResourceBarWidget.h"
 #include "UI/PlayerWeaponSlotWidget.h"
+#include "DataAsset/WeaponDataAsset.h"
 
 void UPlayerStatusWidget::SetObservedPlayer(APlayerBase* Player)
 {
@@ -83,7 +84,15 @@ void UPlayerStatusWidget::RefreshEnergyDisplay()
 	const UWeaponSlotAttributeSet* Energy = Player ? Player->GetWeaponSlotAttributes() : nullptr;
 	DisplayEnergy = Energy ? Energy->GetSharedEnergy() : 0;
 	DisplayMaxEnergy = Energy ? Energy->GetSharedMaxEnergy() : 0;
-	if (EnergyResource) EnergyResource->SetResourceValues(DisplayEnergy, DisplayMaxEnergy);
+	if (EnergyResource)
+	{
+		EnergyResource->SetResourceValues(DisplayEnergy, DisplayMaxEnergy);
+		const UWeaponDataAsset* ActiveWeapon = Player ? Player->GetWeaponDataInSlot(Player->GetVisibleWeaponSlot()) : nullptr;
+		const bool bShowEnergy = Player && !Player->IsDead() && !Player->IsHandlingGimmick() && ActiveWeapon
+			&& (ActiveWeapon->WeaponType == EWeaponType::LightRanged || ActiveWeapon->WeaponType == EWeaponType::HeavyRanged);
+		// Keep the HUD anchored while switching weapons; only the energy artwork disappears.
+		EnergyResource->SetVisibility(bShowEnergy ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
+	}
 }
 
 void UPlayerStatusWidget::RefreshStatus()

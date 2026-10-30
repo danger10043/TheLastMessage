@@ -201,6 +201,13 @@ void AExplosiveBomb::ApplyExplosionToActor(AActor * Target)
         return;
     }
 
+    // 폭발 범위 안의 다른 설치 폭탄에 공격 전달
+    if (AExplosiveBomb* OtherBomb = Cast<AExplosiveBomb>(Target))
+    {
+        OtherBomb->ReceiveAttackDamage(BombConfig.ExplosionDamage,this);
+        return;
+    }
+
     // 지정된 파괴 장애물 처리
     if (ABombDestructibleObstacle* Obstacle = Cast<ABombDestructibleObstacle>(Target))
     {

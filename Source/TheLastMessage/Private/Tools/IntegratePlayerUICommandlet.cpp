@@ -56,6 +56,12 @@
 #include "Interfaces/ISlateRHIRendererModule.h"
 #include "Modules/ModuleManager.h"
 #include "Misc/App.h"
+#include "Materials/Material.h"
+#include "Materials/MaterialExpressionVertexColor.h"
+#include "Materials/MaterialExpressionVectorParameter.h"
+#include "Materials/MaterialExpressionParticleColor.h"
+#include "Materials/MaterialExpressionMultiply.h"
+#include "Materials/MaterialExpressionConstant.h"
 
 namespace PlayerUIBuild
 {
@@ -615,6 +621,59 @@ UIntegratePlayerUICommandlet::UIntegratePlayerUICommandlet()
 int32 UIntegratePlayerUICommandlet::Main(const FString& Params)
 {
 #if WITH_EDITOR
+	if (FParse::Param(*Params, TEXT("MeleeReachHammerMaterial")))
+	{
+		UMaterial* Source = LoadObject<UMaterial>(nullptr, TEXT("/Game/Test_Jihong/Blueprints/Weapon/Effects/M_HammerTrail_ScifiStable.M_HammerTrail_ScifiStable"));
+		if (!Source) return 1;
+		UMaterial* Material = DuplicateObject<UMaterial>(Source, CreatePackage(TEXT("/Game/Main/Effects/M_MeleeReach_Hammer")), TEXT("M_MeleeReach_Hammer"));
+		Material->SetFlags(RF_Public | RF_Standalone);
+		Material->TwoSided = true;
+		auto* Tint = NewObject<UMaterialExpressionVectorParameter>(Material);
+		Tint->ParameterName = TEXT("ReachColor");
+		Tint->DefaultValue = FLinearColor::White;
+		for (UMaterialExpression* Expression : Material->GetExpressions())
+			for (int32 Index = 0; FExpressionInput* Input = Expression->GetInput(Index); ++Index)
+				if (Cast<UMaterialExpressionParticleColor>(Input->Expression)) Input->Expression = Tint;
+		Material->GetExpressionCollection().AddExpression(Tint);
+		auto* Vertex = NewObject<UMaterialExpressionVertexColor>(Material);
+		Material->GetExpressionCollection().AddExpression(Vertex);
+		auto* Fade = NewObject<UMaterialExpressionMultiply>(Material);
+		Fade->A = Material->GetEditorOnlyData()->Opacity;
+		Fade->B.Connect(4, Vertex);
+		Material->GetExpressionCollection().AddExpression(Fade);
+		Material->GetEditorOnlyData()->Opacity.Connect(0, Fade);
+		Material->PostEditChange();
+		FAssetRegistryModule::AssetCreated(Material);
+		return PlayerUIBuild::Save(Material) ? 0 : 1;
+	}
+	if (FParse::Param(*Params, TEXT("MeleeReachMaterial")))
+	{
+		const TCHAR* Path = TEXT("/Game/Main/Effects/M_MeleeReach");
+		UMaterial* Material = LoadObject<UMaterial>(nullptr, Path);
+		if (!Material)
+		{
+			Material = NewObject<UMaterial>(CreatePackage(Path), TEXT("M_MeleeReach"), RF_Public | RF_Standalone);
+			FAssetRegistryModule::AssetCreated(Material);
+		}
+		Material->BlendMode = BLEND_Additive;
+		Material->SetShadingModel(MSM_Unlit);
+		Material->TwoSided = true;
+		Material->GetExpressionCollection().Empty();
+		auto* Color = NewObject<UMaterialExpressionVertexColor>(Material);
+		Material->GetExpressionCollection().AddExpression(Color);
+		auto* Tint = NewObject<UMaterialExpressionVectorParameter>(Material);
+		Tint->ParameterName = TEXT("ReachColor");
+		Tint->DefaultValue = FLinearColor::White;
+		Material->GetExpressionCollection().AddExpression(Tint);
+		auto* Multiply = NewObject<UMaterialExpressionMultiply>(Material);
+		Multiply->A.Connect(0, Color);
+		Multiply->B.Connect(0, Tint);
+		Material->GetExpressionCollection().AddExpression(Multiply);
+		Material->GetEditorOnlyData()->EmissiveColor.Connect(0, Multiply);
+		Material->GetEditorOnlyData()->Opacity.Connect(4, Color);
+		Material->PostEditChange();
+		return PlayerUIBuild::Save(Material) ? 0 : 1;
+	}
 	if (FParse::Param(*Params, TEXT("FixResourceFrameUV")))
 	{
 		UWidgetBlueprint* BP = LoadObject<UWidgetBlueprint>(nullptr, PlayerUIBuild::BarPath);

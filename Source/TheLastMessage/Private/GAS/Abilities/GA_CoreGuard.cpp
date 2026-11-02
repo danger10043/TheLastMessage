@@ -81,13 +81,21 @@ void UGA_CoreGuard::HandleGuardBlocked(FGameplayEventData Payload)
 	}
 	const bool bPartial = Payload.TargetTags.HasTagExact(CoreGameplayTags::Result_GuardPartial);
 
-	if (BlockSound)
+	if (bPartial && GuardBreakSound)
+	{
+		UGameplayStatics::PlaySoundAtLocation(this, GuardBreakSound, Avatar->GetActorLocation());
+	}
+	else if (BlockSound)
 	{
 		UGameplayStatics::PlaySoundAtLocation(this, BlockSound, Avatar->GetActorLocation(), 1.0f,
 			bPartial ? PartialBlockPitch : 1.0f);
 	}
 	if (!BarrierMaterialInstance)
 	{
+		if (bPartial)
+		{
+			BreakGuard();
+		}
 		return;
 	}
 
@@ -102,6 +110,12 @@ void UGA_CoreGuard::HandleGuardBlocked(FGameplayEventData Payload)
 		}
 	}
 
+	if (bPartial)
+	{
+		BreakGuard();
+		return;
+	}
+
 	// 깨지는 중에 또 막으면 목표 상태에서 이어서 깎아, 연속 공격일수록 더 성겨지게 한다.
 	BreakTarget = FMath::Max(MinIntegrity, FMath::Min(Integrity, BreakTarget) - BlockBreakAmount);
 	BreakRemaining = BreakTime;
@@ -114,6 +128,52 @@ void UGA_CoreGuard::HandleGuardBlocked(FGameplayEventData Payload)
 		World->GetTimerManager().SetTimer(BarrierTimerHandle, this, &ThisClass::UpdateBarrier, 1.0f / 60.0f, true);
 	}
 	UpdateBarrier();
+}
+
+void UGA_CoreGuard::BreakGuard()
+{
+	UWorld* World = GetWorld();
+	if (!World || bGuardBroken)
+	{
+		return;
+	}
+	bGuardBroken = true;
+	GuardBreakCooldownEndTime = World->GetTimeSeconds() + GuardBreakCooldown;
+
+	if (BarrierMaterialInstance)
+	{
+		BreakTarget = 0.0f;
+		BreakRemaining = GuardBreakTime;
+		Flash = 1.0f;
+		if (!World->GetTimerManager().IsTimerActive(BarrierTimerHandle))
+		{
+			LastUpdateTime = World->GetTimeSeconds();
+			World->GetTimerManager().SetTimer(BarrierTimerHandle, this, &ThisClass::UpdateBarrier, 1.0f / 60.0f, true);
+		}
+	}
+
+	// 피해 처리 도중에 받은 이벤트이므로 GE 제거와 태그 해제는 다음 틱으로 미룬다.
+	World->GetTimerManager().SetTimerForNextTick(FTimerDelegate::CreateWeakLambda(this, [this]()
+	{
+		if (IsActive())
+		{
+			K2_EndAbility();
+		}
+	}));
+}
+
+bool UGA_CoreGuard::CanActivateAbility(const FGameplayAbilitySpecHandle Handle,
+	const FGameplayAbilityActorInfo* ActorInfo,
+	const FGameplayTagContainer* SourceTags,
+	const FGameplayTagContainer* TargetTags,
+	FGameplayTagContainer* OptionalRelevantTags) const
+{
+	if (!Super::CanActivateAbility(Handle, ActorInfo, SourceTags, TargetTags, OptionalRelevantTags))
+	{
+		return false;
+	}
+	const UWorld* World = ActorInfo && ActorInfo->AvatarActor.IsValid() ? ActorInfo->AvatarActor->GetWorld() : nullptr;
+	return !World || World->GetTimeSeconds() >= GuardBreakCooldownEndTime;
 }
 
 void UGA_CoreGuard::UpdateBarrier()
@@ -132,6 +192,12 @@ void UGA_CoreGuard::UpdateBarrier()
 		const float Step = FMath::Min(DeltaTime, BreakRemaining);
 		Integrity += (BreakTarget - Integrity) * FMath::Min(1.0f, Step / BreakRemaining);
 		BreakRemaining -= Step;
+	}
+	else if (bGuardBroken)
+	{
+		// 가드 브레이크는 다시 차오르지 않고 다 깨진 뒤 방벽을 제거한다.
+		HideBarrier();
+		return;
 	}
 	else
 	{
@@ -154,6 +220,9 @@ void UGA_CoreGuard::UpdateBarrier()
 
 void UGA_CoreGuard::ShowBarrier(AActor* Avatar)
 {
+	// 이전 가드 브레이크 연출이 남아 있으면 정리하고 새 방벽으로 시작한다.
+	HideBarrier();
+
 	USceneComponent* Root = IsValid(Avatar) ? Avatar->GetRootComponent() : nullptr;
 	if (!Root || !BarrierMesh || !BarrierMaterial)
 	{
@@ -194,6 +263,7 @@ void UGA_CoreGuard::HideBarrier()
 	}
 	BarrierComponent = nullptr;
 	BarrierMaterialInstance = nullptr;
+	bGuardBroken = false;
 }
 
 void UGA_CoreGuard::InputReleased(const FGameplayAbilitySpecHandle Handle,
@@ -226,7 +296,11 @@ void UGA_CoreGuard::EndAbility(const FGameplayAbilitySpecHandle Handle,
 	}
 	RootEffectHandle.Invalidate();
 
-	HideBarrier();
+	// 가드 브레이크면 깨지는 연출이 끝난 뒤 UpdateBarrier가 방벽을 제거한다.
+	if (!bGuardBroken)
+	{
+		HideBarrier();
+	}
 
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 }

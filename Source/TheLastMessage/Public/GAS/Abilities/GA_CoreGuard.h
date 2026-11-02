@@ -59,9 +59,27 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Guard|Block")
 	TObjectPtr<USoundBase> BlockSound;
 
-	/** 에너지가 부족해 일부만 막았을 때의 소리 높낮이 배율. */
+	/** 에너지가 부족해 일부만 막았을 때의 소리 높낮이 배율. 가드 브레이크 소리가 없을 때 막는 소리에 적용한다. */
 	UPROPERTY(EditDefaultsOnly, Category = "Guard|Block", meta = (ClampMin = "0.1"))
 	float PartialBlockPitch = 0.8f;
+
+	/** 일부만 막아 가드가 풀릴 때 재생하는 소리. 비우면 막는 소리를 낮은 높이로 재생한다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Guard|Break")
+	TObjectPtr<USoundBase> GuardBreakSound;
+
+	/** 가드 브레이크 때 방벽이 완전히 깨져 사라지는 데 걸리는 시간(초). */
+	UPROPERTY(EditDefaultsOnly, Category = "Guard|Break", meta = (ClampMin = "0.01"))
+	float GuardBreakTime = 0.15f;
+
+	/** 가드 브레이크 후 다시 가드할 수 없는 시간(초). */
+	UPROPERTY(EditDefaultsOnly, Category = "Guard|Break", meta = (ClampMin = "0"))
+	float GuardBreakCooldown = 0.5f;
+
+	virtual bool CanActivateAbility(const FGameplayAbilitySpecHandle Handle,
+		const FGameplayAbilityActorInfo* ActorInfo,
+		const FGameplayTagContainer* SourceTags = nullptr,
+		const FGameplayTagContainer* TargetTags = nullptr,
+		FGameplayTagContainer* OptionalRelevantTags = nullptr) const override;
 
 	virtual void ActivateAbility(const FGameplayAbilitySpecHandle Handle,
 		const FGameplayAbilityActorInfo* ActorInfo,
@@ -85,8 +103,16 @@ private:
 	UFUNCTION()
 	void HandleGuardBlocked(FGameplayEventData Payload);
 
-	/** 깎인 방벽을 다시 채우고 머티리얼에 반영한다. 가득 차면 멈춘다. */
+	/** 에너지가 부족해 일부만 막으면 방벽을 깨뜨리고 가드를 강제로 해제한다. */
+	void BreakGuard();
+
+	/** 깎인 방벽을 다시 채우고 머티리얼에 반영한다. 가득 차면 멈추고, 가드 브레이크 중이면 다 깨진 뒤 제거한다. */
 	void UpdateBarrier();
+
+	/** 가드 브레이크로 방벽이 깨지는 중인지. 가드가 끝나도 깨지는 연출이 끝날 때까지 방벽을 남긴다. */
+	bool bGuardBroken = false;
+	/** 이 시각까지는 가드를 다시 시작하지 않는다. */
+	double GuardBreakCooldownEndTime = 0.0;
 
 	/** 방벽 상태(0~1). 1이면 온전한 방벽이다. */
 	float Integrity = 1.0f;

@@ -85,6 +85,13 @@ public:
 	TArray<TSubclassOf<UGameplayAbility>> GrantedAbilities;
 
 	/**
+	 * GrantedAbilities를 키 입력으로 실행할 때의 입력 태그. 플레이어의 AbilityInputBindings에서 같은 태그의 키로 실행된다.
+	 * 이벤트로 발동하는 능력만 있는 코어는 비워 둔다.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Core|Grants", meta = (Categories = "Input"))
+	FGameplayTag AbilityInputTag;
+
+	/**
 	 * GrantedEffects·GrantedAbilities가 코어 부여 규칙을 지키는지 확인한다.
 	 * GE는 Infinite Duration·Stacking None이어야 하며, 클래스는 유효하고 추상이 아니어야 한다.
 	 * 한 목록에 같은 클래스를 중복 등록할 수 없다. 서로 다른 코어가 같은 클래스를 쓰는 것은 허용한다.

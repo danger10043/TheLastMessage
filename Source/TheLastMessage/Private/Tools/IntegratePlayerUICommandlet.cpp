@@ -56,6 +56,12 @@
 #include "Interfaces/ISlateRHIRendererModule.h"
 #include "Modules/ModuleManager.h"
 #include "Misc/App.h"
+#include "Materials/Material.h"
+#include "Materials/MaterialExpressionVertexColor.h"
+#include "Materials/MaterialExpressionVectorParameter.h"
+#include "Materials/MaterialExpressionParticleColor.h"
+#include "Materials/MaterialExpressionMultiply.h"
+#include "Materials/MaterialExpressionConstant.h"
 
 namespace PlayerUIBuild
 {
@@ -356,7 +362,7 @@ bool BuildHUDResourceBars()
 	UOverlay* Overlay = Widget<UOverlay>(Tree, TEXT("ResourceOverlay")); Size->AddChild(Overlay);
 	UImage* Frame = Widget<UImage>(Tree, TEXT("ResourceFrame")); Frame->SetBrushFromTexture(FrameTexture);
 	FSlateBrush FrameBrush = Frame->GetBrush();
-	FrameBrush.SetUVRegion(FBox2f(FVector2f(0.015f, 0.303f), FVector2f(0.985f, 0.690f)));
+	FrameBrush.SetUVRegion(FBox2f(FVector2f(0, 0), FVector2f(1, 1)));
 	Frame->SetBrush(FrameBrush);
 	UOverlaySlot* FrameSlot = Overlay->AddChildToOverlay(Frame);
 	FrameSlot->SetHorizontalAlignment(HAlign_Fill); FrameSlot->SetVerticalAlignment(VAlign_Fill);
@@ -373,17 +379,17 @@ bool BuildHUDResourceBars()
 	Bar->SetBorderPadding(FVector2D::ZeroVector); Bar->SetPercent(1);
 	UOverlaySlot* FillSlot = Overlay->AddChildToOverlay(Bar);
 	FillSlot->SetHorizontalAlignment(HAlign_Fill); FillSlot->SetVerticalAlignment(VAlign_Fill);
-	FillSlot->SetPadding(FMargin(14, 10));
+	FillSlot->SetPadding(FMargin(26, 13));
 	UTextBlock* Label = Text(Tree, TEXT("LabelText"), 17); Label->SetText(FText::FromString(TEXT("HP")));
 	Label->SetColorAndOpacity(FLinearColor(0.95f, 0.94f, 0.87f));
 	Label->SetShadowOffset(FVector2D(1, 1)); Label->SetShadowColorAndOpacity(FLinearColor::Black);
 	UOverlaySlot* LabelSlot = Overlay->AddChildToOverlay(Label);
-	LabelSlot->SetHorizontalAlignment(HAlign_Left); LabelSlot->SetVerticalAlignment(VAlign_Center); LabelSlot->SetPadding(FMargin(22, 0));
+	LabelSlot->SetHorizontalAlignment(HAlign_Left); LabelSlot->SetVerticalAlignment(VAlign_Center); LabelSlot->SetPadding(FMargin(32, 0));
 	UTextBlock* Value = Text(Tree, TEXT("ValueText"), 18); Value->SetText(FText::FromString(TEXT("100 / 100")));
 	Value->SetColorAndOpacity(FLinearColor(0.95f, 0.94f, 0.87f));
 	Value->SetShadowOffset(FVector2D(1, 1)); Value->SetShadowColorAndOpacity(FLinearColor::Black);
 	UOverlaySlot* ValueSlot = Overlay->AddChildToOverlay(Value);
-	ValueSlot->SetHorizontalAlignment(HAlign_Right); ValueSlot->SetVerticalAlignment(VAlign_Center); ValueSlot->SetPadding(FMargin(22, 0));
+	ValueSlot->SetHorizontalAlignment(HAlign_Right); ValueSlot->SetVerticalAlignment(VAlign_Center); ValueSlot->SetPadding(FMargin(32, 0));
 	BP->WidgetVariableNameToGuidMap.Reset();
 	Tree->ForEachWidget([BP](UWidget* Control) { Control->bIsVariable = true; BP->WidgetVariableNameToGuidMap.Add(Control->GetFName(), FGuid::NewGuid()); });
 	if (!CompileSave(BP)) return false;
@@ -395,7 +401,7 @@ bool BuildHUDResourceBars()
 	if (!HP || !Energy) return false;
 	HP->FillColor = FLinearColor(0.85f, 0.055f, 0.025f); HP->ResourceLabel = FText::FromString(TEXT("HP"));
 	Energy->FillColor = FLinearColor(0.025f, 0.65f, 0.95f); Energy->ResourceLabel = FText::FromString(TEXT("ENERGY"));
-	Energy->SetVisibility(ESlateVisibility::Hidden);
+	Energy->SetVisibility(ESlateVisibility::HitTestInvisible);
 	return CompileSave(Panel);
 }
 
@@ -615,6 +621,80 @@ UIntegratePlayerUICommandlet::UIntegratePlayerUICommandlet()
 int32 UIntegratePlayerUICommandlet::Main(const FString& Params)
 {
 #if WITH_EDITOR
+	if (FParse::Param(*Params, TEXT("MeleeReachHammerMaterial")))
+	{
+		UMaterial* Source = LoadObject<UMaterial>(nullptr, TEXT("/Game/Test_Jihong/Blueprints/Weapon/Effects/M_HammerTrail_ScifiStable.M_HammerTrail_ScifiStable"));
+		if (!Source) return 1;
+		UMaterial* Material = DuplicateObject<UMaterial>(Source, CreatePackage(TEXT("/Game/Main/Effects/M_MeleeReach_Hammer")), TEXT("M_MeleeReach_Hammer"));
+		Material->SetFlags(RF_Public | RF_Standalone);
+		Material->TwoSided = true;
+		auto* Tint = NewObject<UMaterialExpressionVectorParameter>(Material);
+		Tint->ParameterName = TEXT("ReachColor");
+		Tint->DefaultValue = FLinearColor::White;
+		for (UMaterialExpression* Expression : Material->GetExpressions())
+			for (int32 Index = 0; FExpressionInput* Input = Expression->GetInput(Index); ++Index)
+				if (Cast<UMaterialExpressionParticleColor>(Input->Expression)) Input->Expression = Tint;
+		Material->GetExpressionCollection().AddExpression(Tint);
+		auto* Vertex = NewObject<UMaterialExpressionVertexColor>(Material);
+		Material->GetExpressionCollection().AddExpression(Vertex);
+		auto* Fade = NewObject<UMaterialExpressionMultiply>(Material);
+		Fade->A = Material->GetEditorOnlyData()->Opacity;
+		Fade->B.Connect(4, Vertex);
+		Material->GetExpressionCollection().AddExpression(Fade);
+		Material->GetEditorOnlyData()->Opacity.Connect(0, Fade);
+		Material->PostEditChange();
+		FAssetRegistryModule::AssetCreated(Material);
+		return PlayerUIBuild::Save(Material) ? 0 : 1;
+	}
+	if (FParse::Param(*Params, TEXT("MeleeReachMaterial")))
+	{
+		const TCHAR* Path = TEXT("/Game/Main/Effects/M_MeleeReach");
+		UMaterial* Material = LoadObject<UMaterial>(nullptr, Path);
+		if (!Material)
+		{
+			Material = NewObject<UMaterial>(CreatePackage(Path), TEXT("M_MeleeReach"), RF_Public | RF_Standalone);
+			FAssetRegistryModule::AssetCreated(Material);
+		}
+		Material->BlendMode = BLEND_Additive;
+		Material->SetShadingModel(MSM_Unlit);
+		Material->TwoSided = true;
+		Material->GetExpressionCollection().Empty();
+		auto* Color = NewObject<UMaterialExpressionVertexColor>(Material);
+		Material->GetExpressionCollection().AddExpression(Color);
+		auto* Tint = NewObject<UMaterialExpressionVectorParameter>(Material);
+		Tint->ParameterName = TEXT("ReachColor");
+		Tint->DefaultValue = FLinearColor::White;
+		Material->GetExpressionCollection().AddExpression(Tint);
+		auto* Multiply = NewObject<UMaterialExpressionMultiply>(Material);
+		Multiply->A.Connect(0, Color);
+		Multiply->B.Connect(0, Tint);
+		Material->GetExpressionCollection().AddExpression(Multiply);
+		Material->GetEditorOnlyData()->EmissiveColor.Connect(0, Multiply);
+		Material->GetEditorOnlyData()->Opacity.Connect(4, Color);
+		Material->PostEditChange();
+		return PlayerUIBuild::Save(Material) ? 0 : 1;
+	}
+	if (FParse::Param(*Params, TEXT("FixResourceFrameUV")))
+	{
+		UWidgetBlueprint* BP = LoadObject<UWidgetBlueprint>(nullptr, PlayerUIBuild::BarPath);
+		UImage* Frame = BP && BP->WidgetTree ? Cast<UImage>(BP->WidgetTree->FindWidget(TEXT("ResourceFrame"))) : nullptr;
+		if (!Frame) return 1;
+		FSlateBrush Brush = Frame->GetBrush();
+		Brush.SetUVRegion(FBox2f(FVector2f(0, 0), FVector2f(1, 1)));
+		Frame->SetBrush(Brush);
+		UWidget* Fill = BP->WidgetTree->FindWidget(TEXT("ValueBar"));
+		UWidget* Label = BP->WidgetTree->FindWidget(TEXT("LabelText"));
+		UWidget* Value = BP->WidgetTree->FindWidget(TEXT("ValueText"));
+		if (!Fill || !Label || !Value) return 1;
+		UOverlaySlot* FillSlot = Cast<UOverlaySlot>(Fill->Slot);
+		UOverlaySlot* LabelSlot = Cast<UOverlaySlot>(Label->Slot);
+		UOverlaySlot* ValueSlot = Cast<UOverlaySlot>(Value->Slot);
+		if (!FillSlot || !LabelSlot || !ValueSlot) return 1;
+		FillSlot->SetPadding(FMargin(26, 13));
+		LabelSlot->SetPadding(FMargin(32, 0));
+		ValueSlot->SetPadding(FMargin(32, 0));
+		return PlayerUIBuild::CompileSave(BP) ? 0 : 1;
+	}
 	if (FParse::Param(*Params, TEXT("HUDResources")))
 	{
 		if (!PlayerUIBuild::BuildHUDResourceBars()) return 1;

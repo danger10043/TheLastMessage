@@ -1,6 +1,42 @@
 #include "Weapon/MeleeSweep.h"
 #include "Engine/World.h"
 #include "DrawDebugHelpers.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
+#include "DataAsset/WeaponDataAsset.h"
+
+bool MeleeSweep::ResolveReach(const UWeaponDataAsset* Data, const UStaticMeshComponent* Mesh,
+ FVector& Start, FVector& End, FVector& Tip, FVector& ExtendedTip)
+{
+ if (!Data || !Mesh || !Mesh->GetStaticMesh()) return false;
+ Start = Data->MeleeTraceStart; End = Data->MeleeTraceEnd;
+ bool bStartIsTip = false;
+ if (!Data->bCustomMeleeTrace)
+ {
+  const FBox Bounds = Mesh->GetStaticMesh()->GetBoundingBox();
+  const FVector Extent = Bounds.GetExtent();
+  const int32 Axis = Extent.X >= Extent.Y && Extent.X >= Extent.Z ? 0 : (Extent.Y >= Extent.Z ? 1 : 2);
+  Start = End = Bounds.GetCenter();
+  Start[Axis] = FMath::Lerp(Bounds.Min[Axis], Bounds.Max[Axis], 0.15f);
+  End[Axis] = FMath::Lerp(Bounds.Min[Axis], Bounds.Max[Axis], 0.95f);
+  if (Data->WeaponType == EWeaponType::HeavyMelee)
+  {
+   bStartIsTip = Data->MeleeTrailOffset.GetLocation()[Axis] < Bounds.GetCenter()[Axis];
+   if (bStartIsTip) { Start[Axis] = Bounds.Min[Axis]; End[Axis] = FMath::Lerp(Bounds.Min[Axis], Bounds.Max[Axis], 0.35f); }
+   else Start[Axis] = FMath::Lerp(Bounds.Min[Axis], Bounds.Max[Axis], 0.65f);
+  }
+ }
+ else bStartIsTip = Start.SizeSquared() > End.SizeSquared();
+ Tip = bStartIsTip ? Start : End;
+ const FVector Base = bStartIsTip ? End : Start;
+ const FVector Direction = (Tip - Base).GetSafeNormal();
+ const float WorldScale = Mesh->GetComponentTransform().TransformVector(Direction).Length();
+ const float RatioDistance = FVector::Distance(Tip, Base) * FMath::Clamp(Data->MeleeReachExtension, 0.f, 1.f);
+ const float FixedDistance = WorldScale > SMALL_NUMBER ? FMath::Clamp(Data->MeleeReachExtraDistance, 0.f, 300.f) / WorldScale : 0.f;
+ ExtendedTip = Tip + Direction * FMath::Max(RatioDistance, FixedDistance);
+ if (bStartIsTip) Start = ExtendedTip; else End = ExtendedTip;
+ return true;
+}
 void MeleeSweep::Trace(UWorld* World,AActor* Owner,const FVector& LocalStart,const FVector& LocalEnd,float Radius,const FTransform& Previous,const FTransform& Current,TArray<FHitResult>& Hits,bool bDebug)
 {
  if(!World || Radius<=0) return;

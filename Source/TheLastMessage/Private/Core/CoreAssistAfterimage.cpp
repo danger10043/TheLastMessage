@@ -68,6 +68,7 @@ bool ACoreAssistAfterimage::Initialize(APlayerBase* Player, const UMeleeAttackEv
 	Visual.WeaponMesh = Attack->WeaponData->WeaponMesh;
 	Visual.Montage = Attack->AttackMontage;
 	Visual.Section = Attack->AttackSection;
+	Visual.ContinuationSection = Attack->ContinuationSection;
 	Visual.CharacterTransform = Player->GetMesh()->GetComponentTransform().GetRelativeTransform(GetActorTransform());
 	Visual.WeaponSocket = Attack->WeaponData->AttachSocketName;
 	Visual.WeaponTransform = Attack->WeaponData->AttachOffset;
@@ -157,7 +158,9 @@ void ACoreAssistAfterimage::StartPresentation()
 	if (!Appearance.Section.IsNone())
 	{
 		Animation->RestartMontage(Appearance.Montage, Appearance.Section);
-		Animation->Montage_SetNextSection(Appearance.Section, NAME_None, Appearance.Montage);
+		Animation->Montage_SetNextSection(Appearance.Section, Appearance.ContinuationSection, Appearance.Montage);
+		if (!Appearance.ContinuationSection.IsNone())
+			Animation->Montage_SetNextSection(Appearance.ContinuationSection, NAME_None, Appearance.Montage);
 	}
 	if (!Animation->Montage_IsActive(Appearance.Montage))
 	{
@@ -167,7 +170,9 @@ void ACoreAssistAfterimage::StartPresentation()
 	FOnMontageEnded EndDelegate = FOnMontageEnded::CreateUObject(this, &ACoreAssistAfterimage::HandleMontageEnded);
 	Animation->Montage_SetEndDelegate(EndDelegate, Appearance.Montage);
 	const int32 SectionIndex = Appearance.Montage->GetSectionIndex(Appearance.Section);
-	const float Length = SectionIndex != INDEX_NONE ? Appearance.Montage->GetSectionLength(SectionIndex) : Appearance.Montage->GetPlayLength();
+	float Length = SectionIndex != INDEX_NONE ? Appearance.Montage->GetSectionLength(SectionIndex) : Appearance.Montage->GetPlayLength();
+	const int32 ContinuationIndex = Appearance.Montage->GetSectionIndex(Appearance.ContinuationSection);
+	if (ContinuationIndex != INDEX_NONE) Length += Appearance.Montage->GetSectionLength(ContinuationIndex);
 	const float Duration = Length / (PlaybackRate * Appearance.Montage->RateScale);
 	if (!FMath::IsFinite(Duration) || Duration <= 0.0f)
 	{

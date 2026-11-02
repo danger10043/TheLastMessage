@@ -10,7 +10,7 @@ class APlayerBase;
 class APushPullGimmick;
 class UCharacterMovementComponent;
 class UStaticMeshComponent;
-//class UPhysicsHandleComponent;
+class UPrimitiveComponent;
 
 UCLASS(Blueprintable, ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
 class THELASTMESSAGE_API UPushPullComponent : public UActorComponent
@@ -23,10 +23,6 @@ public:
     // 물체 조작 시작
     UFUNCTION(BlueprintCallable, Category = "Gimmick|PushPull")
     bool StartPushPull(APushPullGimmick* Target);
-
-    // 이동 입력을 받아 물리 핸들의 목표 위치 갱신
-    //FUNCTION(BlueprintCallable, Category = "Gimmick|PushPull")
-    //void UpdatePushPull(const FVector& MoveDirection, float DeltaTime);
 
     // 이동 입력에 따라 물체의 수평 속도를 제어
     UFUNCTION(BlueprintCallable, Category = "Gimmick|PushPull")
@@ -42,6 +38,14 @@ public:
     UFUNCTION(BlueprintPure, Category = "Gimmick|PushPull")
     APushPullGimmick* GetCurrentTarget() const;
 
+    // 플레이어가 입력한 좌우 이동값 전달
+    void SetMoveInput(float Value);
+
+    // Animation consumes the same measured speed as the shared movement solver.
+    float GetFollowSpeedX() const { return bApproaching ? 0.0f : static_cast<float>(SharedMoveSpeedX); }
+    bool IsApproaching() const { return bApproaching; }
+    bool GetHandContacts(FVector& Left, FVector& Right) const;
+
 protected:
 	virtual void BeginPlay() override;
 
@@ -52,10 +56,6 @@ protected:
     // 현재 조작 중인 물체
     UPROPERTY(Transient)
     TWeakObjectPtr<APushPullGimmick> CurrentTarget;
-
-    // 물체를 잡고 움직일 물리 핸들
-    //UPROPERTY(Transient)
-    //TObjectPtr<UPhysicsHandleComponent> PhysicsHandle;
 
     // 플레이어에게 이동 평면 설정이 없을 때 사용할 법선
     // Y축을 법선으로 사용하면 X·Z 평면에서 이동
@@ -68,10 +68,6 @@ private:
 
     UPROPERTY(Transient)
     TWeakObjectPtr<APlayerBase> OwnerPlayer;
-
-    // 물리 핸들이 유지할 목표 위치와 회전
-    //FVector TargetLocation = FVector::ZeroVector;
-    //FRotator TargetRotation = FRotator::ZeroRotator;
 
     // 이번 조작에서 사용하는 이동 평면
     FVector ActivePlaneNormal = FVector(0.0f, 1.0f, 0.0f);
@@ -87,4 +83,46 @@ private:
 
     // 낮은 턱을 넘을 수 있는지 검사하고, 가능하면 위치 보정
     bool TryStepUp(UStaticMeshComponent* Mesh, double DirectionSign, double ForwardDistance);
+
+    // 공통 이동에 사용할 좌우 입력
+    float PendingMoveInput = 0.0f;
+
+    // 조작 시작 시 플레이어와 물체 사이의 X축 위치 차이
+    double InitialRelativeOffsetX = 0.0;
+
+    // 플레이어와 물체에 함께 사용할 수평 이동 속도
+    double SharedMoveSpeedX = 0.0;
+
+
+    // 실제 충돌 형상으로 이동 경로를 검사하고
+    // 이동을 막는 가장 가까운 충돌 결과 반환
+    bool SweepBlockingMovement(UPrimitiveComponent* Component, const FVector& Start, const FVector& End, FHitResult& OutHit) const;
+
+    // 지정한 수평 이동이 가능한지 검사하고 도착 위치 계산
+    // 도착 위치에 받쳐 주는 바닥이 있는지도 함께 반환
+    bool FindSharedMoveLocation(UPrimitiveComponent* Component, double DeltaX, double MaxStepHeight, double MaxSlopeAngle, FVector& OutLocation, bool& bOutOnGround) const;
+
+    // 공통 이동을 위해 자동 이동 상태 전환
+    bool BeginSharedMovement(UStaticMeshComponent* Mesh);
+
+    // 조작 종료 시 플레이어의 일반 이동 복구
+    void EndSharedMovement();
+
+    // 공통 이동 전환이 적용되어 있는지 확인
+    bool bSharedMovementActive = false;
+
+    // 전환 전 캐릭터 무브먼트의 갱신 상태
+    bool bSavedMovementTickEnabled = false;
+
+    // 설정한 잡기 거리에 맞춰 플레이어 위치 정렬
+    bool AlignPlayerToGrabDistance();
+    void UpdateApproach(float DeltaTime);
+    bool bApproaching = false;
+    FVector ApproachStart = FVector::ZeroVector;
+    FVector ApproachTarget = FVector::ZeroVector;
+    float ApproachElapsed = 0.0f;
+    float ApproachDuration = 0.3f;
+    double GripSide = 1.0;
+    double GripOffsetZ = 0.0;
+    double GripHalfWidth = 14.0;
 };

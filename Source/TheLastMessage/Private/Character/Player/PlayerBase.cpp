@@ -1,4 +1,5 @@
 #include "Character/Player/PlayerBase.h"
+#include "Weapon/MeleeReachRibbon.h"
 #include "UI/LoadingTransitionSubsystem.h"
 #include "Engine/GameInstance.h"
 #include "Character/Player/GrapplingHookComponent.h"
@@ -16,6 +17,7 @@
 #include "Gimmick/Component/GravityStateComponent.h"
 #include "Gimmick/Component/PushPullComponent.h"
 #include "Core/CoreComponent.h"
+#include "Core/CoreGameplayTags.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -290,13 +292,16 @@ void APlayerBase::UpdateGimmickAnimation()
 	if (!Anim) return;
 	UAnimMontage* Desired = nullptr;
 	float PlayRate = 1.0f;
-	if (bAvailable && PushPullComponent && PushPullComponent->IsPushPulling())
+	if (bAvailable && PushPullComponent && PushPullComponent->IsPushPulling() && !PushPullComponent->IsApproaching())
 	{
 		const FVector ToObject = PushPullComponent->GetCurrentTarget()->GetActorLocation() - GetActorLocation();
-		const FVector Velocity = FVector::VectorPlaneProject(GetVelocity(), GetActorUpVector());
-		const bool bPulling = FVector::DotProduct(Velocity, ToObject) < -1.0f;
-		Desired = (bPulling ? PullMontage : PushMontage).Get();
-		PlayRate = Velocity.SizeSquared() > 25.0f ? 1.0f : 0.0f;
+		const FVector Velocity(PushPullComponent->GetFollowSpeedX(), 0, 0);
+		const bool bMoving = FMath::Abs(Velocity.X) > 5.0f;
+		const bool bPulling = bMoving && FVector::DotProduct(Velocity, ToObject) < 0.0f;
+		// Keep the last grip pose at rest; tiny physics corrections must not switch montages.
+		Desired = !bMoving && (GimmickMontage == PullMontage || GimmickMontage == PushMontage)
+			? GimmickMontage.Get() : (bPulling ? PullMontage : PushMontage).Get();
+		PlayRate = bMoving ? 1.0f : 0.0f;
 	}
 	else if (bAvailable && CarryComponent && CarryComponent->HasCarriedObject())
 	{
@@ -376,6 +381,7 @@ void APlayerBase::RequestGrapplingHook()
 		return;
 	}
 	if (IsDead() || IsHitReacting()) return;
+	if (AbilitySystemComponent->HasMatchingGameplayTag(CoreGameplayTags::State_Guarding)) return;
 	UpdateMouseAim();
 	if (bHasAimTarget) GrapplingHookComponent->RequestGrapple(GetAimTargetLocation());
 }
@@ -605,6 +611,7 @@ void APlayerBase::CancelWeaponInputsForUI()
 	ClearPendingAttack();
 	AbilityInputCanceled(WeaponGameplayTags::Input_Primary);
 	AbilityInputCanceled(WeaponGameplayTags::Input_Secondary);
+	AbilityInputCanceled(CoreGameplayTags::Input_Guard);
 	for (int32 Index=0;Index<4;++Index) SetWeaponChoiceHeld(Index,false);
 	StopJumping();ConsumeMovementInputVector();
 }
@@ -754,7 +761,17 @@ void APlayerBase::RefreshPrimaryWeaponVisual()
 
 void APlayerBase::UpdateWeaponGimmickTransition(float DeltaSeconds)
 {
-	const bool bWantHidden = IsHandlingGimmick();
+	// 가드 중에도 기믹 조작처럼 무기를 숨긴다. 태그는 서버 기준이라 클라이언트는 복제된 가드 몽타주로 판단하고,
+	// End 섹션(팔을 푸는 동작)에 들어가면 무기가 다시 나타난다.
+	const auto IsGuardingVisual = [this]()
+	{
+		if (AbilitySystemComponent && AbilitySystemComponent->HasMatchingGameplayTag(CoreGameplayTags::State_Guarding)) return true;
+		const UAnimInstance* Anim = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr;
+		const UAnimMontage* Montage = Anim ? Anim->GetCurrentActiveMontage() : nullptr;
+		return Montage && Montage->GetName().StartsWith(TEXT("AM_PlayerGuard"))
+			&& Anim->Montage_GetCurrentSection(Montage) != FName(TEXT("End"));
+	};
+	const bool bWantHidden = IsHandlingGimmick() || IsGuardingVisual();
 	if (bWantHidden != bWeaponHiddenForGimmick)
 	{
 		bWeaponHiddenForGimmick = bWantHidden;
@@ -882,6 +899,7 @@ bool APlayerBase::AssignWeaponChoice(int32 Index, EWeaponSlot Slot)
 		|| (Slot != EWeaponSlot::Primary && Slot != EWeaponSlot::Secondary)) return false;
 	// Keep a running swing/charge bound to its captured weapon until it finishes.
 	if (AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking)) return false;
+	if (AbilitySystemComponent->HasMatchingGameplayTag(CoreGameplayTags::State_Guarding)) return false;
 	if (GetWeaponDataInSlot(Slot) == Data) return true;
 
 	auto Remember = [this](UWeaponBase* Weapon)
@@ -1059,6 +1077,15 @@ static void AlignTrailToCamera(const UObject* WorldContext, UNiagaraComponent* T
 	Trail->SetWorldRotation(FQuat::FindBetweenNormals(FVector::UpVector, Facing.GetSafeNormal()));
 }
 
+void APlayerBase::StartMeleeReachRibbon(UStaticMeshComponent* Attachment)
+{
+	if (GetNetMode() == NM_DedicatedServer || !Attachment || !MeleeFeedbackData) return;
+	if (MeleeReachRibbon) MeleeReachRibbon->StopEmission();
+	MeleeReachRibbon = NewObject<UMeleeReachRibbon>(this);
+	MeleeReachRibbon->RegisterComponent();
+	MeleeReachRibbon->Initialize(Attachment, MeleeFeedbackData);
+}
+
 void APlayerBase::StartMeleeAttackFeedback()
 {
 	const UWeaponDataAsset* Data = MeleeFeedbackData;
@@ -1077,8 +1104,9 @@ void APlayerBase::StartMeleeAttackFeedback()
 	{
 		MeleeTrailEffect = SpawnAttached(Data->MeleeTrailEffect, Data->MeleeTrailSocketName, Data->MeleeTrailOffset);
 		AlignTrailToCamera(this, MeleeTrailEffect);
+		StartMeleeReachRibbon(Attachment);
 	}
-	if (MeleeTrailEffect && Data->MeleeTrailDuration > 0.0f)
+	if ((MeleeTrailEffect || MeleeReachRibbon) && !Data->bUseMeleeTrailNotifyWindow && Data->MeleeTrailDuration > 0.0f)
 		GetWorldTimerManager().SetTimer(MeleeTrailTimer, this, &APlayerBase::StopMeleeTrail, Data->MeleeTrailDuration, false);
 	if (Data->AttackSound)
 	{
@@ -1091,6 +1119,8 @@ void APlayerBase::StartMeleeAttackFeedback()
 
 void APlayerBase::StopMeleeTrail()
 {
+	if (IsValid(MeleeReachRibbon)) MeleeReachRibbon->StopEmission();
+	MeleeReachRibbon = nullptr;
 	GetWorldTimerManager().ClearTimer(MeleeTrailTimer);
 	if (IsValid(MeleeTrailEffect)) MeleeTrailEffect->DestroyComponent();
 	MeleeTrailEffect = nullptr;
@@ -1100,10 +1130,11 @@ void APlayerBase::BeginMeleeTrailWindow(const UAnimSequenceBase* Animation)
 {
 	const UWeaponDataAsset* Data = MeleeFeedbackData;
 	if (GetNetMode() == NM_DedicatedServer || IsDead() || !Data || !Data->bUseMeleeTrailNotifyWindow
-		|| Data->AttackMontage != Animation || !Data->MeleeTrailEffect) return;
+		|| Data->AttackMontage != Animation) return;
 	StopMeleeTrail();
 	UStaticMeshComponent* Attachment = MeleeFeedbackSlot == EWeaponSlot::Secondary ? SecondaryWeaponMesh.Get() : PrimaryWeaponMesh.Get();
 	if (!Attachment) return;
+	StartMeleeReachRibbon(Attachment);
 	const FName Socket = Attachment->DoesSocketExist(Data->MeleeTrailSocketName) ? Data->MeleeTrailSocketName : NAME_None;
 	const FTransform& Offset = Data->MeleeTrailOffset;
 	MeleeTrailEffect = UNiagaraFunctionLibrary::SpawnSystemAttached(Data->MeleeTrailEffect, Attachment, Socket,
@@ -1117,6 +1148,8 @@ void APlayerBase::EndMeleeTrailWindow(const UAnimSequenceBase* Animation)
 	{
 		// 즉시 파괴하면 리본이 뚝 끊겨 싸구려처럼 보인다. 스폰만 멈추고 남은 파티클이 수명만큼 사라지게 둔다
 		GetWorldTimerManager().ClearTimer(MeleeTrailTimer);
+		if (IsValid(MeleeReachRibbon)) MeleeReachRibbon->StopEmission();
+		MeleeReachRibbon = nullptr;
 		if (IsValid(MeleeTrailEffect)) MeleeTrailEffect->Deactivate();
 		MeleeTrailEffect = nullptr;
 	}
@@ -1636,18 +1669,31 @@ void APlayerBase::UpdateMoveSpeed()
 void APlayerBase::DoMove(float Forward)
 {
 	if (IsCarryTransitionActive()) return;
-	if (IsDead() || IsHitReacting() || IsGrappling() || AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking))
+	if (IsDead() || IsHitReacting() || IsGrappling() || AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking)
+		|| AbilitySystemComponent->HasMatchingGameplayTag(CoreGameplayTags::State_Guarding))
 	{
 		ActionValueY = 0.0f;
 		return;
 	}
+	//---------------------------------
+	if (IsValid(PushPullComponent)
+		&& PushPullComponent->IsPushPulling())
+	{
+		ActionValueY = Forward;
+
+		// 조작 중에는 일반 걷기 대신 공통 이동으로 입력 전달
+		PushPullComponent->SetMoveInput(Forward);
+		return;
+	}
+	//---------------------------------
 	Super::DoMove(Forward);
 }
 
 void APlayerBase::DoDrop(float Value)
 {
 	if (IsCarryTransitionActive()) return;
-	if (IsDead() || IsHitReacting() || IsGrappling() || AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking))
+	if (IsDead() || IsHitReacting() || IsGrappling() || AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking)
+		|| AbilitySystemComponent->HasMatchingGameplayTag(CoreGameplayTags::State_Guarding))
 	{
 		DropValue = 0.0f;
 		return;
@@ -1659,7 +1705,18 @@ void APlayerBase::DoJumpStart()
 {
 	if (IsCarryTransitionActive()) return;
 	if (IsDead() || IsHitReacting() || AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking)) return;
+	if (AbilitySystemComponent->HasMatchingGameplayTag(CoreGameplayTags::State_Guarding)) return;
 	if (IsGrappling()) GrapplingHookComponent->CancelGrapple();
+
+	// +추가----
+	// 점프하기 전에 일반 캐릭터 이동을 복구
+	if (IsValid(PushPullComponent)
+		&& PushPullComponent->IsPushPulling())
+	{
+		PushPullComponent->StopPushPull();
+	}
+	// +--------
+
 	if (bGrappleCancelJumpAvailable && !IsGrappling())
 	{
 		// Keep the release trajectory even beside a wall or while holding drop input.
@@ -1688,7 +1745,8 @@ void APlayerBase::StopMovementForAttack()
 void APlayerBase::DoInteract()
 {
 	if (IsCarryTransitionActive()) return;
-	if (IsDead() || IsHitReacting() || !IsValid(InteractionComponent))
+	if (IsDead() || IsHitReacting() || !IsValid(InteractionComponent)
+		|| AbilitySystemComponent->HasMatchingGameplayTag(CoreGameplayTags::State_Guarding))
 	{
 		return;
 	}

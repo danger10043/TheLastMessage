@@ -228,8 +228,13 @@ ECoreAcquireResult UCoreComponent::AcquireCore(UCoreDataAsset* CoreData)
 			// 효과 적용이 끝나면 능력을 등록하고, 반환된 핸들을 기록한다.
 			for (const TSubclassOf<UGameplayAbility>& AbilityClass : CoreData->GrantedAbilities)
 			{
-				const FGameplayAbilitySpecHandle AbilityHandle = ASC->GiveAbility(
-					FGameplayAbilitySpec(AbilityClass, 1, INDEX_NONE, CoreData));
+				// 입력 태그가 있으면 플레이어 입력이 같은 태그의 능력을 찾아 실행한다.
+				FGameplayAbilitySpec AbilitySpec(AbilityClass, 1, INDEX_NONE, CoreData);
+				if (CoreData->AbilityInputTag.IsValid())
+				{
+					AbilitySpec.GetDynamicSpecSourceTags().AddTag(CoreData->AbilityInputTag);
+				}
+				const FGameplayAbilitySpecHandle AbilityHandle = ASC->GiveAbility(AbilitySpec);
 				if (!AbilityHandle.IsValid())
 				{
 					RemoveCoreGrants(Record);

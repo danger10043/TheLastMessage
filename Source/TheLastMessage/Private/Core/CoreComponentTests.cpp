@@ -11,6 +11,7 @@
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "GAS/CombatAttributeSet.h"
+#include "GAS/WeaponGameplayTags.h"
 #include "GAS/WeaponSlotAttributeSet.h"
 #include "GAS/Abilities/GA_CoreGuard.h"
 #include "Misc/ScopeExit.h"
@@ -506,8 +507,25 @@ bool FCoreGuardTest::RunTest(const FString& Parameters)
 	Fixture.ASC->AbilitySpecInputPressed(*Spec);
 	TestTrue(TEXT("Guard activates on press"), Fixture.ASC->TryActivateAbility(GuardHandle));
 	TestTrue(TEXT("Guard state while held"), Fixture.ASC->HasMatchingGameplayTag(Guarding));
+	TestEqual(TEXT("Guard stops movement"), Fixture.Attributes->GetMoveSpeedMultiplier(), 0.f);
 	Fixture.ASC->AbilitySpecInputReleased(*Fixture.ASC->FindAbilitySpecFromHandle(GuardHandle));
 	TestFalse(TEXT("Guard state ends on release"), Fixture.ASC->HasMatchingGameplayTag(Guarding));
+	TestEqual(TEXT("Movement returns on release"), Fixture.Attributes->GetMoveSpeedMultiplier(), 1.f);
+
+	// 취소로 끝나도 이동 정지가 남지 않는다.
+	Fixture.ASC->AbilitySpecInputPressed(*Fixture.ASC->FindAbilitySpecFromHandle(GuardHandle));
+	TestTrue(TEXT("Guard activates again"), Fixture.ASC->TryActivateAbility(GuardHandle));
+	Fixture.ASC->CancelAbilityHandle(GuardHandle);
+	TestFalse(TEXT("Canceled guard removes state"), Fixture.ASC->HasMatchingGameplayTag(Guarding));
+	TestEqual(TEXT("Canceled guard restores movement"), Fixture.Attributes->GetMoveSpeedMultiplier(), 1.f);
+	Fixture.ASC->AbilitySpecInputReleased(*Fixture.ASC->FindAbilitySpecFromHandle(GuardHandle));
+
+	// 공격 중에는 가드를 시작하지 않는다.
+	Fixture.ASC->AddLooseGameplayTag(WeaponGameplayTags::State_Attacking);
+	Fixture.ASC->AbilitySpecInputPressed(*Fixture.ASC->FindAbilitySpecFromHandle(GuardHandle));
+	TestFalse(TEXT("Guard is blocked while attacking"), Fixture.ASC->TryActivateAbility(GuardHandle));
+	Fixture.ASC->AbilitySpecInputReleased(*Fixture.ASC->FindAbilitySpecFromHandle(GuardHandle));
+	Fixture.ASC->RemoveLooseGameplayTag(WeaponGameplayTags::State_Attacking);
 
 	ApplyDamage(30.f);
 	TestEqual(TEXT("Damage applies without guard"), Fixture.Attributes->GetHealth(), 70.f);

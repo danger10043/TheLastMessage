@@ -106,6 +106,15 @@ private:
 	/** 에너지가 부족해 일부만 막으면 방벽을 깨뜨리고 가드를 강제로 해제한다. */
 	void BreakGuard();
 
+	/** 퍼펙트 가드 판정 시간이 있으면 그동안 State.GuardPerfect를 붙인다. */
+	void StartPerfectWindow(UAbilitySystemComponent* ASC);
+	/** 퍼펙트 가드 판정을 끝낸다. 판정 시간이 지나거나 가드가 끝나면 호출한다. */
+	void EndPerfectWindow();
+
+	/** 이 가드에서 퍼펙트 가드 태그를 붙였는지. 붙인 만큼만 떼기 위해 기록한다. */
+	bool bPerfectWindowActive = false;
+	FTimerHandle PerfectWindowTimerHandle;
+
 	/** 깎인 방벽을 다시 채우고 머티리얼에 반영한다. 가득 차면 멈추고, 가드 브레이크 중이면 다 깨진 뒤 제거한다. */
 	void UpdateBarrier();
 

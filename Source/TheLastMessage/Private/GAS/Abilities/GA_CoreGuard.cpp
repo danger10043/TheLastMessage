@@ -2,6 +2,7 @@
 #include "AbilitySystemComponent.h"
 #include "Character/Player/PlayerBase.h"
 #include "Core/CoreGameplayTags.h"
+#include "GAS/CombatAttributeSet.h"
 #include "GAS/Effects/GE_CoreGuardRoot.h"
 #include "GAS/WeaponGameplayTags.h"
 #include "GAS/WeaponSlotAttributeSet.h"
@@ -66,6 +67,7 @@ void UGA_CoreGuard::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
 	}
 
 	ShowBarrier(ActorInfo->AvatarActor.Get());
+	StartPerfectWindow(ActorInfo->AbilitySystemComponent.Get());
 
 	UAbilityTask_WaitGameplayEvent* WaitBlocked = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(
 		this, CoreGameplayTags::Event_GuardBlocked, nullptr, false, true);
@@ -161,6 +163,38 @@ void UGA_CoreGuard::BreakGuard()
 			K2_EndAbility();
 		}
 	}));
+}
+
+void UGA_CoreGuard::StartPerfectWindow(UAbilitySystemComponent* ASC)
+{
+	const UCombatAttributeSet* Attributes = ASC ? ASC->GetSet<UCombatAttributeSet>() : nullptr;
+	UWorld* World = GetWorld();
+	const float Window = Attributes ? Attributes->GetPerfectGuardWindow() : 0.0f;
+	if (!World || !FMath::IsFinite(Window) || Window <= 0.0f)
+	{
+		return;
+	}
+
+	ASC->AddLooseGameplayTag(CoreGameplayTags::State_GuardPerfect);
+	bPerfectWindowActive = true;
+	World->GetTimerManager().SetTimer(PerfectWindowTimerHandle, this, &ThisClass::EndPerfectWindow, Window, false);
+}
+
+void UGA_CoreGuard::EndPerfectWindow()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(PerfectWindowTimerHandle);
+	}
+	if (!bPerfectWindowActive)
+	{
+		return;
+	}
+	bPerfectWindowActive = false;
+	if (UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo())
+	{
+		ASC->RemoveLooseGameplayTag(CoreGameplayTags::State_GuardPerfect);
+	}
 }
 
 bool UGA_CoreGuard::CanActivateAbility(const FGameplayAbilitySpecHandle Handle,
@@ -290,6 +324,8 @@ void UGA_CoreGuard::EndAbility(const FGameplayAbilitySpecHandle Handle,
 	const FGameplayAbilityActivationInfo ActivationInfo,
 	bool bReplicateEndAbility, bool bWasCancelled)
 {
+	EndPerfectWindow();
+
 	// 종료·취소 경로와 관계없이 이동·충전 정지를 해제한다.
 	UAbilitySystemComponent* ASC = ActorInfo ? ActorInfo->AbilitySystemComponent.Get() : nullptr;
 	if (ASC && RootEffectHandle.IsValid())

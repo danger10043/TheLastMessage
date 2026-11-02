@@ -87,11 +87,7 @@ void UPlayerStatusWidget::RefreshEnergyDisplay()
 	if (EnergyResource)
 	{
 		EnergyResource->SetResourceValues(DisplayEnergy, DisplayMaxEnergy);
-		const UWeaponDataAsset* ActiveWeapon = Player ? Player->GetWeaponDataInSlot(Player->GetVisibleWeaponSlot()) : nullptr;
-		const bool bShowEnergy = Player && !Player->IsDead() && !Player->IsHandlingGimmick() && ActiveWeapon
-			&& (ActiveWeapon->WeaponType == EWeaponType::LightRanged || ActiveWeapon->WeaponType == EWeaponType::HeavyRanged);
-		// Keep the HUD anchored while switching weapons; only the energy artwork disappears.
-		EnergyResource->SetVisibility(bShowEnergy ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
+		EnergyResource->SetVisibility(ESlateVisibility::HitTestInvisible);
 	}
 }
 

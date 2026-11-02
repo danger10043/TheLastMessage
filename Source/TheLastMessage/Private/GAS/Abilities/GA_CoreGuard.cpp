@@ -4,9 +4,24 @@
 #include "Core/CoreGameplayTags.h"
 #include "GAS/Effects/GE_CoreGuardRoot.h"
 #include "GAS/WeaponGameplayTags.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "UObject/ConstructorHelpers.h"
+
+namespace
+{
+	// 방벽 머티리얼은 평면의 가장자리 15%를 테두리 빛 번짐에 쓰므로 메시를 반지름보다 그만큼 크게 둔다.
+	constexpr float BarrierMeshMargin = 1.15f;
+	// 엔진 기본 평면의 한 변 길이(cm).
+	constexpr float BarrierMeshSize = 100.0f;
+}
 
 UGA_CoreGuard::UGA_CoreGuard()
 {
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> Plane(TEXT("/Engine/BasicShapes/Plane.Plane"));
+	BarrierMesh = Plane.Object;
+
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
 	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::ServerOnly;
 	NetSecurityPolicy = EGameplayAbilityNetSecurityPolicy::ServerOnly;
@@ -45,6 +60,40 @@ void UGA_CoreGuard::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
 	{
 		RootEffectHandle = ApplyGameplayEffectSpecToOwner(Handle, ActorInfo, ActivationInfo, RootSpec);
 	}
+
+	ShowBarrier(ActorInfo->AvatarActor.Get());
+}
+
+void UGA_CoreGuard::ShowBarrier(AActor* Avatar)
+{
+	USceneComponent* Root = IsValid(Avatar) ? Avatar->GetRootComponent() : nullptr;
+	if (!Root || !BarrierMesh || !BarrierMaterial)
+	{
+		return;
+	}
+
+	BarrierComponent = NewObject<UStaticMeshComponent>(Avatar, NAME_None, RF_Transient);
+	BarrierComponent->SetStaticMesh(BarrierMesh);
+	BarrierComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	BarrierComponent->SetCastShadow(false);
+	BarrierComponent->SetupAttachment(Root);
+	// 위치만 캐릭터를 따라가고, 회전은 고정해 사이드뷰 카메라(+Y 쪽에서 -Y 방향)를 항상 바라보게 한다.
+	BarrierComponent->SetUsingAbsoluteRotation(true);
+	BarrierComponent->SetRelativeLocation(BarrierOffset);
+	BarrierComponent->SetWorldRotation(FRotator(0.0f, 0.0f, 90.0f));
+	BarrierComponent->SetWorldScale3D(FVector(BarrierRadius * 2.0f * BarrierMeshMargin / BarrierMeshSize));
+	BarrierComponent->RegisterComponent();
+	BarrierMaterialInstance = BarrierComponent->CreateDynamicMaterialInstance(0, BarrierMaterial);
+}
+
+void UGA_CoreGuard::HideBarrier()
+{
+	if (BarrierComponent)
+	{
+		BarrierComponent->DestroyComponent();
+	}
+	BarrierComponent = nullptr;
+	BarrierMaterialInstance = nullptr;
 }
 
 void UGA_CoreGuard::InputReleased(const FGameplayAbilitySpecHandle Handle,
@@ -76,6 +125,8 @@ void UGA_CoreGuard::EndAbility(const FGameplayAbilitySpecHandle Handle,
 		}
 	}
 	RootEffectHandle.Invalidate();
+
+	HideBarrier();
 
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
 }

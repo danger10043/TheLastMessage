@@ -1,5 +1,6 @@
 #include "GAS/Abilities/GA_CoreGuard.h"
 #include "AbilitySystemComponent.h"
+#include "Character/Player/PlayerBase.h"
 #include "Core/CoreGameplayTags.h"
 #include "GAS/Effects/GE_CoreGuardRoot.h"
 #include "GAS/WeaponGameplayTags.h"
@@ -62,11 +63,17 @@ void UGA_CoreGuard::EndAbility(const FGameplayAbilitySpecHandle Handle,
 	const FGameplayAbilityActivationInfo ActivationInfo,
 	bool bReplicateEndAbility, bool bWasCancelled)
 {
-	// 종료·취소 경로와 관계없이 이동 정지를 해제한다.
+	// 종료·취소 경로와 관계없이 이동·충전 정지를 해제한다.
 	UAbilitySystemComponent* ASC = ActorInfo ? ActorInfo->AbilitySystemComponent.Get() : nullptr;
 	if (ASC && RootEffectHandle.IsValid())
 	{
 		ASC->RemoveActiveGameplayEffect(RootEffectHandle);
+
+		// 무기 사용 후와 같이 가드를 푼 뒤에도 대기 시간이 지나야 에너지가 충전된다.
+		if (APlayerBase* Player = Cast<APlayerBase>(ActorInfo->AvatarActor.Get()))
+		{
+			Player->NotifyWeaponEnergySpent();
+		}
 	}
 	RootEffectHandle.Invalidate();
 

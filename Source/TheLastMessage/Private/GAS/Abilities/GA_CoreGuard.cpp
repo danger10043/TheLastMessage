@@ -4,6 +4,7 @@
 #include "Core/CoreGameplayTags.h"
 #include "GAS/Effects/GE_CoreGuardRoot.h"
 #include "GAS/WeaponGameplayTags.h"
+#include "GAS/WeaponSlotAttributeSet.h"
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
@@ -169,6 +170,13 @@ bool UGA_CoreGuard::CanActivateAbility(const FGameplayAbilitySpecHandle Handle,
 	FGameplayTagContainer* OptionalRelevantTags) const
 {
 	if (!Super::CanActivateAbility(Handle, ActorInfo, SourceTags, TargetTags, OptionalRelevantTags))
+	{
+		return false;
+	}
+	// 막을 에너지가 없으면 가드를 시작하지 않는다.
+	const UAbilitySystemComponent* ASC = ActorInfo ? ActorInfo->AbilitySystemComponent.Get() : nullptr;
+	const UWeaponSlotAttributeSet* EnergySet = ASC ? ASC->GetSet<UWeaponSlotAttributeSet>() : nullptr;
+	if (EnergySet && EnergySet->GetSharedEnergy() <= 0.0f)
 	{
 		return false;
 	}

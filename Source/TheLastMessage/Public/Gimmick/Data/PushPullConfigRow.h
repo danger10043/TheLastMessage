@@ -19,6 +19,10 @@ struct THELASTMESSAGE_API FPushPullConfigRow : public FTableRowBase
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PushPull", meta = (ClampMin = "1.0", Units = "cm/s"))
     float MoveSpeed = 200.0f;
 
+    // 플레이어 캡슐 중심부터 가까운 물체 충돌 표면점까지의 X축 거리
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PushPull", meta = (ClampMin = "1.0", Units = "cm"))
+    float GrabDistance = 60.0f;
+
     // 플레이어와 물체 사이의 조작 유지 가능 거리
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PushPull", meta = (ClampMin = "1.0", Units = "cm"))
     float MaxSeparationDistance = 250.0f;
@@ -34,5 +38,5 @@ struct THELASTMESSAGE_API FPushPullConfigRow : public FTableRowBase
     // 조작 중 넘을 수 있는 최대 턱 높이
 // 0이면 턱 넘기 기능 사용 안 함
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PushPull", meta = (ClampMin = "0.0", Units = "cm"))
-    float MaxStepHeight = 20.0f;
+    float MaxStepHeight = 30.0f;
 };

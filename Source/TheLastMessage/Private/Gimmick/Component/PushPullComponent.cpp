@@ -6,13 +6,17 @@
 #include "Character/Player/PlayerBase.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/PrimitiveComponent.h"
+#include "Components/CapsuleComponent.h"
+#include "Engine/ScopedMovementUpdate.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Gimmick/Component/CarryComponent.h"
 #include "Gimmick/PushPull/PushPullGimmick.h"
-//#include "PhysicsEngine/PhysicsHandleComponent.h"
 #include "CollisionQueryParams.h"
 #include "Engine/World.h"
 #include "Math/RotationMatrix.h"
+#include "PhysicsEngine/BodyInstance.h"
+#include "PhysicsEngine/ConstraintInstance.h"
 
 UPushPullComponent::UPushPullComponent()
 {
@@ -86,8 +90,7 @@ bool UPushPullComponent::StartPushPull(APushPullGimmick* Target)
 
     if (Movement->bConstrainToPlane)
     {
-        const FVector PlayerPlaneNormal =
-            Movement->GetPlaneConstraintNormal().GetSafeNormal();
+        const FVector PlayerPlaneNormal = Movement->GetPlaneConstraintNormal().GetSafeNormal();
 
         if (!PlayerPlaneNormal.IsNearlyZero())
         {
@@ -110,6 +113,13 @@ bool UPushPullComponent::StartPushPull(APushPullGimmick* Target)
 
     CurrentTarget = Target;
 
+    // 표면 기준 위치 정렬이 성공한 뒤 실제 유지 간격 저장
+    InitialRelativeOffsetX = 0.0;
+
+    // 이전 조작의 입력과 속도가 남지 않도록 초기화
+    PendingMoveInput = 0.0f;
+    SharedMoveSpeedX = 0.0;
+
     // 조작 중 빠르게 움직일 때 충돌 누락을 줄이도록 설정
     Mesh->SetUseCCD(true);
 
@@ -117,89 +127,41 @@ bool UPushPullComponent::StartPushPull(APushPullGimmick* Target)
     bOriginalOrientToMovement = Movement->bOrientRotationToMovement;
     Movement->bOrientRotationToMovement = false;
 
-    const FVector Facing = FVector::VectorPlaneProject(
-        Mesh->GetComponentLocation() - Player->GetActorLocation(),
-        Player->GetActorUpVector()).GetSafeNormal();
-
-    if (!Facing.IsNearlyZero())
-    {
-        Player->SetActorRotation(
-            FRotationMatrix::MakeFromXZ(
-                Facing,
-                Player->GetActorUpVector()).Rotator());
-    }
-
     // 조작 전 걷기 속도를 기록하고 제한 적용
     OriginalMaxWalkSpeed = Movement->MaxWalkSpeed;
     AppliedMaxWalkSpeed = OriginalMaxWalkSpeed;
     bHasWalkSpeedOverride = true;
 
     UpdateWalkSpeedLimit(Movement, Config.MoveSpeed);
+
+    if (!BeginSharedMovement(Mesh))
+    {
+        StopPushPull();
+        return false;
+    }
+
+    // 지정한 잡기 위치로 이동할 수 있어야 조작 시작
+    if (!AlignPlayerToGrabDistance())
+    {
+        StopPushPull();
+        return false;
+    }
+
+    // 위치 정렬 중 발생한 겹침 이벤트로 조작이 끝날 수 있음
+    if (!IsValid(Player)
+        || Player->IsDead()
+        || !IsValid(Target)
+        || !bSharedMovementActive
+        || CurrentTarget.Get() != Target
+        || !Movement->IsMovingOnGround())
+    {
+        StopPushPull();
+        return false;
+    }
 
     SetComponentTickEnabled(true);
 
     return true;
-
-    /*
-    ActivePlaneNormal = MovementPlaneNormal.GetSafeNormal();
-
-    // 플레이어에게 이동 평면이 설정돼 있으면 그 평면을 사용
-    if (Movement->bConstrainToPlane)
-    {
-        const FVector PlayerPlaneNormal = Movement->GetPlaneConstraintNormal().GetSafeNormal();
-
-        if (!PlayerPlaneNormal.IsNearlyZero())
-        {
-            ActivePlaneNormal = PlayerPlaneNormal;
-        }
-    }
-
-    if (ActivePlaneNormal.IsNearlyZero())
-    {
-        return false;
-    }
-
-    TargetLocation = Mesh->GetComponentLocation();
-    TargetRotation = Mesh->GetComponentRotation();
-
-    // 현재 위치와 회전을 기준으로 물체 잡기
-    PhysicsHandle->GrabComponentAtLocationWithRotation(Mesh, NAME_None, TargetLocation, TargetRotation
-    );
-
-    if (PhysicsHandle->GetGrabbedComponent() != Mesh)
-    {
-        return false;
-    }
-
-    Target->BeginPushPull(Player);
-
-    // 물체 쪽에서도 조작 시작이 정상 처리됐는지 확인
-    if (Target->GetControllingPlayer() != Player)
-    {
-        PhysicsHandle->ReleaseComponent();
-        return false;
-    }
-
-    CurrentTarget = Target;
-    bOriginalOrientToMovement = Movement->bOrientRotationToMovement;
-    Movement->bOrientRotationToMovement = false;
-    const FVector Facing = FVector::VectorPlaneProject(
-        Mesh->GetComponentLocation() - Player->GetActorLocation(), Player->GetActorUpVector()).GetSafeNormal();
-    if (!Facing.IsNearlyZero())
-    {
-        Player->SetActorRotation(FRotationMatrix::MakeFromXZ(Facing, Player->GetActorUpVector()).Rotator());
-    }
-
-    // 조작 전 걷기 속도를 기록하고 제한 적용
-    OriginalMaxWalkSpeed = Movement->MaxWalkSpeed;
-    AppliedMaxWalkSpeed = OriginalMaxWalkSpeed;
-    bHasWalkSpeedOverride = true;
-
-    UpdateWalkSpeedLimit(Movement, Config.MoveSpeed);
-
-    SetComponentTickEnabled(true);
-
-    return true;*/
 }
 
 void UPushPullComponent::UpdatePushPull(const FVector& MoveDirection, float DeltaTime)
@@ -210,19 +172,59 @@ void UPushPullComponent::UpdatePushPull(const FVector& MoveDirection, float Delt
     if (!IsValid(Player)
         || Player->IsDead()
         || Player->IsHitReacting()
+        || Player->IsAttacking()
+        || Player->IsGrappling()
+        || Player->IsCarryTransitionActive()
         || !IsValid(Target)
-        //|| !IsValid(PhysicsHandle)
         || !Target->IsGimmickEnabled()
-        || Target->GetControllingPlayer() != Player)
+        || Target->GetControllingPlayer() != Player
+        || !bSharedMovementActive)
     {
         StopPushPull();
         return;
     }
 
+    if (!FMath::IsFinite(DeltaTime) || DeltaTime <= SMALL_NUMBER || MoveDirection.ContainsNaN())
+    {
+        return;
+    }
+
     UCharacterMovementComponent* Movement = Player->GetCharacterMovement();
 
-    // 점프하거나 발밑 지면이 없어지면 물체를 놓음
-    if (!IsValid(Movement) || !Movement->IsMovingOnGround())
+    UCapsuleComponent* Capsule = Player->GetCapsuleComponent();
+
+    UStaticMeshComponent* Mesh = Target->GetPhysicsMesh();
+
+    USceneComponent* Anchor = Target->GetInteractionAnchor();
+
+    if (!IsValid(Movement)
+        || !IsValid(Capsule)
+        || !IsValid(Mesh)
+        || !IsValid(Anchor)
+        || !Mesh->IsSimulatingPhysics()
+        || Capsule->GetCollisionEnabled() == ECollisionEnabled::NoCollision
+        || Mesh->GetCollisionEnabled() == ECollisionEnabled::NoCollision)
+    {
+        StopPushPull();
+        return;
+    }
+
+    // 자동 갱신을 멈춘 동안에도 외부 힘과 발사 요청은 확인
+    Movement->ApplyAccumulatedForces(DeltaTime);
+    Movement->HandlePendingLaunch();
+
+    // 이동 모드 변경 이벤트에서 조작이 종료될 수도 있음
+    if (!bSharedMovementActive || CurrentTarget.Get() != Target)
+    {
+        if (bSharedMovementActive && !CurrentTarget.IsValid())
+        {
+            StopPushPull();
+        }
+
+        return;
+    }
+
+    if (!Movement->IsMovingOnGround())
     {
         StopPushPull();
         return;
@@ -236,42 +238,31 @@ void UPushPullComponent::UpdatePushPull(const FVector& MoveDirection, float Delt
         return;
     }
 
-    UStaticMeshComponent* Mesh = Target->GetPhysicsMesh();
-    USceneComponent* Anchor = Target->GetInteractionAnchor();
+    // 일반 이동 입력이 쌓였다가 조작 종료 후 적용되지 않도록 정리
+    Player->ConsumeMovementInputVector();
 
-    if (!IsValid(Mesh) 
-        || !IsValid(Anchor)
-        || !Mesh->IsSimulatingPhysics()
-        || Mesh->GetCollisionEnabled() == ECollisionEnabled::NoCollision
-        /* || PhysicsHandle->GetGrabbedComponent() != Mesh*/)
-    {
-        StopPushPull();
-        return;
-    }
+    const FPushPullConfigRow Config = Target->GetPushPullConfig();
 
-    const FPushPullConfigRow& Config = Target->GetPushPullConfig();
-
-    // 새 설정값의 유효성 확인
-    if (!FMath::IsFinite(Config.HorizontalAcceleration)
+    if (!FMath::IsFinite(Config.MoveSpeed)
+        || Config.MoveSpeed <= 0.0f
+        || !FMath::IsFinite(Config.HorizontalAcceleration)
         || Config.HorizontalAcceleration <= 0.0f
+        || !FMath::IsFinite(Config.MaxStepHeight)
+        || Config.MaxStepHeight < 0.0f
         || !FMath::IsFinite(Config.MaxSlopeAngle)
         || Config.MaxSlopeAngle < 0.0f
-        || Config.MaxSlopeAngle > 80.0f)
+        || Config.MaxSlopeAngle > 80.0f
+        || !FMath::IsFinite(Config.MaxSeparationDistance)
+        || Config.MaxSeparationDistance <= 0.0f)
     {
-        UE_LOG(LogTemp, Warning,
-            TEXT("%s: 밀기 가속도는 양수, 최대 경사각은 0~80도여야 합니다."),
-            *Target->GetName());
+        UE_LOG(LogTemp, Warning, TEXT("%s: 밀기·당기기 데이터 테이블 설정을 확인해주세요."), *Target->GetName());
 
         StopPushPull();
         return;
     }
 
-    const double DistanceSquared = FVector::DistSquared(
-        Player->GetActorLocation(),
-        Anchor->GetComponentLocation());
-
-    if (DistanceSquared > FMath::Square(
-        static_cast<double>(Config.MaxSeparationDistance)))
+    if (FVector::DistSquared(Player->GetActorLocation(), Anchor->GetComponentLocation()) > 
+        FMath::Square(static_cast<double>(Config.MaxSeparationDistance)))
     {
         StopPushPull();
         return;
@@ -279,269 +270,205 @@ void UPushPullComponent::UpdatePushPull(const FVector& MoveDirection, float Delt
 
     UpdateWalkSpeedLimit(Movement, Config.MoveSpeed);
 
-    if (!FMath::IsFinite(DeltaTime)
-        || DeltaTime <= 0.0f
-        || MoveDirection.ContainsNaN())
-    {
-        return;
-    }
+    const FVector PlayerStart = Capsule->GetComponentLocation();
+    const FVector BoxStart = Mesh->GetComponentLocation();
 
-    UWorld* World = GetWorld();
-
-    if (!World)
+    if (PlayerStart.ContainsNaN() || BoxStart.ContainsNaN() || !FMath::IsFinite(InitialRelativeOffsetX))
     {
         StopPushPull();
         return;
     }
 
-    const FVector PlanarDirection = FVector::VectorPlaneProject(
-        MoveDirection,
-        ActivePlaneNormal).GetClampedToMaxSize(1.0f);
+    const double StepTime = static_cast<double>(DeltaTime);
 
-    const double EffectiveMoveSpeed = FMath::Max(
-        0.0,
-        static_cast<double>(
-            FMath::Min(Config.MoveSpeed, Movement->MaxWalkSpeed)));
+    const double MoveSpeed = FMath::Max(0.0, static_cast<double>(FMath::Min(Config.MoveSpeed, Movement->MaxWalkSpeed)));
 
-    const double Acceleration =
-        static_cast<double>(Config.HorizontalAcceleration);
+    const double InputX = FMath::Clamp(static_cast<double>(MoveDirection.X), -1.0, 1.0);
 
-    // 플레이어 입력으로 제어하는 것은 월드 X축 속도뿐
-    double DesiredSpeedX =
-        PlanarDirection.X * EffectiveMoveSpeed;
+    const double DesiredSpeedX = InputX * MoveSpeed;
 
-    const FVector CurrentVelocity = Mesh->GetPhysicsLinearVelocity();
+    const double SpeedChange = static_cast<double>(Config.HorizontalAcceleration) * StepTime;
 
-    if (CurrentVelocity.ContainsNaN())
+    // 플레이어와 상자에 사용할 공통 속도 계산
+    SharedMoveSpeedX += FMath::Clamp(DesiredSpeedX - SharedMoveSpeedX, -SpeedChange, SpeedChange);
+
+    const double RequestedDeltaX = SharedMoveSpeedX * StepTime;
+
+    struct FPairMovePlan
     {
-        StopPushPull();
-        return;
-    }
+        FVector PlayerLocation = FVector::ZeroVector;
+        FVector BoxLocation = FVector::ZeroVector;
+        bool bPlayerOnGround = false;
+        bool bBoxOnGround = false;
+    };
 
-    // 진행 방향 앞의 벽과 경사면 검사
-    if (FMath::Abs(DesiredSpeedX) > 0.01)
-    {
-        const double DirectionSign = FMath::Sign(DesiredSpeedX);
-
-        const double CurrentForwardSpeed = FMath::Max(
-            0.0,
-            CurrentVelocity.X * DirectionSign);
-
-        const double ProbeSpeed = FMath::Max(
-            FMath::Abs(DesiredSpeedX),
-            CurrentForwardSpeed);
-
-        constexpr double CollisionMargin = 1.0;
-
-        // 현재 속도에서 멈출 거리까지 미리 확인
-        const double BrakingDistance =
-            FMath::Square(ProbeSpeed) / (2.0 * Acceleration);
-
-        const double ProbeDistance = FMath::Min(
-            ProbeSpeed * DeltaTime
-            + BrakingDistance
-            + CollisionMargin,
-            static_cast<double>(Config.MaxSeparationDistance));
-
-        const FVector MeshLocation = Mesh->GetComponentLocation();
-
-        const FVector ProbeDelta(
-            DirectionSign * ProbeDistance,
-            0.0,
-            0.0);
-
-        FComponentQueryParams QueryParams(
-            SCENE_QUERY_STAT(PushPullMovement),
-            Target);
-
-        QueryParams.AddIgnoredActor(Player);
-        QueryParams.bIgnoreTouches = true;
-
-        TArray<FHitResult> SweepHits;
-
-        // 실제 물체의 충돌 형상으로 경로 검사
-        World->ComponentSweepMulti(
-            SweepHits,
-            Mesh,
-            MeshLocation,
-            MeshLocation + ProbeDelta,
-            Mesh->GetComponentQuat(),
-            QueryParams);
-
-        // 이 값 이상의 위쪽 법선을 가지면 허용 경사면
-        const double MinFloorNormalZ = FMath::Cos(
-            FMath::DegreesToRadians(
-                static_cast<double>(Config.MaxSlopeAngle)));
-
-        for (const FHitResult& Hit : SweepHits)
+    // 플레이어의 이동량을 기준으로 두 도착 위치를 함께 계산
+    const auto BuildPairPlan = [&](double PlayerDeltaX, FPairMovePlan& OutPlan) -> bool
         {
-            if (!Hit.bBlockingHit)
+            // 처음 잡았을 때의 간격에 맞는 상자 이동량 계산
+            const double BoxDeltaX = PlayerStart.X + PlayerDeltaX + InitialRelativeOffsetX - BoxStart.X;
+
+            const double PlayerSlopeAngle = FMath::Clamp(static_cast<double>(Movement->GetWalkableFloorAngle()), 0.0, 80.0);
+
+            if (!FindSharedMoveLocation(
+                Capsule,
+                PlayerDeltaX,
+                static_cast<double>(Movement->MaxStepHeight),
+                PlayerSlopeAngle,
+                OutPlan.PlayerLocation,
+                OutPlan.bPlayerOnGround))
             {
-                continue;
+                return false;
             }
 
-            FVector SurfaceNormal = Hit.ImpactNormal.GetSafeNormal();
+            return FindSharedMoveLocation(
+                Mesh,
+                BoxDeltaX,
+                static_cast<double>(Config.MaxStepHeight),
+                static_cast<double>(Config.MaxSlopeAngle),
+                OutPlan.BoxLocation,
+                OutPlan.bBoxOnGround);
+        };
 
-            if (SurfaceNormal.IsNearlyZero())
+    FPairMovePlan BestPlan;
+
+    // 현재 위치에서도 정상적으로 지형을 판단할 수 있어야 함
+    if (!BuildPairPlan(0.0, BestPlan))
+    {
+        StopPushPull();
+        return;
+    }
+
+    if (!BestPlan.bPlayerOnGround)
+    {
+        Movement->SetMovementMode(MOVE_Falling);
+        StopPushPull();
+        return;
+    }
+
+    if (FMath::Abs(RequestedDeltaX) > UE_KINDA_SMALL_NUMBER)
+    {
+        FPairMovePlan FullPlan;
+
+        if (BuildPairPlan(RequestedDeltaX, FullPlan))
+        {
+            BestPlan = FullPlan;
+        }
+        else
+        {
+            // 어느 한쪽이 막히면 둘 다 가능한 이동량까지 줄임
+            double Low = 0.0;
+            double High = 1.0;
+
+            for (int32 Index = 0; Index < 6; ++Index)
             {
-                SurfaceNormal = Hit.Normal.GetSafeNormal();
+                const double Fraction = (Low + High) * 0.5;
+
+                FPairMovePlan TestPlan;
+
+                if (BuildPairPlan(RequestedDeltaX * Fraction, TestPlan))
+                {
+                    Low = Fraction;
+                    BestPlan = TestPlan;
+                }
+                else
+                {
+                    High = Fraction;
+                }
             }
-
-            // 접촉면에서 멀어지거나 나란히 움직이는 경우 허용
-            if (FVector::DotProduct(ProbeDelta, SurfaceNormal)
-                >= -UE_KINDA_SMALL_NUMBER)
-            {
-                continue;
-            }
-
-            // 올라갈 수 있는 경사면은 벽으로 취급하지 않음
-            if (SurfaceNormal.Z + KINDA_SMALL_NUMBER
-                >= MinFloorNormalZ)
-            {
-                continue;
-            }
-
-            // 벽이나 너무 가파른 경사면 앞에서는 감속
-            const double HitDistance =
-                ProbeDistance * FMath::Clamp(
-                    static_cast<double>(Hit.Time),
-                    0.0,
-                    1.0);
-
-            // 한 번에 전진할 거리를 작게 제한
-            const double StepForwardDistance = FMath::Clamp(
-                FMath::Abs(DesiredSpeedX) * static_cast<double>(DeltaTime) + 2.0,
-                2.0,
-                10.0);
-
-            // 가까운 장애물에 대해서만 턱 넘기 시도
-            if (HitDistance <= StepForwardDistance
-                && TryStepUp(Mesh, DirectionSign, StepForwardDistance))
-            {
-                // 위치가 바뀌었으므로 이번 프레임의 나머지 이동 계산 종료
-                return;
-            }
-
-            const double SafeDistance = FMath::Max(
-                0.0,
-                HitDistance - CollisionMargin);
-
-            const double AllowedSpeed = FMath::Sqrt(
-                2.0 * Acceleration * SafeDistance);
-
-            DesiredSpeedX = DirectionSign * FMath::Min(
-                FMath::Abs(DesiredSpeedX),
-                AllowedSpeed);
         }
     }
 
-    // 목표 수평 속도까지 가속하거나 감속
-    const double AccelerationX = FMath::Clamp(
-        (DesiredSpeedX - CurrentVelocity.X)
-        / static_cast<double>(DeltaTime),
-        -Acceleration,
-        Acceleration);
+    FBodyInstance& Body = Mesh->BodyInstance;
 
-    // X축에만 가속도를 적용
-    // Z축은 중력과 바닥 충돌에 따라 자유롭게 움직임
-    Mesh->AddForce(
-        FVector(AccelerationX, 0.0, 0.0),
-        NAME_None,
-        true);
+    if (!Body.bLockXTranslation || Body.DOFConstraint == nullptr)
+    {
+        StopPushPull();
+        return;
+    }
 
-    //const float DistanceSquared = FVector::DistSquared(Player->GetActorLocation(), Anchor->GetComponentLocation());
+    SharedMoveSpeedX = (BestPlan.PlayerLocation.X - PlayerStart.X) / StepTime;
 
-    //// 플레이어와 물체가 너무 멀어지면 조작 종료
-    //if (DistanceSquared > FMath::Square(Config.MaxSeparationDistance))
-    //{
-    //    StopPushPull();
-    //    return;
-    //}
+    {
+        // 두 위치를 적용한 뒤 겹침 이벤트를 처리
+        FScopedMovementUpdate PlayerMoveScope(Capsule, EScopedUpdate::DeferredUpdates);
 
-    //UpdateWalkSpeedLimit(Movement, Config.MoveSpeed);
+        FScopedMovementUpdate BoxMoveScope(Mesh, EScopedUpdate::DeferredUpdates);
 
-    //if (!FMath::IsFinite(DeltaTime) || DeltaTime <= 0.0f || MoveDirection.ContainsNaN())
-    //{
-    //    return;
-    //}
+        // X축 잠금의 기준점을 새 상자 위치로 이동
+        // Z축은 잠겨 있지 않으므로 중력에 따른 이동 유지
+        Body.DOFConstraint->SetRefPosition(EConstraintFrame::Frame2, BestPlan.BoxLocation);
 
-    //// 이동 평면을 벗어나는 입력 제거
-    //const FVector PlanarDirection = FVector::VectorPlaneProject(MoveDirection, ActivePlaneNormal).GetClampedToMaxSize(1.0f);
+        Mesh->SetWorldLocation(BestPlan.BoxLocation, false, nullptr, ETeleportType::TeleportPhysics);
 
-    //// 플레이어의 현재 제한 속도를 넘지 않도록 처리
-    //const float EffectiveMoveSpeed = FMath::Max(0.0f, FMath::Min(Config.MoveSpeed, Movement->MaxWalkSpeed));
+        FVector BoxVelocity = Mesh->GetPhysicsLinearVelocity();
+        BoxVelocity.X = 0.0;
+        BoxVelocity.Y = 0.0;
 
-    //UWorld* World = GetWorld();
+        if (BestPlan.bBoxOnGround)
+        {
+            BoxVelocity.Z = 0.0;
+        }
 
-    //if (!World)
-    //{
-    //    StopPushPull();
-    //    return;
-    //}
+        Mesh->SetPhysicsLinearVelocity(BoxVelocity);
+        Mesh->WakeAllRigidBodies();
 
-    //const FVector MeshLocation = Mesh->GetComponentLocation();
+        Capsule->SetWorldLocation(BestPlan.PlayerLocation, false, nullptr, ETeleportType::TeleportPhysics);
 
-    //// 입력에 따라 이동하려는 목표 위치 계산
-    //const FVector DesiredLocation = TargetLocation + PlanarDirection * EffectiveMoveSpeed * DeltaTime;
+        // 애니메이션에서도 실제 이동 속도를 읽을 수 있도록 갱신
+        Movement->Velocity = (BestPlan.PlayerLocation - PlayerStart) / StepTime;
 
-    //// 물체의 현재 위치에서 목표 위치까지의 이동량
-    //const FVector DesiredDelta = (DesiredLocation - MeshLocation).GetClampedToMaxSize(Config.MaxSeparationDistance);
+        Movement->UpdateComponentVelocity();
+    }
 
-    //const double DesiredDistance = DesiredDelta.Size();
+    // 겹침 이벤트로 피격되거나 조작이 끝났다면 추가 처리하지 않음
+    if (!bSharedMovementActive || CurrentTarget.Get() != Target)
+    {
+        if (bSharedMovementActive && !CurrentTarget.IsValid())
+        {
+            StopPushPull();
+        }
 
-    //// 이동량이 없으면 현재 위치 유지
-    //TargetLocation = MeshLocation;
+        return;
+    }
 
-    //if (!DesiredDelta.IsNearlyZero())
-    //{
-    //    FComponentQueryParams QueryParams(SCENE_QUERY_STAT(PushPullMovement), Target);
+    if (!IsValid(Player) || !IsValid(Target) || !IsValid(Movement))
+    {
+        StopPushPull();
+        return;
+    }
 
-    //    QueryParams.AddIgnoredActor(Player);
-    //    QueryParams.bIgnoreTouches = true;
+    if (!BestPlan.bPlayerOnGround)
+    {
+        // 빈 바닥 결과를 전달해서 받침 대상 해제
+        Movement->SetBaseFromFloor(FFindFloorResult{});
+        Movement->SetMovementMode(MOVE_Falling);
 
-    //    TArray<FHitResult> SweepHits;
+        StopPushPull();
+        return;
+    }
 
-    //    // 실제 메시의 충돌 형상으로 이동 경로 검사
-    //    World->ComponentSweepMulti(
-    //        SweepHits,
-    //        Mesh,
-    //        MeshLocation,
-    //        MeshLocation + DesiredDelta,
-    //        Mesh->GetComponentQuat(),
-    //        QueryParams);
+    // 캐릭터 무브먼트가 사용하는 바닥 정보도 현재 위치로 갱신
+    FFindFloorResult FloorResult;
 
-    //    double AllowedDistance = DesiredDistance;
+    Movement->FindFloor(Player->GetActorLocation(), FloorResult, false);
 
-    //    // 벽 표면에 목표점이 들어가지 않도록 약간의 여유 확보
-    //    constexpr double CollisionMargin = 1.0;
+    Movement->CurrentFloor = FloorResult;
 
-    //    for (const FHitResult& Hit : SweepHits)
-    //    {
-    //        if (!Hit.bBlockingHit)
-    //        {
-    //            continue;
-    //        }
+    if (!FloorResult.IsWalkableFloor())
+    {
+        // 빈 바닥 결과를 전달해서 받침 대상 해제
+        Movement->SetBaseFromFloor(FFindFloorResult{});
+        Movement->SetMovementMode(MOVE_Falling);
 
-    //        // 접촉면에서 멀어지거나 나란히 움직이는 경우는 허용
-    //        const double IntoSurface = FVector::DotProduct(DesiredDelta, Hit.Normal);
+        StopPushPull();
+        return;
+    }
 
-    //        if (IntoSurface >= -UE_KINDA_SMALL_NUMBER)
-    //        {
-    //            continue;
-    //        }
+    // 확인된 바닥 정보를 이용해 받침 대상 설정
+    Movement->SetBaseFromFloor(FloorResult);
 
-    //        const double HitDistance = DesiredDistance * FMath::Clamp(static_cast<double>(Hit.Time), 0.0, 1.0);
-
-    //        const double SafeDistance = FMath::Max(0.0, HitDistance - CollisionMargin);
-
-    //        AllowedDistance = FMath::Min(AllowedDistance, SafeDistance);
-    //    }
-
-    //    // 벽에 막히면 목표점도 벽 앞에서 멈춤
-    //    TargetLocation = MeshLocation + DesiredDelta.GetSafeNormal() * AllowedDistance;
-    //}
-
-    //PhysicsHandle->SetTargetLocationAndRotation(TargetLocation, TargetRotation);
+    Movement->SaveBaseLocation();
 }
 
 void UPushPullComponent::StopPushPull()
@@ -549,7 +476,14 @@ void UPushPullComponent::StopPushPull()
     APushPullGimmick* Target = CurrentTarget.Get();
 
     CurrentTarget.Reset();
+
+    PendingMoveInput = 0.0f;
+    InitialRelativeOffsetX = 0.0;
+    SharedMoveSpeedX = 0.0;
+
     SetComponentTickEnabled(false);
+
+    EndSharedMovement();
 
     // 물체의 조작 종료 및 수평 이동 잠금
     if (IsValid(Target)
@@ -579,34 +513,6 @@ void UPushPullComponent::StopPushPull()
             }
         }
     }
-    //// 물체 잡기 해제
-    //if (IsValid(PhysicsHandle))
-    //{
-    //    PhysicsHandle->ReleaseComponent();
-    //}
-
-    //// 물체에 기록된 조작자 정보 정리
-    //if (IsValid(Target) && Target->GetControllingPlayer() == OwnerPlayer.Get())
-    //{
-    //    Target->EndPushPull();
-    //}
-
-    //// 컴포넌트가 적용한 속도 제한 복구
-    //if (bHasWalkSpeedOverride)
-    //{
-    //    if (APlayerBase* Player = OwnerPlayer.Get())
-    //    {
-    //        if (UCharacterMovementComponent* Movement = Player->GetCharacterMovement())
-    //        {
-    //            Movement->bOrientRotationToMovement = bOriginalOrientToMovement;
-    //            // 다른 기능이 이미 속도를 변경했다면 덮어쓰지 않음
-    //            if (FMath::IsNearlyEqual(Movement->MaxWalkSpeed, AppliedMaxWalkSpeed))
-    //            {
-    //                Movement->MaxWalkSpeed = OriginalMaxWalkSpeed;
-    //            }
-    //        }
-    //    }
-    //}
 
     bHasWalkSpeedOverride = false;
 }
@@ -619,6 +525,11 @@ bool UPushPullComponent::IsPushPulling() const
 APushPullGimmick* UPushPullComponent::GetCurrentTarget() const
 {
     return CurrentTarget.Get();
+}
+
+void UPushPullComponent::SetMoveInput(float Value)
+{
+    PendingMoveInput = FMath::IsFinite(Value) ? FMath::Clamp(Value, -1.0f, 1.0f) : 0.0f;
 }
 
 void UPushPullComponent::BeginPlay()
@@ -636,45 +547,13 @@ void UPushPullComponent::BeginPlay()
         return;
     }
 
-    // 캐릭터가 이동 입력을 처리한 뒤 물체 제어
-    if (UCharacterMovementComponent* Movement =
-        Player->GetCharacterMovement())
-    {
-        AddTickPrerequisiteComponent(Movement);
-    }
-
-    //// 플레이어가 소유하는 전용 물리 핸들 생성
-    //PhysicsHandle = NewObject<UPhysicsHandleComponent>(Player);
-
-    //Player->AddInstanceComponent(PhysicsHandle);
-    //PhysicsHandle->RegisterComponent();
-
-    //PhysicsHandle->SetInterpolationSpeed(15.0f);
-    //PhysicsHandle->SetLinearStiffness(10000.0f);
-    //PhysicsHandle->SetLinearDamping(2000.0f);
-    //PhysicsHandle->SetAngularStiffness(10000.0f);
-    //PhysicsHandle->SetAngularDamping(2000.0f);
-
-    //// 캐릭터 이동이 입력을 처리한 뒤 마지막 이동 입력을 읽음
-    //if (UCharacterMovementComponent* Movement = Player->GetCharacterMovement())
-    //{
-    //    AddTickPrerequisiteComponent(Movement);
-    //}
-
-    //// 목표 위치를 갱신한 뒤 물리 핸들이 처리되도록 순서 지정
-    //PhysicsHandle->AddTickPrerequisiteComponent(this);
-	
+    // 플레이어 액터 갱신 이후 공통 이동 처리
+    AddTickPrerequisiteActor(Player);
 }
 
 void UPushPullComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
     StopPushPull();
-
-    //if (IsValid(PhysicsHandle))
-    //{
-    //    PhysicsHandle->DestroyComponent();
-    //    PhysicsHandle = nullptr;
-    //}
 
     OwnerPlayer.Reset();
 
@@ -685,16 +564,12 @@ void UPushPullComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 {
     Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-    APlayerBase* Player = OwnerPlayer.Get();
+    const FVector MoveDirection(PendingMoveInput, 0.0f, 0.0f);
 
-    if (!IsValid(Player))
-    {
-        StopPushPull();
-        return;
-    }
+    // 다음 프레임에 입력이 없으면 정지하도록 매번 초기화
+    PendingMoveInput = 0.0f;
 
-    // 플레이어의 기존 이동 입력을 사용
-    UpdatePushPull(Player->GetLastMovementInputVector(), DeltaTime);
+    UpdatePushPull(MoveDirection, DeltaTime);
 }
 
 void UPushPullComponent::UpdateWalkSpeedLimit(UCharacterMovementComponent* Movement, float MoveSpeed)
@@ -904,6 +779,565 @@ bool UPushPullComponent::TryStepUp(UStaticMeshComponent* Mesh, double DirectionS
         Mesh->SetPhysicsLinearVelocity(SavedVelocity);
         Mesh->WakeAllRigidBodies();
     }
+
+    return true;
+}
+
+bool UPushPullComponent::SweepBlockingMovement(UPrimitiveComponent* Component, const FVector& Start, const FVector& End, FHitResult& OutHit) const
+{
+    OutHit = FHitResult();
+
+    UWorld* World = GetWorld();
+
+    if (!World || !IsValid(Component))
+    {
+        return false;
+    }
+
+    const FVector Delta = End - Start;
+
+    if (Delta.IsNearlyZero())
+    {
+        return false;
+    }
+
+    FComponentQueryParams QueryParams(SCENE_QUERY_STAT(PushPullSharedMovement), Component->GetOwner());
+
+    // 함께 움직이는 플레이어와 상자는 경로 검사에서 서로 제외
+    QueryParams.AddIgnoredActor(GetOwner());
+
+    if (CurrentTarget.IsValid())
+    {
+        QueryParams.AddIgnoredActor(CurrentTarget.Get());
+    }
+
+    QueryParams.bIgnoreTouches = true;
+
+    TArray<FHitResult> Hits;
+
+    World->ComponentSweepMulti(Hits, Component, Start, End, Component->GetComponentQuat(), QueryParams);
+
+    bool bFoundBlockingHit = false;
+
+    for (const FHitResult& Hit : Hits)
+    {
+        if (!Hit.bBlockingHit)
+        {
+            continue;
+        }
+
+        FVector SurfaceNormal = Hit.ImpactNormal.GetSafeNormal();
+
+        if (SurfaceNormal.IsNearlyZero())
+        {
+            SurfaceNormal = Hit.Normal.GetSafeNormal();
+        }
+
+        // 바닥과 나란히 움직이거나 접촉면에서 멀어지는 경우 허용
+        if (!SurfaceNormal.IsNearlyZero() && FVector::DotProduct(Delta, SurfaceNormal) >= -UE_KINDA_SMALL_NUMBER)
+        {
+            continue;
+        }
+
+        // 이동을 막는 충돌 중 가장 가까운 결과 선택
+        if (!bFoundBlockingHit || Hit.Time < OutHit.Time)
+        {
+            OutHit = Hit;
+            bFoundBlockingHit = true;
+        }
+    }
+
+    return bFoundBlockingHit;
+}
+
+bool UPushPullComponent::FindSharedMoveLocation(UPrimitiveComponent* Component, double DeltaX, double MaxStepHeight, double MaxSlopeAngle, FVector& OutLocation, bool& bOutOnGround) const
+{
+    OutLocation = FVector::ZeroVector;
+    bOutOnGround = false;
+
+    if (!IsValid(Component) || !GetWorld())
+    {
+        return false;
+    }
+
+    const FVector Start = Component->GetComponentLocation();
+    OutLocation = Start;
+
+    if (!FMath::IsFinite(DeltaX)
+        || !FMath::IsFinite(MaxStepHeight)
+        || !FMath::IsFinite(MaxSlopeAngle)
+        || MaxStepHeight < 0.0
+        || MaxSlopeAngle < 0.0
+        || MaxSlopeAngle > 80.0)
+    {
+        return false;
+    }
+
+    constexpr double GroundProbeDistance = 6.0;
+    constexpr double SurfaceGap = 0.5;
+
+    const double MinFloorNormalZ = FMath::Cos(FMath::DegreesToRadians(MaxSlopeAngle));
+
+    const auto GetSurfaceNormal = [](const FHitResult& Hit)
+        {
+            FVector Normal = Hit.ImpactNormal.GetSafeNormal();
+
+            if (Normal.IsNearlyZero())
+            {
+                Normal = Hit.Normal.GetSafeNormal();
+            }
+
+            return Normal;
+        };
+
+    // 특정 위치 아래의 바닥을 확인하고 착지 위치 계산
+    const auto FindLanding = [&](const FVector& From, double DownDistance, FVector& OutLanding, bool& bHasFloor) -> bool
+        {
+            OutLanding = From;
+            bHasFloor = false;
+
+            FHitResult FloorHit;
+
+            if (!SweepBlockingMovement(Component, From, From - FVector::UpVector * DownDistance, FloorHit))
+            {
+                // 아래에 바닥이 없는 경우
+                return true;
+            }
+
+            const FVector FloorNormal = GetSurfaceNormal(FloorHit);
+
+            // 너무 가파른 면은 받쳐 주는 바닥으로 인정하지 않음
+            if (FloorNormal.Z + KINDA_SMALL_NUMBER < MinFloorNormalZ)
+            {
+                return false;
+            }
+
+            // 깊이 겹친 상태를 강제 위치 이동으로 해결하지 않음
+            if (FloorHit.bStartPenetrating && FloorHit.PenetrationDepth > 1.0f)
+            {
+                return false;
+            }
+
+            OutLanding = From - FVector::UpVector * DownDistance * static_cast<double>(FloorHit.Time);
+
+            OutLanding.Z += SurfaceGap;
+
+            if (FloorHit.bStartPenetrating)
+            {
+                OutLanding.Z += FloorHit.PenetrationDepth;
+            }
+
+            bHasFloor = true;
+            return true;
+        };
+
+    // 현재 발밑에 가까운 바닥이 있는지 확인
+    FHitResult CurrentFloorHit;
+
+    const bool bFoundCurrentFloor = SweepBlockingMovement(
+        Component,
+        Start,
+        Start - FVector::UpVector * GroundProbeDistance,
+        CurrentFloorHit);
+
+    if (bFoundCurrentFloor && CurrentFloorHit.bStartPenetrating && CurrentFloorHit.PenetrationDepth > 1.0f)
+    {
+        return false;
+    }
+
+    const bool bStartedOnGround = bFoundCurrentFloor && GetSurfaceNormal(CurrentFloorHit).Z + KINDA_SMALL_NUMBER >= MinFloorNormalZ;
+
+    const FVector HorizontalDelta(DeltaX, 0.0, 0.0);
+    const FVector FlatEnd = Start + HorizontalDelta;
+
+    FHitResult ForwardHit;
+
+    // 먼저 높이를 바꾸지 않고 이동할 수 있는지 검사
+    if (!SweepBlockingMovement(Component, Start, FlatEnd, ForwardHit))
+    {
+        // 이미 공중에 있다면 수평 경로만 확인
+        // 낙하 처리는 실제 이동 단계에서 담당
+        if (!bStartedOnGround)
+        {
+            OutLocation = FlatEnd;
+            return true;
+        }
+
+        // 평지와 내리막의 바닥 높이에 맞춘 도착 위치 계산
+        return FindLanding(FlatEnd, MaxStepHeight + GroundProbeDistance, OutLocation, bOutOnGround);
+    }
+
+    // 공중에서는 벽을 타고 올라가거나 턱을 넘지 않음
+    if (!bStartedOnGround)
+    {
+        return false;
+    }
+
+    const FVector ForwardNormal = GetSurfaceNormal(ForwardHit);
+
+    // 허용된 경사면이라면 면을 따라 올라가는 경로 검사
+    if (ForwardNormal.Z + KINDA_SMALL_NUMBER >= MinFloorNormalZ)
+    {
+        const double Rise = -DeltaX * ForwardNormal.X / ForwardNormal.Z;
+
+        const FVector RampEnd = FlatEnd + FVector::UpVector * Rise;
+
+        FHitResult RampHit;
+
+        if (!SweepBlockingMovement(Component, Start, RampEnd, RampHit))
+        {
+            FVector Landing;
+            bool bHasFloor = false;
+
+            if (FindLanding(RampEnd, MaxStepHeight + GroundProbeDistance, Landing, bHasFloor) && bHasFloor)
+            {
+                OutLocation = Landing;
+                bOutOnGround = true;
+                return true;
+            }
+        }
+    }
+
+    // 경사 이동이 불가능하면 낮은 턱인지 검사
+    if (MaxStepHeight <= 0.0)
+    {
+        return false;
+    }
+
+    double UpDistance = MaxStepHeight + SurfaceGap;
+    FHitResult CeilingHit;
+
+    // 위쪽 공간 검사
+    if (SweepBlockingMovement(Component, Start, Start + FVector::UpVector * UpDistance, CeilingHit))
+    {
+        if (CeilingHit.bStartPenetrating)
+        {
+            return false;
+        }
+
+        UpDistance = FMath::Max(0.0, UpDistance * static_cast<double>(CeilingHit.Time) - SurfaceGap);
+    }
+
+    if (UpDistance <= UE_KINDA_SMALL_NUMBER)
+    {
+        return false;
+    }
+
+    const FVector RaisedStart = Start + FVector::UpVector * UpDistance;
+
+    const FVector RaisedEnd = RaisedStart + HorizontalDelta;
+
+    FHitResult RaisedForwardHit;
+
+    // 높이를 올린 상태에서 앞쪽 공간 검사
+    if (SweepBlockingMovement(Component, RaisedStart, RaisedEnd, RaisedForwardHit))
+    {
+        return false;
+    }
+
+    FVector Landing;
+    bool bHasFloor = false;
+
+    // 앞으로 이동한 위치 아래의 착지 지점 검사
+    if (!FindLanding(RaisedEnd, UpDistance + MaxStepHeight + GroundProbeDistance, Landing, bHasFloor) || !bHasFloor)
+    {
+        return false;
+    }
+
+    // 실제 올라가는 높이가 설정한 턱 높이를 넘으면 차단
+    const double Rise = Landing.Z - Start.Z;
+
+    if (Rise > MaxStepHeight + SurfaceGap + 0.1)
+    {
+        return false;
+    }
+
+    OutLocation = Landing;
+    bOutOnGround = true;
+    return true;
+}
+
+bool UPushPullComponent::BeginSharedMovement(UStaticMeshComponent* Mesh)
+{
+    if (bSharedMovementActive)
+    {
+        return false;
+    }
+
+    APlayerBase* Player = OwnerPlayer.Get();
+    APushPullGimmick* Target = CurrentTarget.Get();
+
+    if (!IsValid(Player)
+        || !IsValid(Target)
+        || !IsValid(Mesh)
+        || Target->GetPhysicsMesh() != Mesh
+        || Target->GetControllingPlayer() != Player
+        || !Mesh->IsSimulatingPhysics())
+    {
+        return false;
+    }
+
+    UCharacterMovementComponent* Movement = Player->GetCharacterMovement();
+
+    if (!IsValid(Movement) || !Movement->IsMovingOnGround() || !Movement->IsComponentTickEnabled())
+    {
+        return false;
+    }
+
+    FBodyInstance& Body = Mesh->BodyInstance;
+
+    const bool bPreviousLockX = Body.bLockXTranslation;
+
+    // 상자가 독립적인 물리 힘으로 좌우 이동하지 않도록 잠금
+    // Z축 잠금 설정은 변경하지 않음
+    Body.bLockXTranslation = true;
+    Body.SetDOFLock(EDOFMode::SixDOF);
+
+    if (Body.DOFConstraint == nullptr)
+    {
+        Body.bLockXTranslation = bPreviousLockX;
+        Body.SetDOFLock(EDOFMode::SixDOF);
+        return false;
+    }
+
+    // 남아 있는 수평 물리 속도만 제거
+    FVector BoxVelocity = Mesh->GetPhysicsLinearVelocity();
+    BoxVelocity.X = 0.0;
+    BoxVelocity.Y = 0.0;
+
+    Mesh->SetPhysicsLinearVelocity(BoxVelocity);
+
+    bSavedMovementTickEnabled = Movement->IsComponentTickEnabled();
+
+    // 이전 걷기 속도와 이동 입력이 남지 않도록 정리
+    Movement->StopMovementImmediately();
+    Player->ConsumeMovementInputVector();
+
+    // 조작 중 이동은 공통 이동 함수가 담당
+    Movement->SetComponentTickEnabled(false);
+
+    bSharedMovementActive = true;
+    return true;
+}
+
+void UPushPullComponent::EndSharedMovement()
+{
+    if (!bSharedMovementActive)
+    {
+        return;
+    }
+
+    // 종료 중 다른 이벤트가 발생해도 중복 복구하지 않도록 처리
+    bSharedMovementActive = false;
+
+    APlayerBase* Player = OwnerPlayer.Get();
+
+    if (!IsValid(Player))
+    {
+        return;
+    }
+
+    UCharacterMovementComponent* Movement = Player->GetCharacterMovement();
+
+    if (!IsValid(Movement))
+    {
+        return;
+    }
+
+    if (Movement->IsMovingOnGround() && !Player->IsActorBeingDestroyed())
+    {
+        // 공통 이동으로 위치가 달라졌으므로 현재 발밑 다시 확인
+        FFindFloorResult FloorResult;
+
+        Movement->FindFloor(Player->GetActorLocation(), FloorResult, false);
+
+        Movement->CurrentFloor = FloorResult;
+
+        if (FloorResult.IsWalkableFloor())
+        {
+            // 지상에서 손을 놓았을 때 남은 이동 속도 제거
+            Movement->Velocity = FVector::ZeroVector;
+
+            // 확인된 바닥 정보를 이용해 받침 대상 설정
+            Movement->SetBaseFromFloor(FloorResult);
+        }
+        else
+        {
+            // 발밑이 없다면 일반 낙하로 복귀
+            // 빈 바닥 결과를 전달해서 받침 대상 해제
+            Movement->SetBaseFromFloor(FFindFloorResult{});
+            Movement->SetMovementMode(MOVE_Falling);
+        }
+    }
+
+    Movement->bForceNextFloorCheck = true;
+    Movement->UpdateComponentVelocity();
+
+    // 전환 전의 자동 갱신 상태 복구
+    Movement->SetComponentTickEnabled(bSavedMovementTickEnabled);
+}
+
+bool UPushPullComponent::AlignPlayerToGrabDistance()
+{
+    APlayerBase* Player = OwnerPlayer.Get();
+    APushPullGimmick* Target = CurrentTarget.Get();
+
+    if (!IsValid(Player) || !IsValid(Target) || !bSharedMovementActive)
+    {
+        return false;
+    }
+
+    UCharacterMovementComponent* Movement = Player->GetCharacterMovement();
+
+    UCapsuleComponent* Capsule = Player->GetCapsuleComponent();
+
+    UStaticMeshComponent* Mesh = Target->GetPhysicsMesh();
+
+    USceneComponent* Anchor = Target->GetInteractionAnchor();
+
+    if (!IsValid(Movement) || !IsValid(Capsule) || !IsValid(Mesh) || !IsValid(Anchor))
+    {
+        return false;
+    }
+
+    const FPushPullConfigRow& Config = Target->GetPushPullConfig();
+
+    if (!FMath::IsFinite(Config.GrabDistance) || Config.GrabDistance <= 0.0f || Config.GrabDistance >= Config.MaxSeparationDistance)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("%s: GrabDistance와 MaxSeparationDistance를 확인해주세요."), *Target->GetName());
+
+        return false;
+    }
+
+    // 단순 콜리전에서 주어진 위치와 가장 가까운 표면점 조회
+    const auto ReadSurfacePoint = [&](const FVector& Location, FVector& OutSurfacePoint) 
+        -> bool {
+            if (Location.ContainsNaN())
+            {
+                return false;
+            }
+
+            const float Distance = Mesh->GetClosestPointOnCollision(Location, OutSurfacePoint);
+
+            return FMath::IsFinite(Distance) && Distance > 0.0f && !OutSurfacePoint.ContainsNaN();
+        };
+
+    const FVector StartLocation = Capsule->GetComponentLocation();
+
+    FVector SurfacePoint;
+
+    if (!ReadSurfacePoint(StartLocation, SurfacePoint))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("%s: 충돌 표면을 계산하지 못했습니다. 단순 콜리전과 플레이어 위치를 확인해주세요."), *Target->GetName());
+
+        return false;
+    }
+
+    // 원점 대신 가까운 표면이 있는 방향으로 좌우 판단
+    const double ToSurfaceX = SurfacePoint.X - StartLocation.X;
+
+    if (FMath::Abs(ToSurfaceX) <= UE_KINDA_SMALL_NUMBER)
+    {
+        return false;
+    }
+
+    const double SideSign = FMath::Sign(ToSurfaceX);
+    const double DesiredGap = static_cast<double>(Config.GrabDistance);
+
+    constexpr double GapTolerance = 0.25;
+    constexpr int32 MaxIterations = 12;
+
+    FVector CandidateLocation = StartLocation;
+    FVector AlignedLocation = StartLocation;
+    bool bConverged = false;
+
+    for (int32 Index = 0; Index < MaxIterations; ++Index)
+    {
+        if (!ReadSurfacePoint(CandidateLocation, SurfacePoint))
+        {
+            return false;
+        }
+
+        // 처음 선택한 물체 옆면을 계속 기준으로 사용
+        if (SideSign * (SurfacePoint.X - CandidateLocation.X) <= UE_KINDA_SMALL_NUMBER)
+        {
+            return false;
+        }
+
+        const double DesiredPlayerX = SurfacePoint.X - SideSign * DesiredGap;
+
+        bool bOnGround = false;
+
+        // 실제 위치는 바꾸지 않고 바닥에 맞는 후보 위치 계산
+        if (!FindSharedMoveLocation(
+            Capsule,
+            DesiredPlayerX - StartLocation.X,
+            static_cast<double>(Movement->MaxStepHeight),
+            FMath::Clamp(static_cast<double>(Movement->GetWalkableFloorAngle()), 0.0, 80.0),
+            AlignedLocation,
+            bOnGround)
+            || !bOnGround)
+        {
+            return false;
+        }
+
+        FVector CheckedSurfacePoint;
+
+        if (!ReadSurfacePoint(AlignedLocation, CheckedSurfacePoint))
+        {
+            return false;
+        }
+
+        const double ActualGap = SideSign * (CheckedSurfacePoint.X - AlignedLocation.X);
+
+        if (ActualGap > 0.0 && FMath::Abs(ActualGap - DesiredGap) <= GapTolerance)
+        {
+            bConverged = true;
+            break;
+        }
+
+        // 곡면과 높이 차이를 반영해 후보 위치에서 다시 계산
+        CandidateLocation = AlignedLocation;
+    }
+
+    if (!bConverged)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("%s: 설정한 표면 간격으로 잡기 위치를 계산하지 못했습니다."), *Target->GetName());
+
+        return false;
+    }
+
+    if (FVector::DistSquared(AlignedLocation, Anchor->GetComponentLocation()) > FMath::Square(static_cast<double>(Config.MaxSeparationDistance)))
+    {
+        return false;
+    }
+
+    // 실제 이동에서는 상자와 주변 벽을 포함해 충돌 검사
+    FScopedMovementUpdate AlignScope(Capsule, EScopedUpdate::DeferredUpdates);
+
+    FHitResult MoveHit;
+
+    Capsule->SetWorldLocation(AlignedLocation, true, &MoveHit, ETeleportType::TeleportPhysics);
+
+    if (MoveHit.bBlockingHit || !Capsule->GetComponentLocation().Equals(AlignedLocation, 0.1))
+    {
+        AlignScope.RevertMove();
+        return false;
+    }
+
+    // 가까운 물체 표면을 바라보도록 설정
+    const FVector Facing = FVector::VectorPlaneProject(FVector(SideSign, 0.0, 0.0), Player->GetActorUpVector()).GetSafeNormal();
+
+    if (!Facing.IsNearlyZero())
+    {
+        Player->SetActorRotation(FRotationMatrix::MakeFromXZ(Facing, Player->GetActorUpVector()).Rotator());
+    }
+
+    // 표면 기준 정렬 결과를 기존 공통 이동에 사용할 간격으로 저장
+    InitialRelativeOffsetX = Mesh->GetComponentLocation().X - Capsule->GetComponentLocation().X;
+
+    Movement->Velocity = FVector::ZeroVector;
+    Movement->UpdateComponentVelocity();
 
     return true;
 }

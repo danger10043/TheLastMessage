@@ -285,6 +285,12 @@ protected:
 	/** 켜면 공격 중에 맞아도 피격 몽타주가 재생되고 공격이 취소된다. 끄면 공격 중에는 피격 몽타주를 재생하지 않는다. */
 	bool bHitReactionInterruptsAttack = false;
 
+	/** 끄면 이동 중에 맞았을 때 피격 몽타주를 재생하지 않는다(걷는 애니메이션이 끊기는 것을 막는다). 번쩍임과 이펙트는 그대로 나온다. */
+	bool bHitReactionWhileMoving = false;
+
+	/** 이 속도(cm/s) 이상으로 움직이면 "이동 중"으로 본다. */
+	float HitReactionMoveSpeedThreshold = 30.f;
+
 	/**
 	 * 피격 시 몬스터 메시 위에 잠깐 덧씌울 오버레이 머티리얼(번쩍임). 비워 두면 번쩍이지 않는다.
 	 * 몬스터마다 머티리얼을 고칠 필요 없이 하나를 공용으로 쓴다.

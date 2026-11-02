@@ -15,20 +15,26 @@ namespace
 	constexpr float MinDamageTakenMultiplier = 0.3f;	// 받는 피해는 최소 30%까지만 감소한다.
 	constexpr float MinChargeTimeMultiplier = 0.2f;		// 최대 차지 시간은 최소 20%까지만 단축한다.
 
-	// 가드 중이고 공용 에너지가 피해 이상 남아 있으면 피해만큼 에너지를 소모하고 피해를 막는다.
-	bool TryBlockDamageWithGuardEnergy(UAbilitySystemComponent* ASC, APlayerBase* Player, float Damage)
+	// 가드 중이면 공용 에너지를 피해만큼 소모해 막고, 막은 양을 반환한다. 에너지가 부족하면 남은 에너지만큼만 막는다.
+	float BlockDamageWithGuardEnergy(UAbilitySystemComponent* ASC, APlayerBase* Player, float Damage)
 	{
 		const UWeaponSlotAttributeSet* EnergySet = ASC ? ASC->GetSet<UWeaponSlotAttributeSet>() : nullptr;
-		if (!EnergySet || !ASC->HasMatchingGameplayTag(CoreGameplayTags::State_Guarding)
-			|| EnergySet->GetSharedEnergy() < Damage)
+		if (!EnergySet || !ASC->HasMatchingGameplayTag(CoreGameplayTags::State_Guarding))
 		{
-			return false;
+			return 0.0f;
 		}
 
-		ASC->SetNumericAttributeBase(UWeaponSlotAttributeSet::GetSharedEnergyAttribute(), EnergySet->GetSharedEnergy() - Damage);
+		const float Energy = EnergySet->GetSharedEnergy();
+		const float Blocked = FMath::Min(Damage, FMath::Max(0.0f, Energy));
+		if (Blocked <= 0.0f)
+		{
+			return 0.0f;
+		}
+
+		ASC->SetNumericAttributeBase(UWeaponSlotAttributeSet::GetSharedEnergyAttribute(), Energy - Blocked);
 		// 무기 사용과 같은 대기 시간 뒤에 에너지가 다시 충전된다.
 		if (Player) Player->NotifyWeaponEnergySpent();
-		return true;
+		return Blocked;
 	}
 }
 
@@ -140,11 +146,12 @@ void UCombatAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCall
 
 		// 체력을 차감하는 이 지점에서 받는 피해 배율을 한 번만 적용한다. 0.9라면 피해 10% 감소다.
 		const float Damage = RawIncomingDamage * FMath::Max(0.0f, GetDamageTakenMultiplier());
-		if (FMath::IsFinite(Damage) && Damage > 0.0f && (!Player || !Player->IsDead())
-			&& !TryBlockDamageWithGuardEnergy(ASC, Player, Damage))
+		if (FMath::IsFinite(Damage) && Damage > 0.0f && (!Player || !Player->IsDead()))
 		{
+			// 가드로 막은 양을 뺀 나머지만 체력에서 차감한다. 전부 막으면 체력이 줄지 않아 피격 반응도 없다.
+			const float RemainingDamage = Damage - BlockDamageWithGuardEnergy(ASC, Player, Damage);
 			const float PreviousHealth = GetHealth();
-			SetHealth(FMath::Clamp(GetHealth() - Damage, 0.0f, GetMaxHealth()));
+			SetHealth(FMath::Clamp(GetHealth() - RemainingDamage, 0.0f, GetMaxHealth()));
 			bReceivedDamage = GetHealth() < PreviousHealth;
 			
 			bCheckDeath = true;

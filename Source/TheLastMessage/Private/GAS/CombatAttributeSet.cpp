@@ -5,6 +5,8 @@
 #include "Net/UnrealNetwork.h"
 #include "Character/Player/PlayerBase.h"
 #include "Character/Player/CombatFeedbackComponent.h"
+#include "Core/CoreGameplayTags.h"
+#include "GAS/WeaponSlotAttributeSet.h"
 
 namespace
 {
@@ -12,6 +14,22 @@ namespace
 	// 밸런스 수치가 아니라 데이터 실수에 대한 보호 장치이며, 기획 확정 시 함께 조정한다.
 	constexpr float MinDamageTakenMultiplier = 0.3f;	// 받는 피해는 최소 30%까지만 감소한다.
 	constexpr float MinChargeTimeMultiplier = 0.2f;		// 최대 차지 시간은 최소 20%까지만 단축한다.
+
+	// 가드 중이고 공용 에너지가 피해 이상 남아 있으면 피해만큼 에너지를 소모하고 피해를 막는다.
+	bool TryBlockDamageWithGuardEnergy(UAbilitySystemComponent* ASC, APlayerBase* Player, float Damage)
+	{
+		const UWeaponSlotAttributeSet* EnergySet = ASC ? ASC->GetSet<UWeaponSlotAttributeSet>() : nullptr;
+		if (!EnergySet || !ASC->HasMatchingGameplayTag(CoreGameplayTags::State_Guarding)
+			|| EnergySet->GetSharedEnergy() < Damage)
+		{
+			return false;
+		}
+
+		ASC->SetNumericAttributeBase(UWeaponSlotAttributeSet::GetSharedEnergyAttribute(), EnergySet->GetSharedEnergy() - Damage);
+		// 무기 사용과 같은 대기 시간 뒤에 에너지가 다시 충전된다.
+		if (Player) Player->NotifyWeaponEnergySpent();
+		return true;
+	}
 }
 
 UCombatAttributeSet::UCombatAttributeSet()
@@ -122,7 +140,8 @@ void UCombatAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCall
 
 		// 체력을 차감하는 이 지점에서 받는 피해 배율을 한 번만 적용한다. 0.9라면 피해 10% 감소다.
 		const float Damage = RawIncomingDamage * FMath::Max(0.0f, GetDamageTakenMultiplier());
-		if (FMath::IsFinite(Damage) && Damage > 0.0f && (!Player || !Player->IsDead()))
+		if (FMath::IsFinite(Damage) && Damage > 0.0f && (!Player || !Player->IsDead())
+			&& !TryBlockDamageWithGuardEnergy(ASC, Player, Damage))
 		{
 			const float PreviousHealth = GetHealth();
 			SetHealth(FMath::Clamp(GetHealth() - Damage, 0.0f, GetMaxHealth()));

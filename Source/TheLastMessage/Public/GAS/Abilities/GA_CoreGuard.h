@@ -59,11 +59,7 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Guard|Block")
 	TObjectPtr<USoundBase> BlockSound;
 
-	/** 에너지가 부족해 일부만 막았을 때의 소리 높낮이 배율. 가드 브레이크 소리가 없을 때 막는 소리에 적용한다. */
-	UPROPERTY(EditDefaultsOnly, Category = "Guard|Block", meta = (ClampMin = "0.1"))
-	float PartialBlockPitch = 0.8f;
-
-	/** 일부만 막아 가드가 풀릴 때 재생하는 소리. 비우면 막는 소리를 낮은 높이로 재생한다. */
+	/** 일부만 막아 가드가 풀릴 때 재생하는 소리. 비우면 소리 없이 동작한다. */
 	UPROPERTY(EditDefaultsOnly, Category = "Guard|Break")
 	TObjectPtr<USoundBase> GuardBreakSound;
 
@@ -74,6 +70,38 @@ protected:
 	/** 가드 브레이크 후 다시 가드할 수 없는 시간(초). */
 	UPROPERTY(EditDefaultsOnly, Category = "Guard|Break", meta = (ClampMin = "0"))
 	float GuardBreakCooldown = 0.5f;
+
+	/** 퍼펙트 가드 때 방벽이 물드는 색. */
+	UPROPERTY(EditDefaultsOnly, Category = "Guard|Perfect")
+	FLinearColor PerfectColor = FLinearColor(0.47f, 0.84f, 1.0f);
+
+	/** 퍼펙트 가드 때 방벽이 퍼펙트 색으로 물드는 정도(0~1). */
+	UPROPERTY(EditDefaultsOnly, Category = "Guard|Perfect", meta = (ClampMin = "0", ClampMax = "1"))
+	float PerfectTint = 0.6f;
+
+	/** 퍼펙트 가드 때 방벽 밝기·선·테두리를 강조하는 세기. */
+	UPROPERTY(EditDefaultsOnly, Category = "Guard|Perfect", meta = (ClampMin = "0"))
+	float PerfectFlashStrength = 0.9f;
+
+	/** 퍼펙트 가드 때 방벽이 잠깐 커지는 비율. 0.08이면 8% 커졌다가 돌아온다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Guard|Perfect", meta = (ClampMin = "0"))
+	float PerfectPop = 0.08f;
+
+	/** 퍼펙트 가드 때 방벽 테두리에서 퍼지는 충격파 머티리얼. Progress(0~1)·Expand·Color 파라미터를 쓴다. 비우면 충격파를 표시하지 않는다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Guard|Perfect")
+	TObjectPtr<UMaterialInterface> ShockwaveMaterial;
+
+	/** 충격파가 방벽 반지름 대비 바깥으로 퍼지는 거리 비율. */
+	UPROPERTY(EditDefaultsOnly, Category = "Guard|Perfect", meta = (ClampMin = "0.1"))
+	float ShockwaveExpand = 0.95f;
+
+	/** 충격파가 퍼져 사라지는 시간(초). */
+	UPROPERTY(EditDefaultsOnly, Category = "Guard|Perfect", meta = (ClampMin = "0.05"))
+	float ShockwaveDuration = 0.35f;
+
+	/** 퍼펙트 가드 때 재생하는 소리. 비우면 소리 없이 동작한다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Guard|Perfect")
+	TObjectPtr<USoundBase> PerfectBlockSound;
 
 	virtual bool CanActivateAbility(const FGameplayAbilitySpecHandle Handle,
 		const FGameplayAbilityActorInfo* ActorInfo,
@@ -115,8 +143,32 @@ private:
 	bool bPerfectWindowActive = false;
 	FTimerHandle PerfectWindowTimerHandle;
 
+	/** 퍼펙트 가드 연출(번쩍임·부풀기·충격파)을 시작한다. 방벽은 깎지 않는다. */
+	void PlayPerfectFeedback();
+	void SpawnShockwave();
+	/** 충격파를 모두 제거한다. */
+	void ClearShockwaves();
+	/** 업데이트 타이머가 멈춰 있으면 시작한다. */
+	void EnsureBarrierTimer();
+
 	/** 깎인 방벽을 다시 채우고 머티리얼에 반영한다. 가득 차면 멈추고, 가드 브레이크 중이면 다 깨진 뒤 제거한다. */
 	void UpdateBarrier();
+
+	/** 퍼펙트 가드 강조(1에서 0으로 줄어듦). 밝기·색·선 강조에 쓴다. */
+	float PerfectFlash = 0.0f;
+	/** 부풀기 진행(1에서 0으로 줄어듦). */
+	float PerfectPopProgress = 0.0f;
+	/** 머티리얼 기본값. 퍼펙트 강조 시 이 값을 기준으로 바꾼다. */
+	float BaseLineAlpha = 0.35f;
+	float BaseFillScale = 0.3f;
+	float BaseRimWidth = 0.05f;
+	FLinearColor BaseColor = FLinearColor::White;
+	float BaseBarrierScale = 1.0f;
+
+	/** 퍼지는 중인 충격파와 경과 시간. */
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UStaticMeshComponent>> ShockwaveComponents;
+	TArray<float> ShockwaveElapsed;
 
 	/** 가드 브레이크로 방벽이 깨지는 중인지. 가드가 끝나도 깨지는 연출이 끝날 때까지 방벽을 남긴다. */
 	bool bGuardBroken = false;

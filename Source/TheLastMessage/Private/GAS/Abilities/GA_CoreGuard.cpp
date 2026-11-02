@@ -83,27 +83,24 @@ void UGA_CoreGuard::HandleGuardBlocked(FGameplayEventData Payload)
 		return;
 	}
 	const bool bPartial = Payload.TargetTags.HasTagExact(CoreGameplayTags::Result_GuardPartial);
+	const bool bPerfect = Payload.TargetTags.HasTagExact(CoreGameplayTags::Result_GuardPerfect);
 
-	if (bPartial && GuardBreakSound)
+	// 상황마다 지정한 소리만 재생하고, 비어 있으면 소리를 내지 않는다.
+	USoundBase* Sound = bPerfect ? PerfectBlockSound.Get() : bPartial ? GuardBreakSound.Get() : BlockSound.Get();
+	if (Sound)
 	{
-		UGameplayStatics::PlaySoundAtLocation(this, GuardBreakSound, Avatar->GetActorLocation());
+		UGameplayStatics::PlaySoundAtLocation(this, Sound, Avatar->GetActorLocation());
 	}
-	else if (BlockSound)
+
+	// 퍼펙트 가드는 방벽을 깎지 않고 튕겨 내는 연출만 한다.
+	if (bPerfect)
 	{
-		UGameplayStatics::PlaySoundAtLocation(this, BlockSound, Avatar->GetActorLocation(), 1.0f,
-			bPartial ? PartialBlockPitch : 1.0f);
-	}
-	if (!BarrierMaterialInstance)
-	{
-		if (bPartial)
-		{
-			BreakGuard();
-		}
+		PlayPerfectFeedback();
 		return;
 	}
-
 	// 공격자가 있는 방향부터 깨지도록 방벽 평면 기준 각도로 바꾼다. 머티리얼은 V축을 뒤집어 위쪽을 +로 쓴다.
-	if (const AActor* Attacker = Payload.Instigator.Get())
+	const AActor* Attacker = Payload.Instigator.Get();
+	if (BarrierMaterialInstance && Attacker)
 	{
 		const FVector Local = BarrierComponent->GetComponentTransform().InverseTransformVectorNoScale(
 			Attacker->GetActorLocation() - Avatar->GetActorLocation());
@@ -118,19 +115,80 @@ void UGA_CoreGuard::HandleGuardBlocked(FGameplayEventData Payload)
 		BreakGuard();
 		return;
 	}
+	if (!BarrierMaterialInstance)
+	{
+		return;
+	}
 
 	// 깨지는 중에 또 막으면 목표 상태에서 이어서 깎아, 연속 공격일수록 더 성겨지게 한다.
 	BreakTarget = FMath::Max(MinIntegrity, FMath::Min(Integrity, BreakTarget) - BlockBreakAmount);
 	BreakRemaining = BreakTime;
 	Flash = 1.0f;
+	EnsureBarrierTimer();
+	UpdateBarrier();
+}
 
+void UGA_CoreGuard::EnsureBarrierTimer()
+{
 	UWorld* World = GetWorld();
 	if (World && !World->GetTimerManager().IsTimerActive(BarrierTimerHandle))
 	{
 		LastUpdateTime = World->GetTimeSeconds();
 		World->GetTimerManager().SetTimer(BarrierTimerHandle, this, &ThisClass::UpdateBarrier, 1.0f / 60.0f, true);
 	}
+}
+
+void UGA_CoreGuard::PlayPerfectFeedback()
+{
+	if (!BarrierMaterialInstance)
+	{
+		return;
+	}
+	PerfectFlash = 1.0f;
+	PerfectPopProgress = 1.0f;
+	SpawnShockwave();
+	EnsureBarrierTimer();
 	UpdateBarrier();
+}
+
+void UGA_CoreGuard::SpawnShockwave()
+{
+	if (!ShockwaveMaterial || !BarrierMesh || !BarrierComponent)
+	{
+		return;
+	}
+	AActor* Avatar = BarrierComponent->GetOwner();
+	UStaticMeshComponent* Wave = NewObject<UStaticMeshComponent>(Avatar, NAME_None, RF_Transient);
+	Wave->SetStaticMesh(BarrierMesh);
+	Wave->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	Wave->SetCastShadow(false);
+	Wave->SetupAttachment(BarrierComponent->GetAttachParent());
+	Wave->SetUsingAbsoluteRotation(true);
+	Wave->SetRelativeLocation(BarrierOffset);
+	Wave->SetWorldRotation(BarrierComponent->GetComponentRotation());
+	// 머티리얼은 평면 가장자리를 방벽 반지름 × (1 + Expand) × 1.1로 계산하므로 메시도 같은 크기로 둔다.
+	const float WaveMargin = (1.0f + ShockwaveExpand) * 1.1f;
+	Wave->SetWorldScale3D(FVector(BarrierRadius * 2.0f * WaveMargin / BarrierMeshSize));
+	Wave->RegisterComponent();
+	UMaterialInstanceDynamic* WaveMaterial = Wave->CreateDynamicMaterialInstance(0, ShockwaveMaterial);
+	WaveMaterial->SetScalarParameterValue(TEXT("Expand"), ShockwaveExpand);
+	WaveMaterial->SetScalarParameterValue(TEXT("Progress"), 0.0f);
+	WaveMaterial->SetVectorParameterValue(TEXT("Color"), PerfectColor);
+	ShockwaveComponents.Add(Wave);
+	ShockwaveElapsed.Add(0.0f);
+}
+
+void UGA_CoreGuard::ClearShockwaves()
+{
+	for (UStaticMeshComponent* Wave : ShockwaveComponents)
+	{
+		if (Wave)
+		{
+			Wave->DestroyComponent();
+		}
+	}
+	ShockwaveComponents.Reset();
+	ShockwaveElapsed.Reset();
 }
 
 void UGA_CoreGuard::BreakGuard()
@@ -148,11 +206,7 @@ void UGA_CoreGuard::BreakGuard()
 		BreakTarget = 0.0f;
 		BreakRemaining = GuardBreakTime;
 		Flash = 1.0f;
-		if (!World->GetTimerManager().IsTimerActive(BarrierTimerHandle))
-		{
-			LastUpdateTime = World->GetTimeSeconds();
-			World->GetTimerManager().SetTimer(BarrierTimerHandle, this, &ThisClass::UpdateBarrier, 1.0f / 60.0f, true);
-		}
+		EnsureBarrierTimer();
 	}
 
 	// 피해 처리 도중에 받은 이벤트이므로 GE 제거와 태그 해제는 다음 틱으로 미룬다.
@@ -250,11 +304,45 @@ void UGA_CoreGuard::UpdateBarrier()
 		BreakTarget = Integrity;
 	}
 	Flash = FMath::Max(0.0f, Flash - DeltaTime * 6.0f);
+	PerfectFlash = FMath::Max(0.0f, PerfectFlash - DeltaTime * 3.0f);
+	PerfectPopProgress = FMath::Max(0.0f, PerfectPopProgress - DeltaTime * 6.0f);
 
+	// 퍼펙트 강조는 밝기·선·채움·테두리를 키우고 색을 퍼펙트 색 쪽으로 물들인다.
+	const float Perfect = PerfectFlash * PerfectFlashStrength;
 	BarrierMaterialInstance->SetScalarParameterValue(TEXT("Integrity"), Integrity);
-	BarrierMaterialInstance->SetScalarParameterValue(TEXT("Brightness"), BaseBrightness * (1.0f + 0.35f * Flash));
+	BarrierMaterialInstance->SetScalarParameterValue(TEXT("Brightness"),
+		BaseBrightness * (1.0f + 0.35f * Flash + 0.8f * Perfect));
+	BarrierMaterialInstance->SetScalarParameterValue(TEXT("LineAlpha"), BaseLineAlpha + 0.6f * Perfect);
+	BarrierMaterialInstance->SetScalarParameterValue(TEXT("FillScale"), BaseFillScale + 0.4f * Perfect);
+	BarrierMaterialInstance->SetScalarParameterValue(TEXT("RimWidth"), BaseRimWidth * (1.0f + 0.65f * Perfect));
+	BarrierMaterialInstance->SetVectorParameterValue(TEXT("Color"),
+		FMath::Lerp(BaseColor, PerfectColor, PerfectFlash * PerfectTint));
+	const float Pop = PerfectPopProgress > 0.0f ? PerfectPop * FMath::Sin(PI * (1.0f - PerfectPopProgress)) : 0.0f;
+	BarrierComponent->SetWorldScale3D(FVector(BaseBarrierScale * (1.0f + Pop)));
 
-	if (Integrity >= 1.0f && Flash <= 0.0f && BreakRemaining <= 0.0f)
+	for (int32 Index = ShockwaveComponents.Num() - 1; Index >= 0; --Index)
+	{
+		ShockwaveElapsed[Index] += DeltaTime;
+		const float Progress = ShockwaveElapsed[Index] / ShockwaveDuration;
+		UStaticMeshComponent* Wave = ShockwaveComponents[Index];
+		if (!Wave || Progress >= 1.0f)
+		{
+			if (Wave)
+			{
+				Wave->DestroyComponent();
+			}
+			ShockwaveComponents.RemoveAt(Index);
+			ShockwaveElapsed.RemoveAt(Index);
+			continue;
+		}
+		if (UMaterialInstanceDynamic* WaveMaterial = Cast<UMaterialInstanceDynamic>(Wave->GetMaterial(0)))
+		{
+			WaveMaterial->SetScalarParameterValue(TEXT("Progress"), Progress);
+		}
+	}
+
+	if (Integrity >= 1.0f && Flash <= 0.0f && BreakRemaining <= 0.0f && PerfectFlash <= 0.0f
+		&& PerfectPopProgress <= 0.0f && ShockwaveComponents.IsEmpty())
 	{
 		World->GetTimerManager().ClearTimer(BarrierTimerHandle);
 	}
@@ -284,12 +372,19 @@ void UGA_CoreGuard::ShowBarrier(AActor* Avatar)
 	BarrierComponent->RegisterComponent();
 	BarrierMaterialInstance = BarrierComponent->CreateDynamicMaterialInstance(0, BarrierMaterial);
 	BarrierMaterialInstance->GetScalarParameterValue(TEXT("Brightness"), BaseBrightness);
+	BarrierMaterialInstance->GetScalarParameterValue(TEXT("LineAlpha"), BaseLineAlpha);
+	BarrierMaterialInstance->GetScalarParameterValue(TEXT("FillScale"), BaseFillScale);
+	BarrierMaterialInstance->GetScalarParameterValue(TEXT("RimWidth"), BaseRimWidth);
+	BarrierMaterialInstance->GetVectorParameterValue(TEXT("Color"), BaseColor);
+	BaseBarrierScale = BarrierComponent->GetComponentScale().X;
 
 	// 새 가드는 온전한 방벽으로 시작한다.
 	Integrity = 1.0f;
 	BreakTarget = 1.0f;
 	BreakRemaining = 0.0f;
 	Flash = 0.0f;
+	PerfectFlash = 0.0f;
+	PerfectPopProgress = 0.0f;
 	BarrierMaterialInstance->SetScalarParameterValue(TEXT("Integrity"), Integrity);
 }
 
@@ -299,6 +394,7 @@ void UGA_CoreGuard::HideBarrier()
 	{
 		World->GetTimerManager().ClearTimer(BarrierTimerHandle);
 	}
+	ClearShockwaves();
 	if (BarrierComponent)
 	{
 		BarrierComponent->DestroyComponent();

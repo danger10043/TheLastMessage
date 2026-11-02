@@ -79,9 +79,6 @@ void UStartMenuWidget::NativeConstruct()
 	if (ConfirmButton) ConfirmButton->OnClicked.AddUniqueDynamic(this, &UStartMenuWidget::ConfirmOverwrite);
 	if (CancelButton) CancelButton->OnClicked.AddUniqueDynamic(this, &UStartMenuWidget::CancelOverwrite);
 	SetIsFocusable(true);
-	UButton* FocusButtons[] = { NewGameButton, LoadGameButton, ExitButton, Slot1Button, Slot2Button,
-		Slot3Button, BackButton, ConfirmButton, CancelButton };
-	for (UButton* Button : FocusButtons) if (Button) Button->SetIsFocusable(true);
 	ShowMainMenu();
 }
 

@@ -156,7 +156,8 @@ void UCombatAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCall
 			bReceivedDamage = GetHealth() < PreviousHealth;
 
 			// 체력 반영 후에 알려 연출·회복 능력이 막은 결과와 현재 체력을 함께 볼 수 있게 한다.
-			if (BlockedDamage > 0.0f)
+			// 에너지가 없어 하나도 막지 못해도 가드 중이었다면 알려 가드 브레이크로 처리하게 한다.
+			if (BlockedDamage > 0.0f || ASC->HasMatchingGameplayTag(CoreGameplayTags::State_Guarding))
 			{
 				FGameplayEventData Payload;
 				Payload.EventTag = CoreGameplayTags::Event_GuardBlocked;

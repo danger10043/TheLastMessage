@@ -461,6 +461,9 @@ private:
 	void StartMeleeAttackFeedback();
 	void StopMeleeAttackFeedback();
 	void StopMeleeTrail();
+	void StartMeleeReachRibbon(UStaticMeshComponent* Attachment);
+	UPROPERTY(Transient)
+	TObjectPtr<class UMeleeReachRibbon> MeleeReachRibbon;
 	FTimerHandle MeleeFeedbackTimer;
 	FTimerHandle MeleeTrailTimer;
 	EWeaponSlot MeleeFeedbackSlot = EWeaponSlot::None;

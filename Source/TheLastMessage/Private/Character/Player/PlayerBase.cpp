@@ -1,4 +1,5 @@
 #include "Character/Player/PlayerBase.h"
+#include "Weapon/MeleeReachRibbon.h"
 #include "UI/LoadingTransitionSubsystem.h"
 #include "Engine/GameInstance.h"
 #include "Character/Player/GrapplingHookComponent.h"
@@ -1059,6 +1060,15 @@ static void AlignTrailToCamera(const UObject* WorldContext, UNiagaraComponent* T
 	Trail->SetWorldRotation(FQuat::FindBetweenNormals(FVector::UpVector, Facing.GetSafeNormal()));
 }
 
+void APlayerBase::StartMeleeReachRibbon(UStaticMeshComponent* Attachment)
+{
+	if (GetNetMode() == NM_DedicatedServer || !Attachment || !MeleeFeedbackData) return;
+	if (MeleeReachRibbon) MeleeReachRibbon->StopEmission();
+	MeleeReachRibbon = NewObject<UMeleeReachRibbon>(this);
+	MeleeReachRibbon->RegisterComponent();
+	MeleeReachRibbon->Initialize(Attachment, MeleeFeedbackData);
+}
+
 void APlayerBase::StartMeleeAttackFeedback()
 {
 	const UWeaponDataAsset* Data = MeleeFeedbackData;
@@ -1077,8 +1087,9 @@ void APlayerBase::StartMeleeAttackFeedback()
 	{
 		MeleeTrailEffect = SpawnAttached(Data->MeleeTrailEffect, Data->MeleeTrailSocketName, Data->MeleeTrailOffset);
 		AlignTrailToCamera(this, MeleeTrailEffect);
+		StartMeleeReachRibbon(Attachment);
 	}
-	if (MeleeTrailEffect && Data->MeleeTrailDuration > 0.0f)
+	if ((MeleeTrailEffect || MeleeReachRibbon) && !Data->bUseMeleeTrailNotifyWindow && Data->MeleeTrailDuration > 0.0f)
 		GetWorldTimerManager().SetTimer(MeleeTrailTimer, this, &APlayerBase::StopMeleeTrail, Data->MeleeTrailDuration, false);
 	if (Data->AttackSound)
 	{
@@ -1091,6 +1102,8 @@ void APlayerBase::StartMeleeAttackFeedback()
 
 void APlayerBase::StopMeleeTrail()
 {
+	if (IsValid(MeleeReachRibbon)) MeleeReachRibbon->StopEmission();
+	MeleeReachRibbon = nullptr;
 	GetWorldTimerManager().ClearTimer(MeleeTrailTimer);
 	if (IsValid(MeleeTrailEffect)) MeleeTrailEffect->DestroyComponent();
 	MeleeTrailEffect = nullptr;
@@ -1100,10 +1113,11 @@ void APlayerBase::BeginMeleeTrailWindow(const UAnimSequenceBase* Animation)
 {
 	const UWeaponDataAsset* Data = MeleeFeedbackData;
 	if (GetNetMode() == NM_DedicatedServer || IsDead() || !Data || !Data->bUseMeleeTrailNotifyWindow
-		|| Data->AttackMontage != Animation || !Data->MeleeTrailEffect) return;
+		|| Data->AttackMontage != Animation) return;
 	StopMeleeTrail();
 	UStaticMeshComponent* Attachment = MeleeFeedbackSlot == EWeaponSlot::Secondary ? SecondaryWeaponMesh.Get() : PrimaryWeaponMesh.Get();
 	if (!Attachment) return;
+	StartMeleeReachRibbon(Attachment);
 	const FName Socket = Attachment->DoesSocketExist(Data->MeleeTrailSocketName) ? Data->MeleeTrailSocketName : NAME_None;
 	const FTransform& Offset = Data->MeleeTrailOffset;
 	MeleeTrailEffect = UNiagaraFunctionLibrary::SpawnSystemAttached(Data->MeleeTrailEffect, Attachment, Socket,
@@ -1117,6 +1131,8 @@ void APlayerBase::EndMeleeTrailWindow(const UAnimSequenceBase* Animation)
 	{
 		// 즉시 파괴하면 리본이 뚝 끊겨 싸구려처럼 보인다. 스폰만 멈추고 남은 파티클이 수명만큼 사라지게 둔다
 		GetWorldTimerManager().ClearTimer(MeleeTrailTimer);
+		if (IsValid(MeleeReachRibbon)) MeleeReachRibbon->StopEmission();
+		MeleeReachRibbon = nullptr;
 		if (IsValid(MeleeTrailEffect)) MeleeTrailEffect->Deactivate();
 		MeleeTrailEffect = nullptr;
 	}

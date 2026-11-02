@@ -224,6 +224,21 @@ public:
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Melee Collision", meta=(ClampMin="1", ClampMax="50", Units="cm"))
     float MeleeTraceRadius = 8.f;
 
+	// 메시의 타격 구간 길이를 기준으로 무기 끝쪽에 추가할 판정 비율.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Melee Collision", meta=(ClampMin="0", ClampMax="1"))
+	float MeleeReachExtension = 0.25f;
+	// 무기 메시 스케일과 관계없는 추가 사거리(cm). 비율 확장과 비교해 더 긴 쪽을 사용한다.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Melee Collision", meta=(ClampMin="0", ClampMax="300", Units="cm"))
+	float MeleeReachExtraDistance = 100.f;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Melee|Reach")
+	TSoftObjectPtr<UMaterialInterface> MeleeReachMaterial{FSoftObjectPath(TEXT("/Game/Main/Effects/M_MeleeReach.M_MeleeReach"))};
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Melee|Reach")
+	TSoftObjectPtr<UMaterialInterface> MeleeReachTrailSurface{FSoftObjectPath(TEXT("/Game/Main/Effects/M_MeleeReach_Hammer.M_MeleeReach_Hammer"))};
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Melee|Reach")
+	FLinearColor MeleeReachColor = FLinearColor(1.0f, 0.72f, 0.3f, 0.85f);
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Melee|Reach", meta=(ClampMin="0.03", ClampMax="0.3"))
+	float MeleeReachFadeTime = 0.12f;
+
 
 	// 원거리 투사체의 기본 최대 이동 거리(cm), 투사체 BP에서 사거리 덮어쓰기를 켜면 BP 설정을 사용한다
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon", meta=(ToolTip="원거리 투사체의 기본 최대 이동 거리(cm), 투사체 BP에서 사거리 덮어쓰기를 켜면 BP 설정을 사용한다"))

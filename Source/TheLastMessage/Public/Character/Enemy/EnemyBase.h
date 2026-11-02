@@ -285,6 +285,12 @@ protected:
 	/** 켜면 공격 중에 맞아도 피격 몽타주가 재생되고 공격이 취소된다. 끄면 공격 중에는 피격 몽타주를 재생하지 않는다. */
 	bool bHitReactionInterruptsAttack = false;
 
+	/** 끄면 이동 중에 맞았을 때 피격 몽타주를 재생하지 않는다(걷는 애니메이션이 끊기는 것을 막는다). 번쩍임과 이펙트는 그대로 나온다. */
+	bool bHitReactionWhileMoving = false;
+
+	/** 이 속도(cm/s) 이상으로 움직이면 "이동 중"으로 본다. */
+	float HitReactionMoveSpeedThreshold = 30.f;
+
 	/**
 	 * 피격 시 몬스터 메시 위에 잠깐 덧씌울 오버레이 머티리얼(번쩍임). 비워 두면 번쩍이지 않는다.
 	 * 몬스터마다 머티리얼을 고칠 필요 없이 하나를 공용으로 쓴다.
@@ -301,6 +307,32 @@ protected:
 
 	/** 사망 후 시체가 남아 있는 시간(초). 이 시간이 지나면 몬스터가 풀로 돌아간다. 0 이하이면 계속 남긴다. */
 	float CorpseLifeSpan = 5.f;
+
+	/**
+	 * 죽을 때 물리 시뮬레이션으로 전환할 본 이름들(예: 다리가 시작되는 본). 각 본 아래 전체가 물리로 움직인다.
+	 * 스켈레탈 메시의 Physics Asset에 그 본들의 바디가 있어야 한다. 비워 두면 사용하지 않는다.
+	 * 몸통 본(예: Pelvis)을 넣으면 몸 전체가 물리로 쓰러진다. 수치는 데이터 에셋(Death Physics ...)에서 정한다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Death")
+	TArray<FName> DeathPhysicsBones;
+
+	/** 죽을 때 물리 속도와 관절 설정(데이터 에셋에서 복사된다) */
+	float DeathPhysicsImpulse = 500.f;
+	float DeathPhysicsUpImpulse = 300.f;
+	float DeathPhysicsSpin = 6.f;
+	bool bDeathBreakConstraints = true;
+	bool bDeathPhysicsLockToPlane = true;
+
+	/** 지정한 본들을 물리로 전환하고 몸에서 떼어 날려 보낸다. */
+	void StartDeathPhysics();
+
+	/** 사망 물리를 되돌린다(풀에서 다시 쓸 때). 본 위치, 관절, 메시 충돌 설정이 원래대로 돌아온다. */
+	void RestoreDeathPhysics();
+
+	bool bDeathPhysicsActive = false;
+	ECollisionEnabled::Type DefaultMeshCollision = ECollisionEnabled::QueryOnly;
+	TEnumAsByte<ECollisionChannel> DefaultMeshObjectType = ECC_Pawn;
+	FCollisionResponseContainer DefaultMeshResponses;
 
 	/** 사망할 때 재생할 이펙트 */
 	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Effects")

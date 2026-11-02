@@ -559,22 +559,8 @@ void UGA_WeaponAttackBase::HandleMeleeHit(FGameplayEventData Payload)
     if(Phase>=2 && !bMeleeWindowOpen) return;
     UStaticMeshComponent* WeaponMesh=Player->GetWeaponVisualMesh(WeaponSlot);
     if(!WeaponMesh || !WeaponMesh->GetStaticMesh()) return;
-    FVector LocalStart=Data->MeleeTraceStart,LocalEnd=Data->MeleeTraceEnd;
-    if(!Data->bCustomMeleeTrace)
-    {
-        const FBox Bounds=WeaponMesh->GetStaticMesh()->GetBoundingBox();
-        const FVector Extent=Bounds.GetExtent();
-        int32 Axis=Extent.X>=Extent.Y && Extent.X>=Extent.Z ? 0 : (Extent.Y>=Extent.Z ? 1 : 2);
-        LocalStart=LocalEnd=Bounds.GetCenter();
-        LocalStart[Axis]=FMath::Lerp(Bounds.Min[Axis],Bounds.Max[Axis],0.15f);
-        LocalEnd[Axis]=FMath::Lerp(Bounds.Min[Axis],Bounds.Max[Axis],0.95f);
-        if(Data->WeaponType==EWeaponType::HeavyMelee)
-        {
-            const float Tip=Data->MeleeTrailOffset.GetLocation()[Axis];
-            if(Tip<Bounds.GetCenter()[Axis]){LocalStart[Axis]=Bounds.Min[Axis];LocalEnd[Axis]=FMath::Lerp(Bounds.Min[Axis],Bounds.Max[Axis],0.35f);}
-            else LocalStart[Axis]=FMath::Lerp(Bounds.Min[Axis],Bounds.Max[Axis],0.65f);
-        }
-    }
+    FVector LocalStart, LocalEnd, Tip, ExtendedTip;
+    if (!MeleeSweep::ResolveReach(Data, WeaponMesh, LocalStart, LocalEnd, Tip, ExtendedTip)) return;
     const FTransform Current=WeaponMesh->GetComponentTransform();
     if(!bHasPreviousMeleeTransform) PreviousMeleeTransform=Current;
     TArray<FHitResult> Hits;

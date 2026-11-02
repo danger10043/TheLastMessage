@@ -149,11 +149,25 @@ void UCombatAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCall
 		if (FMath::IsFinite(Damage) && Damage > 0.0f && (!Player || !Player->IsDead()))
 		{
 			// 가드로 막은 양을 뺀 나머지만 체력에서 차감한다. 전부 막으면 체력이 줄지 않아 피격 반응도 없다.
-			const float RemainingDamage = Damage - BlockDamageWithGuardEnergy(ASC, Player, Damage);
+			const float BlockedDamage = BlockDamageWithGuardEnergy(ASC, Player, Damage);
+			const float RemainingDamage = Damage - BlockedDamage;
 			const float PreviousHealth = GetHealth();
 			SetHealth(FMath::Clamp(GetHealth() - RemainingDamage, 0.0f, GetMaxHealth()));
 			bReceivedDamage = GetHealth() < PreviousHealth;
-			
+
+			// 체력 반영 후에 알려 연출·회복 능력이 막은 결과와 현재 체력을 함께 볼 수 있게 한다.
+			if (BlockedDamage > 0.0f)
+			{
+				FGameplayEventData Payload;
+				Payload.EventTag = CoreGameplayTags::Event_GuardBlocked;
+				Payload.Instigator = Data.EffectSpec.GetContext().GetInstigator();
+				Payload.Target = ASC->GetAvatarActor();
+				Payload.EventMagnitude = BlockedDamage;
+				Payload.ContextHandle = Data.EffectSpec.GetContext();
+				if (RemainingDamage > 0.0f) Payload.TargetTags.AddTag(CoreGameplayTags::Result_GuardPartial);
+				ASC->HandleGameplayEvent(Payload.EventTag, &Payload);
+			}
+
 			bCheckDeath = true;
 		}
 	}

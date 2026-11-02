@@ -395,7 +395,7 @@ bool BuildHUDResourceBars()
 	if (!HP || !Energy) return false;
 	HP->FillColor = FLinearColor(0.85f, 0.055f, 0.025f); HP->ResourceLabel = FText::FromString(TEXT("HP"));
 	Energy->FillColor = FLinearColor(0.025f, 0.65f, 0.95f); Energy->ResourceLabel = FText::FromString(TEXT("ENERGY"));
-	Energy->SetVisibility(ESlateVisibility::Hidden);
+	Energy->SetVisibility(ESlateVisibility::HitTestInvisible);
 	return CompileSave(Panel);
 }
 

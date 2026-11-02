@@ -119,6 +119,14 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Animation", meta=(ToolTip="공격 시 플레이어가 재생할 몽타주, 근거리는 타격 프레임에 Melee Hit 노티파이가 필요하다"))
 	TObjectPtr<UAnimMontage> AttackMontage = nullptr;
 
+	// Optional hold animation, authored with Start -> Loop -> Loop sections.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Animation")
+	TObjectPtr<UAnimMontage> ChargeMontage = nullptr;
+
+	// Only used after charging actually starts; short clicks retain normal attacks.
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Animation")
+	FName ChargeReleaseSection = NAME_None;
+
 	// 공격 몽타주의 섹션 중 하나를 균등 추첨하고 선택한 섹션만 재생한다
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Animation", meta=(ToolTip="공격 몽타주의 섹션 중 하나를 균등 추첨하고 선택한 섹션만 재생한다"))
 	bool bRandomizeAttackSection = false;

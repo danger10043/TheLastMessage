@@ -71,6 +71,8 @@ protected:
 	UFUNCTION()
 	void HandleMontageCancelled();
 	UFUNCTION()
+	void HandleChargeMontageCancelled();
+	UFUNCTION()
 	void HandleWeaponDataChanged();
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Attack", meta = (ClampMin = "1.0"))

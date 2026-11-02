@@ -46,6 +46,9 @@ public:
     UPROPERTY(BlueprintReadOnly, Category = "Combat|Melee")
     FName AttackSection = NAME_None;
 
+    UPROPERTY()
+    FName ContinuationSection = NAME_None;
+
     UPROPERTY(BlueprintReadOnly, Category = "Combat|Melee")
     EWeaponSlot WeaponSlot = EWeaponSlot::None;
 

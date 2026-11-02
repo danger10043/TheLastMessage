@@ -28,6 +28,7 @@ struct FCoreAfterimageAppearance
 	UPROPERTY() TObjectPtr<UStaticMesh> WeaponMesh = nullptr;
 	UPROPERTY() TObjectPtr<UAnimMontage> Montage = nullptr;
 	UPROPERTY() FName Section = NAME_None;
+	UPROPERTY() FName ContinuationSection = NAME_None;
 	UPROPERTY() FTransform CharacterTransform = FTransform::Identity;
 	UPROPERTY() FName WeaponSocket = NAME_None;
 	UPROPERTY() FTransform WeaponTransform = FTransform::Identity;

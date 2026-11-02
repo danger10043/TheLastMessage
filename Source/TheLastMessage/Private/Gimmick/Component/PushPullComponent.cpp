@@ -8,6 +8,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Engine/ScopedMovementUpdate.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Gimmick/Component/CarryComponent.h"
@@ -24,7 +25,9 @@ UPushPullComponent::UPushPullComponent()
 
 	// 실제 조작 중에만 갱신
 	PrimaryComponentTick.bStartWithTickEnabled = false;
-	PrimaryComponentTick.TickGroup = TG_PrePhysics;
+	// Apply the coordinated pair move after ground physics settles, then evaluate IK.
+	// Otherwise the box's ground-clearance correction oscillates against gravity.
+	PrimaryComponentTick.TickGroup = TG_PostPhysics;
 }
 
 bool UPushPullComponent::StartPushPull(APushPullGimmick* Target)
@@ -147,6 +150,15 @@ bool UPushPullComponent::StartPushPull(APushPullGimmick* Target)
         return false;
     }
 
+    const FBox Bounds = Mesh->Bounds.GetBox();
+    const auto* PlayerMesh = Player->GetMesh();
+    const FVector ShoulderL = PlayerMesh->GetSocketLocation(TEXT("upperarm_l"));
+    const FVector ShoulderR = PlayerMesh->GetSocketLocation(TEXT("upperarm_r"));
+    const double ChestZ = (ShoulderL.Z + ShoulderR.Z) * 0.5 - 12.0;
+    GripOffsetZ = FMath::Clamp(ChestZ, Bounds.Min.Z + 6.0, Bounds.Max.Z - 6.0) - Bounds.GetCenter().Z;
+    GripHalfWidth = FMath::Min(Bounds.GetExtent().Y * 0.6,
+        FMath::Clamp(FVector::Dist(ShoulderL, ShoulderR) * 0.55, 10.0, 18.0));
+
     // 위치 정렬 중 발생한 겹침 이벤트로 조작이 끝날 수 있음
     if (!IsValid(Player)
         || Player->IsDead()
@@ -261,7 +273,7 @@ void UPushPullComponent::UpdatePushPull(const FVector& MoveDirection, float Delt
         return;
     }
 
-    if (FVector::DistSquared(Player->GetActorLocation(), Anchor->GetComponentLocation()) > 
+    if (FVector::DistSquared(Player->GetActorLocation(), Anchor->GetComponentLocation()) >
         FMath::Square(static_cast<double>(Config.MaxSeparationDistance)))
     {
         StopPushPull();
@@ -271,6 +283,11 @@ void UPushPullComponent::UpdatePushPull(const FVector& MoveDirection, float Delt
     UpdateWalkSpeedLimit(Movement, Config.MoveSpeed);
 
     const FVector PlayerStart = Capsule->GetComponentLocation();
+    if (bApproaching)
+    {
+        UpdateApproach(DeltaTime);
+        return;
+    }
     const FVector BoxStart = Mesh->GetComponentLocation();
 
     if (PlayerStart.ContainsNaN() || BoxStart.ContainsNaN() || !FMath::IsFinite(InitialRelativeOffsetX))
@@ -477,6 +494,9 @@ void UPushPullComponent::StopPushPull()
 
     CurrentTarget.Reset();
 
+    bApproaching = false;
+    ApproachElapsed = 0.0f;
+
     PendingMoveInput = 0.0f;
     InitialRelativeOffsetX = 0.0;
     SharedMoveSpeedX = 0.0;
@@ -549,6 +569,7 @@ void UPushPullComponent::BeginPlay()
 
     // 플레이어 액터 갱신 이후 공통 이동 처리
     AddTickPrerequisiteActor(Player);
+    if (Player->GetMesh()) Player->GetMesh()->AddTickPrerequisiteComponent(this);
 }
 
 void UPushPullComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -1210,7 +1231,7 @@ bool UPushPullComponent::AlignPlayerToGrabDistance()
     }
 
     // 단순 콜리전에서 주어진 위치와 가장 가까운 표면점 조회
-    const auto ReadSurfacePoint = [&](const FVector& Location, FVector& OutSurfacePoint) 
+    const auto ReadSurfacePoint = [&](const FVector& Location, FVector& OutSurfacePoint)
         -> bool {
             if (Location.ContainsNaN())
             {
@@ -1242,7 +1263,22 @@ bool UPushPullComponent::AlignPlayerToGrabDistance()
     }
 
     const double SideSign = FMath::Sign(ToSurfaceX);
-    const double DesiredGap = static_cast<double>(Config.GrabDistance);
+    const double MinGap = Capsule->GetScaledCapsuleRadius() + 3.0;
+    double Reach = Config.GrabDistance;
+    const auto* PlayerMesh = Player->GetMesh();
+    if (PlayerMesh && PlayerMesh->GetBoneIndex(TEXT("hand_l")) != INDEX_NONE)
+    {
+        auto ArmLength = [PlayerMesh](const TCHAR* Upper, const TCHAR* Lower, const TCHAR* Hand)
+        {
+            return FVector::Dist(PlayerMesh->GetSocketLocation(Upper), PlayerMesh->GetSocketLocation(Lower))
+                + FVector::Dist(PlayerMesh->GetSocketLocation(Lower), PlayerMesh->GetSocketLocation(Hand));
+        };
+        Reach = FMath::Min(ArmLength(TEXT("upperarm_l"),TEXT("lowerarm_l"),TEXT("hand_l")),
+            ArmLength(TEXT("upperarm_r"),TEXT("lowerarm_r"),TEXT("hand_r"))) * 0.65;
+    }
+    // Keep the configured distance within capsule clearance and the robot's reach.
+    const double DesiredGap = FMath::Clamp(static_cast<double>(Config.GrabDistance), MinGap, FMath::Max(MinGap, Reach));
+    GripSide = -SideSign;
 
     constexpr double GapTolerance = 0.25;
     constexpr int32 MaxIterations = 12;
@@ -1312,18 +1348,12 @@ bool UPushPullComponent::AlignPlayerToGrabDistance()
         return false;
     }
 
-    // 실제 이동에서는 상자와 주변 벽을 포함해 충돌 검사
-    FScopedMovementUpdate AlignScope(Capsule, EScopedUpdate::DeferredUpdates);
-
-    FHitResult MoveHit;
-
-    Capsule->SetWorldLocation(AlignedLocation, true, &MoveHit, ETeleportType::TeleportPhysics);
-
-    if (MoveHit.bBlockingHit || !Capsule->GetComponentLocation().Equals(AlignedLocation, 0.1))
-    {
-        AlignScope.RevertMove();
-        return false;
-    }
+    // The collision-checked destination is approached over several frames.
+    ApproachStart = StartLocation;
+    ApproachTarget = AlignedLocation;
+    ApproachElapsed = 0.0f;
+    ApproachDuration = FMath::Clamp(static_cast<float>(FMath::Abs(AlignedLocation.X-StartLocation.X)/350.0),0.2f,0.5f);
+    bApproaching = !AlignedLocation.Equals(StartLocation,0.25);
 
     // 가까운 물체 표면을 바라보도록 설정
     const FVector Facing = FVector::VectorPlaneProject(FVector(SideSign, 0.0, 0.0), Player->GetActorUpVector()).GetSafeNormal();
@@ -1339,6 +1369,54 @@ bool UPushPullComponent::AlignPlayerToGrabDistance()
     Movement->Velocity = FVector::ZeroVector;
     Movement->UpdateComponentVelocity();
 
+    return true;
+}
+
+void UPushPullComponent::UpdateApproach(float DeltaTime)
+{
+    APlayerBase* Player = OwnerPlayer.Get();
+    APushPullGimmick* Target = CurrentTarget.Get();
+    if (!Player || !Target || !bSharedMovementActive || DeltaTime <= SMALL_NUMBER) { StopPushPull(); return; }
+    auto* Movement = Player->GetCharacterMovement();
+    auto* Capsule = Player->GetCapsuleComponent();
+    const FVector Start = Capsule->GetComponentLocation();
+    ApproachElapsed += DeltaTime;
+    const float T = FMath::Clamp(ApproachElapsed/ApproachDuration,0.0f,1.0f);
+    const double Ease = T*T*(3.0f-2.0f*T);
+    const double DesiredX = FMath::Lerp(ApproachStart.X,ApproachTarget.X,Ease);
+    FVector Next; bool bOnGround = false;
+    if (!FindSharedMoveLocation(Capsule,DesiredX-Start.X,Movement->MaxStepHeight,
+        Movement->GetWalkableFloorAngle(),Next,bOnGround) || !bOnGround)
+    { StopPushPull(); return; }
+    FHitResult Hit;
+    Capsule->SetWorldLocation(Next,true,&Hit,ETeleportType::TeleportPhysics);
+    if (!bSharedMovementActive || CurrentTarget.Get()!=Target) return;
+    if (Hit.bBlockingHit || !Capsule->GetComponentLocation().Equals(Next,0.1)) { StopPushPull(); return; }
+    Movement->Velocity = (Next-Start)/DeltaTime;
+    Movement->UpdateComponentVelocity();
+    if (T >= 1.0f)
+    {
+        bApproaching = false;
+        InitialRelativeOffsetX = Target->GetPhysicsMesh()->GetComponentLocation().X - Next.X;
+        SharedMoveSpeedX = 0.0;
+        Movement->Velocity = FVector::ZeroVector;
+        Movement->UpdateComponentVelocity();
+        Movement->FindFloor(Next,Movement->CurrentFloor,false);
+        Movement->SetBaseFromFloor(Movement->CurrentFloor);
+        Movement->SaveBaseLocation();
+    }
+}
+
+bool UPushPullComponent::GetHandContacts(FVector& Left, FVector& Right) const
+{
+    const APlayerBase* Player = OwnerPlayer.Get();
+    const APushPullGimmick* Target = CurrentTarget.Get();
+    if (!Player || !Target || !Target->GetPhysicsMesh() || bApproaching) return false;
+    const FBox Bounds = Target->GetPhysicsMesh()->Bounds.GetBox();
+    const FVector Center(Bounds.GetCenter().X + GripSide*(Bounds.GetExtent().X+1.0),
+        Bounds.GetCenter().Y,Bounds.GetCenter().Z+GripOffsetZ);
+    Left = Center - Player->GetActorRightVector()*GripHalfWidth;
+    Right = Center + Player->GetActorRightVector()*GripHalfWidth;
     return true;
 }
 

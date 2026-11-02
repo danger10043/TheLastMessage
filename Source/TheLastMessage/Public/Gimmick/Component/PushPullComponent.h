@@ -41,6 +41,11 @@ public:
     // 플레이어가 입력한 좌우 이동값 전달
     void SetMoveInput(float Value);
 
+    // Animation consumes the same measured speed as the shared movement solver.
+    float GetFollowSpeedX() const { return bApproaching ? 0.0f : static_cast<float>(SharedMoveSpeedX); }
+    bool IsApproaching() const { return bApproaching; }
+    bool GetHandContacts(FVector& Left, FVector& Right) const;
+
 protected:
 	virtual void BeginPlay() override;
 
@@ -88,7 +93,7 @@ private:
     // 플레이어와 물체에 함께 사용할 수평 이동 속도
     double SharedMoveSpeedX = 0.0;
 
-   
+
     // 실제 충돌 형상으로 이동 경로를 검사하고
     // 이동을 막는 가장 가까운 충돌 결과 반환
     bool SweepBlockingMovement(UPrimitiveComponent* Component, const FVector& Start, const FVector& End, FHitResult& OutHit) const;
@@ -111,4 +116,13 @@ private:
 
     // 설정한 잡기 거리에 맞춰 플레이어 위치 정렬
     bool AlignPlayerToGrabDistance();
+    void UpdateApproach(float DeltaTime);
+    bool bApproaching = false;
+    FVector ApproachStart = FVector::ZeroVector;
+    FVector ApproachTarget = FVector::ZeroVector;
+    float ApproachElapsed = 0.0f;
+    float ApproachDuration = 0.3f;
+    double GripSide = 1.0;
+    double GripOffsetZ = 0.0;
+    double GripHalfWidth = 14.0;
 };

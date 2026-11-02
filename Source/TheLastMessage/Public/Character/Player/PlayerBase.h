@@ -305,7 +305,7 @@ protected:
 	TObjectPtr<UAnimMontage> DeathMontage;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Animation", meta = (ClampMin = "0.01"))
-	float HitReactPlayRate = 1.0f;
+	float HitReactPlayRate = 1.74;
 
 	/** Immunity to hit reaction only, measured from the end of the previous reaction. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Animation", meta = (ClampMin = "0.0", Units = "s"))

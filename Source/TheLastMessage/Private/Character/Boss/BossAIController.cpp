@@ -332,19 +332,20 @@ void ABossAIController::UpdateCombatRange(
     const bool bNormalCombatState = State == EBossState::Idle
         || State == EBossState::Combat || State == EBossState::Attacking;
 
-    const bool bCrossLaserInProgress =
+    const uint8 SelectedAttack = BB->GetValueAsEnum(TEXT("SelectedAttack"));
+    const bool bKeepAttackRange =
         State == EBossState::Attacking
-        && BB->GetValueAsEnum(TEXT("SelectedAttack"))
-        == static_cast<uint8>(EBossAttackType::CrossLaser);
+        && (SelectedAttack == static_cast<uint8>(EBossAttackType::CrossLaser)
+            || SelectedAttack == static_cast<uint8>(EBossAttackType::JumpAttack));
 
     const bool bInCombatRange = bNormalCombatState
-        && (bCrossLaserInProgress
+        && (bKeepAttackRange
             || (FMath::IsFinite(CombatRadius) && CombatRadius > 0.f
                 && Distance <= CombatRadius));
 
     BB->SetValueAsBool(TEXT("bIsInCombatRange"), bInCombatRange);
     BB->SetValueAsBool(TEXT("bIsInAttackRange"), bInCombatRange
-        && (bCrossLaserInProgress
+        && (bKeepAttackRange
             || ControlledBoss->IsDistanceInAttackRange(AttackType, Distance)));
 }
 

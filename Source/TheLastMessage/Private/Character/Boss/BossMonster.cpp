@@ -4,6 +4,7 @@
 #include "GameplayEffect.h"
 #include "GameplayAbilitySpec.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Character/Boss/BossCharacterMovementComponent.h"
 #include "AbilitySystemComponent.h"
 #include "Character/Boss/BossAttributeSet.h"
 #include "Character/Boss/BossAIController.h"
@@ -35,7 +36,9 @@
 #include "Framework/ActorPoolSubsystem.h"
 #include "Interface/PoolableInterface.h"
 
-ABossMonster::ABossMonster()
+ABossMonster::ABossMonster(const FObjectInitializer& ObjectInitializer)
+    : Super(ObjectInitializer.SetDefaultSubobjectClass<UBossCharacterMovementComponent>(
+        ACharacter::CharacterMovementComponentName))
 {
     AIControllerClass = ABossAIController::StaticClass();
     AutoPossessAI = EAutoPossessAI::PlacedInWorldOrSpawned;
@@ -1913,4 +1916,15 @@ void ABossMonster::MulticastGunBurstMuzzle_Implementation(
         Effect, GunMesh.Get(), SocketName,
         FVector::ZeroVector, FRotator::ZeroRotator,
         EAttachLocation::SnapToTarget, true);
+}
+
+void ABossMonster::MulticastGroundEffect_Implementation(
+    UNiagaraSystem* Effect, FVector Location)
+{
+    if (GetNetMode() == NM_DedicatedServer || !IsValid(Effect) || Location.ContainsNaN())
+    {
+        return;
+    }
+    UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+        this, Effect, Location, FRotator::ZeroRotator);
 }

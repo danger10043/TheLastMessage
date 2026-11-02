@@ -525,9 +525,14 @@ bool FCoreGuardTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Guard uses reduced damage"), Energy->GetSharedEnergy(), 50.f);
 	Fixture.Attributes->SetDamageTakenMultiplier(1.f);
 
+	// 에너지가 부족하면 남은 에너지만큼 막고 나머지 피해를 받는다.
 	ApplyDamage(60.f);
-	TestEqual(TEXT("Guard fails without enough energy"), Fixture.Attributes->GetHealth(), 10.f);
-	TestEqual(TEXT("Failed guard keeps energy"), Energy->GetSharedEnergy(), 50.f);
+	TestEqual(TEXT("Guard takes only the unblocked damage"), Fixture.Attributes->GetHealth(), 60.f);
+	TestEqual(TEXT("Guard spends all remaining energy"), Energy->GetSharedEnergy(), 0.f);
+
+	ApplyDamage(20.f);
+	TestEqual(TEXT("Guard without energy takes full damage"), Fixture.Attributes->GetHealth(), 40.f);
+	TestEqual(TEXT("Energy stays empty"), Energy->GetSharedEnergy(), 0.f);
 	return true;
 }
 

@@ -71,6 +71,8 @@ void AEnemyBase::ApplyEnemyData(const UEnemyDataAsset* Data)
 	HealthBarVisibleTime = Data->HealthBarVisibleTime;
 	HitReactionCooldown = Data->HitReactionCooldown;
 	bHitReactionInterruptsAttack = Data->bHitReactionInterruptsAttack;
+	bHitReactionWhileMoving = Data->bHitReactionWhileMoving;
+	HitReactionMoveSpeedThreshold = Data->HitReactionMoveSpeedThreshold;
 	HitFlashDuration = Data->HitFlashDuration;
 	CorpseLifeSpan = Data->CorpseLifeSpan;
 	DeathPhysicsImpulse = Data->DeathPhysicsImpulse;
@@ -601,6 +603,17 @@ void AEnemyBase::PlayHitReaction()
 	if (bIsAttacking && !bHitReactionInterruptsAttack)
 	{
 		return;
+	}
+
+	// 걷는 중에 피격 몽타주가 재생되면 몸 전체 포즈가 덮여 걷는 애니메이션이 끊긴다. 이동 중에는 재생하지 않는다.
+	if (!bHitReactionWhileMoving)
+	{
+		// 사이드뷰라 X(좌우)와 Z(위아래) 속도만 본다. 벽을 기어가는 몬스터(Cinder)도 이동 중으로 판단된다.
+		const FVector Velocity = GetVelocity();
+		if (FMath::Sqrt(FMath::Square(Velocity.X) + FMath::Square(Velocity.Z)) >= HitReactionMoveSpeedThreshold)
+		{
+			return;
+		}
 	}
 
 	const double Now = GetWorld()->GetTimeSeconds();

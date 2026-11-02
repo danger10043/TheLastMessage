@@ -42,7 +42,7 @@ protected:
 
 	/** 한 번 막을 때 방벽이 깎이는 양(0~1). 연속으로 막으면 누적된다. */
 	UPROPERTY(EditDefaultsOnly, Category = "Guard|Block", meta = (ClampMin = "0", ClampMax = "1"))
-	float BlockBreakAmount = 0.35f;
+	float BlockBreakAmount = 0.6f;
 
 	/** 연속으로 막아도 남는 최소 방벽 상태(0~1). */
 	UPROPERTY(EditDefaultsOnly, Category = "Guard|Block", meta = (ClampMin = "0", ClampMax = "1"))
@@ -79,10 +79,6 @@ protected:
 	/** 가드 브레이크 때 방벽이 완전히 깨져 사라지는 데 걸리는 시간(초). */
 	UPROPERTY(EditDefaultsOnly, Category = "Guard|Break", meta = (ClampMin = "0.01"))
 	float GuardBreakTime = 0.15f;
-
-	/** 가드 브레이크 후 다시 가드할 수 없는 시간(초). */
-	UPROPERTY(EditDefaultsOnly, Category = "Guard|Break", meta = (ClampMin = "0"))
-	float GuardBreakCooldown = 0.5f;
 
 	/** 퍼펙트 가드 때 방벽이 물드는 색. */
 	UPROPERTY(EditDefaultsOnly, Category = "Guard|Perfect")
@@ -127,6 +123,8 @@ protected:
 		const FGameplayAbilityActivationInfo ActivationInfo,
 		const FGameplayEventData* TriggerEventData) override;
 
+	virtual void OnRemoveAbility(const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilitySpec& Spec) override;
+
 	virtual void InputReleased(const FGameplayAbilitySpecHandle Handle,
 		const FGameplayAbilityActorInfo* ActorInfo,
 		const FGameplayAbilityActivationInfo ActivationInfo) override;
@@ -167,6 +165,8 @@ private:
 	/** 퍼펙트 가드 연출(번쩍임·부풀기·충격파)을 시작한다. 방벽은 깎지 않는다. */
 	void PlayPerfectFeedback();
 	void SpawnShockwave();
+	/** 충격파를 퍼뜨리고 다 퍼진 것은 제거한다. 가드가 끝나도 남은 충격파가 사라질 때까지 진행한다. */
+	void UpdateShockwaves();
 	/** 충격파를 모두 제거한다. */
 	void ClearShockwaves();
 	/** 업데이트 타이머가 멈춰 있으면 시작한다. */
@@ -190,11 +190,11 @@ private:
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UStaticMeshComponent>> ShockwaveComponents;
 	TArray<float> ShockwaveElapsed;
+	double LastShockwaveUpdateTime = 0.0;
+	FTimerHandle ShockwaveTimerHandle;
 
 	/** 가드 브레이크로 방벽이 깨지는 중인지. 가드가 끝나도 깨지는 연출이 끝날 때까지 방벽을 남긴다. */
 	bool bGuardBroken = false;
-	/** 이 시각까지는 가드를 다시 시작하지 않는다. */
-	double GuardBreakCooldownEndTime = 0.0;
 
 	/** 방벽 상태(0~1). 1이면 온전한 방벽이다. */
 	float Integrity = 1.0f;

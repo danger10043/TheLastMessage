@@ -171,7 +171,12 @@ void UGA_CoreGuard::EnsureBarrierTimer()
 	if (World && !World->GetTimerManager().IsTimerActive(BarrierTimerHandle))
 	{
 		LastUpdateTime = World->GetTimeSeconds();
-		World->GetTimerManager().SetTimer(BarrierTimerHandle, this, &ThisClass::UpdateBarrier, 1.0f / 60.0f, true);
+		// 능력이 끝나면 엔진이 능력 객체에 묶인 타이머를 모두 지우므로, 가드 브레이크 연출이 이어지도록 약한 참조 람다로 건다.
+		World->GetTimerManager().SetTimer(BarrierTimerHandle, FTimerDelegate::CreateLambda(
+			[WeakThis = TWeakObjectPtr<UGA_CoreGuard>(this)]()
+			{
+				if (WeakThis.IsValid()) WeakThis->UpdateBarrier();
+			}), 1.0f / 60.0f, true);
 	}
 }
 
@@ -213,10 +218,26 @@ void UGA_CoreGuard::SpawnShockwave()
 	WaveMaterial->SetVectorParameterValue(TEXT("Color"), PerfectColor);
 	ShockwaveComponents.Add(Wave);
 	ShockwaveElapsed.Add(0.0f);
+
+	// 충격파는 방벽과 따로 진행해, 가드를 떼거나 다시 눌러도 끝까지 퍼진 뒤 사라진다.
+	UWorld* World = GetWorld();
+	if (World && !World->GetTimerManager().IsTimerActive(ShockwaveTimerHandle))
+	{
+		LastShockwaveUpdateTime = World->GetTimeSeconds();
+		World->GetTimerManager().SetTimer(ShockwaveTimerHandle, FTimerDelegate::CreateLambda(
+			[WeakThis = TWeakObjectPtr<UGA_CoreGuard>(this)]()
+			{
+				if (WeakThis.IsValid()) WeakThis->UpdateShockwaves();
+			}), 1.0f / 60.0f, true);
+	}
 }
 
 void UGA_CoreGuard::ClearShockwaves()
 {
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(ShockwaveTimerHandle);
+	}
 	for (UStaticMeshComponent* Wave : ShockwaveComponents)
 	{
 		if (Wave)
@@ -236,7 +257,6 @@ void UGA_CoreGuard::BreakGuard()
 		return;
 	}
 	bGuardBroken = true;
-	GuardBreakCooldownEndTime = World->GetTimeSeconds() + GuardBreakCooldown;
 
 	if (BarrierMaterialInstance)
 	{
@@ -298,15 +318,10 @@ bool UGA_CoreGuard::CanActivateAbility(const FGameplayAbilitySpecHandle Handle,
 	{
 		return false;
 	}
-	// 막을 에너지가 없으면 가드를 시작하지 않는다.
+	// 막을 에너지가 없으면 가드를 시작하지 않는다. 가드 브레이크 직후에는 에너지가 0이라 따로 대기 시간을 두지 않는다.
 	const UAbilitySystemComponent* ASC = ActorInfo ? ActorInfo->AbilitySystemComponent.Get() : nullptr;
 	const UWeaponSlotAttributeSet* EnergySet = ASC ? ASC->GetSet<UWeaponSlotAttributeSet>() : nullptr;
-	if (EnergySet && EnergySet->GetSharedEnergy() <= 0.0f)
-	{
-		return false;
-	}
-	const UWorld* World = ActorInfo && ActorInfo->AvatarActor.IsValid() ? ActorInfo->AvatarActor->GetWorld() : nullptr;
-	return !World || World->GetTimeSeconds() >= GuardBreakCooldownEndTime;
+	return !EnergySet || EnergySet->GetSharedEnergy() > 0.0f;
 }
 
 void UGA_CoreGuard::UpdateBarrier()
@@ -357,6 +372,24 @@ void UGA_CoreGuard::UpdateBarrier()
 	const float Pop = PerfectPopProgress > 0.0f ? PerfectPop * FMath::Sin(PI * (1.0f - PerfectPopProgress)) : 0.0f;
 	BarrierComponent->SetWorldScale3D(FVector(BaseBarrierScale * (1.0f + Pop)));
 
+	if (Integrity >= 1.0f && Flash <= 0.0f && BreakRemaining <= 0.0f && PerfectFlash <= 0.0f
+		&& PerfectPopProgress <= 0.0f)
+	{
+		World->GetTimerManager().ClearTimer(BarrierTimerHandle);
+	}
+}
+
+void UGA_CoreGuard::UpdateShockwaves()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+	const double Now = World->GetTimeSeconds();
+	const float DeltaTime = static_cast<float>(Now - LastShockwaveUpdateTime);
+	LastShockwaveUpdateTime = Now;
+
 	for (int32 Index = ShockwaveComponents.Num() - 1; Index >= 0; --Index)
 	{
 		ShockwaveElapsed[Index] += DeltaTime;
@@ -378,10 +411,9 @@ void UGA_CoreGuard::UpdateBarrier()
 		}
 	}
 
-	if (Integrity >= 1.0f && Flash <= 0.0f && BreakRemaining <= 0.0f && PerfectFlash <= 0.0f
-		&& PerfectPopProgress <= 0.0f && ShockwaveComponents.IsEmpty())
+	if (ShockwaveComponents.IsEmpty())
 	{
-		World->GetTimerManager().ClearTimer(BarrierTimerHandle);
+		World->GetTimerManager().ClearTimer(ShockwaveTimerHandle);
 	}
 }
 
@@ -431,7 +463,6 @@ void UGA_CoreGuard::HideBarrier()
 	{
 		World->GetTimerManager().ClearTimer(BarrierTimerHandle);
 	}
-	ClearShockwaves();
 	if (BarrierComponent)
 	{
 		BarrierComponent->DestroyComponent();
@@ -439,6 +470,15 @@ void UGA_CoreGuard::HideBarrier()
 	BarrierComponent = nullptr;
 	BarrierMaterialInstance = nullptr;
 	bGuardBroken = false;
+}
+
+void UGA_CoreGuard::OnRemoveAbility(const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilitySpec& Spec)
+{
+	// 코어 초기화·복원으로 능력이 제거되면 남은 방벽·충격파와 판정도 함께 정리한다.
+	EndPerfectWindow();
+	HideBarrier();
+	ClearShockwaves();
+	Super::OnRemoveAbility(ActorInfo, Spec);
 }
 
 void UGA_CoreGuard::InputReleased(const FGameplayAbilitySpecHandle Handle,
@@ -475,8 +515,9 @@ void UGA_CoreGuard::EndAbility(const FGameplayAbilitySpecHandle Handle,
 
 	FinishGuardMontage(ASC, bWasCancelled);
 
-	// 가드 브레이크면 깨지는 연출이 끝난 뒤 UpdateBarrier가 방벽을 제거한다.
-	if (!bGuardBroken)
+	// 가드 브레이크로 끝나면 깨지는 연출이 끝난 뒤 UpdateBarrier가 방벽을 제거한다.
+	// 사망 등으로 취소되면 연출 없이 바로 지워 부활 후에 남지 않게 한다.
+	if (!bGuardBroken || bWasCancelled)
 	{
 		HideBarrier();
 	}

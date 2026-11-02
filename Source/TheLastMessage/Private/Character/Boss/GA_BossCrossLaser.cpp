@@ -851,6 +851,11 @@ void UGA_BossCrossLaser::UpdateFollowUp(double Now)
 {
     ABossMonster* Boss = GetBossOwner();
     if (!Boss || !IsActive() || bEnding) return;
+    if (bDropLanded)
+    {
+        if (!FacingTurn.Update(Now)) Finish(true);
+        return;
+    }
     const float Elapsed = static_cast<float>(Now - StageStart);
     switch (Stage)
     {
@@ -945,7 +950,18 @@ void UGA_BossCrossLaser::UpdateFollowUp(double Now)
         {
             bDropLanded = true;
             ClearDropWarning();
-            Finish(false);
+            AActor* FacingTarget = LockedTarget.Get();
+            const float LandingWindow = LandingMontage
+                ? LandingMontage->GetPlayLength() / LandingMontage->RateScale : 0.f;
+            if (!IsValid(FacingTarget)
+                || !FMath::IsFinite(FacingTurnDuration) || FacingTurnDuration <= 0.f
+                || !FacingTurn.Start(Boss, FacingTarget->GetActorLocation().X,
+                    FacingTurnSpeedCurve.Get(),
+                    FMath::Min(FacingTurnDuration, LandingWindow), Now)
+                || !PrepareLanding(DropGroundPoint, MontageTask) || !PlayLandingMontage())
+            {
+                Finish(true);
+            }
         }
 
         break;
@@ -992,6 +1008,11 @@ void UGA_BossCrossLaser::EndAbility(const FGameplayAbilitySpecHandle Handle,
 {
     if (bEnding || !IsEndAbilityValid(Handle, ActorInfo)) return;
     TGuardValue<bool> Guard(bEnding, true);
+    if (!bWasCancelled && bDropLanded)
+    {
+        FacingTurn.Finish();
+    }
+    FacingTurn.Restore();
     ClearDropWarning();
     DropHitPlayers.Reset();
     if (GetWorld()) GetWorld()->GetTimerManager().ClearTimer(UpdateTimer);
@@ -1038,7 +1059,7 @@ void UGA_BossCrossLaser::EndAbility(const FGameplayAbilitySpecHandle Handle,
         Boss->OnBossStateChanged.RemoveDynamic(this, &UGA_BossCrossLaser::OnStateChanged);
         if (bOwnsMovement)
         {
-            if (bWasCancelled || !bDropLanded)
+            if (!bDropLanded)
             {
                 Boss->SetActorTransform(
                     SavedTransform, false, nullptr,
@@ -1046,9 +1067,10 @@ void UGA_BossCrossLaser::EndAbility(const FGameplayAbilitySpecHandle Handle,
             }
             else
             {
+                FRotator LandedRotation = SavedTransform.Rotator();
+                LandedRotation.Yaw = Boss->GetActorRotation().Yaw;
                 Boss->SetActorRotation(
-                    SavedTransform.GetRotation(),
-                    ETeleportType::TeleportPhysics);
+                    LandedRotation, ETeleportType::TeleportPhysics);
             }
             Boss->bUseControllerRotationYaw = bSavedUseControllerYaw;
             Boss->SetActorEnableCollision(bSavedCollision);

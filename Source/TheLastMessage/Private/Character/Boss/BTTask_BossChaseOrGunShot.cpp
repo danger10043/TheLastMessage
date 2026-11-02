@@ -2,6 +2,7 @@
 #include "Character/Boss/GA_BossGunShot.h"
 #include "Character/Boss/BossMonster.h"
 #include "Character/Player/PlayerBase.h"
+#include "Character/Boss/GA_BossRockThrow.h"
 #include "AIController.h"
 #include "AbilitySystemComponent.h"
 #include "Navigation/PathFollowingComponent.h"
@@ -15,6 +16,7 @@ UBTTask_BossChaseOrGunShot::UBTTask_BossChaseOrGunShot()
     bNotifyTick = true;
     bNotifyTaskFinished = true;
     GunShotAbilityClass = UGA_BossGunShot::StaticClass();
+    RockThrowAbilityClass = UGA_BossRockThrow::StaticClass();
 }
 
 EBTNodeResult::Type UBTTask_BossChaseOrGunShot::ExecuteTask(
@@ -115,15 +117,26 @@ void UBTTask_BossChaseOrGunShot::TickTask(
                 bMoveSucceeded ? EBTNodeResult::Succeeded : EBTNodeResult::Failed);
             return;
         }
-        if ((LockedPhase != EBossPhase::Phase1 && LockedPhase != EBossPhase::Phase2)
-            || !GunShotAbilityClass)
+        UClass* FallbackClass = nullptr;
+        EBossAttackType FallbackAttack = EBossAttackType::None;
+        if (LockedPhase == EBossPhase::Phase3)
+        {
+            FallbackClass = RockThrowAbilityClass.Get();
+            FallbackAttack = EBossAttackType::RockThrow;
+        }
+        else if (LockedPhase == EBossPhase::Phase1 || LockedPhase == EBossPhase::Phase2)
+        {
+            FallbackClass = GunShotAbilityClass.Get();
+            FallbackAttack = EBossAttackType::GunShot;
+        }
+        if (!FallbackClass)
         {
             FinishLatentTask(OwnerComp, EBTNodeResult::Failed);
             return;
         }
         UAbilitySystemComponent* ASC = Boss->GetAbilitySystemComponent();
         FGameplayAbilitySpec* Spec = IsValid(ASC)
-            ? ASC->FindAbilitySpecFromClass(GunShotAbilityClass) : nullptr;
+            ? ASC->FindAbilitySpecFromClass(FallbackClass) : nullptr;
         if (!Spec || Spec->IsActive())
         {
             FinishLatentTask(OwnerComp, EBTNodeResult::Failed);
@@ -139,7 +152,7 @@ void UBTTask_BossChaseOrGunShot::TickTask(
             return;
         }
         if (UBlackboardComponent* BB = OwnerComp.GetBlackboardComponent())
-            BB->SetValueAsEnum(TEXT("SelectedAttack"), static_cast<uint8>(EBossAttackType::GunShot));
+            BB->SetValueAsEnum(TEXT("SelectedAttack"), static_cast<uint8>(FallbackAttack));
         return;
     }
     if (bAbilityEnded)

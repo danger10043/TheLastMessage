@@ -9,6 +9,7 @@
 
 class APlayerBase;
 class UGA_BossGunShot;
+class UGA_BossRockThrow;
 class UAbilitySystemComponent;
 class UPathFollowingComponent;
 struct FPathFollowingResult;
@@ -36,6 +37,9 @@ protected:
     float AcceptanceRadius = 100.f;
     UPROPERTY(EditAnywhere, Category = "Boss|GunShot")
     TSubclassOf<UGA_BossGunShot> GunShotAbilityClass;
+
+    UPROPERTY(EditAnywhere, Category = "Boss|RockThrow")
+    TSubclassOf<UGA_BossRockThrow> RockThrowAbilityClass;
 
 private:
     void HandleMoveFinished(FAIRequestID RequestID, const FPathFollowingResult& Result);

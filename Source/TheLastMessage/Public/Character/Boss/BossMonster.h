@@ -45,7 +45,7 @@ class THELASTMESSAGE_API ABossMonster
     GENERATED_BODY()
 
 public:
-    ABossMonster();
+    ABossMonster(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
     virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
 
     // 체력/페이즈/기믹/쿨타임을 초기화한다. 위치 이동은 호출자가 처리한다.
@@ -63,6 +63,9 @@ public:
 
     UFUNCTION(NetMulticast, Unreliable)
     void MulticastGunBurstMuzzle(UNiagaraSystem* Effect, FName SocketName);
+
+    UFUNCTION(NetMulticast, Reliable)
+    void MulticastGroundEffect(UNiagaraSystem* Effect, FVector Location);
 
     UStaticMeshComponent* GetGunMesh() const { return GunMesh.Get(); }
 

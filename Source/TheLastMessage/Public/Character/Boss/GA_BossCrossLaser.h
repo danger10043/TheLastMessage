@@ -1,7 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Character/Boss/GA_BossAttackBase.h"
+#include "Character/Boss/GA_BossLandingAttackBase.h"
 #include "Animation/AnimInstance.h"
 #include "TimerManager.h"
 #include "GA_BossCrossLaser.generated.h"
@@ -37,7 +37,7 @@ struct FBossCrossLaserPhaseConfig
 };
 
 UCLASS()
-class THELASTMESSAGE_API UGA_BossCrossLaser : public UGA_BossAttackBase
+class THELASTMESSAGE_API UGA_BossCrossLaser : public UGA_BossLandingAttackBase
 {
     GENERATED_BODY()
 

@@ -34,5 +34,5 @@ struct THELASTMESSAGE_API FPushPullConfigRow : public FTableRowBase
     // 조작 중 넘을 수 있는 최대 턱 높이
 // 0이면 턱 넘기 기능 사용 안 함
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PushPull", meta = (ClampMin = "0.0", Units = "cm"))
-    float MaxStepHeight = 20.0f;
+    float MaxStepHeight = 30.0f;
 };

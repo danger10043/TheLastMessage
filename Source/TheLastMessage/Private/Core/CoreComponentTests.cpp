@@ -3,6 +3,7 @@
 #include "Misc/AutomationTest.h"
 #include "AbilitySystemComponent.h"
 #include "Core/CoreComponent.h"
+#include "Core/CoreGameplayTags.h"
 #include "Core/CoreRewardSession.h"
 #include "DataAsset/CoreDataAsset.h"
 #include "Engine/CurveTable.h"
@@ -10,6 +11,9 @@
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "GAS/CombatAttributeSet.h"
+#include "GAS/WeaponSlotAttributeSet.h"
+#include "GAS/Abilities/GA_CoreGuard.h"
+#include "Misc/ScopeExit.h"
 #include "Templates/UnrealTemplate.h"
 #include "UObject/StrongObjectPtr.h"
 #if WITH_EDITOR
@@ -468,5 +472,63 @@ bool FCoreDamageEventTest::RunTest(const FString& Parameters)
 }
 
 #endif
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCoreGuardTest, "TheLastMessage.Core.Guard",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCoreGuardTest::RunTest(const FString& Parameters)
+{
+	FCoreTestFixture Fixture(true);
+	UWeaponSlotAttributeSet* Energy = NewObject<UWeaponSlotAttributeSet>(Fixture.Owner);
+	Fixture.ASC->AddAttributeSetSubobject(Energy);
+	Fixture.Attributes->SetMaxHealth(100.f);
+	Fixture.Attributes->SetHealth(100.f);
+	Fixture.ASC->SetNumericAttributeBase(UWeaponSlotAttributeSet::GetSharedEnergyAttribute(), 100.f);
+	// 실제 피해 GE처럼 IncomingDamage를 Instant로 실행해 피해 처리 콜백을 거치게 한다.
+	auto ApplyDamage = [&Fixture](float Amount)
+	{
+		UGameplayEffect* Effect = NewObject<UGameplayEffect>();
+		Effect->DurationPolicy = EGameplayEffectDurationType::Instant;
+		FGameplayModifierInfo& Mod = Effect->Modifiers.AddDefaulted_GetRef();
+		Mod.Attribute = UCombatAttributeSet::GetIncomingDamageAttribute();
+		Mod.ModifierOp = EGameplayModOp::Additive;
+		Mod.ModifierMagnitude = FGameplayEffectModifierMagnitude(FScalableFloat(Amount));
+		Fixture.ASC->ApplyGameplayEffectToSelf(Effect, 1, Fixture.ASC->MakeEffectContext());
+	};
+	const FGameplayTag Guarding = CoreGameplayTags::State_Guarding;
+
+	// 입력 태그로 부여한 가드 능력은 키를 누른 동안만 가드 상태를 유지한다.
+	FGameplayAbilitySpec GuardSpec(UGA_CoreGuard::StaticClass(), 1);
+	GuardSpec.GetDynamicSpecSourceTags().AddTag(CoreGameplayTags::Input_Guard);
+	const FGameplayAbilitySpecHandle GuardHandle = Fixture.ASC->GiveAbility(GuardSpec);
+	FGameplayAbilitySpec* Spec = Fixture.ASC->FindAbilitySpecFromHandle(GuardHandle);
+	if (!TestNotNull(TEXT("Guard ability is granted"), Spec)) return false;
+	Fixture.ASC->AbilitySpecInputPressed(*Spec);
+	TestTrue(TEXT("Guard activates on press"), Fixture.ASC->TryActivateAbility(GuardHandle));
+	TestTrue(TEXT("Guard state while held"), Fixture.ASC->HasMatchingGameplayTag(Guarding));
+	Fixture.ASC->AbilitySpecInputReleased(*Fixture.ASC->FindAbilitySpecFromHandle(GuardHandle));
+	TestFalse(TEXT("Guard state ends on release"), Fixture.ASC->HasMatchingGameplayTag(Guarding));
+
+	ApplyDamage(30.f);
+	TestEqual(TEXT("Damage applies without guard"), Fixture.Attributes->GetHealth(), 70.f);
+	TestEqual(TEXT("No energy used without guard"), Energy->GetSharedEnergy(), 100.f);
+
+	Fixture.ASC->AddLooseGameplayTag(Guarding);
+	ON_SCOPE_EXIT { Fixture.ASC->RemoveLooseGameplayTag(Guarding); };
+	ApplyDamage(30.f);
+	TestEqual(TEXT("Guard blocks damage"), Fixture.Attributes->GetHealth(), 70.f);
+	TestEqual(TEXT("Guard spends energy equal to damage"), Energy->GetSharedEnergy(), 70.f);
+
+	// 에너지 소모량은 받는 피해 배율을 적용한 뒤의 피해다.
+	Fixture.Attributes->SetDamageTakenMultiplier(0.5f);
+	ApplyDamage(40.f);
+	TestEqual(TEXT("Guard uses reduced damage"), Energy->GetSharedEnergy(), 50.f);
+	Fixture.Attributes->SetDamageTakenMultiplier(1.f);
+
+	ApplyDamage(60.f);
+	TestEqual(TEXT("Guard fails without enough energy"), Fixture.Attributes->GetHealth(), 10.f);
+	TestEqual(TEXT("Failed guard keeps energy"), Energy->GetSharedEnergy(), 50.f);
+	return true;
+}
 
 #endif

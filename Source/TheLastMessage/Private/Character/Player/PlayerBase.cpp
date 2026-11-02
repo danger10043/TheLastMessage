@@ -1641,6 +1641,17 @@ void APlayerBase::DoMove(float Forward)
 		ActionValueY = 0.0f;
 		return;
 	}
+	//---------------------------------
+	if (IsValid(PushPullComponent)
+		&& PushPullComponent->IsPushPulling())
+	{
+		ActionValueY = Forward;
+
+		// 조작 중에는 일반 걷기 대신 공통 이동으로 입력 전달
+		PushPullComponent->SetMoveInput(Forward);
+		return;
+	}
+	//---------------------------------
 	Super::DoMove(Forward);
 }
 
@@ -1660,6 +1671,16 @@ void APlayerBase::DoJumpStart()
 	if (IsCarryTransitionActive()) return;
 	if (IsDead() || IsHitReacting() || AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking)) return;
 	if (IsGrappling()) GrapplingHookComponent->CancelGrapple();
+
+	// +추가----
+	// 점프하기 전에 일반 캐릭터 이동을 복구
+	if (IsValid(PushPullComponent)
+		&& PushPullComponent->IsPushPulling())
+	{
+		PushPullComponent->StopPushPull();
+	}
+	// +--------
+
 	if (bGrappleCancelJumpAvailable && !IsGrappling())
 	{
 		// Keep the release trajectory even beside a wall or while holding drop input.

@@ -108,4 +108,7 @@ private:
 
     // 전환 전 캐릭터 무브먼트의 갱신 상태
     bool bSavedMovementTickEnabled = false;
+
+    // 설정한 잡기 거리에 맞춰 플레이어 위치 정렬
+    bool AlignPlayerToGrabDistance();
 };

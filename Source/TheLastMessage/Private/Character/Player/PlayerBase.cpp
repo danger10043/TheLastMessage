@@ -17,6 +17,7 @@
 #include "Gimmick/Component/GravityStateComponent.h"
 #include "Gimmick/Component/PushPullComponent.h"
 #include "Core/CoreComponent.h"
+#include "Core/CoreGameplayTags.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -606,6 +607,7 @@ void APlayerBase::CancelWeaponInputsForUI()
 	ClearPendingAttack();
 	AbilityInputCanceled(WeaponGameplayTags::Input_Primary);
 	AbilityInputCanceled(WeaponGameplayTags::Input_Secondary);
+	AbilityInputCanceled(CoreGameplayTags::Input_Guard);
 	for (int32 Index=0;Index<4;++Index) SetWeaponChoiceHeld(Index,false);
 	StopJumping();ConsumeMovementInputVector();
 }
@@ -1675,6 +1677,7 @@ void APlayerBase::DoJumpStart()
 {
 	if (IsCarryTransitionActive()) return;
 	if (IsDead() || IsHitReacting() || AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking)) return;
+	if (AbilitySystemComponent->HasMatchingGameplayTag(CoreGameplayTags::State_Guarding)) return;
 	if (IsGrappling()) GrapplingHookComponent->CancelGrapple();
 	if (bGrappleCancelJumpAvailable && !IsGrappling())
 	{

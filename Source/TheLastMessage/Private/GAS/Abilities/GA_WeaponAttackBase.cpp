@@ -1,5 +1,6 @@
 #include "GAS/Abilities/GA_WeaponAttackBase.h"
 #include "Weapon/MeleeSweep.h"
+#include "Weapon/WeaponAttackAnimation.h"
 #include "Animation/AnimNotifyState_MeleeTrail.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
@@ -178,6 +179,16 @@ void UGA_WeaponAttackBase::StartWeaponCharge()
 	bChargeStarted = true;
 	ChargeStartTime = GetWorld()->GetTimeSeconds();
 	Player->BeginWeaponCharge(WeaponSlot, ChargeDuration);
+	const UWeaponDataAsset* Data = SourceWeapon ? SourceWeapon->WeaponData.Get() : nullptr;
+	if (Data && Data->ChargeMontage)
+	{
+		// GAS owns playback/replication and stops the loop when this ability ends.
+		auto* Task = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
+			this, TEXT("WeaponCharge"), Data->ChargeMontage, 1.0f, TEXT("Start"), true);
+		Task->OnInterrupted.AddDynamic(this, &UGA_WeaponAttackBase::HandleChargeMontageCancelled);
+		Task->OnCancelled.AddDynamic(this, &UGA_WeaponAttackBase::HandleChargeMontageCancelled);
+		Task->ReadyForActivation();
+	}
 }
 
 float UGA_WeaponAttackBase::GetChargeRatio() const
@@ -412,6 +423,7 @@ void UGA_WeaponAttackBase::CaptureMeleeAttack(APlayerBase* Player, FName AttackS
 	MeleeAttack->WeaponData = SourceWeapon->WeaponData;
 	MeleeAttack->AttackMontage = Data->AttackMontage;
 	MeleeAttack->AttackSection = AttackSection;
+	MeleeAttack->ContinuationSection = WeaponAttackAnimation::GetContinuation(Data->AttackMontage, AttackSection, Data->ChargeReleaseSection);
 	MeleeAttack->WeaponSlot = WeaponSlot;
 	MeleeAttack->SkeletalMesh = Player->GetMesh()->GetSkeletalMeshAsset();
 	MeleeAttack->ActorTransform = Player->GetActorTransform();
@@ -508,10 +520,20 @@ void UGA_WeaponAttackBase::ExecuteAttack()
 	FName AttackSection = NAME_None;
 	if (Data->AttackMontage)
 	{
-		if (Data->bRandomizeAttackSection && Data->AttackMontage->GetNumSections() > 0)
+		if (bChargeStarted && !Data->ChargeReleaseSection.IsNone()
+			&& Data->AttackMontage->GetSectionIndex(Data->ChargeReleaseSection) != INDEX_NONE)
 		{
-			const int32 SectionIndex = FMath::RandRange(0, Data->AttackMontage->GetNumSections() - 1);
-			AttackSection = Data->AttackMontage->GetSectionName(SectionIndex);
+			AttackSection = Data->ChargeReleaseSection;
+		}
+		else if (Data->bRandomizeAttackSection && Data->AttackMontage->GetNumSections() > 0)
+		{
+			TArray<FName> NormalSections;
+			for (int32 Index = 0; Index < Data->AttackMontage->GetNumSections(); ++Index)
+			{
+				const FName Section = Data->AttackMontage->GetSectionName(Index);
+				if (Section != Data->ChargeReleaseSection) NormalSections.Add(Section);
+			}
+			if (!NormalSections.IsEmpty()) AttackSection = NormalSections[FMath::RandHelper(NormalSections.Num())];
 		}
 		if (!bRanged) CaptureMeleeAttack(Player, AttackSection);
 		UAbilityTask_PlayMontageAndWait* MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
@@ -525,7 +547,10 @@ void UGA_WeaponAttackBase::ExecuteAttack()
 		if (!AttackSection.IsNone())
 		{
 			// 에셋의 원래 연결은 유지하고, 이번 재생에서만 다음 섹션 진행을 끊는다.
-			Player->GetMesh()->GetAnimInstance()->Montage_SetNextSection(AttackSection, NAME_None, Data->AttackMontage);
+			const FName Continuation = WeaponAttackAnimation::GetContinuation(Data->AttackMontage, AttackSection, Data->ChargeReleaseSection);
+			UAnimInstance* Anim = Player->GetMesh()->GetAnimInstance();
+			Anim->Montage_SetNextSection(AttackSection, Continuation, Data->AttackMontage);
+			if (!Continuation.IsNone()) Anim->Montage_SetNextSection(Continuation, NAME_None, Data->AttackMontage);
 		}
 	}
 
@@ -654,6 +679,12 @@ void UGA_WeaponAttackBase::HandleMontageCompleted()
 void UGA_WeaponAttackBase::HandleMontageCancelled()
 {
 	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
+}
+
+void UGA_WeaponAttackBase::HandleChargeMontageCancelled()
+{
+	// Replacing the charge loop with the release attack is an expected interruption.
+	if (IsWaitingForAttackRelease()) HandleMontageCancelled();
 }
 
 void UGA_WeaponAttackBase::EndAbility(const FGameplayAbilitySpecHandle Handle,

@@ -34,6 +34,15 @@ void UPlayerLocomotionAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
         if (!Instance || Instance->GetWeight() <= ZERO_ANIMWEIGHT_THRESH) AirAttackMontage.Reset();
     }
     UAnimMontage* Active = GetCurrentActiveMontage();
+    // Guard locks movement: full body (knee bend) on the ground, upper body only while airborne.
+    // No latch, so landing during a guard blends back to the full-body pose.
+    if (Active && Active->GetName().StartsWith(TEXT("AM_PlayerGuard")))
+    {
+        AirAttackMontage.Reset();
+        LastAttackInstanceID = INDEX_NONE;
+        bUseAirAttackPose = bFalling;
+        return;
+    }
     if (Active && (Active->GetName().StartsWith(TEXT("AM_PlayerAttack_"))
         || Active->GetName().StartsWith(TEXT("AM_PlayerCharge_"))))
     {

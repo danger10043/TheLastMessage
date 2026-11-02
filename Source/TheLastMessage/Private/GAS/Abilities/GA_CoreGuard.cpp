@@ -6,7 +6,9 @@
 #include "GAS/Effects/GE_CoreGuardRoot.h"
 #include "GAS/WeaponGameplayTags.h"
 #include "GAS/WeaponSlotAttributeSet.h"
+#include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
+#include "Animation/AnimMontage.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Kismet/GameplayStatics.h"
@@ -26,6 +28,7 @@ UGA_CoreGuard::UGA_CoreGuard()
 {
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> Plane(TEXT("/Engine/BasicShapes/Plane.Plane"));
 	BarrierMesh = Plane.Object;
+	GuardMontage = TSoftObjectPtr<UAnimMontage>(FSoftObjectPath(TEXT("/Game/Test_Jihong/Animations/Guard/AM_PlayerGuard.AM_PlayerGuard")));
 
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
 	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::ServerOnly;
@@ -67,12 +70,46 @@ void UGA_CoreGuard::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
 	}
 
 	ShowBarrier(ActorInfo->AvatarActor.Get());
+	PlayGuardMontage();
 	StartPerfectWindow(ActorInfo->AbilitySystemComponent.Get());
 
 	UAbilityTask_WaitGameplayEvent* WaitBlocked = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(
 		this, CoreGameplayTags::Event_GuardBlocked, nullptr, false, true);
 	WaitBlocked->EventReceived.AddDynamic(this, &ThisClass::HandleGuardBlocked);
 	WaitBlocked->ReadyForActivation();
+}
+
+void UGA_CoreGuard::PlayGuardMontage()
+{
+	UAnimMontage* Montage = GuardMontage.LoadSynchronous();
+	if (!Montage)
+	{
+		return;
+	}
+	// 능력이 끝날 때 바로 끊지 않고 End 섹션으로 넘겨 풀리는 동작까지 보여 준다.
+	UAbilityTask_PlayMontageAndWait* Task = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
+		this, TEXT("GuardPose"), Montage, 1.0f, TEXT("Start"), false);
+	Task->ReadyForActivation();
+	PlayingGuardMontage = Montage;
+}
+
+void UGA_CoreGuard::FinishGuardMontage(UAbilitySystemComponent* ASC, bool bWasCancelled)
+{
+	UAnimMontage* Montage = PlayingGuardMontage.Get();
+	PlayingGuardMontage.Reset();
+	// 피격·사망 등 다른 몽타주가 이미 덮어썼으면 그쪽을 그대로 둔다.
+	if (!ASC || !Montage || ASC->GetCurrentMontage() != Montage)
+	{
+		return;
+	}
+	if (!bWasCancelled && Montage->IsValidSectionName(GuardEndSection))
+	{
+		ASC->CurrentMontageJumpToSection(GuardEndSection);
+	}
+	else
+	{
+		ASC->CurrentMontageStop(GuardMontageStopBlendTime);
+	}
 }
 
 void UGA_CoreGuard::HandleGuardBlocked(FGameplayEventData Payload)
@@ -435,6 +472,8 @@ void UGA_CoreGuard::EndAbility(const FGameplayAbilitySpecHandle Handle,
 		}
 	}
 	RootEffectHandle.Invalidate();
+
+	FinishGuardMontage(ASC, bWasCancelled);
 
 	// 가드 브레이크면 깨지는 연출이 끝난 뒤 UpdateBarrier가 방벽을 제거한다.
 	if (!bGuardBroken)

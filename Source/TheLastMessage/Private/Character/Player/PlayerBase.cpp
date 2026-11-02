@@ -761,7 +761,17 @@ void APlayerBase::RefreshPrimaryWeaponVisual()
 
 void APlayerBase::UpdateWeaponGimmickTransition(float DeltaSeconds)
 {
-	const bool bWantHidden = IsHandlingGimmick();
+	// 가드 중에도 기믹 조작처럼 무기를 숨긴다. 태그는 서버 기준이라 클라이언트는 복제된 가드 몽타주로 판단하고,
+	// End 섹션(팔을 푸는 동작)에 들어가면 무기가 다시 나타난다.
+	const auto IsGuardingVisual = [this]()
+	{
+		if (AbilitySystemComponent && AbilitySystemComponent->HasMatchingGameplayTag(CoreGameplayTags::State_Guarding)) return true;
+		const UAnimInstance* Anim = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr;
+		const UAnimMontage* Montage = Anim ? Anim->GetCurrentActiveMontage() : nullptr;
+		return Montage && Montage->GetName().StartsWith(TEXT("AM_PlayerGuard"))
+			&& Anim->Montage_GetCurrentSection(Montage) != FName(TEXT("End"));
+	};
+	const bool bWantHidden = IsHandlingGimmick() || IsGuardingVisual();
 	if (bWantHidden != bWeaponHiddenForGimmick)
 	{
 		bWeaponHiddenForGimmick = bWantHidden;

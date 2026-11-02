@@ -4,6 +4,7 @@
 #include "Abilities/GameplayAbility.h"
 #include "GA_CoreGuard.generated.h"
 
+class UAnimMontage;
 class UMaterialInstanceDynamic;
 class UMaterialInterface;
 class USoundBase;
@@ -54,6 +55,18 @@ protected:
 	/** 최소 상태에서 다시 가득 차는 데 걸리는 시간(초). */
 	UPROPERTY(EditDefaultsOnly, Category = "Guard|Block", meta = (ClampMin = "0.01"))
 	float RebuildTime = 0.4f;
+
+	/** 가드 몽타주. Start → Loop(반복) → End 섹션을 쓴다. 비우면 애니메이션 없이 동작한다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Guard|Animation")
+	TSoftObjectPtr<UAnimMontage> GuardMontage;
+
+	/** 가드를 풀 때 넘어갈 섹션. 없으면 몽타주를 블렌드 아웃한다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Guard|Animation")
+	FName GuardEndSection = TEXT("End");
+
+	/** 가드가 취소될 때(사망 등) 몽타주를 끊는 블렌드 시간(초). */
+	UPROPERTY(EditDefaultsOnly, Category = "Guard|Animation", meta = (ClampMin = "0"))
+	float GuardMontageStopBlendTime = 0.15f;
 
 	/** 막았을 때 재생하는 소리. 비우면 소리 없이 동작한다. */
 	UPROPERTY(EditDefaultsOnly, Category = "Guard|Block")
@@ -124,6 +137,14 @@ protected:
 		bool bReplicateEndAbility, bool bWasCancelled) override;
 
 private:
+	/** 가드 몽타주를 Start 섹션부터 재생한다. 능력이 끝나도 자동으로 끊지 않고 EndAbility에서 End로 넘긴다. */
+	void PlayGuardMontage();
+	/** 정상 해제·가드 브레이크면 End 섹션으로, 취소면 블렌드 아웃으로 몽타주를 정리한다. */
+	void FinishGuardMontage(UAbilitySystemComponent* ASC, bool bWasCancelled);
+
+	/** 이번 가드에서 재생한 몽타주. 다른 몽타주가 덮어썼으면 건드리지 않기 위해 기록한다. */
+	TWeakObjectPtr<UAnimMontage> PlayingGuardMontage;
+
 	void ShowBarrier(AActor* Avatar);
 	void HideBarrier();
 

@@ -3,7 +3,6 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Materials/MaterialInterface.h"
-#include "UObject/ConstructorHelpers.h"
 #include "Components/AudioComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Engine/OverlapResult.h"
@@ -50,11 +49,6 @@ AJuggernautEnemy::AJuggernautEnemy()
 	TelegraphMesh->bReceivesDecals = false;
 	TelegraphMesh->SetVisibility(false);
 
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> PlaneMesh(TEXT("/Engine/BasicShapes/Plane.Plane"));
-	if (PlaneMesh.Succeeded())
-	{
-		TelegraphMesh->SetStaticMesh(PlaneMesh.Object);
-	}
 }
 
 void AJuggernautEnemy::ApplyEnemyData(const UEnemyDataAsset* Data)
@@ -92,9 +86,18 @@ void AJuggernautEnemy::BeginPlay()
 
 	DefaultMaxAcceleration = GetCharacterMovement()->MaxAcceleration;
 
-	if (TelegraphMesh && TelegraphMaterial)
+	// 예고 띠의 메시(평면)와 머티리얼은 BP에서 지정한다.
+	if (TelegraphMesh)
 	{
-		TelegraphMesh->SetMaterial(0, TelegraphMaterial);
+		if (TelegraphPlaneMesh)
+		{
+			TelegraphMesh->SetStaticMesh(TelegraphPlaneMesh);
+		}
+
+		if (TelegraphMaterial)
+		{
+			TelegraphMesh->SetMaterial(0, TelegraphMaterial);
+		}
 	}
 }
 
@@ -190,7 +193,8 @@ void AJuggernautEnemy::ShowTelegraph()
 
 	if (!TelegraphMesh->GetStaticMesh())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[Juggernaut] %s: 예고 띠 메시(엔진 기본 Plane)를 불러오지 못했습니다."), *GetName());
+		UE_LOG(LogTemp, Warning, TEXT("[Juggernaut] %s: 예고 띠 메시가 없습니다. BP의 Telegraph Plane Mesh에 평면 메시를 지정하세요."), *GetName());
+		return;
 	}
 
 	const UCapsuleComponent* Capsule = GetCapsuleComponent();

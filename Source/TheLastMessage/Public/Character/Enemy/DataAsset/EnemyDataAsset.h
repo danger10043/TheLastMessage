@@ -80,6 +80,26 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Enemy|Drop", meta = (ClampMin = "0.0"))
 	float HealDropHeight = 40.f;
 
+	/** 죽을 때 물리 시뮬레이션으로 날아가는 본(몬스터 BP의 Death Physics Bones)에 주는 바깥쪽 속도(cm/s). */
+	UPROPERTY(EditAnywhere, Category = "Enemy|Death", meta = (ClampMin = "0.0"))
+	float DeathPhysicsImpulse = 500.f;
+
+	/** 죽을 때 위쪽으로 더해지는 속도(cm/s) */
+	UPROPERTY(EditAnywhere, Category = "Enemy|Death", meta = (ClampMin = "0.0"))
+	float DeathPhysicsUpImpulse = 300.f;
+
+	/** 죽을 때 본에 주는 무작위 회전 속도(라디안/s). 0이면 회전을 주지 않는다. */
+	UPROPERTY(EditAnywhere, Category = "Enemy|Death", meta = (ClampMin = "0.0"))
+	float DeathPhysicsSpin = 6.f;
+
+	/** 켜면 죽을 때 해당 본이 몸에서 떨어져 나간다(관절을 끊는다). 끄면 관절이 유지된 채 축 늘어진다. */
+	UPROPERTY(EditAnywhere, Category = "Enemy|Death")
+	bool bDeathBreakConstraints = true;
+
+	/** 켜면 죽을 때 물리로 움직이는 본이 사이드뷰 평면(X-Z)을 벗어나지 않는다. */
+	UPROPERTY(EditAnywhere, Category = "Enemy|Death")
+	bool bDeathPhysicsLockToPlane = true;
+
 	// ---- 몬스터 종류별 수치 ----
 
 	/** Rattler 전용 수치. Rattler 몬스터만 읽는다. 다른 몬스터의 에셋에서는 건드리지 않아도 된다. */

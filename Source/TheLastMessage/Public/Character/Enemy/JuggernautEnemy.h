@@ -5,6 +5,7 @@
 #include "JuggernautEnemy.generated.h"
 
 class UNiagaraSystem;
+class UStaticMesh;
 class UStaticMeshComponent;
 class UMaterialInterface;
 class USoundBase;
@@ -98,7 +99,14 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Juggernaut|Telegraph")
 	TObjectPtr<UMaterialInterface> TelegraphMaterial;
 
-	/** 예고 띠 메시(엔진 기본 Plane). 크기·위치는 코드가 정한다. */
+	/**
+	 * 예고 띠에 쓸 평면 메시(엔진 콘텐츠의 Plane, 100x100). 크기·위치는 코드가 정한다.
+	 * 비워 두면 TelegraphMesh 컴포넌트에 직접 지정한 메시를 쓴다. 둘 다 없으면 띠가 표시되지 않는다.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Juggernaut|Telegraph")
+	TObjectPtr<UStaticMesh> TelegraphPlaneMesh;
+
+	/** 예고 띠 메시 컴포넌트. 크기·위치는 코드가 정한다. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Juggernaut|Telegraph")
 	TObjectPtr<UStaticMeshComponent> TelegraphMesh;
 

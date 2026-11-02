@@ -80,10 +80,6 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Guard|Break", meta = (ClampMin = "0.01"))
 	float GuardBreakTime = 0.15f;
 
-	/** 가드 브레이크 후 다시 가드할 수 없는 시간(초). */
-	UPROPERTY(EditDefaultsOnly, Category = "Guard|Break", meta = (ClampMin = "0"))
-	float GuardBreakCooldown = 0.5f;
-
 	/** 퍼펙트 가드 때 방벽이 물드는 색. */
 	UPROPERTY(EditDefaultsOnly, Category = "Guard|Perfect")
 	FLinearColor PerfectColor = FLinearColor(0.47f, 0.84f, 1.0f);
@@ -199,8 +195,6 @@ private:
 
 	/** 가드 브레이크로 방벽이 깨지는 중인지. 가드가 끝나도 깨지는 연출이 끝날 때까지 방벽을 남긴다. */
 	bool bGuardBroken = false;
-	/** 이 시각까지는 가드를 다시 시작하지 않는다. */
-	double GuardBreakCooldownEndTime = 0.0;
 
 	/** 방벽 상태(0~1). 1이면 온전한 방벽이다. */
 	float Integrity = 1.0f;

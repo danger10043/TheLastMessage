@@ -257,7 +257,6 @@ void UGA_CoreGuard::BreakGuard()
 		return;
 	}
 	bGuardBroken = true;
-	GuardBreakCooldownEndTime = World->GetTimeSeconds() + GuardBreakCooldown;
 
 	if (BarrierMaterialInstance)
 	{
@@ -319,15 +318,10 @@ bool UGA_CoreGuard::CanActivateAbility(const FGameplayAbilitySpecHandle Handle,
 	{
 		return false;
 	}
-	// 막을 에너지가 없으면 가드를 시작하지 않는다.
+	// 막을 에너지가 없으면 가드를 시작하지 않는다. 가드 브레이크 직후에는 에너지가 0이라 따로 대기 시간을 두지 않는다.
 	const UAbilitySystemComponent* ASC = ActorInfo ? ActorInfo->AbilitySystemComponent.Get() : nullptr;
 	const UWeaponSlotAttributeSet* EnergySet = ASC ? ASC->GetSet<UWeaponSlotAttributeSet>() : nullptr;
-	if (EnergySet && EnergySet->GetSharedEnergy() <= 0.0f)
-	{
-		return false;
-	}
-	const UWorld* World = ActorInfo && ActorInfo->AvatarActor.IsValid() ? ActorInfo->AvatarActor->GetWorld() : nullptr;
-	return !World || World->GetTimeSeconds() >= GuardBreakCooldownEndTime;
+	return !EnergySet || EnergySet->GetSharedEnergy() > 0.0f;
 }
 
 void UGA_CoreGuard::UpdateBarrier()

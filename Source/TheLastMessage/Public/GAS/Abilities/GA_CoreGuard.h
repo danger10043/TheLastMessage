@@ -6,6 +6,7 @@
 
 class UMaterialInstanceDynamic;
 class UMaterialInterface;
+class USoundBase;
 class UStaticMesh;
 class UStaticMeshComponent;
 
@@ -38,6 +39,30 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Guard|Barrier")
 	FVector BarrierOffset = FVector::ZeroVector;
 
+	/** 한 번 막을 때 방벽이 깎이는 양(0~1). 연속으로 막으면 누적된다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Guard|Block", meta = (ClampMin = "0", ClampMax = "1"))
+	float BlockBreakAmount = 0.35f;
+
+	/** 연속으로 막아도 남는 최소 방벽 상태(0~1). */
+	UPROPERTY(EditDefaultsOnly, Category = "Guard|Block", meta = (ClampMin = "0", ClampMax = "1"))
+	float MinIntegrity = 0.2f;
+
+	/** 막는 순간 방벽이 깎이는 데 걸리는 시간(초). */
+	UPROPERTY(EditDefaultsOnly, Category = "Guard|Block", meta = (ClampMin = "0"))
+	float BreakTime = 0.05f;
+
+	/** 최소 상태에서 다시 가득 차는 데 걸리는 시간(초). */
+	UPROPERTY(EditDefaultsOnly, Category = "Guard|Block", meta = (ClampMin = "0.01"))
+	float RebuildTime = 0.4f;
+
+	/** 막았을 때 재생하는 소리. 비우면 소리 없이 동작한다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Guard|Block")
+	TObjectPtr<USoundBase> BlockSound;
+
+	/** 에너지가 부족해 일부만 막았을 때의 소리 높낮이 배율. */
+	UPROPERTY(EditDefaultsOnly, Category = "Guard|Block", meta = (ClampMin = "0.1"))
+	float PartialBlockPitch = 0.8f;
+
 	virtual void ActivateAbility(const FGameplayAbilitySpecHandle Handle,
 		const FGameplayAbilityActorInfo* ActorInfo,
 		const FGameplayAbilityActivationInfo ActivationInfo,
@@ -55,6 +80,26 @@ protected:
 private:
 	void ShowBarrier(AActor* Avatar);
 	void HideBarrier();
+
+	/** 가드 성공 이벤트를 받아 방벽을 맞은 방향부터 깎고 소리를 재생한다. */
+	UFUNCTION()
+	void HandleGuardBlocked(FGameplayEventData Payload);
+
+	/** 깎인 방벽을 다시 채우고 머티리얼에 반영한다. 가득 차면 멈춘다. */
+	void UpdateBarrier();
+
+	/** 방벽 상태(0~1). 1이면 온전한 방벽이다. */
+	float Integrity = 1.0f;
+	/** 깨지는 중일 때 도달할 상태. */
+	float BreakTarget = 1.0f;
+	/** 깨지는 데 남은 시간(초). */
+	float BreakRemaining = 0.0f;
+	/** 막은 순간의 밝기 강조(1에서 0으로 줄어듦). */
+	float Flash = 0.0f;
+	/** 머티리얼 기본 밝기. 강조 시 이 값을 기준으로 키운다. */
+	float BaseBrightness = 1.0f;
+	double LastUpdateTime = 0.0;
+	FTimerHandle BarrierTimerHandle;
 
 	/** 가드 중에만 적용하는 이동 정지 GE의 핸들. 종료 시 제거한다. */
 	FActiveGameplayEffectHandle RootEffectHandle;

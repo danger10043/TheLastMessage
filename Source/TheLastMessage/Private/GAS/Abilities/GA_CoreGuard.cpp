@@ -4,8 +4,11 @@
 #include "Core/CoreGameplayTags.h"
 #include "GAS/Effects/GE_CoreGuardRoot.h"
 #include "GAS/WeaponGameplayTags.h"
+#include "Abilities/Tasks/AbilityTask_WaitGameplayEvent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
+#include "Kismet/GameplayStatics.h"
+#include "TimerManager.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -62,6 +65,91 @@ void UGA_CoreGuard::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
 	}
 
 	ShowBarrier(ActorInfo->AvatarActor.Get());
+
+	UAbilityTask_WaitGameplayEvent* WaitBlocked = UAbilityTask_WaitGameplayEvent::WaitGameplayEvent(
+		this, CoreGameplayTags::Event_GuardBlocked, nullptr, false, true);
+	WaitBlocked->EventReceived.AddDynamic(this, &ThisClass::HandleGuardBlocked);
+	WaitBlocked->ReadyForActivation();
+}
+
+void UGA_CoreGuard::HandleGuardBlocked(FGameplayEventData Payload)
+{
+	const AActor* Avatar = GetAvatarActorFromActorInfo();
+	if (!IsValid(Avatar))
+	{
+		return;
+	}
+	const bool bPartial = Payload.TargetTags.HasTagExact(CoreGameplayTags::Result_GuardPartial);
+
+	if (BlockSound)
+	{
+		UGameplayStatics::PlaySoundAtLocation(this, BlockSound, Avatar->GetActorLocation(), 1.0f,
+			bPartial ? PartialBlockPitch : 1.0f);
+	}
+	if (!BarrierMaterialInstance)
+	{
+		return;
+	}
+
+	// 공격자가 있는 방향부터 깨지도록 방벽 평면 기준 각도로 바꾼다. 머티리얼은 V축을 뒤집어 위쪽을 +로 쓴다.
+	if (const AActor* Attacker = Payload.Instigator.Get())
+	{
+		const FVector Local = BarrierComponent->GetComponentTransform().InverseTransformVectorNoScale(
+			Attacker->GetActorLocation() - Avatar->GetActorLocation());
+		if (!FMath::IsNearlyZero(Local.X) || !FMath::IsNearlyZero(Local.Y))
+		{
+			BarrierMaterialInstance->SetScalarParameterValue(TEXT("ImpactAngle"), FMath::Atan2(-Local.Y, Local.X));
+		}
+	}
+
+	// 깨지는 중에 또 막으면 목표 상태에서 이어서 깎아, 연속 공격일수록 더 성겨지게 한다.
+	BreakTarget = FMath::Max(MinIntegrity, FMath::Min(Integrity, BreakTarget) - BlockBreakAmount);
+	BreakRemaining = BreakTime;
+	Flash = 1.0f;
+
+	UWorld* World = GetWorld();
+	if (World && !World->GetTimerManager().IsTimerActive(BarrierTimerHandle))
+	{
+		LastUpdateTime = World->GetTimeSeconds();
+		World->GetTimerManager().SetTimer(BarrierTimerHandle, this, &ThisClass::UpdateBarrier, 1.0f / 60.0f, true);
+	}
+	UpdateBarrier();
+}
+
+void UGA_CoreGuard::UpdateBarrier()
+{
+	UWorld* World = GetWorld();
+	if (!World || !BarrierMaterialInstance)
+	{
+		return;
+	}
+	const double Now = World->GetTimeSeconds();
+	const float DeltaTime = static_cast<float>(Now - LastUpdateTime);
+	LastUpdateTime = Now;
+
+	if (BreakRemaining > 0.0f)
+	{
+		const float Step = FMath::Min(DeltaTime, BreakRemaining);
+		Integrity += (BreakTarget - Integrity) * FMath::Min(1.0f, Step / BreakRemaining);
+		BreakRemaining -= Step;
+	}
+	else
+	{
+		// 많이 깨졌을수록 빠르게, 거의 다 찼을 때는 천천히 차오른다.
+		const float Range = FMath::Max(KINDA_SMALL_NUMBER, 1.0f - MinIntegrity);
+		const float Speed = 0.5f + 1.5f * (1.0f - Integrity) / Range;
+		Integrity = FMath::Min(1.0f, Integrity + Range / RebuildTime * DeltaTime * Speed);
+		BreakTarget = Integrity;
+	}
+	Flash = FMath::Max(0.0f, Flash - DeltaTime * 6.0f);
+
+	BarrierMaterialInstance->SetScalarParameterValue(TEXT("Integrity"), Integrity);
+	BarrierMaterialInstance->SetScalarParameterValue(TEXT("Brightness"), BaseBrightness * (1.0f + 0.35f * Flash));
+
+	if (Integrity >= 1.0f && Flash <= 0.0f && BreakRemaining <= 0.0f)
+	{
+		World->GetTimerManager().ClearTimer(BarrierTimerHandle);
+	}
 }
 
 void UGA_CoreGuard::ShowBarrier(AActor* Avatar)
@@ -84,10 +172,22 @@ void UGA_CoreGuard::ShowBarrier(AActor* Avatar)
 	BarrierComponent->SetWorldScale3D(FVector(BarrierRadius * 2.0f * BarrierMeshMargin / BarrierMeshSize));
 	BarrierComponent->RegisterComponent();
 	BarrierMaterialInstance = BarrierComponent->CreateDynamicMaterialInstance(0, BarrierMaterial);
+	BarrierMaterialInstance->GetScalarParameterValue(TEXT("Brightness"), BaseBrightness);
+
+	// 새 가드는 온전한 방벽으로 시작한다.
+	Integrity = 1.0f;
+	BreakTarget = 1.0f;
+	BreakRemaining = 0.0f;
+	Flash = 0.0f;
+	BarrierMaterialInstance->SetScalarParameterValue(TEXT("Integrity"), Integrity);
 }
 
 void UGA_CoreGuard::HideBarrier()
 {
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(BarrierTimerHandle);
+	}
 	if (BarrierComponent)
 	{
 		BarrierComponent->DestroyComponent();

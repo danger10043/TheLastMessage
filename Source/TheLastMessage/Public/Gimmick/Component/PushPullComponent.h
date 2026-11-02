@@ -10,6 +10,7 @@ class APlayerBase;
 class APushPullGimmick;
 class UCharacterMovementComponent;
 class UStaticMeshComponent;
+class UPhysicsConstraintComponent;
 //class UPhysicsHandleComponent;
 
 UCLASS(Blueprintable, ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
@@ -42,6 +43,10 @@ public:
     UFUNCTION(BlueprintPure, Category = "Gimmick|PushPull")
     APushPullGimmick* GetCurrentTarget() const;
 
+    float GetFollowSpeedX() const { return FollowSpeedX; }
+    bool IsApproaching() const { return bApproaching; }
+    bool GetHandContacts(FVector& Left, FVector& Right) const;
+
 protected:
 	virtual void BeginPlay() override;
 
@@ -63,7 +68,7 @@ protected:
     FVector MovementPlaneNormal = FVector(0.0f, 1.0f, 0.0f);
 
 private:
-    // 조작 중 걷기 속도를 물체의 이동 속도에 맞춰 제한
+    // 조작 중 독립 걷기를 막고, 해제할 때 복구할 속도를 보관
     void UpdateWalkSpeedLimit(UCharacterMovementComponent* Movement, float MoveSpeed);
 
     UPROPERTY(Transient)
@@ -84,6 +89,21 @@ private:
 
     bool bHasWalkSpeedOverride = false;
     bool bOriginalOrientToMovement = false;
+
+    // Follow the simulated box after physics, preserving the signed grab distance.
+    double GrabOffsetX = 0.0;
+    bool bOriginalPhysicsInteraction = true;
+    bool bTargetWasMoveIgnored = false;
+    void FollowSimulatedTarget(float DeltaTime);
+    float FollowSpeedX = 0.0f;
+    bool bApproaching = false;
+    double ApproachStartX = 0.0;
+    float ApproachElapsed = 0.0f;
+    float ApproachDuration = 0.3f;
+    double GripOffsetZ = 0.0;
+    double GripHalfWidth = 14.0;
+    UPROPERTY(Transient)
+    TObjectPtr<UPhysicsConstraintComponent> HolderCollisionConstraint;
 
     // 낮은 턱을 넘을 수 있는지 검사하고, 가능하면 위치 보정
     bool TryStepUp(UStaticMeshComponent* Mesh, double DirectionSign, double ForwardDistance);

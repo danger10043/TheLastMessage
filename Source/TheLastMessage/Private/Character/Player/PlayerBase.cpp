@@ -291,13 +291,16 @@ void APlayerBase::UpdateGimmickAnimation()
 	if (!Anim) return;
 	UAnimMontage* Desired = nullptr;
 	float PlayRate = 1.0f;
-	if (bAvailable && PushPullComponent && PushPullComponent->IsPushPulling())
+	if (bAvailable && PushPullComponent && PushPullComponent->IsPushPulling() && !PushPullComponent->IsApproaching())
 	{
 		const FVector ToObject = PushPullComponent->GetCurrentTarget()->GetActorLocation() - GetActorLocation();
-		const FVector Velocity = FVector::VectorPlaneProject(GetVelocity(), GetActorUpVector());
-		const bool bPulling = FVector::DotProduct(Velocity, ToObject) < -1.0f;
-		Desired = (bPulling ? PullMontage : PushMontage).Get();
-		PlayRate = Velocity.SizeSquared() > 25.0f ? 1.0f : 0.0f;
+		const FVector Velocity(PushPullComponent->GetFollowSpeedX(), 0, 0);
+		const bool bMoving = FMath::Abs(Velocity.X) > 5.0f;
+		const bool bPulling = bMoving && FVector::DotProduct(Velocity, ToObject) < 0.0f;
+		// Keep the last grip pose at rest; tiny physics corrections must not switch montages.
+		Desired = !bMoving && (GimmickMontage == PullMontage || GimmickMontage == PushMontage)
+			? GimmickMontage.Get() : (bPulling ? PullMontage : PushMontage).Get();
+		PlayRate = bMoving ? 1.0f : 0.0f;
 	}
 	else if (bAvailable && CarryComponent && CarryComponent->HasCarriedObject())
 	{

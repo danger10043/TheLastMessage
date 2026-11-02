@@ -6,6 +6,8 @@
 #include "Character/Player/PlayerBase.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/CapsuleComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Gimmick/Component/CarryComponent.h"
 #include "Gimmick/PushPull/PushPullGimmick.h"
@@ -13,6 +15,7 @@
 #include "CollisionQueryParams.h"
 #include "Engine/World.h"
 #include "Math/RotationMatrix.h"
+#include "PhysicsEngine/PhysicsConstraintComponent.h"
 
 UPushPullComponent::UPushPullComponent()
 {
@@ -20,7 +23,7 @@ UPushPullComponent::UPushPullComponent()
 
 	// 실제 조작 중에만 갱신
 	PrimaryComponentTick.bStartWithTickEnabled = false;
-	PrimaryComponentTick.TickGroup = TG_PrePhysics;
+	PrimaryComponentTick.TickGroup = TG_PostPhysics;
 }
 
 bool UPushPullComponent::StartPushPull(APushPullGimmick* Target)
@@ -109,6 +112,43 @@ bool UPushPullComponent::StartPushPull(APushPullGimmick* Target)
     }
 
     CurrentTarget = Target;
+    const FBox Bounds = Mesh->Bounds.GetBox();
+    const double Side = Player->GetActorLocation().X >= Bounds.GetCenter().X ? 1.0 : -1.0;
+    const double SurfaceX = Bounds.GetCenter().X + Side * Bounds.GetExtent().X;
+    const double StanceX = SurfaceX + Side * (Player->GetCapsuleComponent()->GetScaledCapsuleRadius() + 3.0);
+    const double Approach = StanceX - Player->GetActorLocation().X;
+    ApproachStartX = Player->GetActorLocation().X;
+    ApproachElapsed = 0.0f;
+    ApproachDuration = FMath::Clamp(static_cast<float>(FMath::Abs(Approach) / 350.0), 0.2f, 0.5f);
+    bApproaching = FMath::Abs(Approach) > 0.5;
+    GrabOffsetX = StanceX - Mesh->GetComponentLocation().X;
+    const auto* PlayerMesh = Player->GetMesh();
+    const FVector ShoulderL = PlayerMesh->GetSocketLocation(TEXT("upperarm_l"));
+    const FVector ShoulderR = PlayerMesh->GetSocketLocation(TEXT("upperarm_r"));
+    const double ChestZ = (ShoulderL.Z + ShoulderR.Z) * 0.5 - 12.0;
+    const double GripZ = FMath::Clamp(ChestZ, Bounds.Min.Z + 6.0, Bounds.Max.Z - 6.0);
+    GripOffsetZ = GripZ - Bounds.GetCenter().Z;
+    GripHalfWidth = FMath::Min(Bounds.GetExtent().Y * 0.6,
+        FMath::Clamp(FVector::Dist(ShoulderL, ShoulderR) * 0.55, 10.0, 18.0));
+    FollowSpeedX = 0.0f;
+    bOriginalPhysicsInteraction = Movement->bEnablePhysicsInteraction;
+    Movement->bEnablePhysicsInteraction = false;
+    bTargetWasMoveIgnored = Player->GetCapsuleComponent()->GetMoveIgnoreActors().Contains(Target);
+    Player->GetCapsuleComponent()->IgnoreActorWhenMoving(Target, true);
+    Movement->StopMovementImmediately();
+    // Disable collision for this physical pair only. A fully free constraint applies
+    // no movement restriction, but prevents the box colliding with its own holder.
+    HolderCollisionConstraint = NewObject<UPhysicsConstraintComponent>(Player);
+    HolderCollisionConstraint->RegisterComponent();
+    HolderCollisionConstraint->SetWorldLocation(Mesh->GetComponentLocation());
+    HolderCollisionConstraint->SetLinearXLimit(LCM_Free, 0);
+    HolderCollisionConstraint->SetLinearYLimit(LCM_Free, 0);
+    HolderCollisionConstraint->SetLinearZLimit(LCM_Free, 0);
+    HolderCollisionConstraint->SetAngularSwing1Limit(ACM_Free, 0);
+    HolderCollisionConstraint->SetAngularSwing2Limit(ACM_Free, 0);
+    HolderCollisionConstraint->SetAngularTwistLimit(ACM_Free, 0);
+    HolderCollisionConstraint->SetDisableCollision(true);
+    HolderCollisionConstraint->SetConstrainedComponents(Player->GetCapsuleComponent(), NAME_None, Mesh, NAME_None);
 
     // 조작 중 빠르게 움직일 때 충돌 누락을 줄이도록 설정
     Mesh->SetUseCCD(true);
@@ -277,6 +317,8 @@ void UPushPullComponent::UpdatePushPull(const FVector& MoveDirection, float Delt
         return;
     }
 
+    if (bApproaching) return; // Only the approach moves the holder; the box stays still.
+
     UpdateWalkSpeedLimit(Movement, Config.MoveSpeed);
 
     if (!FMath::IsFinite(DeltaTime)
@@ -301,7 +343,7 @@ void UPushPullComponent::UpdatePushPull(const FVector& MoveDirection, float Delt
     const double EffectiveMoveSpeed = FMath::Max(
         0.0,
         static_cast<double>(
-            FMath::Min(Config.MoveSpeed, Movement->MaxWalkSpeed)));
+            FMath::Min(Config.MoveSpeed, OriginalMaxWalkSpeed)));
 
     const double Acceleration =
         static_cast<double>(Config.HorizontalAcceleration);
@@ -436,18 +478,14 @@ void UPushPullComponent::UpdatePushPull(const FVector& MoveDirection, float Delt
     }
 
     // 목표 수평 속도까지 가속하거나 감속
-    const double AccelerationX = FMath::Clamp(
-        (DesiredSpeedX - CurrentVelocity.X)
-        / static_cast<double>(DeltaTime),
-        -Acceleration,
-        Acceleration);
-
-    // X축에만 가속도를 적용
-    // Z축은 중력과 바닥 충돌에 따라 자유롭게 움직임
-    Mesh->AddForce(
-        FVector(AccelerationX, 0.0, 0.0),
-        NAME_None,
-        true);
+    double SpeedX = FMath::FInterpConstantTo(CurrentVelocity.X, DesiredSpeedX,
+        static_cast<double>(DeltaTime), Acceleration);
+    if (FMath::Abs(DesiredSpeedX) < 0.01 && FMath::Abs(SpeedX) < 1.0) SpeedX = 0.0;
+    // Control horizontal speed directly so floor friction does not create a near
+    // stationary pulling direction. The physics solver still handles ground/walls.
+    // Do not wake a resting physics body every tick by repeatedly assigning zero velocity.
+    if (!FMath::IsNearlyEqual(SpeedX, CurrentVelocity.X, 0.001))
+        Mesh->SetPhysicsLinearVelocity(FVector(SpeedX, CurrentVelocity.Y, CurrentVelocity.Z));
 
     //const float DistanceSquared = FVector::DistSquared(Player->GetActorLocation(), Anchor->GetComponentLocation());
 
@@ -547,6 +585,22 @@ void UPushPullComponent::UpdatePushPull(const FVector& MoveDirection, float Delt
 void UPushPullComponent::StopPushPull()
 {
     APushPullGimmick* Target = CurrentTarget.Get();
+    if (HolderCollisionConstraint)
+    {
+        HolderCollisionConstraint->BreakConstraint();
+        HolderCollisionConstraint->DestroyComponent();
+        HolderCollisionConstraint = nullptr;
+    }
+    FollowSpeedX = 0.0f;
+    bApproaching = false;
+
+    if (IsValid(Target))
+    {
+        if (APlayerBase* Player = OwnerPlayer.Get())
+        {
+            if (!bTargetWasMoveIgnored) Player->GetCapsuleComponent()->IgnoreActorWhenMoving(Target, false);
+        }
+    }
 
     CurrentTarget.Reset();
     SetComponentTickEnabled(false);
@@ -568,6 +622,8 @@ void UPushPullComponent::StopPushPull()
             {
                 Movement->bOrientRotationToMovement =
                     bOriginalOrientToMovement;
+                Movement->bEnablePhysicsInteraction = bOriginalPhysicsInteraction;
+                Movement->Velocity.X = 0.0;
 
                 // 다른 기능이 이미 속도를 변경했다면 유지
                 if (FMath::IsNearlyEqual(
@@ -642,6 +698,8 @@ void UPushPullComponent::BeginPlay()
     {
         AddTickPrerequisiteComponent(Movement);
     }
+    // Evaluate animation only after the post-physics follow has updated velocity/position.
+    if (Player->GetMesh()) Player->GetMesh()->AddTickPrerequisiteComponent(this);
 
     //// 플레이어가 소유하는 전용 물리 핸들 생성
     //PhysicsHandle = NewObject<UPhysicsHandleComponent>(Player);
@@ -695,6 +753,67 @@ void UPushPullComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAc
 
     // 플레이어의 기존 이동 입력을 사용
     UpdatePushPull(Player->GetLastMovementInputVector(), DeltaTime);
+    if (IsPushPulling()) FollowSimulatedTarget(DeltaTime);
+}
+
+void UPushPullComponent::FollowSimulatedTarget(float DeltaTime)
+{
+    APlayerBase* Player = OwnerPlayer.Get();
+    APushPullGimmick* Target = CurrentTarget.Get();
+    if (!Player || !Target || DeltaTime <= SMALL_NUMBER) return;
+    UCharacterMovementComponent* Movement = Player->GetCharacterMovement();
+    UStaticMeshComponent* Mesh = Target->GetPhysicsMesh();
+    if (!Movement || !Mesh) return;
+
+    const double StartX = Player->GetActorLocation().X;
+    const double TargetX = Mesh->GetComponentLocation().X + GrabOffsetX;
+    if (bApproaching)
+    {
+        ApproachElapsed += DeltaTime;
+        const float T = FMath::Clamp(ApproachElapsed / ApproachDuration, 0.0f, 1.0f);
+        const float Ease = T*T*(3.0f-2.0f*T);
+        const double DesiredX = FMath::Lerp(ApproachStartX, TargetX, static_cast<double>(Ease));
+        Movement->MoveSmooth(FVector((DesiredX-StartX)/DeltaTime,0,0),DeltaTime);
+        Movement->Velocity.X = (Player->GetActorLocation().X-StartX)/DeltaTime;
+        FollowSpeedX = 0.0f;
+        if (FMath::Abs(DesiredX-Player->GetActorLocation().X)>2.0) { StopPushPull(); return; }
+        if (T >= 1.0f) { bApproaching=false; Movement->Velocity.X=0.0; }
+        return;
+    }
+    const double FollowDeltaX = TargetX - StartX;
+    if (!FMath::IsFinite(FollowDeltaX)) { StopPushPull(); return; }
+    if (FMath::Abs(FollowDeltaX) < 0.05)
+    {
+        Movement->Velocity.X = 0.0;
+        FollowSpeedX = 0.0f;
+        return;
+    }
+    // MoveSmooth retains character collision, ramp handling and step-up behavior.
+    // Never teleport the capsule through a wall to catch up with the object.
+    Movement->MoveSmooth(FVector(FollowDeltaX / DeltaTime, 0, 0), DeltaTime);
+    Movement->Velocity.X = (Player->GetActorLocation().X - StartX) / DeltaTime;
+    FollowSpeedX = Movement->Velocity.X;
+    if (FMath::Abs(TargetX - Player->GetActorLocation().X) > 2.0)
+    {
+        // The holder hit an obstacle: stop the interaction rather than stretching the grip.
+        StopPushPull();
+    }
+}
+
+bool UPushPullComponent::GetHandContacts(FVector& Left, FVector& Right) const
+{
+    const APlayerBase* Player = OwnerPlayer.Get();
+    const APushPullGimmick* Target = CurrentTarget.Get();
+    if (!Player || !Target || !Target->GetPhysicsMesh() || bApproaching) return false;
+    const FBox Bounds = Target->GetPhysicsMesh()->Bounds.GetBox();
+    const double Side = FMath::Sign(GrabOffsetX);
+    const double FaceX = Bounds.GetCenter().X + Side * (Bounds.GetExtent().X + 1.0);
+    const double Width = GripHalfWidth;
+    const double Height = Bounds.GetCenter().Z + GripOffsetZ;
+    const FVector Center(FaceX, Bounds.GetCenter().Y, Height);
+    Left = Center - Player->GetActorRightVector() * Width;
+    Right = Center + Player->GetActorRightVector() * Width;
+    return true;
 }
 
 void UPushPullComponent::UpdateWalkSpeedLimit(UCharacterMovementComponent* Movement, float MoveSpeed)
@@ -711,7 +830,9 @@ void UPushPullComponent::UpdateWalkSpeedLimit(UCharacterMovementComponent* Movem
         OriginalMaxWalkSpeed = Movement->MaxWalkSpeed;
     }
 
-    AppliedMaxWalkSpeed = FMath::Min(OriginalMaxWalkSpeed, MoveSpeed);
+    // Input is still consumed by CharacterMovement for controlling the box, but the
+    // capsule's horizontal translation comes exclusively from the simulated target.
+    AppliedMaxWalkSpeed = 0.0f;
 
     Movement->MaxWalkSpeed = AppliedMaxWalkSpeed;
 }

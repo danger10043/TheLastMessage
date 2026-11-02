@@ -23,6 +23,9 @@
 #include "Animation/AnimSequence.h"
 #include "DataAsset/WeaponDataAsset.h"
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "AnimGraphNode_LocalToComponentSpace.h"
+#include "AnimGraphNode_ComponentToLocalSpace.h"
+#include "AnimGraphNode_TwoBoneIK.h"
 
 template<class T> static T* AddAirNode(UEdGraph* G, const TCHAR* Name, int X, int Y)
 {
@@ -49,6 +52,55 @@ static bool SaveAirAsset(UObject* Object)
 int32 UFixAirAttackCommandlet::Main(const FString& Params)
 {
 #if WITH_EDITOR
+    if (Params.Contains(TEXT("-BoxGripApply")))
+    {
+        auto* BP = LoadObject<UAnimBlueprint>(nullptr, TEXT("/Game/Test_Jihong/Animations/Robbie_01_AnimBP.Robbie_01_AnimBP"));
+        if (!BP || BP->ParentClass != UPlayerLocomotionAnimInstance::StaticClass()) return 1;
+        TArray<UEdGraph*> Graphs; BP->GetAllGraphs(Graphs);
+        UEdGraph* G = nullptr; UAnimGraphNode_Root* Root = nullptr;
+        for (auto* Graph : Graphs) if (Graph->GetName() == TEXT("AnimGraph")) G = Graph;
+        if (!G) return 2;
+        for (UEdGraphNode* N : G->Nodes)
+        {
+            if (N->GetName() == TEXT("BoxGripLeftIK")) return 3;
+            if (auto* R = Cast<UAnimGraphNode_Root>(N)) Root = R;
+        }
+        if (!Root || Root->FindPin(TEXT("Result"))->LinkedTo.Num() != 1) return 4;
+        UEdGraphPin* Previous = Root->FindPin(TEXT("Result"))->LinkedTo[0];
+        Root->FindPin(TEXT("Result"))->BreakAllPinLinks();
+        auto* ToCS = AddAirNode<UAnimGraphNode_LocalToComponentSpace>(G, TEXT("BoxGripToComponent"), 2100, 300);
+        ToCS->AllocateDefaultPins();
+        AirLink(Previous, ToCS->FindPin(TEXT("LocalPose")));
+        auto Variable = [&](FName Name, int Y)
+        {
+            auto* N = AddAirNode<UK2Node_VariableGet>(G, *FString::Printf(TEXT("Read%s_%d"), *Name.ToString(), FMath::Abs(Y)), 2100, Y);
+            N->VariableReference.SetSelfMember(Name); N->AllocateDefaultPins(); return N->FindPin(Name);
+        };
+        UEdGraphPin* Pose = ToCS->FindPin(TEXT("ComponentPose"));
+        for (int I=0; I<2; ++I)
+        {
+            auto* IK = AddAirNode<UAnimGraphNode_TwoBoneIK>(G, I == 0 ? TEXT("BoxGripLeftIK") : TEXT("BoxGripRightIK"), 2450+I*400, 300);
+            IK->Node.IKBone.BoneName = I == 0 ? TEXT("hand_l") : TEXT("hand_r");
+            IK->Node.EffectorLocationSpace = BCS_ComponentSpace;
+            IK->Node.JointTargetLocationSpace = BCS_ComponentSpace;
+            IK->Node.bAllowStretching = false; IK->Node.bMaintainEffectorRelRot = true;
+            IK->AllocateDefaultPins();
+            AirLink(Pose, IK->FindPin(TEXT("ComponentPose")));
+            AirLink(Variable(I == 0 ? TEXT("BoxLeftHand") : TEXT("BoxRightHand"), -300-I*250), IK->FindPin(TEXT("EffectorLocation")));
+            AirLink(Variable(I == 0 ? TEXT("BoxLeftElbow") : TEXT("BoxRightElbow"), -180-I*250), IK->FindPin(TEXT("JointTargetLocation")));
+            AirLink(Variable(TEXT("BoxGripAlpha"), 650+I*120), IK->FindPin(TEXT("Alpha")));
+            Pose = IK->FindPin(TEXT("Pose"));
+        }
+        auto* ToLocal = AddAirNode<UAnimGraphNode_ComponentToLocalSpace>(G, TEXT("BoxGripToLocal"), 3300, 300);
+        ToLocal->AllocateDefaultPins(); AirLink(Pose, ToLocal->FindPin(TEXT("ComponentPose")));
+        AirLink(ToLocal->FindPin(TEXT("Pose")), Root->FindPin(TEXT("Result")));
+        Root->NodePosX = 3600;
+        FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(BP);
+        FKismetEditorUtilities::CompileBlueprint(BP);
+        if (BP->Status == BS_Error || !SaveAirAsset(BP)) return 5;
+        UE_LOG(LogTemp, Display, TEXT("BOX_GRIP_IK compiled and saved."));
+        return 0;
+    }
     if (Params.Contains(TEXT("-ChargeRepairSlots")))
     {
         for (const TCHAR* Kind : {TEXT("Hammer"), TEXT("Railgun")})

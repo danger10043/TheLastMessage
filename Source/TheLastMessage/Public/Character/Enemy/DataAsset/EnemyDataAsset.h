@@ -50,6 +50,14 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Enemy|Animation")
 	bool bHitReactionInterruptsAttack = false;
 
+	/** 끄면 이동 중에 맞았을 때 피격 몽타주를 재생하지 않는다(걷는 애니메이션이 끊기는 것을 막는다). 번쩍임과 이펙트는 그대로 나온다. */
+	UPROPERTY(EditAnywhere, Category = "Enemy|Animation")
+	bool bHitReactionWhileMoving = false;
+
+	/** 이 속도(cm/s) 이상으로 움직이면 "이동 중"으로 본다. */
+	UPROPERTY(EditAnywhere, Category = "Enemy|Animation", meta = (ClampMin = "0.0"))
+	float HitReactionMoveSpeedThreshold = 30.f;
+
 	/** 번쩍임이 유지되는 시간(초) */
 	UPROPERTY(EditAnywhere, Category = "Enemy|Effects", meta = (ClampMin = "0.01"))
 	float HitFlashDuration = 0.08f;

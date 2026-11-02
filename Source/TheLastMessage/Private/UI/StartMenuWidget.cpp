@@ -79,6 +79,9 @@ void UStartMenuWidget::NativeConstruct()
 	if (ConfirmButton) ConfirmButton->OnClicked.AddUniqueDynamic(this, &UStartMenuWidget::ConfirmOverwrite);
 	if (CancelButton) CancelButton->OnClicked.AddUniqueDynamic(this, &UStartMenuWidget::CancelOverwrite);
 	SetIsFocusable(true);
+	UButton* FocusButtons[] = { NewGameButton, LoadGameButton, ExitButton, Slot1Button, Slot2Button,
+		Slot3Button, BackButton, ConfirmButton, CancelButton };
+	for (UButton* Button : FocusButtons) if (Button) Button->SetIsFocusable(true);
 	ShowMainMenu();
 }
 
@@ -181,6 +184,39 @@ void UStartMenuWidget::ShowError(const FText& Message)
 	SetBusy(false);
 	if (Pages) Pages->SetActiveWidgetIndex(1);
 	if (SelectionText) SelectionText->SetText(Message);
+}
+
+FReply UStartMenuWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, const FKeyEvent& Event)
+{
+	const FKey Key = Event.GetKey();
+	if (Pages && (Key == EKeys::Up || Key == EKeys::Down))
+	{
+		if (bWorking) return FReply::Handled();
+		TArray<UButton*> Buttons;
+		switch (Pages->GetActiveWidgetIndex())
+		{
+		case 0: Buttons = { NewGameButton, LoadGameButton, ExitButton }; break;
+		case 1: Buttons = { Slot1Button, Slot2Button, Slot3Button, BackButton }; break;
+		case 2: Buttons = { ConfirmButton, CancelButton }; break;
+		default: return Super::NativeOnPreviewKeyDown(Geometry, Event);
+		}
+		int32 Current = INDEX_NONE;
+		for (int32 Index = 0; Index < Buttons.Num(); ++Index)
+			if (Buttons[Index] && Buttons[Index]->HasAnyUserFocus()) { Current = Index; break; }
+		const int32 Direction = Key == EKeys::Down ? 1 : -1;
+		if (Current == INDEX_NONE) Current = Direction > 0 ? Buttons.Num() - 1 : 0;
+		for (int32 Step = 1; Step <= Buttons.Num(); ++Step)
+		{
+			UButton* Button = Buttons[(Current + Direction * Step + Buttons.Num()) % Buttons.Num()];
+			if (Button && Button->GetIsEnabled() && Button->IsVisible())
+			{
+				Button->SetKeyboardFocus();
+				break;
+			}
+		}
+		return FReply::Handled();
+	}
+	return Super::NativeOnPreviewKeyDown(Geometry, Event);
 }
 
 FReply UStartMenuWidget::NativeOnKeyDown(const FGeometry& Geometry, const FKeyEvent& Event)

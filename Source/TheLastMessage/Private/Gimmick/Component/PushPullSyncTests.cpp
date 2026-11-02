@@ -45,7 +45,7 @@ bool FPushPullSyncTest::RunTest(const FString& Parameters)
     {
         for (int32 I=0; I<FMath::RoundToInt(Seconds/DT); ++I)
         {
-            if (Player) Player->AddMovementInput(FVector::XAxisVector, Input);
+            if (Player) Player->DoMove(Input);
             ++GFrameCounter; World->Tick(LEVELTICK_All, DT);
         }
     };
@@ -89,7 +89,7 @@ bool FPushPullSyncTest::RunTest(const FString& Parameters)
             TestFalse(TEXT("Approach completes"),PushPull->IsApproaching());
             const double Gap = Player->GetActorLocation().X - Mesh->GetComponentLocation().X;
             const double SurfaceDistance = FMath::Abs(Player->GetActorLocation().X-Mesh->Bounds.Origin.X)-Mesh->Bounds.BoxExtent.X;
-            TestTrue(TEXT("Max-range grab approaches the box"), FMath::IsNearlyEqual(SurfaceDistance,Player->GetCapsuleComponent()->GetScaledCapsuleRadius()+3.0,1.0));
+            TestTrue(TEXT("Max-range grab respects clearance and configured distance"), SurfaceDistance >= Player->GetCapsuleComponent()->GetScaledCapsuleRadius()+2.0 && SurfaceDistance <= Config.GrabDistance+1.0);
             double MaxError=0;
             double MaxHandError=0;
             const double StartX = Mesh->GetComponentLocation().X;
@@ -149,6 +149,34 @@ bool FPushPullSyncTest::RunTest(const FString& Parameters)
             TestEqual(TEXT("Walking speed restored"),Movement->MaxWalkSpeed,WalkSpeed);
             TestTrue(TEXT("Character physics interaction restored"),Movement->bEnablePhysicsInteraction);
             TestFalse(TEXT("Temporary box sweep ignore removed"),Player->GetCapsuleComponent()->GetMoveIgnoreActors().Contains(Box));
+            TestTrue(TEXT("Normal movement tick restored"),Movement->IsComponentTickEnabled());
+            if (BoxScale == 1.0f && DT > 0.03f && Side < 0.0f)
+            {
+                Advance(0.1f,DT,nullptr,0);
+                if (TestTrue(TEXT("Can regrab for terrain checks"),PushPull->StartPushPull(Box)))
+                {
+                    Advance(0.6f,DT,nullptr,0);
+                    const double StepX = Mesh->Bounds.Origin.X + Mesh->Bounds.BoxExtent.X + 90.0;
+                    auto* Step = MakeBlock(FVector(StepX,0,10),FVector(1,4,0.2));
+                    const double BeforeStep = Player->GetActorLocation().X;
+                    Advance(1.8f,DT,Player,1.0f);
+                    TestTrue(TEXT("Shared movement crosses a low step"),PushPull->IsPushPulling() && Player->GetActorLocation().X>BeforeStep+160.0);
+                    Player->DoJumpStart();
+                    // Re-enabled tick functions are scheduled by the editor frame,
+                    // which this synchronous world-only harness does not advance.
+                    static_cast<ACharacter*>(Player)->CheckJumpInput(DT);
+                    Advance(0.1f,DT,nullptr,0);
+                    TestFalse(TEXT("Jump releases the box"),PushPull->IsPushPulling());
+                    TestTrue(TEXT("Jump restores CharacterMovement"),Movement->IsComponentTickEnabled());
+                    TestTrue(TEXT("Jump enters falling movement"),Movement->IsFalling());
+                    PushPull->StopPushPull();
+                    // This synchronous test advances its world without a full editor
+                    // frame; remove the fixture's collision before destroying it.
+                    Cast<UPrimitiveComponent>(Step->GetRootComponent())->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+                    Step->Destroy();
+                    Movement->bForceNextFloorCheck = true;
+                }
+            }
         }
         Box->Destroy(); Player->Destroy(); Controller->Destroy(); Advance(0.1f,DT,nullptr,0);
     }

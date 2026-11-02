@@ -441,6 +441,14 @@ void UGA_CoreGuard::HideBarrier()
 	bGuardBroken = false;
 }
 
+void UGA_CoreGuard::OnRemoveAbility(const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilitySpec& Spec)
+{
+	// 코어 초기화·복원으로 능력이 제거되면 남은 방벽과 판정도 함께 정리한다.
+	EndPerfectWindow();
+	HideBarrier();
+	Super::OnRemoveAbility(ActorInfo, Spec);
+}
+
 void UGA_CoreGuard::InputReleased(const FGameplayAbilitySpecHandle Handle,
 	const FGameplayAbilityActorInfo* ActorInfo,
 	const FGameplayAbilityActivationInfo ActivationInfo)
@@ -475,8 +483,9 @@ void UGA_CoreGuard::EndAbility(const FGameplayAbilitySpecHandle Handle,
 
 	FinishGuardMontage(ASC, bWasCancelled);
 
-	// 가드 브레이크면 깨지는 연출이 끝난 뒤 UpdateBarrier가 방벽을 제거한다.
-	if (!bGuardBroken)
+	// 가드 브레이크로 끝나면 깨지는 연출이 끝난 뒤 UpdateBarrier가 방벽을 제거한다.
+	// 사망 등으로 취소되면 연출 없이 바로 지워 부활 후에 남지 않게 한다.
+	if (!bGuardBroken || bWasCancelled)
 	{
 		HideBarrier();
 	}

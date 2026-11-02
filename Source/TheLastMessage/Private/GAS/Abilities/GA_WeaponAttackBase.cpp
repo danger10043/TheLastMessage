@@ -26,6 +26,7 @@
 #include "GAS/Effects/GE_WeaponEnergyCost.h"
 #include "Projectile/ProjectileBase.h"
 #include "GAS/WeaponGameplayTags.h"
+#include "Core/CoreGameplayTags.h"
 #include "Weapon/WeaponBase.h"
 #include "UObject/StrongObjectPtr.h"
 
@@ -44,6 +45,7 @@ UGA_WeaponAttackBase::UGA_WeaponAttackBase()
 	ActivationBlockedTags.AddTag(WeaponGameplayTags::State_Dead);
 	ActivationBlockedTags.AddTag(WeaponGameplayTags::State_HitReacting);
 	ActivationBlockedTags.AddTag(WeaponGameplayTags::State_Grappling);
+	ActivationBlockedTags.AddTag(CoreGameplayTags::State_Guarding);
 	CostEffectClass = UGE_WeaponEnergyCost::StaticClass();
 }
 

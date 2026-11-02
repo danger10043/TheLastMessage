@@ -5,6 +5,8 @@
 #include "Net/UnrealNetwork.h"
 #include "Character/Player/PlayerBase.h"
 #include "Character/Player/CombatFeedbackComponent.h"
+#include "Core/CoreGameplayTags.h"
+#include "GAS/WeaponSlotAttributeSet.h"
 
 namespace
 {
@@ -12,6 +14,33 @@ namespace
 	// 밸런스 수치가 아니라 데이터 실수에 대한 보호 장치이며, 기획 확정 시 함께 조정한다.
 	constexpr float MinDamageTakenMultiplier = 0.3f;	// 받는 피해는 최소 30%까지만 감소한다.
 	constexpr float MinChargeTimeMultiplier = 0.2f;		// 최대 차지 시간은 최소 20%까지만 단축한다.
+
+	// 가드 중이면 공용 에너지를 피해만큼 소모해 막고, 막은 양을 반환한다. 에너지가 부족하면 남은 에너지만큼만 막는다.
+	// 퍼펙트 가드 판정 중이면 에너지를 쓰지 않고 전부 막는다.
+	float BlockDamageWithGuardEnergy(UAbilitySystemComponent* ASC, APlayerBase* Player, float Damage)
+	{
+		const UWeaponSlotAttributeSet* EnergySet = ASC ? ASC->GetSet<UWeaponSlotAttributeSet>() : nullptr;
+		if (!EnergySet || !ASC->HasMatchingGameplayTag(CoreGameplayTags::State_Guarding))
+		{
+			return 0.0f;
+		}
+		if (ASC->HasMatchingGameplayTag(CoreGameplayTags::State_GuardPerfect))
+		{
+			return Damage;
+		}
+
+		const float Energy = EnergySet->GetSharedEnergy();
+		const float Blocked = FMath::Min(Damage, FMath::Max(0.0f, Energy));
+		if (Blocked <= 0.0f)
+		{
+			return 0.0f;
+		}
+
+		ASC->SetNumericAttributeBase(UWeaponSlotAttributeSet::GetSharedEnergyAttribute(), Energy - Blocked);
+		// 무기 사용과 같은 대기 시간 뒤에 에너지가 다시 충전된다.
+		if (Player) Player->NotifyWeaponEnergySpent();
+		return Blocked;
+	}
 }
 
 UCombatAttributeSet::UCombatAttributeSet()
@@ -31,6 +60,7 @@ UCombatAttributeSet::UCombatAttributeSet()
 	InitLifeStealRatio(0.0f);
 	InitKillHealRatio(0.0f);
 	InitAssistStrikeDamageRatio(0.0f);
+	InitPerfectGuardWindow(0.0f);
 
 	// 연속 발사 효과가 없으면 원래 피해의 단발 공격이다.
 	InitRangedBurstShotCount(1.0f);
@@ -84,7 +114,8 @@ void UCombatAttributeSet::PreAttributeChange(const FGameplayAttribute& Attribute
 		|| Attribute == GetLifeStealRatioAttribute()
 		|| Attribute == GetKillHealRatioAttribute()
 		|| Attribute == GetRangedBurstTotalDamageMultiplierAttribute()
-		|| Attribute == GetAssistStrikeDamageRatioAttribute())
+		|| Attribute == GetAssistStrikeDamageRatioAttribute()
+		|| Attribute == GetPerfectGuardWindowAttribute())
 	{
 		// 음수 배율·회복량은 피해 회복이나 역방향 이동 같은 의도하지 않은 동작을 만든다.
 		NewValue = FMath::Max(0.0f, NewValue);
@@ -124,10 +155,28 @@ void UCombatAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCall
 		const float Damage = RawIncomingDamage * FMath::Max(0.0f, GetDamageTakenMultiplier());
 		if (FMath::IsFinite(Damage) && Damage > 0.0f && (!Player || !Player->IsDead()))
 		{
+			// 가드로 막은 양을 뺀 나머지만 체력에서 차감한다. 전부 막으면 체력이 줄지 않아 피격 반응도 없다.
+			const float BlockedDamage = BlockDamageWithGuardEnergy(ASC, Player, Damage);
+			const float RemainingDamage = Damage - BlockedDamage;
 			const float PreviousHealth = GetHealth();
-			SetHealth(FMath::Clamp(GetHealth() - Damage, 0.0f, GetMaxHealth()));
+			SetHealth(FMath::Clamp(GetHealth() - RemainingDamage, 0.0f, GetMaxHealth()));
 			bReceivedDamage = GetHealth() < PreviousHealth;
-			
+
+			// 체력 반영 후에 알려 연출·회복 능력이 막은 결과와 현재 체력을 함께 볼 수 있게 한다.
+			// 에너지가 없어 하나도 막지 못해도 가드 중이었다면 알려 가드 브레이크로 처리하게 한다.
+			if (BlockedDamage > 0.0f || ASC->HasMatchingGameplayTag(CoreGameplayTags::State_Guarding))
+			{
+				FGameplayEventData Payload;
+				Payload.EventTag = CoreGameplayTags::Event_GuardBlocked;
+				Payload.Instigator = Data.EffectSpec.GetContext().GetInstigator();
+				Payload.Target = ASC->GetAvatarActor();
+				Payload.EventMagnitude = BlockedDamage;
+				Payload.ContextHandle = Data.EffectSpec.GetContext();
+				if (RemainingDamage > 0.0f) Payload.TargetTags.AddTag(CoreGameplayTags::Result_GuardPartial);
+				if (ASC->HasMatchingGameplayTag(CoreGameplayTags::State_GuardPerfect)) Payload.TargetTags.AddTag(CoreGameplayTags::Result_GuardPerfect);
+				ASC->HandleGameplayEvent(Payload.EventTag, &Payload);
+			}
+
 			bCheckDeath = true;
 		}
 	}

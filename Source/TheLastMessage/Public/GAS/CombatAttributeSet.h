@@ -91,6 +91,11 @@ public:
 	FGameplayAttributeData AssistStrikeDamageRatio;
 	ATTRIBUTE_ACCESSORS_BASIC(UCombatAttributeSet, AssistStrikeDamageRatio);
 
+	/** 가드를 시작한 뒤 퍼펙트 가드로 판정하는 시간(초). 0.0은 퍼펙트 가드 없음이다. */
+	UPROPERTY(BlueprintReadOnly, Category = "Base Stat")
+	FGameplayAttributeData PerfectGuardWindow;
+	ATTRIBUTE_ACCESSORS_BASIC(UCombatAttributeSet, PerfectGuardWindow);
+
 	/** 원거리 공격 한 번에 발사할 총 탄환 수. 기본값 1은 단발이며, 2 이상이면 연속 발사한다. */
 	UPROPERTY(BlueprintReadOnly, Category = "Base Stat|Ranged Burst")
 	FGameplayAttributeData RangedBurstShotCount;

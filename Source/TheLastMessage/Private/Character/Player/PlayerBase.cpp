@@ -17,6 +17,7 @@
 #include "Gimmick/Component/GravityStateComponent.h"
 #include "Gimmick/Component/PushPullComponent.h"
 #include "Core/CoreComponent.h"
+#include "Core/CoreGameplayTags.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -380,6 +381,7 @@ void APlayerBase::RequestGrapplingHook()
 		return;
 	}
 	if (IsDead() || IsHitReacting()) return;
+	if (AbilitySystemComponent->HasMatchingGameplayTag(CoreGameplayTags::State_Guarding)) return;
 	UpdateMouseAim();
 	if (bHasAimTarget) GrapplingHookComponent->RequestGrapple(GetAimTargetLocation());
 }
@@ -609,6 +611,7 @@ void APlayerBase::CancelWeaponInputsForUI()
 	ClearPendingAttack();
 	AbilityInputCanceled(WeaponGameplayTags::Input_Primary);
 	AbilityInputCanceled(WeaponGameplayTags::Input_Secondary);
+	AbilityInputCanceled(CoreGameplayTags::Input_Guard);
 	for (int32 Index=0;Index<4;++Index) SetWeaponChoiceHeld(Index,false);
 	StopJumping();ConsumeMovementInputVector();
 }
@@ -886,6 +889,7 @@ bool APlayerBase::AssignWeaponChoice(int32 Index, EWeaponSlot Slot)
 		|| (Slot != EWeaponSlot::Primary && Slot != EWeaponSlot::Secondary)) return false;
 	// Keep a running swing/charge bound to its captured weapon until it finishes.
 	if (AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking)) return false;
+	if (AbilitySystemComponent->HasMatchingGameplayTag(CoreGameplayTags::State_Guarding)) return false;
 	if (GetWeaponDataInSlot(Slot) == Data) return true;
 
 	auto Remember = [this](UWeaponBase* Weapon)
@@ -1655,7 +1659,8 @@ void APlayerBase::UpdateMoveSpeed()
 void APlayerBase::DoMove(float Forward)
 {
 	if (IsCarryTransitionActive()) return;
-	if (IsDead() || IsHitReacting() || IsGrappling() || AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking))
+	if (IsDead() || IsHitReacting() || IsGrappling() || AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking)
+		|| AbilitySystemComponent->HasMatchingGameplayTag(CoreGameplayTags::State_Guarding))
 	{
 		ActionValueY = 0.0f;
 		return;
@@ -1677,7 +1682,8 @@ void APlayerBase::DoMove(float Forward)
 void APlayerBase::DoDrop(float Value)
 {
 	if (IsCarryTransitionActive()) return;
-	if (IsDead() || IsHitReacting() || IsGrappling() || AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking))
+	if (IsDead() || IsHitReacting() || IsGrappling() || AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking)
+		|| AbilitySystemComponent->HasMatchingGameplayTag(CoreGameplayTags::State_Guarding))
 	{
 		DropValue = 0.0f;
 		return;
@@ -1689,6 +1695,7 @@ void APlayerBase::DoJumpStart()
 {
 	if (IsCarryTransitionActive()) return;
 	if (IsDead() || IsHitReacting() || AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking)) return;
+	if (AbilitySystemComponent->HasMatchingGameplayTag(CoreGameplayTags::State_Guarding)) return;
 	if (IsGrappling()) GrapplingHookComponent->CancelGrapple();
 
 	// +추가----
@@ -1728,7 +1735,8 @@ void APlayerBase::StopMovementForAttack()
 void APlayerBase::DoInteract()
 {
 	if (IsCarryTransitionActive()) return;
-	if (IsDead() || IsHitReacting() || !IsValid(InteractionComponent))
+	if (IsDead() || IsHitReacting() || !IsValid(InteractionComponent)
+		|| AbilitySystemComponent->HasMatchingGameplayTag(CoreGameplayTags::State_Guarding))
 	{
 		return;
 	}

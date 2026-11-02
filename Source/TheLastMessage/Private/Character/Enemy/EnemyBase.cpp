@@ -17,6 +17,8 @@
 #include "Character/Enemy/UI/EnemyHealthBarWidget.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "PhysicsEngine/BodyInstance.h"
+#include "PhysicsEngine/PhysicsAsset.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -69,8 +71,15 @@ void AEnemyBase::ApplyEnemyData(const UEnemyDataAsset* Data)
 	HealthBarVisibleTime = Data->HealthBarVisibleTime;
 	HitReactionCooldown = Data->HitReactionCooldown;
 	bHitReactionInterruptsAttack = Data->bHitReactionInterruptsAttack;
+	bHitReactionWhileMoving = Data->bHitReactionWhileMoving;
+	HitReactionMoveSpeedThreshold = Data->HitReactionMoveSpeedThreshold;
 	HitFlashDuration = Data->HitFlashDuration;
 	CorpseLifeSpan = Data->CorpseLifeSpan;
+	DeathPhysicsImpulse = Data->DeathPhysicsImpulse;
+	DeathPhysicsUpImpulse = Data->DeathPhysicsUpImpulse;
+	DeathPhysicsSpin = Data->DeathPhysicsSpin;
+	bDeathBreakConstraints = Data->bDeathBreakConstraints;
+	bDeathPhysicsLockToPlane = Data->bDeathPhysicsLockToPlane;
 	HomeReanchorHeight = Data->HomeReanchorHeight;
 	PatrolRadius = Data->PatrolRadius;
 	HealDropChance = Data->HealDropChance;
@@ -83,6 +92,14 @@ void AEnemyBase::BeginPlay()
 	Super::BeginPlay();
 
 	DefaultCapsuleCollision = GetCapsuleComponent()->GetCollisionEnabled();
+
+	// 사망 물리에서 바꾸는 메시 충돌 설정의 원래 값을 기억해 둔다.
+	if (const USkeletalMeshComponent* SkelMesh = GetMesh())
+	{
+		DefaultMeshCollision = SkelMesh->GetCollisionEnabled();
+		DefaultMeshObjectType = SkelMesh->GetCollisionObjectType();
+		DefaultMeshResponses = SkelMesh->GetCollisionResponseToChannels();
+	}
 
 	InitializeEnemy();
 
@@ -588,6 +605,17 @@ void AEnemyBase::PlayHitReaction()
 		return;
 	}
 
+	// 걷는 중에 피격 몽타주가 재생되면 몸 전체 포즈가 덮여 걷는 애니메이션이 끊긴다. 이동 중에는 재생하지 않는다.
+	if (!bHitReactionWhileMoving)
+	{
+		// 사이드뷰라 X(좌우)와 Z(위아래) 속도만 본다. 벽을 기어가는 몬스터(Cinder)도 이동 중으로 판단된다.
+		const FVector Velocity = GetVelocity();
+		if (FMath::Sqrt(FMath::Square(Velocity.X) + FMath::Square(Velocity.Z)) >= HitReactionMoveSpeedThreshold)
+		{
+			return;
+		}
+	}
+
 	const double Now = GetWorld()->GetTimeSeconds();
 	if (Now - LastHitReactionTime < HitReactionCooldown)
 	{
@@ -770,6 +798,8 @@ void AEnemyBase::HandleDeath()
 		PlayAnimMontage(DeathMontage);
 	}
 
+	StartDeathPhysics();
+
 	SpawnEffectAtLocation(DeathEffect, GetActorLocation());
 
 	OnEnemyDied.Broadcast(this);
@@ -834,8 +864,97 @@ void AEnemyBase::OnAcquiredFromPool()
 	ResetEnemy();
 }
 
+void AEnemyBase::StartDeathPhysics()
+{
+	USkeletalMeshComponent* SkelMesh = GetMesh();
+	if (DeathPhysicsBones.Num() == 0 || !SkelMesh || !SkelMesh->GetPhysicsAsset())
+	{
+		return;
+	}
+
+	// 캡슐은 사망 때 꺼지므로, 메시가 직접 지형과 부딪히며 물리로 움직이게 한다.
+	SkelMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	SkelMesh->SetCollisionObjectType(ECC_PhysicsBody);
+	SkelMesh->SetCollisionResponseToAllChannels(ECR_Ignore);
+	SkelMesh->SetCollisionResponseToChannel(ECC_WorldStatic, ECR_Block);
+
+	const FVector Center = GetActorLocation();
+
+	for (const FName& Bone : DeathPhysicsBones)
+	{
+		if (SkelMesh->GetBoneIndex(Bone) == INDEX_NONE)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[EnemyBase] %s: Death Physics Bones의 본 '%s'가 스켈레톤에 없습니다."), *GetName(), *Bone.ToString());
+			continue;
+		}
+
+		SkelMesh->SetAllBodiesBelowSimulatePhysics(Bone, true, true);
+		SkelMesh->SetAllBodiesBelowPhysicsBlendWeight(Bone, 1.f, false, true);
+
+		// 사이드뷰라 물리로 움직이는 본이 화면 앞뒤(Y)로 벗어나지 않게 X-Z 평면에 가둔다.
+		if (bDeathPhysicsLockToPlane)
+		{
+			SkelMesh->ForEachBodyBelow(Bone, true, false, [](FBodyInstance* Body)
+				{
+					Body->SetDOFLock(EDOFMode::XZPlane);
+				});
+		}
+
+		// 몸 중심에서 본이 있는 쪽(좌/우)으로 날려 보낸다. 중심과 같은 X면 무작위 쪽으로 보낸다.
+		const FVector BoneLocation = SkelMesh->GetBoneLocation(Bone);
+		float SideSign = FMath::Sign(BoneLocation.X - Center.X);
+		if (FMath::IsNearlyZero(SideSign))
+		{
+			SideSign = FMath::RandBool() ? 1.f : -1.f;
+		}
+
+		if (bDeathBreakConstraints)
+		{
+			SkelMesh->BreakConstraint(FVector::ZeroVector, BoneLocation, Bone);
+		}
+
+		const FVector Velocity(SideSign * DeathPhysicsImpulse, 0.f, DeathPhysicsUpImpulse);
+		SkelMesh->AddImpulseToAllBodiesBelow(Velocity, Bone, true, true);
+
+		if (DeathPhysicsSpin > 0.f)
+		{
+			// 본 아래 모든 바디에 같은 회전 속도(Y축 기준)를 더한다.
+			const FVector Spin(0.f, FMath::FRandRange(-DeathPhysicsSpin, DeathPhysicsSpin), 0.f);
+			SkelMesh->ForEachBodyBelow(Bone, true, false, [&Spin](FBodyInstance* Body)
+				{
+					Body->SetAngularVelocityInRadians(Spin, true);
+				});
+		}
+	}
+
+	bDeathPhysicsActive = true;
+}
+
+void AEnemyBase::RestoreDeathPhysics()
+{
+	USkeletalMeshComponent* SkelMesh = GetMesh();
+	if (!bDeathPhysicsActive || !SkelMesh)
+	{
+		return;
+	}
+
+	bDeathPhysicsActive = false;
+
+	SkelMesh->SetAllBodiesSimulatePhysics(false);
+	SkelMesh->SetAllBodiesPhysicsBlendWeight(0.f);
+
+	// 메시 충돌 설정을 원래대로 돌리고, 끊어진 관절과 바디를 다시 만든다.
+	SkelMesh->SetCollisionEnabled(DefaultMeshCollision);
+	SkelMesh->SetCollisionObjectType(DefaultMeshObjectType);
+	SkelMesh->SetCollisionResponseToChannels(DefaultMeshResponses);
+	SkelMesh->RecreatePhysicsState();
+	SkelMesh->RefreshBoneTransforms();
+}
+
 void AEnemyBase::ResetEnemy()
 {
+	RestoreDeathPhysics();
+
 	GetWorldTimerManager().ClearAllTimersForObject(this);
 	EndHitFlash();
 	CancelAttack();

@@ -6,8 +6,11 @@
 
 class ACoreSupportRobot;
 class UGameplayEffect;
+class UNiagaraSystem;
 class UProjectileMovementComponent;
+class USoundBase;
 class USphereComponent;
+class UStaticMeshComponent;
 
 /**
  * 지원 로봇이 쏘는 탄이다. 플레이어 무기 탄(ProjectileBase)과 로직이 달라 따로 둔다.
@@ -16,7 +19,7 @@ class USphereComponent;
  * - 지형·기믹 메시처럼 막는 것에 닿으면 피해 없이 사라진다. 기믹의 공격 수신(AttackReceiver)은 부르지 않는다.
  * - 플레이어와 트리거 영역은 통과한다.
  * - 피해의 공격자는 로봇이다. 그래서 플레이어 전용 반응(전력 흡수·잔여 전력 회수·전투 판정·히트스톱)이 붙지 않는다.
- * 모양·이펙트는 이 클래스를 상속한 BP에서 붙인다.
+ * 모양(Visual 메시)과 맞은 연출(ImpactEffect·ImpactSound)은 이 클래스를 상속한 BP에서 값으로 지정한다.
  */
 UCLASS()
 class THELASTMESSAGE_API ACoreSupportRobotProjectile : public AActor
@@ -34,12 +37,19 @@ public:
 		float InDamage, TSubclassOf<UGameplayEffect> InDamageEffect, float MaxDistance);
 
 protected:
-	/** 무언가에 닿아 사라지기 직전에 불린다. 맞은 적이 없으면 HitActor는 지형이나 nullptr이다. BP에서 맞은 이펙트를 붙인다. */
-	UFUNCTION(BlueprintImplementableEvent, Category = "Core|SupportRobot")
-	void ReceiveImpact(const FVector& ImpactLocation, AActor* HitActor);
-
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Core|SupportRobot")
 	TObjectPtr<USphereComponent> Collision;
+
+	/** 탄 모양. 충돌은 없고 보이기만 한다(판정은 Collision 구 하나). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Core|SupportRobot")
+	TObjectPtr<UStaticMeshComponent> Visual;
+
+	/** 적이나 지형에 닿은 자리에서 재생할 이펙트와 소리. 플레이어 무기의 ImpactEffect·ImpactSound와 같은 역할이다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Core|SupportRobot|Effect")
+	TObjectPtr<UNiagaraSystem> ImpactEffect;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Core|SupportRobot|Effect")
+	TObjectPtr<USoundBase> ImpactSound;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Core|SupportRobot")
 	TObjectPtr<UProjectileMovementComponent> Movement;
@@ -53,7 +63,7 @@ private:
 	void HandleHit(UPrimitiveComponent* HitComponent, AActor* OtherActor, UPrimitiveComponent* OtherComponent,
 		FVector NormalImpulse, const FHitResult& Hit);
 
-	/** 한 번만 처리한다. 적이면 피해를 주고, 이펙트를 알린 뒤 사라진다. */
+	/** 한 번만 처리한다. 적이면 피해를 주고, 맞은 연출을 재생한 뒤 사라진다. */
 	void Impact(const FVector& ImpactLocation, AActor* HitActor);
 
 	TWeakObjectPtr<ACoreSupportRobot> Robot;

@@ -2,10 +2,15 @@
 
 #include "Character/CombatDamageLibrary.h"
 #include "Components/SphereComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "Core/CoreSupportRobot.h"
 #include "GameFramework/ProjectileMovementComponent.h"
 #include "GameplayEffect.h"
 #include "GAS/WeaponGameplayTags.h"
+#include "Kismet/GameplayStatics.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
+#include "Sound/SoundBase.h"
 
 ACoreSupportRobotProjectile::ACoreSupportRobotProjectile()
 {
@@ -26,6 +31,13 @@ ACoreSupportRobotProjectile::ACoreSupportRobotProjectile()
 	Collision->SetCollisionResponseToChannel(ECC_Pawn, ECR_Overlap);
 	Collision->SetGenerateOverlapEvents(true);
 	SetRootComponent(Collision);
+
+	// 모양만 보여 주는 메시라 충돌을 끈다. 켜 두면 구와 별개로 막히거나 겹쳐 판정이 두 번 날 수 있다.
+	Visual = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Visual"));
+	Visual->SetupAttachment(Collision);
+	Visual->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	Visual->SetGenerateOverlapEvents(false);
+	Visual->SetCastShadow(false);
 
 	// ---- 이동 ----
 	// 중력 없이 직선으로 날아간다. 막히면 튕기지 않고 멈추며, 그때 Hit 이벤트로 사라진다.
@@ -89,6 +101,8 @@ void ACoreSupportRobotProjectile::Impact(const FVector& ImpactLocation, AActor* 
 			WeaponGameplayTags::Damage_PlayerRanged, 0.0f);
 	}
 
-	ReceiveImpact(ImpactLocation, HitActor);
+	// 맞은 연출은 적이든 지형이든 닿은 자리에서 재생한다(플레이어 무기 탄과 같음).
+	if (ImpactEffect) UNiagaraFunctionLibrary::SpawnSystemAtLocation(this, ImpactEffect, ImpactLocation, GetActorRotation());
+	if (ImpactSound) UGameplayStatics::PlaySoundAtLocation(this, ImpactSound, ImpactLocation);
 	Destroy();
 }

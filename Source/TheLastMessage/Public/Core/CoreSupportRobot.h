@@ -7,8 +7,11 @@
 
 class ACoreSupportRobotProjectile;
 class APlayerBase;
+class UAnimMontage;
 class UGameplayEffect;
+class UNiagaraSystem;
 class USkeletalMeshComponent;
+class USoundBase;
 struct FCollisionQueryParams;
 
 /**
@@ -27,6 +30,7 @@ struct FCollisionQueryParams;
  *   멈춰 쏠 수 있다고 판단될 때 쿨타임(1초)이 끝났으면 총구에서 예측 조준점으로 전용 탄을 쏜다.
  *   피해는 플레이어의 SupportRobotDamage 속성(코어 단계별 4/6/8)이며 플레이어의 피해 배율·치명타는 붙지 않는다.
  *   피해의 공격자는 로봇이고, 피해 함수가 공격자에서 ASC를 찾으므로 로봇은 플레이어 ASC를 돌려준다.
+ *   연출(총구 섬광·발사음·사격 몽타주)은 몬스터처럼 C++ 값으로 지정하고 C++에서 재생한다. 대기·이동 애니메이션은 메시의 ABP가 맡는다.
  *
  * 횡스크롤 게임이라 모든 위치 계산은 플레이어 깊이(Y)의 X·Z 평면에서 한다.
  * 로봇은 충돌을 끄고, 지형 확인은 직접 Sweep으로 한다(다른 판정에 로봇이 걸리지 않게).
@@ -121,9 +125,17 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Core|SupportRobot|Combat")
 	FVector MuzzleOffset = FVector(40.0f, 0.0f, 0.0f);
 
-	/** 쏠 때마다 불린다. BP에서 총구 섬광(MuzzleSocketName에 붙임)·소리·사격 애니메이션을 붙인다. */
-	UFUNCTION(BlueprintImplementableEvent, Category = "Core|SupportRobot|Combat")
-	void ReceiveFired(const FVector& AimPoint);
+	/** 쏠 때 총구(MuzzleSocketName)에 붙여 재생할 섬광. 몬스터의 MuzzleFlashEffect와 같은 방식이다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Core|SupportRobot|Effect")
+	TObjectPtr<UNiagaraSystem> MuzzleFlashEffect;
+
+	/** 쏠 때 총구 위치에서 재생할 소리. */
+	UPROPERTY(EditDefaultsOnly, Category = "Core|SupportRobot|Effect")
+	TObjectPtr<USoundBase> FireSound;
+
+	/** 쏠 때 재생할 사격 몽타주. 메시의 ABP에 몽타주 슬롯(DefaultSlot)이 있어야 보인다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Core|SupportRobot|Effect")
+	TObjectPtr<UAnimMontage> FireMontage;
 
 	/** 지형 확인에 쓰는 로봇 몸 반지름(cm). */
 	UPROPERTY(EditDefaultsOnly, Category = "Core|SupportRobot|Move", meta = (ClampMin = "1.0"))
@@ -304,6 +316,9 @@ private:
 
 	/** 쿨타임이 끝났고 피해가 있으면 총구에서 조준점으로 한 발 쏜다. 쐈으면 true. */
 	bool TryFire(const FVector& AimPoint);
+
+	/** 총구 섬광·발사음·사격 몽타주를 재생한다. 지정되지 않은 것은 건너뛴다. */
+	void PlayFireEffects(const FVector& MuzzleLocation);
 
 	UPROPERTY(Transient)
 	TWeakObjectPtr<APlayerBase> Player;

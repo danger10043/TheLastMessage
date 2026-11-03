@@ -1,6 +1,12 @@
 #include "Core/CoreSupportRobot.h"
 
 #include "Algo/Reverse.h"
+#include "Animation/AnimInstance.h"
+#include "Animation/AnimMontage.h"
+#include "Kismet/GameplayStatics.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
+#include "Sound/SoundBase.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Character/Boss/BossMonster.h"
 #include "Character/Boss/BossTypes.h"
@@ -516,8 +522,31 @@ bool ACoreSupportRobot::TryFire(const FVector& AimPoint)
 	LiveProjectiles.Add(Projectile);
 
 	FireCooldownRemaining = FireInterval;
-	ReceiveFired(AimPoint);
+	PlayFireEffects(Start);
 	return true;
+}
+
+void ACoreSupportRobot::PlayFireEffects(const FVector& MuzzleLocation)
+{
+	// 몬스터(SentryEnemy::FireProjectile)와 같은 순서: 총구 섬광 → 발사음 → 사격 애니메이션.
+	// 섬광은 총구 소켓이 있으면 소켓에 붙여 로봇이 움직여도 따라가게 하고, 없으면 총구 위치에 한 번 재생한다.
+	if (MuzzleFlashEffect)
+	{
+		if (!MuzzleSocketName.IsNone() && Mesh && Mesh->DoesSocketExist(MuzzleSocketName))
+		{
+			UNiagaraFunctionLibrary::SpawnSystemAttached(MuzzleFlashEffect, Mesh, MuzzleSocketName, FVector::ZeroVector,
+				FRotator::ZeroRotator, EAttachLocation::SnapToTarget, true);
+		}
+		else
+		{
+			UNiagaraFunctionLibrary::SpawnSystemAtLocation(this, MuzzleFlashEffect, MuzzleLocation, GetActorRotation());
+		}
+	}
+	if (FireSound) UGameplayStatics::PlaySoundAtLocation(this, FireSound, MuzzleLocation);
+
+	// 몽타주는 ABP의 슬롯을 통해 대기·이동 애니메이션 위에 덮여 재생된다.
+	UAnimInstance* Animation = Mesh ? Mesh->GetAnimInstance() : nullptr;
+	if (FireMontage && Animation) Animation->Montage_Play(FireMontage);
 }
 
 bool ACoreSupportRobot::CanShootFrom(const FVector& From, const FVector& AimPoint) const

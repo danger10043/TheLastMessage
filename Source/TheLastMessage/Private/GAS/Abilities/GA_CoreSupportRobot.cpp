@@ -49,6 +49,11 @@ void UGA_CoreSupportRobot::ActivateAbility(const FGameplayAbilitySpecHandle Hand
 		return;
 	}
 
+	// 플레이어 사망 처리가 CancelAllAbilities로 모든 능력을 취소하는데, 부활할 때 다시 켜 주지 않는다.
+	// 이 능력은 코어를 가진 동안 계속 켜져 있어야 하므로 일괄 취소에서 빠진다. 사망·부활은 아래 사망 태그 처리가 로봇만 없애고 다시 만든다.
+	// 코어를 잃으면 능력 자체가 제거(ClearAbility)되며 그때는 정상적으로 끝난다.
+	SetCanBeCanceled(false);
+
 	DamageDealtHandle = ASC->GenericGameplayEventCallbacks.FindOrAdd(CombatGameplayTags::Event_DamageDealt)
 		.AddUObject(this, &UGA_CoreSupportRobot::HandleDamageDealt);
 	GuardBlockedHandle = ASC->GenericGameplayEventCallbacks.FindOrAdd(CoreGameplayTags::Event_GuardBlocked)

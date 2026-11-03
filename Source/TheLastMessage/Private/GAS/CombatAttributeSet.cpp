@@ -56,11 +56,12 @@ UCombatAttributeSet::UCombatAttributeSet()
 	InitHighHealthDamageMultiplier(1.0f);
 	InitLowHealthDamageMultiplier(1.0f);
 
-	// 코어가 부여하기 전에는 추가 회복과 보조 타격 피해가 없다.
+	// 코어가 부여하기 전에는 추가 회복과 보조 타격·지원 로봇 피해가 없다.
 	InitLifeStealRatio(0.0f);
 	InitKillHealRatio(0.0f);
 	InitAssistStrikeDamageRatio(0.0f);
 	InitPerfectGuardWindow(0.0f);
+	InitSupportRobotDamage(0.0f);
 
 	// 연속 발사 효과가 없으면 원래 피해의 단발 공격이다.
 	InitRangedBurstShotCount(1.0f);
@@ -115,7 +116,8 @@ void UCombatAttributeSet::PreAttributeChange(const FGameplayAttribute& Attribute
 		|| Attribute == GetKillHealRatioAttribute()
 		|| Attribute == GetRangedBurstTotalDamageMultiplierAttribute()
 		|| Attribute == GetAssistStrikeDamageRatioAttribute()
-		|| Attribute == GetPerfectGuardWindowAttribute())
+		|| Attribute == GetPerfectGuardWindowAttribute()
+		|| Attribute == GetSupportRobotDamageAttribute())
 	{
 		// 음수 배율·회복량은 피해 회복이나 역방향 이동 같은 의도하지 않은 동작을 만든다.
 		NewValue = FMath::Max(0.0f, NewValue);

@@ -96,6 +96,11 @@ public:
 	FGameplayAttributeData PerfectGuardWindow;
 	ATTRIBUTE_ACCESSORS_BASIC(UCombatAttributeSet, PerfectGuardWindow);
 
+	/** 지원 로봇 탄 한 발의 피해. 플레이어의 피해 배율·치명타를 적용하지 않는 고정값이며 0.0은 로봇 없음이다. */
+	UPROPERTY(BlueprintReadOnly, Category = "Base Stat")
+	FGameplayAttributeData SupportRobotDamage;
+	ATTRIBUTE_ACCESSORS_BASIC(UCombatAttributeSet, SupportRobotDamage);
+
 	/** 원거리 공격 한 번에 발사할 총 탄환 수. 기본값 1은 단발이며, 2 이상이면 연속 발사한다. */
 	UPROPERTY(BlueprintReadOnly, Category = "Base Stat|Ranged Burst")
 	FGameplayAttributeData RangedBurstShotCount;

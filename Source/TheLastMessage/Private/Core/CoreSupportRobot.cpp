@@ -38,33 +38,44 @@ void ACoreSupportRobot::Tick(float DeltaSeconds)
 	Super::Tick(DeltaSeconds);
 	if (!Player.IsValid() || DeltaSeconds <= 0.0f) return;
 
+	// ---- 이동 ----
 	FBox2D ScreenBounds;
 	const FBox2D* Bounds = GetScreenBounds(ScreenBounds) ? &ScreenBounds : nullptr;
 	UpdateOffscreen(DeltaSeconds, Bounds);
 
-	// 목표까지 멀면 최대 속도로, 가까워지면 거리에 비례해 줄인 속도를 원한다.
+	// 원하는 속도: 목표까지 멀면 최대 속도, 마지막 목표에 가까워지면 거리에 비례해 줄인다.
+	// 중간 경유지에서는 줄이지 않아야 경유지마다 멈칫하지 않고 이어서 지나간다.
 	const FVector ToGoal = GetCurrentGoal(Bounds) - GetActorLocation();
 	const float GoalDistance = ToGoal.Size();
-	const FVector Desired = GoalDistance > ArriveDistance
-		? ToGoal / GoalDistance * MaxSpeed * FMath::Min(1.0f, GoalDistance / SlowdownRadius)
-		: FVector::ZeroVector;
+	const bool bFinalGoal = !(HasPath() && IsInCombat()) || PathIndex == Path.Num() - 1;
+	const float SpeedScale = bFinalGoal ? FMath::Min(1.0f, GoalDistance / SlowdownRadius) : 1.0f;
+	const FVector Desired = GoalDistance > ArriveDistance ? ToGoal / GoalDistance * MaxSpeed * SpeedScale : FVector::ZeroVector;
+	// 현재 속도를 원하는 속도 쪽으로 조금씩 옮겨 출발·정지·방향 전환에 관성이 생기게 한다.
 	Velocity = FMath::VInterpTo(Velocity, Desired, DeltaSeconds, SteeringRate);
 
 	const FVector Moved = MoveWithSweep(Velocity * DeltaSeconds);
 	// 벽에 막힌 만큼 속도도 줄여야 다음 프레임에 벽을 계속 밀지 않는다.
 	Velocity = Moved / DeltaSeconds;
 	UpdateStuck(DeltaSeconds, Desired.Size() * DeltaSeconds, Moved.Size());
+	AdvancePath();
 
+	// 횡스크롤이라 좌우만 본다. 전투 중엔 노리는 적 쪽, 아니면 이동 방향.
 	const AActor* Facing = IsInCombat() ? Target.Get() : nullptr;
 	const float FaceX = Facing ? Facing->GetActorLocation().X - GetActorLocation().X : Velocity.X;
 	if (FMath::Abs(FaceX) > 1.0f) SetActorRotation(FRotator(0.0f, FaceX > 0.0f ? 0.0f : 180.0f, 0.0f));
 }
+
+// =====================================================================
+// 이동
+// =====================================================================
 
 FVector ACoreSupportRobot::GetFollowPoint() const
 {
 	const APlayerBase* PlayerActor = Player.Get();
 	if (!PlayerActor) return GetActorLocation();
 
+	// 플레이어가 바라보는 반대쪽(등 뒤), 중력 반대쪽(머리 위)에 붙는다.
+	// 천장을 걸을 때는 머리 위가 아래쪽이라 빈 공간 쪽에 붙게 된다(카메라 코드와 같은 기준).
 	const float FacingSign = PlayerActor->GetActorForwardVector().X >= 0.0f ? 1.0f : -1.0f;
 	const UCharacterMovementComponent* Movement = PlayerActor->GetCharacterMovement();
 	const float UpSign = Movement && Movement->GetGravityDirection().Z > 0.0f ? -1.0f : 1.0f;
@@ -73,10 +84,11 @@ FVector ACoreSupportRobot::GetFollowPoint() const
 
 FVector ACoreSupportRobot::GetCurrentGoal(const FBox2D* ScreenBounds) const
 {
-	FVector Goal = bHasMoveGoal && IsInCombat() ? MoveGoal : GetFollowPoint();
+	FVector Goal = HasPath() && IsInCombat() ? Path[PathIndex] : GetFollowPoint();
 	if (const APlayerBase* PlayerActor = Player.Get()) Goal.Y = PlayerActor->GetActorLocation().Y;
 	if (!ScreenBounds) return Goal;
 
+	// 위치가 아니라 목표점을 화면 안으로 자른다. 위치를 강제로 옮기면 벽 속으로 밀려 들어갈 수 있다.
 	// 여백을 뺀 영역이 없을 만큼 화면이 작으면 가운데로 모은다.
 	const FVector2D Margin(ScreenMargin, ScreenMargin);
 	const FVector2D Min = ScreenBounds->Min + Margin;
@@ -93,7 +105,7 @@ FVector ACoreSupportRobot::MoveWithSweep(const FVector& Delta)
 	if (Delta.IsNearlyZero()) return FVector::ZeroVector;
 
 	FHitResult Hit;
-	if (!SweepTerrain(Start, Start + Delta, Hit))
+	if (!SweepTerrain(Start, Start + Delta, CollisionRadius, Hit))
 	{
 		SetActorLocation(Start + Delta);
 		return Delta;
@@ -106,37 +118,33 @@ FVector ACoreSupportRobot::MoveWithSweep(const FVector& Delta)
 		return Out;
 	}
 
-	// 닿기 직전에서 살짝 떨어뜨려 다음 Sweep이 겹친 채 시작하지 않게 한다.
+	// 막힌 경우: 닿기 직전에서 멈추고, 남은 이동 중 벽면과 나란한 성분만큼 한 번 미끄러진다.
+	// Hit.Time은 이동 경로의 몇 %에서 닿았는지(0~1)이고, VectorPlaneProject는 벽에 수직인 성분을 뺀다.
+	// 닿은 자리에서 0.5cm 띄워야 다음 Sweep이 오차로 겹친 채 시작하지 않는다.
 	FVector Position = Hit.Location + Hit.Normal * 0.5f;
 	FVector Remaining = FVector::VectorPlaneProject(Delta * (1.0f - Hit.Time), Hit.Normal);
 	Remaining.Y = 0.0f;
 	if (!Remaining.IsNearlyZero())
 	{
 		FHitResult SlideHit;
-		if (!SweepTerrain(Position, Position + Remaining, SlideHit)) Position += Remaining;
+		if (!SweepTerrain(Position, Position + Remaining, CollisionRadius, SlideHit)) Position += Remaining;
 		else if (!SlideHit.bStartPenetrating) Position = SlideHit.Location + SlideHit.Normal * 0.5f;
 	}
 	SetActorLocation(Position);
 	return Position - Start;
 }
 
-bool ACoreSupportRobot::SweepTerrain(const FVector& Start, const FVector& End, FHitResult& OutHit) const
+void ACoreSupportRobot::AdvancePath()
 {
-	const UWorld* World = GetWorld();
-	if (!World) return false;
-
-	FCollisionQueryParams Params(SCENE_QUERY_STAT(SupportRobotMove), false, this);
-	if (Player.IsValid()) Params.AddIgnoredActor(Player.Get());
-	FCollisionResponseParams Response;
-	Response.CollisionResponse.SetResponse(ECC_Pawn, ECR_Ignore);
-	Response.CollisionResponse.SetResponse(ECC_PhysicsBody, ECR_Ignore);
-	return World->SweepSingleByChannel(OutHit, Start, End, FQuat::Identity, ECC_WorldDynamic,
-		FCollisionShape::MakeSphere(CollisionRadius), Params, Response);
+	if (!HasPath() || !IsInCombat() || PathIndex == Path.Num() - 1) return;
+	if (FVector::Dist(GetActorLocation(), Path[PathIndex]) <= ArriveDistance) ++PathIndex;
 }
 
 void ACoreSupportRobot::UpdateStuck(float DeltaSeconds, float WantedDistance, float MovedDistance)
 {
-	// 느리게 다가가는 중은 끼임이 아니다. 어느 정도 속도를 원할 때만 본다.
+	// "움직이려 하는데 못 움직임"이 쌓이는 시간을 잰다.
+	// 목표 근처에서 천천히 감속하는 중은 끼임이 아니므로, 최대 속도의 5% 이상을 원할 때만 본다.
+	// 목표와의 거리가 아니라 실제 이동량으로 보는 이유: 달리는 플레이어를 같은 거리로 따라가면 거리가 줄지 않아도 정상이다.
 	const bool bWantsToMove = WantedDistance > MaxSpeed * 0.05f * DeltaSeconds;
 	StuckElapsed = bWantsToMove && MovedDistance < WantedDistance * 0.2f ? StuckElapsed + DeltaSeconds : 0.0f;
 	if (StuckElapsed >= StuckTime) TeleportToPlayer();
@@ -151,9 +159,9 @@ void ACoreSupportRobot::UpdateOffscreen(float DeltaSeconds, const FBox2D* Screen
 		return;
 	}
 
+	// 화면 밖에 오래 있으면 먼저 전투를 끝내 플레이어에게 날아오게 하고, 그래도 못 돌아오면 순간이동한다.
 	OffscreenElapsed += DeltaSeconds;
 	if (OffscreenElapsed < OffscreenReturnTime) return;
-	// 먼저 전투를 끝내 플레이어에게 날아오게 하고, 그래도 오래 화면 밖이면 순간이동한다.
 	if (IsInCombat()) ClearCombat();
 	else if (OffscreenElapsed >= OffscreenReturnTime + StuckTime) TeleportToPlayer();
 }
@@ -161,29 +169,52 @@ void ACoreSupportRobot::UpdateOffscreen(float DeltaSeconds, const FBox2D* Screen
 void ACoreSupportRobot::TeleportToPlayer()
 {
 	const APlayerBase* PlayerActor = Player.Get();
-	const UWorld* World = GetWorld();
-	if (!PlayerActor || !World) return;
+	if (!PlayerActor) return;
 
+	// 따라다니는 위치가 벽 속이면 플레이어 캡슐 자리(비어 있음이 보장됨)로 옮긴다.
 	FVector Destination = GetFollowPoint();
 	Destination.Y = PlayerActor->GetActorLocation().Y;
-	FCollisionQueryParams Params(SCENE_QUERY_STAT(SupportRobotTeleport), false, this);
-	Params.AddIgnoredActor(PlayerActor);
-	FCollisionResponseParams Response;
-	Response.CollisionResponse.SetResponse(ECC_Pawn, ECR_Ignore);
-	Response.CollisionResponse.SetResponse(ECC_PhysicsBody, ECR_Ignore);
-	if (World->OverlapBlockingTestByChannel(Destination, FQuat::Identity, ECC_WorldDynamic,
-		FCollisionShape::MakeSphere(CollisionRadius), Params, Response))
-	{
-		Destination = PlayerActor->GetActorLocation();
-	}
+	if (!IsSpotFree(Destination)) Destination = PlayerActor->GetActorLocation();
 
 	SetActorLocation(Destination);
 	Velocity = FVector::ZeroVector;
 	StuckElapsed = 0.0f;
 	OffscreenElapsed = 0.0f;
-	// 옮긴 자리에서는 이전 경로가 맞지 않으므로 다음 계산까지 플레이어를 따라간다.
-	bHasMoveGoal = false;
+	// 옮긴 자리에서는 이전 경로가 맞지 않으므로 경로를 비우고 플레이어를 따라간다.
+	ClearMoveGoal();
 }
+
+bool ACoreSupportRobot::HasPath() const
+{
+	return Path.IsValidIndex(PathIndex);
+}
+
+void ACoreSupportRobot::SetMoveGoal(const FVector& Goal)
+{
+	SetMovePath({ Goal });
+}
+
+void ACoreSupportRobot::SetMovePath(const TArray<FVector>& Waypoints)
+{
+	if (Waypoints.IsEmpty())
+	{
+		ClearMoveGoal();
+		return;
+	}
+	Path = Waypoints;
+	PathIndex = 0;
+	StuckElapsed = 0.0f;
+}
+
+void ACoreSupportRobot::ClearMoveGoal()
+{
+	Path.Reset();
+	PathIndex = 0;
+}
+
+// =====================================================================
+// 화면
+// =====================================================================
 
 bool ACoreSupportRobot::GetScreenBounds(FBox2D& OutBounds) const
 {
@@ -202,7 +233,9 @@ bool ACoreSupportRobot::GetScreenBounds(FBox2D& OutBounds) const
 bool ACoreSupportRobot::CalcScreenBounds(const FVector& CameraLocation, const FRotator& CameraRotation,
 	float HorizontalFOV, float AspectRatio, float PlaneY, FBox2D& OutBounds)
 {
-	// 옆에서 보는 카메라만 다룬다. 시선이 평면과 거의 나란하면 사각형을 정할 수 없다.
+	// 원근 카메라에서 보이는 폭은 거리에 비례한다: 반폭 = 거리 × tan(가로 시야각 / 2), 반높이 = 반폭 / 화면비.
+	// Depth는 카메라 시선을 따라 플레이어 평면(Y = PlaneY)까지 간 거리다.
+	// 옆에서 보는 카메라만 다룬다. 시선이 평면과 거의 나란하면 평면에 닿지 않아 사각형을 정할 수 없다.
 	const FVector Forward = CameraRotation.Vector();
 	if (FMath::Abs(Forward.Y) < 0.5f || HorizontalFOV <= 0.0f || HorizontalFOV >= 180.0f || AspectRatio <= 0.0f) return false;
 	const float Depth = (PlaneY - CameraLocation.Y) / Forward.Y;
@@ -215,6 +248,45 @@ bool ACoreSupportRobot::CalcScreenBounds(const FVector& CameraLocation, const FR
 		FVector2D(Center.X + HalfWidth, Center.Z + HalfHeight));
 	return true;
 }
+
+// =====================================================================
+// 지형 판정
+// =====================================================================
+
+bool ACoreSupportRobot::SweepTerrain(const FVector& Start, const FVector& End, float Radius, FHitResult& OutHit) const
+{
+	const UWorld* World = GetWorld();
+	if (!World) return false;
+
+	// WorldDynamic 채널로 구를 밀면 벽·바닥·문(모든 채널을 막는 메시)은 걸리고, 트리거·통과 발판은 지나간다.
+	// 플레이어·적 캡슐(Pawn)과 적 메시(PhysicsBody)는 우리 쪽에서 무시해 이동 중 적을 통과한다.
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(SupportRobotTerrain), false, this);
+	if (Player.IsValid()) Params.AddIgnoredActor(Player.Get());
+	FCollisionResponseParams Response;
+	Response.CollisionResponse.SetResponse(ECC_Pawn, ECR_Ignore);
+	Response.CollisionResponse.SetResponse(ECC_PhysicsBody, ECR_Ignore);
+	return World->SweepSingleByChannel(OutHit, Start, End, FQuat::Identity, ECC_WorldDynamic,
+		FCollisionShape::MakeSphere(Radius), Params, Response);
+}
+
+bool ACoreSupportRobot::IsSpotFree(const FVector& Location) const
+{
+	const UWorld* World = GetWorld();
+	if (!World) return false;
+
+	// 이동 Sweep과 같은 기준으로, 로봇 몸이 그 자리에 놓이면 지형과 겹치는지 본다.
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(SupportRobotSpot), false, this);
+	if (Player.IsValid()) Params.AddIgnoredActor(Player.Get());
+	FCollisionResponseParams Response;
+	Response.CollisionResponse.SetResponse(ECC_Pawn, ECR_Ignore);
+	Response.CollisionResponse.SetResponse(ECC_PhysicsBody, ECR_Ignore);
+	return !World->OverlapBlockingTestByChannel(Location, FQuat::Identity, ECC_WorldDynamic,
+		FCollisionShape::MakeSphere(CollisionRadius), Params, Response);
+}
+
+// =====================================================================
+// 전투 상태·대상
+// =====================================================================
 
 void ACoreSupportRobot::RefreshCombat(float Duration)
 {
@@ -232,19 +304,7 @@ void ACoreSupportRobot::ClearCombat()
 {
 	Target.Reset();
 	CombatEndTime = 0.0;
-	bHasMoveGoal = false;
-}
-
-void ACoreSupportRobot::SetMoveGoal(const FVector& Goal)
-{
-	MoveGoal = Goal;
-	bHasMoveGoal = true;
-	StuckElapsed = 0.0f;
-}
-
-void ACoreSupportRobot::ClearMoveGoal()
-{
-	bHasMoveGoal = false;
+	ClearMoveGoal();
 }
 
 bool ACoreSupportRobot::IsInCombat() const

@@ -1,10 +1,14 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "AbilitySystemInterface.h"
 #include "GameFramework/Actor.h"
 #include "CoreSupportRobot.generated.h"
 
+class ACoreSupportRobotProjectile;
 class APlayerBase;
+class UGameplayEffect;
+struct FCollisionQueryParams;
 
 /**
  * 지원 로봇 코어가 만드는 로봇이다. 생성·파괴와 전투 신호 전달은 능력(UGA_CoreSupportRobot)이 맡고,
@@ -18,11 +22,16 @@ class APlayerBase;
  *   대상 선택 → 예측 조준점 계산 → 지금 자리에서 쏠 수 있으면 그 자리에 멈춤
  *   → 못 쏘면 새 자리 찾기(선호 지점 → 안 되면 화면 격자 BFS) → 자리가 없으면 그 적을 잠시 제외하고 다음 대상.
  *
+ * [사격]
+ *   멈춰 쏠 수 있다고 판단될 때 쿨타임(1초)이 끝났으면 총구에서 예측 조준점으로 전용 탄을 쏜다.
+ *   피해는 플레이어의 SupportRobotDamage 속성(코어 단계별 4/6/8)이며 플레이어의 피해 배율·치명타는 붙지 않는다.
+ *   피해의 공격자는 로봇이고, 피해 함수가 공격자에서 ASC를 찾으므로 로봇은 플레이어 ASC를 돌려준다.
+ *
  * 횡스크롤 게임이라 모든 위치 계산은 플레이어 깊이(Y)의 X·Z 평면에서 한다.
  * 로봇은 충돌을 끄고, 지형 확인은 직접 Sweep으로 한다(다른 판정에 로봇이 걸리지 않게).
  */
 UCLASS()
-class THELASTMESSAGE_API ACoreSupportRobot : public AActor
+class THELASTMESSAGE_API ACoreSupportRobot : public AActor, public IAbilitySystemInterface
 {
 	GENERATED_BODY()
 
@@ -30,6 +39,9 @@ public:
 	ACoreSupportRobot();
 
 	virtual void Tick(float DeltaSeconds) override;
+
+	/** 플레이어의 ASC를 돌려준다. 로봇을 공격자로 피해를 줄 때 피해 함수가 이 ASC로 효과를 만든다. */
+	virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
 
 	/** 지연 생성 중 호출한다. 따라다닐 플레이어를 정한다. */
 	bool Initialize(APlayerBase* InPlayer);
@@ -86,6 +98,14 @@ public:
 	static bool IsAliveEnemy(const AActor* Actor);
 
 protected:
+	/** 쏠 때 탄이 나오는 위치. BP에서 메시의 총구 뼈(Minigun)에 붙인다. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Core|SupportRobot|Combat")
+	TObjectPtr<USceneComponent> Muzzle;
+
+	/** 쏠 때마다 불린다. BP에서 총구 섬광·소리·사격 애니메이션을 붙인다. */
+	UFUNCTION(BlueprintImplementableEvent, Category = "Core|SupportRobot|Combat")
+	void ReceiveFired(const FVector& AimPoint);
+
 	/** 지형 확인에 쓰는 로봇 몸 반지름(cm). */
 	UPROPERTY(EditDefaultsOnly, Category = "Core|SupportRobot|Move", meta = (ClampMin = "1.0"))
 	float CollisionRadius = 30.0f;
@@ -125,6 +145,18 @@ protected:
 	/** 전투 판단(대상·자리 확인)을 반복하는 주기(초). 공격 주기와 같다. */
 	UPROPERTY(EditDefaultsOnly, Category = "Core|SupportRobot|Combat", meta = (ClampMin = "0.1"))
 	float DecisionInterval = 1.0f;
+
+	/** 쏘는 탄. 모양·이펙트를 붙인 BP를 지정한다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Core|SupportRobot|Combat")
+	TSubclassOf<ACoreSupportRobotProjectile> ProjectileClass;
+
+	/** 피해를 줄 때 쓰는 효과. 플레이어 무기와 같은 IncomingDamageExecution 효과를 지정한다. 없으면 쏘지 않는다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Core|SupportRobot|Combat")
+	TSubclassOf<UGameplayEffect> DamageEffectClass;
+
+	/** 한 발을 쏜 뒤 다음 발까지의 시간(초). */
+	UPROPERTY(EditDefaultsOnly, Category = "Core|SupportRobot|Combat", meta = (ClampMin = "0.1"))
+	float FireInterval = 1.0f;
 
 	/** 이 거리 안이고 가리는 것이 없으면 그 자리에서 쏜다(cm). */
 	UPROPERTY(EditDefaultsOnly, Category = "Core|SupportRobot|Combat", meta = (ClampMin = "1.0"))
@@ -214,6 +246,9 @@ private:
 	/** 로봇 몸이 그 자리에 들어갈 수 있는지(지형과 겹치지 않는지) 본다. */
 	bool IsSpotFree(const FVector& Location) const;
 
+	/** 지형 판정에서 빼야 할 액터(플레이어, 로봇이 쏜 탄)를 넣는다. */
+	void AddTerrainQueryIgnores(FCollisionQueryParams& Params) const;
+
 	// ---- 전투 판단 ----
 
 	/** 대상 선택부터 경로 결정까지 한 번의 전투 판단. */
@@ -248,6 +283,9 @@ private:
 	/** 지금 자리에 멈춰 떠 있는다. */
 	void HoldPosition();
 
+	/** 쿨타임이 끝났고 피해가 있으면 총구에서 조준점으로 한 발 쏜다. 쐈으면 true. */
+	bool TryFire(const FVector& AimPoint);
+
 	UPROPERTY(Transient)
 	TWeakObjectPtr<APlayerBase> Player;
 
@@ -276,6 +314,15 @@ private:
 	/** 지난 전투 판단 뒤 흐른 시간과, 다음 프레임에 바로 판단하라는 요청. */
 	float DecisionElapsed = 0.0f;
 	bool bDecisionRequested = false;
+
+	/** 다음 발을 쏠 수 있을 때까지 남은 시간(초). */
+	float FireCooldownRemaining = 0.0f;
+
+	/**
+	 * 쏜 뒤 아직 날아가는 탄. 탄은 지형처럼 WorldDynamic을 막는 충돌이라, 총구에서 막 나온 탄과 로봇이 겹치면
+	 * 로봇의 지형 판정이 탄을 벽으로 보고 로봇을 밀어낸다. 그래서 지형 판정에서 이 탄들을 뺀다.
+	 */
+	TArray<TWeakObjectPtr<AActor>> LiveProjectiles;
 
 	FVector Velocity = FVector::ZeroVector;
 	float StuckElapsed = 0.0f;

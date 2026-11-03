@@ -8,9 +8,12 @@
 #include "Character/Player/PlayerBase.h"
 #include "CollisionQueryParams.h"
 #include "Components/SceneComponent.h"
+#include "Core/CoreSupportRobotProjectile.h"
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/PlayerController.h"
+#include "GameplayEffect.h"
+#include "GAS/CombatAttributeSet.h"
 
 ACoreSupportRobot::ACoreSupportRobot()
 {
@@ -20,7 +23,16 @@ ACoreSupportRobot::ACoreSupportRobot()
 	// 로봇은 다른 판정에 걸리지 않고, 지형 확인은 직접 Sweep으로 한다.
 	SetActorEnableCollision(false);
 	SetCanBeDamaged(false);
-	SetRootComponent(CreateDefaultSubobject<USceneComponent>(TEXT("Root")));
+	USceneComponent* Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
+	SetRootComponent(Root);
+	Muzzle = CreateDefaultSubobject<USceneComponent>(TEXT("Muzzle"));
+	Muzzle->SetupAttachment(Root);
+	ProjectileClass = ACoreSupportRobotProjectile::StaticClass();
+}
+
+UAbilitySystemComponent* ACoreSupportRobot::GetAbilitySystemComponent() const
+{
+	return Player.IsValid() ? Player->GetAbilitySystemComponent() : nullptr;
 }
 
 bool ACoreSupportRobot::Initialize(APlayerBase* InPlayer)
@@ -41,6 +53,7 @@ void ACoreSupportRobot::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 	if (!Player.IsValid() || DeltaSeconds <= 0.0f) return;
+	FireCooldownRemaining = FMath::Max(0.0f, FireCooldownRemaining - DeltaSeconds);
 
 	// ---- 전투 판단 ----
 	// 전투가 막 시작되면 바로 판단하고, 끝나면 대상·경로를 비워 다음 전투에 이전 대상이 남지 않게 한다.
@@ -86,7 +99,8 @@ void ACoreSupportRobot::Tick(float DeltaSeconds)
 
 	const FVector Moved = MoveWithSweep(Velocity * DeltaSeconds);
 	// 벽에 막힌 만큼 속도도 줄여야 다음 프레임에 벽을 계속 밀지 않는다.
-	Velocity = Moved / DeltaSeconds;
+	// 겹침에서 밀려난 양은 순간적으로 클 수 있어, 그대로 속도로 남으면 튕겨 나가므로 최대 속도로 자른다.
+	Velocity = (Moved / DeltaSeconds).GetClampedToMaxSize(MaxSpeed);
 	UpdateStuck(DeltaSeconds, Desired.Size() * DeltaSeconds, Moved.Size());
 	AdvancePath();
 
@@ -338,7 +352,7 @@ bool ACoreSupportRobot::SweepTerrain(const FVector& Start, const FVector& End, f
 	// 플레이어·적 캡슐(Pawn)과 적 메시(PhysicsBody)는 우리 쪽에서 무시한다.
 	// 그래서 이동에서는 적을 통과하고, 시야 판정에서는 사이에 낀 적을 가림으로 보지 않는다.
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(SupportRobotTerrain), false, this);
-	if (Player.IsValid()) Params.AddIgnoredActor(Player.Get());
+	AddTerrainQueryIgnores(Params);
 	FCollisionResponseParams Response;
 	Response.CollisionResponse.SetResponse(ECC_Pawn, ECR_Ignore);
 	Response.CollisionResponse.SetResponse(ECC_PhysicsBody, ECR_Ignore);
@@ -359,12 +373,21 @@ bool ACoreSupportRobot::IsSpotFree(const FVector& Location) const
 
 	// 이동 Sweep과 같은 기준으로, 로봇 몸이 그 자리에 놓이면 지형과 겹치는지 본다.
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(SupportRobotSpot), false, this);
-	if (Player.IsValid()) Params.AddIgnoredActor(Player.Get());
+	AddTerrainQueryIgnores(Params);
 	FCollisionResponseParams Response;
 	Response.CollisionResponse.SetResponse(ECC_Pawn, ECR_Ignore);
 	Response.CollisionResponse.SetResponse(ECC_PhysicsBody, ECR_Ignore);
 	return !World->OverlapBlockingTestByChannel(Location, FQuat::Identity, ECC_WorldDynamic,
 		FCollisionShape::MakeSphere(CollisionRadius), Params, Response);
+}
+
+void ACoreSupportRobot::AddTerrainQueryIgnores(FCollisionQueryParams& Params) const
+{
+	if (Player.IsValid()) Params.AddIgnoredActor(Player.Get());
+	for (const TWeakObjectPtr<AActor>& Projectile : LiveProjectiles)
+	{
+		if (Projectile.IsValid()) Params.AddIgnoredActor(Projectile.Get());
+	}
 }
 
 // =====================================================================
@@ -384,11 +407,13 @@ void ACoreSupportRobot::RunDecision()
 		Target = Enemy;
 		if (!Enemy) break;
 
-		// 지금 자리에서 쏠 수 있으면 움직이지 않는다. 9~12m 여유 구간에서도 머무르는 이유가 이것이다.
+		// 지금 자리에서 쏠 수 있으면 움직이지 않고 쏜다. 9~12m 여유 구간에서도 머무르는 이유가 이것이다.
+		// 도착 직후에도 이 판단이 바로 불리므로, 쿨타임이 끝나 있으면 도착하자마자 첫 발이 나간다.
 		const FVector AimPoint = GetAimPoint(Enemy);
 		if (CanShootFrom(GetActorLocation(), AimPoint))
 		{
 			HoldPosition();
+			TryFire(AimPoint);
 			return;
 		}
 
@@ -444,6 +469,35 @@ FVector ACoreSupportRobot::PredictAimPoint(const FVector& ShooterLocation, const
 		AimPoint = TargetLocation + TargetVelocity * FlightTime;
 	}
 	return AimPoint;
+}
+
+bool ACoreSupportRobot::TryFire(const FVector& AimPoint)
+{
+	// 피해는 코어가 부여한 플레이어 속성에서 그때그때 읽는다. 코어를 강화하면 다음 발부터 바로 반영된다.
+	// 0이면 코어 효과가 없는 상태라 쏘지 않는다.
+	const APlayerBase* PlayerActor = Player.Get();
+	const UCombatAttributeSet* Stats = PlayerActor ? PlayerActor->GetCombatAttributes() : nullptr;
+	const float Damage = Stats ? Stats->GetSupportRobotDamage() : 0.0f;
+	UWorld* World = GetWorld();
+	if (FireCooldownRemaining > 0.0f || Damage <= 0.0f || !World || !ProjectileClass || !DamageEffectClass) return false;
+
+	// 지연 생성으로 피해·방향을 먼저 정한 뒤 생성을 끝낸다. 생성 순간부터 정해진 속도로 날아가게 하기 위해서다.
+	// 사거리보다 조금 더 날아가게 해 사거리 끝의 적도 놓치지 않게 한다.
+	const FVector Start = Muzzle->GetComponentLocation();
+	const FTransform SpawnTransform((AimPoint - Start).Rotation(), Start);
+	ACoreSupportRobotProjectile* Projectile = World->SpawnActorDeferred<ACoreSupportRobotProjectile>(ProjectileClass,
+		SpawnTransform, this, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+	if (!Projectile) return false;
+	Projectile->InitializeShot(this, AimPoint - Start, ProjectileSpeed, ProjectileRadius, Damage, DamageEffectClass,
+		FireRange * 1.2f);
+	Projectile->FinishSpawning(SpawnTransform);
+	// 이미 사라진 탄은 정리하고, 새 탄을 지형 판정 제외 목록에 넣는다.
+	LiveProjectiles.RemoveAll([](const TWeakObjectPtr<AActor>& Shot) { return !Shot.IsValid(); });
+	LiveProjectiles.Add(Projectile);
+
+	FireCooldownRemaining = FireInterval;
+	ReceiveFired(AimPoint);
+	return true;
 }
 
 bool ACoreSupportRobot::CanShootFrom(const FVector& From, const FVector& AimPoint) const

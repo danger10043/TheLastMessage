@@ -8,6 +8,7 @@
 #include "Character/Player/PlayerBase.h"
 #include "CollisionQueryParams.h"
 #include "Components/SceneComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Core/CoreSupportRobotProjectile.h"
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -25,14 +26,33 @@ ACoreSupportRobot::ACoreSupportRobot()
 	SetCanBeDamaged(false);
 	USceneComponent* Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	SetRootComponent(Root);
-	Muzzle = CreateDefaultSubobject<USceneComponent>(TEXT("Muzzle"));
-	Muzzle->SetupAttachment(Root);
+	// 모습만 보여 주는 메시라 충돌·겹침을 모두 끈다(액터 충돌을 꺼도 BP에서 켜지지 않게 컴포넌트에서도 끔).
+	Mesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("Mesh"));
+	Mesh->SetupAttachment(Root);
+	Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	Mesh->SetGenerateOverlapEvents(false);
 	ProjectileClass = ACoreSupportRobotProjectile::StaticClass();
 }
 
 UAbilitySystemComponent* ACoreSupportRobot::GetAbilitySystemComponent() const
 {
 	return Player.IsValid() ? Player->GetAbilitySystemComponent() : nullptr;
+}
+
+FVector ACoreSupportRobot::GetVelocity() const
+{
+	return Velocity;
+}
+
+FVector ACoreSupportRobot::GetMuzzleLocation() const
+{
+	// 몬스터(AEnemyBase::GetMuzzleLocation)와 같은 방식: 소켓이 있으면 소켓, 없으면 액터 기준 오프셋.
+	// 소켓 조회는 뼈 이름도 받으므로 외부 팩 메시를 고치지 않고 Minigun 뼈를 그대로 쓸 수 있다.
+	if (!MuzzleSocketName.IsNone() && Mesh && Mesh->DoesSocketExist(MuzzleSocketName))
+	{
+		return Mesh->GetSocketLocation(MuzzleSocketName);
+	}
+	return GetActorTransform().TransformPosition(MuzzleOffset);
 }
 
 bool ACoreSupportRobot::Initialize(APlayerBase* InPlayer)
@@ -483,7 +503,7 @@ bool ACoreSupportRobot::TryFire(const FVector& AimPoint)
 
 	// 지연 생성으로 피해·방향을 먼저 정한 뒤 생성을 끝낸다. 생성 순간부터 정해진 속도로 날아가게 하기 위해서다.
 	// 사거리보다 조금 더 날아가게 해 사거리 끝의 적도 놓치지 않게 한다.
-	const FVector Start = Muzzle->GetComponentLocation();
+	const FVector Start = GetMuzzleLocation();
 	const FTransform SpawnTransform((AimPoint - Start).Rotation(), Start);
 	ACoreSupportRobotProjectile* Projectile = World->SpawnActorDeferred<ACoreSupportRobotProjectile>(ProjectileClass,
 		SpawnTransform, this, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);

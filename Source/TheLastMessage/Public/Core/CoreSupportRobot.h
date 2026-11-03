@@ -8,6 +8,7 @@
 class ACoreSupportRobotProjectile;
 class APlayerBase;
 class UGameplayEffect;
+class USkeletalMeshComponent;
 struct FCollisionQueryParams;
 
 /**
@@ -97,12 +98,30 @@ public:
 	/** 살아 있는 일반 몬스터나 보스인지 확인한다. 기믹·플레이어 등은 대상이 될 수 없다. */
 	static bool IsAliveEnemy(const AActor* Actor);
 
-protected:
-	/** 쏠 때 탄이 나오는 위치. BP에서 메시의 총구 뼈(Minigun)에 붙인다. */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Core|SupportRobot|Combat")
-	TObjectPtr<USceneComponent> Muzzle;
+	/**
+	 * 실제 이동 속도(cm/s)를 돌려준다. 로봇은 이동 컴포넌트 없이 직접 움직여 기본 구현이 항상 0을 돌려주므로,
+	 * 애니메이션(ABP)이 대기·이동을 구분할 수 있게 이동 계산에 쓰는 속도를 그대로 준다.
+	 */
+	virtual FVector GetVelocity() const override;
 
-	/** 쏠 때마다 불린다. BP에서 총구 섬광·소리·사격 애니메이션을 붙인다. */
+	/** 탄이 나오는 위치. 메시에 총구 소켓(뼈 이름도 됨)이 있으면 그 위치, 없으면 액터 기준 MuzzleOffset 위치다. */
+	UFUNCTION(BlueprintPure, Category = "Core|SupportRobot|Combat")
+	FVector GetMuzzleLocation() const;
+
+protected:
+	/** 로봇 모습. 충돌은 없고 보이기·애니메이션만 맡는다. BP에서 메시·머티리얼·ABP를 지정한다. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Core|SupportRobot")
+	TObjectPtr<USkeletalMeshComponent> Mesh;
+
+	/** 총구로 쓸 메시의 소켓 또는 뼈 이름. 몬스터의 MuzzleSocketName과 같은 방식이다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Core|SupportRobot|Combat")
+	FName MuzzleSocketName = TEXT("Minigun");
+
+	/** 메시에 총구 소켓이 없을 때 쓰는 액터 기준 위치(cm). X가 로봇이 보는 방향이다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Core|SupportRobot|Combat")
+	FVector MuzzleOffset = FVector(40.0f, 0.0f, 0.0f);
+
+	/** 쏠 때마다 불린다. BP에서 총구 섬광(MuzzleSocketName에 붙임)·소리·사격 애니메이션을 붙인다. */
 	UFUNCTION(BlueprintImplementableEvent, Category = "Core|SupportRobot|Combat")
 	void ReceiveFired(const FVector& AimPoint);
 

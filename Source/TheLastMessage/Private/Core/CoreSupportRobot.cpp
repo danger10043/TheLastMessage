@@ -1,5 +1,6 @@
 #include "Core/CoreSupportRobot.h"
 
+#include "Algo/Reverse.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Character/Boss/BossMonster.h"
 #include "Character/Boss/BossTypes.h"
@@ -166,8 +167,24 @@ FVector ACoreSupportRobot::MoveWithSweep(const FVector& Delta)
 
 void ACoreSupportRobot::AdvancePath()
 {
-	if (!HasPath() || !IsInCombat() || PathIndex == Path.Num() - 1) return;
-	if (FVector::Dist(GetActorLocation(), Path[PathIndex]) <= ArriveDistance) ++PathIndex;
+	if (!HasPath() || !IsInCombat()) return;
+
+	// 중간 경유지는 격자 반 칸 안에만 들어와도 넘긴다. 관성 때문에 경유지를 정확히 밟지 못하고 맴도는 것을 막는다.
+	const bool bLast = PathIndex == Path.Num() - 1;
+	const float Reach = bLast ? ArriveDistance : FMath::Max(ArriveDistance, GridSpacing * 0.5f);
+	if (FVector::Dist(GetActorLocation(), Path[PathIndex]) > Reach) return;
+
+	if (!bLast)
+	{
+		++PathIndex;
+		return;
+	}
+	// 마지막 경유지에 도착하면 그 자리에 떠 있고, 1초를 기다리지 않고 바로 쏠 수 있는지 판단한다.
+	if (!bArrivalHandled)
+	{
+		bArrivalHandled = true;
+		bDecisionRequested = true;
+	}
 }
 
 void ACoreSupportRobot::UpdateStuck(float DeltaSeconds, float WantedDistance, float MovedDistance)
@@ -210,8 +227,9 @@ void ACoreSupportRobot::TeleportToPlayer()
 	Velocity = FVector::ZeroVector;
 	StuckElapsed = 0.0f;
 	OffscreenElapsed = 0.0f;
-	// 옮긴 자리에서는 이전 경로가 맞지 않으므로 경로를 비우고 플레이어를 따라간다.
+	// 옮긴 자리에서는 이전 경로가 맞지 않으므로 바로 다시 판단한다(전투가 아니면 그냥 따라간다).
 	ClearMoveGoal();
+	bDecisionRequested = true;
 }
 
 bool ACoreSupportRobot::HasPath() const
@@ -233,6 +251,7 @@ void ACoreSupportRobot::SetMovePath(const TArray<FVector>& Waypoints)
 	}
 	Path = Waypoints;
 	PathIndex = 0;
+	bArrivalHandled = false;
 	StuckElapsed = 0.0f;
 }
 
@@ -240,6 +259,15 @@ void ACoreSupportRobot::ClearMoveGoal()
 {
 	Path.Reset();
 	PathIndex = 0;
+	bArrivalHandled = false;
+}
+
+void ACoreSupportRobot::HoldPosition()
+{
+	// 지금 위치를 이미 도착한 마지막 경유지로 둔다. 도착 처리를 끝낸 것으로 표시해 판단이 반복 요청되지 않게 한다.
+	Path = { GetActorLocation() };
+	PathIndex = 0;
+	bArrivalHandled = true;
 }
 
 // =====================================================================
@@ -279,6 +307,24 @@ bool ACoreSupportRobot::CalcScreenBounds(const FVector& CameraLocation, const FR
 	return true;
 }
 
+FBox2D ACoreSupportRobot::GetSearchBounds() const
+{
+	// 카메라를 모르면(테스트 월드·컷신 등) 플레이어 중심의 화면 크기 사각형으로 대신한다.
+	FBox2D Bounds;
+	if (!GetScreenBounds(Bounds))
+	{
+		const FVector PlayerLocation = Player.IsValid() ? Player->GetActorLocation() : GetActorLocation();
+		const FVector2D Center(PlayerLocation.X, PlayerLocation.Z);
+		Bounds = FBox2D(Center - FallbackViewSize * 0.5f, Center + FallbackViewSize * 0.5f);
+	}
+
+	// 가장자리 여백을 빼고, 여백 때문에 뒤집히면 가운데 한 점으로 줄인다.
+	const FVector2D Margin(ScreenMargin, ScreenMargin);
+	FBox2D Inner(Bounds.Min + Margin, Bounds.Max - Margin);
+	if (Inner.Min.X > Inner.Max.X || Inner.Min.Y > Inner.Max.Y) Inner = FBox2D(Bounds.GetCenter(), Bounds.GetCenter());
+	return Inner;
+}
+
 // =====================================================================
 // 지형 판정
 // =====================================================================
@@ -289,7 +335,8 @@ bool ACoreSupportRobot::SweepTerrain(const FVector& Start, const FVector& End, f
 	if (!World) return false;
 
 	// WorldDynamic 채널로 구를 밀면 벽·바닥·문(모든 채널을 막는 메시)은 걸리고, 트리거·통과 발판은 지나간다.
-	// 플레이어·적 캡슐(Pawn)과 적 메시(PhysicsBody)는 우리 쪽에서 무시해 이동 중 적을 통과한다.
+	// 플레이어·적 캡슐(Pawn)과 적 메시(PhysicsBody)는 우리 쪽에서 무시한다.
+	// 그래서 이동에서는 적을 통과하고, 시야 판정에서는 사이에 낀 적을 가림으로 보지 않는다.
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(SupportRobotTerrain), false, this);
 	if (Player.IsValid()) Params.AddIgnoredActor(Player.Get());
 	FCollisionResponseParams Response;
@@ -297,6 +344,12 @@ bool ACoreSupportRobot::SweepTerrain(const FVector& Start, const FVector& End, f
 	Response.CollisionResponse.SetResponse(ECC_PhysicsBody, ECR_Ignore);
 	return World->SweepSingleByChannel(OutHit, Start, End, FQuat::Identity, ECC_WorldDynamic,
 		FCollisionShape::MakeSphere(Radius), Params, Response);
+}
+
+bool ACoreSupportRobot::IsPathBlocked(const FVector& Start, const FVector& End, float Radius) const
+{
+	FHitResult Hit;
+	return SweepTerrain(Start, End, Radius, Hit);
 }
 
 bool ACoreSupportRobot::IsSpotFree(const FVector& Location) const
@@ -322,14 +375,258 @@ void ACoreSupportRobot::RunDecision()
 {
 	bDecisionRequested = false;
 	DecisionElapsed = 0.0f;
-	Target = ChooseTarget();
+
+	// 한 번의 판단에서 후보는 최대 둘(플레이어가 때린 적, 플레이어를 때린 적)이다.
+	// 첫 후보의 쏠 자리를 못 찾으면 잠시 제외하고 다음 후보를 본다.
+	for (int32 Attempt = 0; Attempt < 2; ++Attempt)
+	{
+		AActor* Enemy = ChooseTarget();
+		Target = Enemy;
+		if (!Enemy) break;
+
+		// 지금 자리에서 쏠 수 있으면 움직이지 않는다. 9~12m 여유 구간에서도 머무르는 이유가 이것이다.
+		const FVector AimPoint = GetAimPoint(Enemy);
+		if (CanShootFrom(GetActorLocation(), AimPoint))
+		{
+			HoldPosition();
+			return;
+		}
+
+		TArray<FVector> NewPath;
+		if (FindAttackPath(AimPoint, NewPath))
+		{
+			SetMovePath(NewPath);
+			return;
+		}
+
+		if (const UWorld* World = GetWorld()) ExcludedUntil.Add(Enemy, World->GetTimeSeconds() + ExcludeDuration);
+	}
+
+	// 노릴 적이 없으면 경로를 비워 플레이어 곁을 따라간다. 전투 시간은 그대로 흐른다.
+	Target.Reset();
+	ClearMoveGoal();
 }
 
 AActor* ACoreSupportRobot::ChooseTarget()
 {
-	if (IsAliveEnemy(PlayerHitTarget.Get())) return PlayerHitTarget.Get();
-	if (IsAliveEnemy(AttackerTarget.Get())) return AttackerTarget.Get();
+	// 시간이 지났거나 사라진 적은 제외 목록에서 뺀다.
+	const double Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
+	for (auto It = ExcludedUntil.CreateIterator(); It; ++It)
+	{
+		if (!It.Key().IsValid() || It.Value() <= Now) It.RemoveCurrent();
+	}
+
+	auto IsUsable = [this](AActor* Enemy)
+	{
+		return IsAliveEnemy(Enemy) && !ExcludedUntil.Contains(Enemy);
+	};
+	if (IsUsable(PlayerHitTarget.Get())) return PlayerHitTarget.Get();
+	if (IsUsable(AttackerTarget.Get())) return AttackerTarget.Get();
 	return nullptr;
+}
+
+FVector ACoreSupportRobot::GetAimPoint(const AActor* Enemy) const
+{
+	return PredictAimPoint(GetActorLocation(), Enemy->GetActorLocation(), Enemy->GetVelocity(), ProjectileSpeed, MaxLeadTime);
+}
+
+FVector ACoreSupportRobot::PredictAimPoint(const FVector& ShooterLocation, const FVector& TargetLocation,
+	const FVector& TargetVelocity, float InProjectileSpeed, float InMaxLeadTime)
+{
+	if (InProjectileSpeed <= 0.0f) return TargetLocation;
+
+	// 비행시간은 조준점까지의 거리로 정해지고, 조준점은 비행시간으로 정해진다(서로 물려 있음).
+	// 적 위치로 비행시간을 먼저 구하고, 그 결과 조준점으로 한 번 더 구하면 실제 만나는 점에 충분히 가까워진다.
+	FVector AimPoint = TargetLocation;
+	for (int32 Iteration = 0; Iteration < 2; ++Iteration)
+	{
+		const float FlightTime = FMath::Min(FVector::Dist(ShooterLocation, AimPoint) / InProjectileSpeed, InMaxLeadTime);
+		AimPoint = TargetLocation + TargetVelocity * FlightTime;
+	}
+	return AimPoint;
+}
+
+bool ACoreSupportRobot::CanShootFrom(const FVector& From, const FVector& AimPoint) const
+{
+	// 탄 크기의 구로 미리 밀어 본다. 가는 선으로는 지나가도 실제 탄은 걸리는 좁은 틈을 걸러낸다.
+	return FVector::Dist(From, AimPoint) <= FireRange && !IsPathBlocked(From, AimPoint, ProjectileRadius);
+}
+
+int32 ACoreSupportRobot::RateSpot(const FVector& Spot, const FVector& AimPoint) const
+{
+	// 거리 비교가 Sweep보다 훨씬 싸므로 먼저 거르고, 사거리 안인 자리만 시야를 확인한다.
+	const float Distance = FVector::Dist(Spot, AimPoint);
+	if (Distance > FireRange || IsPathBlocked(Spot, AimPoint, ProjectileRadius)) return 0;
+
+	// 4~9m 띠 밖이면 쏠 수는 있어도 너무 가깝거나 사거리 끝이라 최후 수단(3등급)이다.
+	// 띠 안이면서 조준점보다 충분히 높으면 내려다보며 쏘는 자리라 1등급이다. "위"는 중력과 관계없이 월드 +Z다.
+	if (Distance < GoalMinDistance || Distance > GoalMaxDistance) return 3;
+	return Spot.Z - AimPoint.Z >= AboveTargetHeight ? 1 : 2;
+}
+
+FVector ACoreSupportRobot::GetPreferredPoint(const FVector& AimPoint, const FBox2D& SearchBounds) const
+{
+	// 플레이어가 있는 쪽, 조준점의 위쪽 대각선. 로봇이 플레이어 곁에서 날아오므로 이동이 짧고, 화면에서도 자연스럽다.
+	// 플레이어가 적 바로 위·아래(가로 차 30cm 안)면 방향이 안 정해지므로 로봇이 있는 쪽을 쓴다.
+	const FVector PlayerLocation = Player.IsValid() ? Player->GetActorLocation() : GetActorLocation();
+	float SideX = PlayerLocation.X - AimPoint.X;
+	if (FMath::Abs(SideX) < 30.0f) SideX = GetActorLocation().X - AimPoint.X;
+	const float Side = SideX >= 0.0f ? 1.0f : -1.0f;
+
+	FVector Point(AimPoint.X + Side * PreferredOffset.X, PlayerLocation.Y, AimPoint.Z + PreferredOffset.Y);
+	Point.X = FMath::Clamp(Point.X, SearchBounds.Min.X, SearchBounds.Max.X);
+	Point.Z = FMath::Clamp(Point.Z, SearchBounds.Min.Y, SearchBounds.Max.Y);
+	return Point;
+}
+
+bool ACoreSupportRobot::FindAttackPath(const FVector& AimPoint, TArray<FVector>& OutPath) const
+{
+	// 1) 선호 지점: 띠 안에서 보이고(1·2등급), 로봇이 바로 날아갈 수 있으면 그대로 쓴다. 대부분 여기서 끝난다.
+	// 2) 막혔으면 격자 BFS로 돌아가는 길을 찾는다.
+	const FBox2D SearchBounds = GetSearchBounds();
+	const FVector Preferred = GetPreferredPoint(AimPoint, SearchBounds);
+	const int32 PreferredRating = IsSpotFree(Preferred) ? RateSpot(Preferred, AimPoint) : 0;
+	if ((PreferredRating == 1 || PreferredRating == 2) && !IsPathBlocked(GetActorLocation(), Preferred, CollisionRadius))
+	{
+		OutPath = { Preferred };
+		return true;
+	}
+	return SearchGridPath(AimPoint, Preferred, SearchBounds, OutPath);
+}
+
+bool ACoreSupportRobot::SearchGridPath(const FVector& AimPoint, const FVector& PreferredPoint,
+	const FBox2D& SearchBounds, TArray<FVector>& OutPath) const
+{
+	const APlayerBase* PlayerActor = Player.Get();
+	if (!PlayerActor) return false;
+
+	// ---- 격자 ----
+	// 칸 (i, j)는 월드 (i × 간격, 플레이어 Y, j × 간격)이다. 화면이 아니라 월드 좌표에 고정해
+	// 카메라가 움직여도 노드가 흔들리지 않고, 같은 상황이면 매번 같은 결과가 나온다. 화면은 쓸 범위만 정한다.
+	const float PlaneY = PlayerActor->GetActorLocation().Y;
+	const FVector Start = GetActorLocation();
+	auto ToWorld = [this, PlaneY](const FIntPoint& Cell)
+	{
+		return FVector(Cell.X * GridSpacing, PlaneY, Cell.Y * GridSpacing);
+	};
+
+	// 범위 밖이거나 로봇 몸이 들어가지 않는(벽 속) 칸은 못 쓴다. 같은 칸을 여러 번 묻지 않게 결과를 기억한다.
+	TMap<FIntPoint, bool> FreeCells;
+	auto IsCellFree = [&](const FIntPoint& Cell)
+	{
+		if (const bool* Cached = FreeCells.Find(Cell)) return *Cached;
+		const FVector Spot = ToWorld(Cell);
+		const bool bFree = SearchBounds.IsInside(FVector2D(Spot.X, Spot.Z)) && IsSpotFree(Spot);
+		FreeCells.Add(Cell, bFree);
+		return bFree;
+	};
+
+	// ---- BFS 시작 ----
+	// 로봇 위치는 칸 중심이 아니므로, 주변 몇 칸에 바로 날아갈 수 있는지 Sweep으로 확인해 1층으로 넣는다.
+	// Depth는 로봇에서 몇 번 이동해 닿는지(층)이고, 같은 층은 비슷한 거리라는 뜻이다.
+	struct FVisit
+	{
+		FIntPoint Parent;
+		int32 Depth = 0;
+		bool bLinkedToStart = false;
+	};
+	TMap<FIntPoint, FVisit> Visits;
+	TArray<FIntPoint> Queue;
+	const FIntPoint StartCell(FMath::RoundToInt(Start.X / GridSpacing), FMath::RoundToInt(Start.Z / GridSpacing));
+	for (int32 DX = -StartLinkCells; DX <= StartLinkCells; ++DX)
+	{
+		for (int32 DZ = -StartLinkCells; DZ <= StartLinkCells; ++DZ)
+		{
+			const FIntPoint Cell = StartCell + FIntPoint(DX, DZ);
+			if (!IsCellFree(Cell) || IsPathBlocked(Start, ToWorld(Cell), CollisionRadius)) continue;
+			Visits.Add(Cell, { Cell, 1, true });
+			Queue.Add(Cell);
+		}
+	}
+
+	// ---- BFS 확장 ----
+	// 큐 앞에서 꺼낸 칸의 등급을 매기고, 이웃 8칸 중 아직 안 가 본 빈 칸으로 막힘 없이 갈 수 있으면 다음 층으로 넣는다.
+	// BFS는 얕은 층부터 꺼내므로 "처음 만난 후보 = 로봇에서 가장 빨리 가는 후보"다.
+	// 등급마다 가장 얕은 층의 후보를 기억하고, 같은 층이면 선호 지점에 가까운 쪽을 남긴다.
+	// 1등급을 찾았으면 그 층까지만 마저 보고(동점 비교) 멈춘다. 1등급이 없으면 끝까지 보고 2·3등급 중 최선을 쓴다.
+	constexpr int32 NoDepth = TNumericLimits<int32>::Max();
+	int32 BestDepth[4] = { NoDepth, NoDepth, NoDepth, NoDepth };
+	double BestPreferredDistSq[4] = { 0.0, 0.0, 0.0, 0.0 };
+	FIntPoint BestCell[4];
+	for (int32 Head = 0; Head < Queue.Num() && Head < MaxSearchNodes; ++Head)
+	{
+		const FIntPoint Cell = Queue[Head];
+		const int32 Depth = Visits[Cell].Depth;
+		if (Depth > BestDepth[1]) break;
+
+		const FVector Spot = ToWorld(Cell);
+		const int32 Rating = RateSpot(Spot, AimPoint);
+		if (Rating > 0)
+		{
+			const double PreferredDistSq = FVector::DistSquared(Spot, PreferredPoint);
+			if (Depth < BestDepth[Rating] || (Depth == BestDepth[Rating] && PreferredDistSq < BestPreferredDistSq[Rating]))
+			{
+				BestDepth[Rating] = Depth;
+				BestPreferredDistSq[Rating] = PreferredDistSq;
+				BestCell[Rating] = Cell;
+			}
+		}
+
+		for (int32 DX = -1; DX <= 1; ++DX)
+		{
+			for (int32 DZ = -1; DZ <= 1; ++DZ)
+			{
+				const FIntPoint Next = Cell + FIntPoint(DX, DZ);
+				if ((DX == 0 && DZ == 0) || Visits.Contains(Next) || !IsCellFree(Next)) continue;
+				// 두 칸이 비어 있어도 사이에 얇은 벽이 있을 수 있어 Sweep으로 연결을 확인한다.
+				if (IsPathBlocked(Spot, ToWorld(Next), CollisionRadius)) continue;
+				Visits.Add(Next, { Cell, Depth + 1, false });
+				Queue.Add(Next);
+			}
+		}
+	}
+
+	int32 Rating = 0;
+	for (int32 Candidate = 1; Candidate <= 3 && Rating == 0; ++Candidate)
+	{
+		if (BestDepth[Candidate] != NoDepth) Rating = Candidate;
+	}
+	if (Rating == 0) return false;
+
+	// ---- 경로 만들기 ----
+	// 고른 칸에서 부모를 거꾸로 따라가 로봇과 바로 이어진 1층 칸까지 모은 뒤 뒤집으면 로봇 → 목표 순서가 된다.
+	TArray<FVector> Points;
+	for (FIntPoint Cell = BestCell[Rating];;)
+	{
+		Points.Add(ToWorld(Cell));
+		const FVisit& Visit = Visits[Cell];
+		if (Visit.bLinkedToStart) break;
+		Cell = Visit.Parent;
+	}
+	Points.Add(Start);
+	Algo::Reverse(Points);
+	SmoothPath(Points);
+	Points.RemoveAt(0);
+	OutPath = MoveTemp(Points);
+	return !OutPath.IsEmpty();
+}
+
+void ACoreSupportRobot::SmoothPath(TArray<FVector>& InOutPoints) const
+{
+	// 줄 당기기: 지금 점에서 가장 먼 점부터 거꾸로 Sweep해 처음 통하는 점으로 건너뛴다.
+	// 격자 때문에 계단처럼 꺾인 경로가 직선 몇 개로 펴진다. 점이 적어서(수십 개 이하) 비용은 작다.
+	if (InOutPoints.Num() <= 2) return;
+
+	TArray<FVector> Result = { InOutPoints[0] };
+	int32 From = 0;
+	while (From < InOutPoints.Num() - 1)
+	{
+		int32 To = InOutPoints.Num() - 1;
+		while (To > From + 1 && IsPathBlocked(InOutPoints[From], InOutPoints[To], CollisionRadius)) --To;
+		Result.Add(InOutPoints[To]);
+		From = To;
+	}
+	InOutPoints = MoveTemp(Result);
 }
 
 bool ACoreSupportRobot::IsAliveEnemy(const AActor* Actor)
@@ -359,15 +656,20 @@ void ACoreSupportRobot::ClearCombat()
 	PlayerHitTarget.Reset();
 	AttackerTarget.Reset();
 	Target.Reset();
+	ExcludedUntil.Reset();
 	CombatEndTime = 0.0;
 	ClearMoveGoal();
 }
 
 void ACoreSupportRobot::SetPlayerHitTarget(AActor* Enemy)
 {
-	if (!IsAliveEnemy(Enemy) || PlayerHitTarget.Get() == Enemy) return;
-	PlayerHitTarget = Enemy;
-	bDecisionRequested = true;
+	if (!IsAliveEnemy(Enemy)) return;
+	const bool bWasExcluded = ExcludedUntil.Remove(Enemy) > 0;
+	if (PlayerHitTarget.Get() != Enemy || bWasExcluded)
+	{
+		PlayerHitTarget = Enemy;
+		bDecisionRequested = true;
+	}
 }
 
 void ACoreSupportRobot::SetAttackerTarget(AActor* Enemy)

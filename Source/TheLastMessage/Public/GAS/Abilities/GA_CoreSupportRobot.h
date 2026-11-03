@@ -9,7 +9,8 @@ struct FOnAttributeChangeData;
 
 /**
  * 지원 로봇 코어를 보유한 동안 켜져 있으며 로봇을 만들고 없애는 능력이다.
- * 플레이어가 피해를 주거나 받으면 로봇의 전투 상태를 유지하고, 마지막으로 공격한 적을 로봇에 전달한다.
+ * 플레이어가 피해를 주거나 받으면 로봇의 전투 상태를 유지한다.
+ * 플레이어가 공격한 적과 플레이어를 공격한 적을 로봇에 전달하고, 누구를 노릴지는 로봇이 정한다.
  * 로봇이 준 피해는 공격자가 로봇이므로 전투 상태와 노릴 적을 갱신하지 않는다.
  */
 UCLASS()
@@ -55,6 +56,7 @@ private:
 	void HandleDamageDealt(const FGameplayEventData* Payload);
 	void HandleGuardBlocked(const FGameplayEventData* Payload);
 	void HandleHealthChanged(const FOnAttributeChangeData& Data);
+	void HandleIncomingDamageChanged(const FOnAttributeChangeData& Data);
 	void HandleDeadTagChanged(const FGameplayTag Tag, int32 NewCount);
 
 	UPROPERTY(Transient)
@@ -63,5 +65,6 @@ private:
 	FDelegateHandle DamageDealtHandle;
 	FDelegateHandle GuardBlockedHandle;
 	FDelegateHandle HealthChangedHandle;
+	FDelegateHandle IncomingDamageHandle;
 	FDelegateHandle DeadTagHandle;
 };

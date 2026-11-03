@@ -1,6 +1,9 @@
 #include "Core/CoreSupportRobot.h"
 
 #include "Camera/PlayerCameraManager.h"
+#include "Character/Boss/BossMonster.h"
+#include "Character/Boss/BossTypes.h"
+#include "Character/Enemy/EnemyBase.h"
 #include "Character/Player/PlayerBase.h"
 #include "CollisionQueryParams.h"
 #include "Components/SceneComponent.h"
@@ -37,6 +40,33 @@ void ACoreSupportRobot::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 	if (!Player.IsValid() || DeltaSeconds <= 0.0f) return;
+
+	// ---- 전투 판단 ----
+	// 전투가 막 시작되면 바로 판단하고, 끝나면 대상·경로를 비워 다음 전투에 이전 대상이 남지 않게 한다.
+	const bool bInCombat = IsInCombat();
+	if (bInCombat != bWasInCombat)
+	{
+		bWasInCombat = bInCombat;
+		if (bInCombat)
+		{
+			bDecisionRequested = true;
+		}
+		else
+		{
+			PlayerHitTarget.Reset();
+			AttackerTarget.Reset();
+			Target.Reset();
+			ClearMoveGoal();
+		}
+	}
+	if (bInCombat)
+	{
+		// 노리던 적이 죽거나 사라지면 1초를 기다리지 않고 다음 대상을 찾는다.
+		// IsExplicitlyNull은 "처음부터 대상이 없음"과 "있었는데 사라짐"을 구분한다.
+		if (!Target.IsExplicitlyNull() && !IsAliveEnemy(Target.Get())) bDecisionRequested = true;
+		DecisionElapsed += DeltaSeconds;
+		if (bDecisionRequested || DecisionElapsed >= DecisionInterval) RunDecision();
+	}
 
 	// ---- 이동 ----
 	FBox2D ScreenBounds;
@@ -285,6 +315,35 @@ bool ACoreSupportRobot::IsSpotFree(const FVector& Location) const
 }
 
 // =====================================================================
+// 전투 판단
+// =====================================================================
+
+void ACoreSupportRobot::RunDecision()
+{
+	bDecisionRequested = false;
+	DecisionElapsed = 0.0f;
+	Target = ChooseTarget();
+}
+
+AActor* ACoreSupportRobot::ChooseTarget()
+{
+	if (IsAliveEnemy(PlayerHitTarget.Get())) return PlayerHitTarget.Get();
+	if (IsAliveEnemy(AttackerTarget.Get())) return AttackerTarget.Get();
+	return nullptr;
+}
+
+bool ACoreSupportRobot::IsAliveEnemy(const AActor* Actor)
+{
+	// 일반 몬스터와 보스는 서로 다른 클래스라 따로 확인한다. 보스의 상태 조회는 const가 아니어서 const_cast를 쓴다.
+	if (const AEnemyBase* Enemy = Cast<AEnemyBase>(Actor)) return IsValid(Enemy) && !Enemy->IsDead();
+	if (const ABossMonster* Boss = Cast<ABossMonster>(Actor))
+	{
+		return IsValid(Boss) && const_cast<ABossMonster*>(Boss)->GetBossState() != EBossState::Dead;
+	}
+	return false;
+}
+
+// =====================================================================
 // 전투 상태·대상
 // =====================================================================
 
@@ -295,16 +354,40 @@ void ACoreSupportRobot::RefreshCombat(float Duration)
 	CombatEndTime = FMath::Max(CombatEndTime, World->GetTimeSeconds() + Duration);
 }
 
-void ACoreSupportRobot::SetTarget(AActor* InTarget)
-{
-	Target = InTarget;
-}
-
 void ACoreSupportRobot::ClearCombat()
 {
+	PlayerHitTarget.Reset();
+	AttackerTarget.Reset();
 	Target.Reset();
 	CombatEndTime = 0.0;
 	ClearMoveGoal();
+}
+
+void ACoreSupportRobot::SetPlayerHitTarget(AActor* Enemy)
+{
+	if (!IsAliveEnemy(Enemy) || PlayerHitTarget.Get() == Enemy) return;
+	PlayerHitTarget = Enemy;
+	bDecisionRequested = true;
+}
+
+void ACoreSupportRobot::SetAttackerTarget(AActor* Enemy)
+{
+	if (!IsAliveEnemy(Enemy) || AttackerTarget.Get() == Enemy) return;
+	AttackerTarget = Enemy;
+	// 플레이어가 때린 적이 있으면 그쪽이 우선이라 판단을 앞당길 필요가 없다.
+	if (!IsAliveEnemy(PlayerHitTarget.Get())) bDecisionRequested = true;
+}
+
+void ACoreSupportRobot::ForgetTarget(const AActor* Enemy)
+{
+	if (!Enemy) return;
+	if (PlayerHitTarget.Get() == Enemy) PlayerHitTarget.Reset();
+	if (AttackerTarget.Get() == Enemy) AttackerTarget.Reset();
+	if (Target.Get() == Enemy)
+	{
+		Target.Reset();
+		bDecisionRequested = true;
+	}
 }
 
 bool ACoreSupportRobot::IsInCombat() const

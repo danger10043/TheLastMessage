@@ -336,7 +336,8 @@ void ABossAIController::UpdateCombatRange(
     const bool bKeepAttackRange =
         State == EBossState::Attacking
         && (SelectedAttack == static_cast<uint8>(EBossAttackType::CrossLaser)
-            || SelectedAttack == static_cast<uint8>(EBossAttackType::JumpAttack));
+            || SelectedAttack == static_cast<uint8>(EBossAttackType::JumpAttack)
+            || SelectedAttack == static_cast<uint8>(EBossAttackType::PullAttack));
 
     const bool bInCombatRange = bNormalCombatState
         && (bKeepAttackRange

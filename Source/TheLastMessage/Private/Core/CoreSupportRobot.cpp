@@ -96,6 +96,7 @@ void ACoreSupportRobot::Tick(float DeltaSeconds)
 			PlayerHitTarget.Reset();
 			AttackerTarget.Reset();
 			Target.Reset();
+			EngagedTarget.Reset();
 			ClearMoveGoal();
 		}
 	}
@@ -130,10 +131,36 @@ void ACoreSupportRobot::Tick(float DeltaSeconds)
 	UpdateStuck(DeltaSeconds, Desired.Size() * DeltaSeconds, Moved.Size());
 	AdvancePath();
 
-	// 횡스크롤이라 좌우만 본다. 전투 중엔 노리는 적 쪽, 아니면 이동 방향.
+	UpdateFacing(DeltaSeconds);
+}
+
+void ACoreSupportRobot::UpdateFacing(float DeltaSeconds)
+{
+	// 전투 중에는 노리는 적을 향해 몸 전체를 돌리고 위아래로도 기울여 "저 적을 노린다"가 보이게 한다.
+	// 횡스크롤이라 좌우는 요 0도(오른쪽)/180도(왼쪽)만 쓰고, 위아래 기울기(피치)는 적까지의 높이 차로 정한다.
+	// 평소에는 이동 방향으로 좌우만 보고 기울기는 0으로 돌아온다.
+	FRotator Desired = GetActorRotation();
 	const AActor* Facing = IsInCombat() ? Target.Get() : nullptr;
-	const float FaceX = Facing ? Facing->GetActorLocation().X - GetActorLocation().X : Velocity.X;
-	if (FMath::Abs(FaceX) > 1.0f) SetActorRotation(FRotator(0.0f, FaceX > 0.0f ? 0.0f : 180.0f, 0.0f));
+	if (Facing)
+	{
+		FVector ToTarget = Facing->GetActorLocation() - GetActorLocation();
+		ToTarget.Y = 0.0f;
+		if (!ToTarget.IsNearlyZero())
+		{
+			// 깊이(Y)를 지운 방향의 회전은 요가 0/180으로, 피치가 내려다보는 각도로 나온다.
+			Desired = ToTarget.Rotation();
+			Desired.Pitch = FMath::Clamp(Desired.Pitch, -MaxAimPitch, MaxAimPitch);
+		}
+	}
+	else
+	{
+		Desired.Pitch = 0.0f;
+		if (FMath::Abs(Velocity.X) > 1.0f) Desired.Yaw = Velocity.X > 0.0f ? 0.0f : 180.0f;
+	}
+	Desired.Roll = 0.0f;
+
+	// 순간적으로 꺾지 않고 부드럽게 돌아가게 한다. 좌우가 바뀔 때는 화면 쪽으로 반 바퀴 도는 모습이 된다.
+	SetActorRotation(FMath::RInterpTo(GetActorRotation(), Desired, DeltaSeconds, TurnSpeed));
 }
 
 // =====================================================================
@@ -220,9 +247,11 @@ void ACoreSupportRobot::AdvancePath()
 		return;
 	}
 	// 마지막 경유지에 도착하면 그 자리에 떠 있고, 1초를 기다리지 않고 바로 쏠 수 있는지 판단한다.
+	// 교전 시작 이동도 여기서 끝난다.
 	if (!bArrivalHandled)
 	{
 		bArrivalHandled = true;
+		bEngaging = false;
 		bDecisionRequested = true;
 	}
 }
@@ -300,6 +329,7 @@ void ACoreSupportRobot::ClearMoveGoal()
 	Path.Reset();
 	PathIndex = 0;
 	bArrivalHandled = false;
+	bEngaging = false;
 }
 
 void ACoreSupportRobot::HoldPosition()
@@ -433,10 +463,17 @@ void ACoreSupportRobot::RunDecision()
 		Target = Enemy;
 		if (!Enemy) break;
 
-		// 지금 자리에서 쏠 수 있으면 움직이지 않고 쏜다. 9~12m 여유 구간에서도 머무르는 이유가 이것이다.
+		// 처음 노리는 적이면 지금 자리에서 쏠 수 있어도 먼저 공격 위치로 날아간다.
+		// 따라다니던 자리에서 바로 쏘면 적을 알아챘다는 느낌이 나지 않기 때문이다.
+		// 날아가는 동안(교전 시작 이동)에는 1초 판단이 이동을 끊지 않고, 도착하면 바로 판단해 첫 발을 쏜다.
+		const bool bNewTarget = EngagedTarget.Get() != Enemy;
+		if (!bNewTarget && bEngaging && HasPath()) return;
+
+		// 이미 교전 중인 적은 지금 자리에서 쏠 수 있으면 움직이지 않고 쏜다. 9~12m 여유 구간에서도 머무르는 이유가 이것이다.
 		// 도착 직후에도 이 판단이 바로 불리므로, 쿨타임이 끝나 있으면 도착하자마자 첫 발이 나간다.
 		const FVector AimPoint = GetAimPoint(Enemy);
-		if (CanShootFrom(GetActorLocation(), AimPoint))
+		const bool bCanShootHere = CanShootFrom(GetActorLocation(), AimPoint);
+		if (!bNewTarget && bCanShootHere)
 		{
 			HoldPosition();
 			TryFire(AimPoint);
@@ -447,6 +484,17 @@ void ACoreSupportRobot::RunDecision()
 		if (FindAttackPath(AimPoint, NewPath))
 		{
 			SetMovePath(NewPath);
+			bEngaging = bNewTarget;
+			EngagedTarget = Enemy;
+			return;
+		}
+
+		// 처음 노리는 적인데 더 나은 자리가 없고 지금 자리에서는 쏠 수 있으면, 제외하지 말고 그 자리에서 쏜다.
+		if (bCanShootHere)
+		{
+			HoldPosition();
+			TryFire(AimPoint);
+			EngagedTarget = Enemy;
 			return;
 		}
 
@@ -454,7 +502,9 @@ void ACoreSupportRobot::RunDecision()
 	}
 
 	// 노릴 적이 없으면 경로를 비워 플레이어 곁을 따라간다. 전투 시간은 그대로 흐른다.
+	// 교전 기록도 지워, 같은 적을 다시 노리게 되면 다시 날아가서 쏘게 한다.
 	Target.Reset();
+	EngagedTarget.Reset();
 	ClearMoveGoal();
 }
 
@@ -759,6 +809,7 @@ void ACoreSupportRobot::ClearCombat()
 	PlayerHitTarget.Reset();
 	AttackerTarget.Reset();
 	Target.Reset();
+	EngagedTarget.Reset();
 	ExcludedUntil.Reset();
 	CombatEndTime = 0.0;
 	ClearMoveGoal();

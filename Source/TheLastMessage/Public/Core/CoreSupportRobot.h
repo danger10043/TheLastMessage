@@ -25,6 +25,8 @@ struct FCollisionQueryParams;
  * [전투 판단 RunDecision]
  *   대상 선택 → 예측 조준점 계산 → 지금 자리에서 쏠 수 있으면 그 자리에 멈춤
  *   → 못 쏘면 새 자리 찾기(선호 지점 → 안 되면 화면 격자 BFS) → 자리가 없으면 그 적을 잠시 제외하고 다음 대상.
+ *   처음 노리는 적이면 쏠 수 있어도 먼저 공격 위치로 날아가고(교전 시작 이동), 도착하면 쏜다.
+ *   전투 중에는 몸을 노리는 적 쪽으로 돌리고 위아래로 기울여 조준하는 모습을 보인다.
  *
  * [사격]
  *   멈춰 쏠 수 있다고 판단될 때 쿨타임(1초)이 끝났으면 총구에서 예측 조준점으로 전용 탄을 쏜다.
@@ -173,6 +175,14 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Core|SupportRobot|Move", meta = (ClampMin = "0.0"))
 	float OffscreenReturnTime = 1.0f;
 
+	/** 몸이 목표 방향으로 돌아가는 빠르기. 클수록 빨리 돈다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Core|SupportRobot|Move", meta = (ClampMin = "0.1"))
+	float TurnSpeed = 10.0f;
+
+	/** 적을 조준할 때 위아래로 기울이는 최대 각도(도). 너무 크면 드론이 뒤집혀 보인다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Core|SupportRobot|Move", meta = (ClampMin = "0.0", ClampMax = "89.0"))
+	float MaxAimPitch = 45.0f;
+
 	/** 전투 판단(대상·자리 확인)을 반복하는 주기(초). 공격 주기와 같다. */
 	UPROPERTY(EditDefaultsOnly, Category = "Core|SupportRobot|Combat", meta = (ClampMin = "0.1"))
 	float DecisionInterval = 1.0f;
@@ -266,6 +276,9 @@ private:
 	void UpdateStuck(float DeltaSeconds, float WantedDistance, float MovedDistance);
 	void UpdateOffscreen(float DeltaSeconds, const FBox2D* ScreenBounds);
 
+	/** 전투 중엔 노리는 적을 향해 좌우·위아래로, 평소엔 이동 방향으로 몸을 돌린다. */
+	void UpdateFacing(float DeltaSeconds);
+
 	bool HasPath() const;
 
 	// ---- 지형 판정 ----
@@ -351,6 +364,15 @@ private:
 
 	/** 다음 발을 쏠 수 있을 때까지 남은 시간(초). */
 	float FireCooldownRemaining = 0.0f;
+
+	/**
+	 * 마지막으로 교전을 시작한 적과, 그 적을 향한 교전 시작 이동 중인지.
+	 * 새 적이면 지금 자리에서 쏠 수 있어도 공격 위치로 먼저 날아가고(bEngaging), 도착할 때까지 이동을 끊지 않는다.
+	 */
+	UPROPERTY(Transient)
+	TWeakObjectPtr<AActor> EngagedTarget;
+
+	bool bEngaging = false;
 
 	/**
 	 * 쏜 뒤 아직 날아가는 탄. 탄은 지형처럼 WorldDynamic을 막는 충돌이라, 총구에서 막 나온 탄과 로봇이 겹치면

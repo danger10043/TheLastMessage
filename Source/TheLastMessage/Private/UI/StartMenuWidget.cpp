@@ -36,6 +36,46 @@ void UStartMenuWidget::BuildDefaultLayout(UWidgetTree* Tree)
 	AddText(Tree, Slots, TEXT("SelectionText"), FText::GetEmpty(), 18);
 	AddButton(Tree, Slots, TEXT("BackButton"), TEXT("BackText"), NSLOCTEXT("StartMenu", "Back", "뒤로"));
 	AddConfirmationLayout(Tree);
+	AddCreditsLayout(Tree);
+}
+
+bool UStartMenuWidget::AddCreditsLayout(UWidgetTree* Tree)
+{
+	UWidgetSwitcher* Switcher = Cast<UWidgetSwitcher>(Tree->FindWidget(TEXT("Pages")));
+	UVerticalBox* Main = Cast<UVerticalBox>(Tree->FindWidget(TEXT("MainPage")));
+	if (!Switcher || !Main || Tree->FindWidget(TEXT("CreditsPage"))) return false;
+
+	UVerticalBox* Credits = Tree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("CreditsPage"));
+	Switcher->AddChild(Credits);
+	UTextBlock* Heading = AddText(Tree, Credits, TEXT("CreditsHeading"), NSLOCTEXT("StartMenu", "Credits", "크레딧"), 32);
+	UTextBlock* Notice = AddText(Tree, Credits, TEXT("FontCreditsText"),
+		NSLOCTEXT("StartMenu", "FontCredits",
+			"사용 글꼴 · SIL Open Font License 1.1\n\n"
+			"Orbit · © 2022 The Orbit Project Authors\n"
+			"Black Han Sans · © 2015 The Black Han Sans Project Authors\n"
+			"Pretendard · © 2021 Kil Hyung-jin\n"
+			"Reserved Font Name: Pretendard"), 20);
+	AddButton(Tree, Main, TEXT("CreditsButton"), TEXT("CreditsText"), NSLOCTEXT("StartMenu", "Credits", "크레딧"));
+	AddButton(Tree, Credits, TEXT("CreditsBackButton"), TEXT("CreditsBackText"), NSLOCTEXT("StartMenu", "Back", "뒤로"));
+	const UButton* Back = Cast<UButton>(Tree->FindWidget(TEXT("BackButton")));
+	const UTextBlock* Body = Cast<UTextBlock>(Tree->FindWidget(TEXT("ConfirmText")));
+	const UTextBlock* Title = Cast<UTextBlock>(Tree->FindWidget(TEXT("SlotHeading")));
+	for (const TCHAR* Name : {TEXT("CreditsButton"), TEXT("CreditsBackButton")})
+	{
+		UButton* Button = CastChecked<UButton>(Tree->FindWidget(Name));
+		if (Back) Button->SetStyle(Back->GetStyle());
+		if (USizeBox* Size = Cast<USizeBox>(Button->GetParent())) Size->SetHeightOverride(56);
+	}
+	for (UTextBlock* TextBlock : {Heading, Notice, CastChecked<UTextBlock>(Tree->FindWidget(TEXT("CreditsText"))),
+		CastChecked<UTextBlock>(Tree->FindWidget(TEXT("CreditsBackText")))})
+	{
+		const UTextBlock* Template = TextBlock == Heading ? Title : Body;
+		if (!Template) continue;
+		FSlateFontInfo Font = Template->GetFont();
+		Font.Size = TextBlock == Heading ? 32 : TextBlock == Notice ? 20 : 24;
+		TextBlock->SetFont(Font);
+	}
+	return true;
 }
 
 bool UStartMenuWidget::AddConfirmationLayout(UWidgetTree* Tree)
@@ -54,7 +94,7 @@ bool UStartMenuWidget::AddConfirmationLayout(UWidgetTree* Tree)
 TSharedRef<SWidget> UStartMenuWidget::RebuildWidget()
 {
 	if (WidgetTree && !WidgetTree->RootWidget) BuildDefaultLayout(WidgetTree);
-	return Super::RebuildWidget();
+	return FactoryMenuStyle::WithMenuFocusStyle(Super::RebuildWidget());
 }
 
 void UStartMenuWidget::NativeConstruct()
@@ -64,6 +104,7 @@ void UStartMenuWidget::NativeConstruct()
 #define MENU_CONTROL(Name, Type) Name = Cast<Type>(WidgetTree->FindWidget(TEXT(#Name)))
 	MENU_CONTROL(Pages, UWidgetSwitcher); MENU_CONTROL(NewGameButton, UButton); MENU_CONTROL(LoadGameButton, UButton);
 	MENU_CONTROL(ExitButton, UButton); MENU_CONTROL(Slot1Button, UButton); MENU_CONTROL(Slot2Button, UButton);
+	MENU_CONTROL(CreditsButton, UButton); MENU_CONTROL(CreditsBackButton, UButton);
 	MENU_CONTROL(Slot3Button, UButton); MENU_CONTROL(BackButton, UButton); MENU_CONTROL(SlotHeading, UTextBlock);
 	MENU_CONTROL(Slot1Text, UTextBlock); MENU_CONTROL(Slot2Text, UTextBlock); MENU_CONTROL(Slot3Text, UTextBlock);
 	MENU_CONTROL(SelectionText, UTextBlock);
@@ -72,6 +113,8 @@ void UStartMenuWidget::NativeConstruct()
 	if (NewGameButton) NewGameButton->OnClicked.AddUniqueDynamic(this, &UStartMenuWidget::ShowNewGameSlots);
 	if (LoadGameButton) LoadGameButton->OnClicked.AddUniqueDynamic(this, &UStartMenuWidget::ShowLoadGameSlots);
 	if (ExitButton) ExitButton->OnClicked.AddUniqueDynamic(this, &UStartMenuWidget::RequestExit);
+	if (CreditsButton) CreditsButton->OnClicked.AddUniqueDynamic(this, &UStartMenuWidget::ShowCredits);
+	if (CreditsBackButton) CreditsBackButton->OnClicked.AddUniqueDynamic(this, &UStartMenuWidget::ShowMainMenu);
 	if (Slot1Button) Slot1Button->OnClicked.AddUniqueDynamic(this, &UStartMenuWidget::SelectSlot1);
 	if (Slot2Button) Slot2Button->OnClicked.AddUniqueDynamic(this, &UStartMenuWidget::SelectSlot2);
 	if (Slot3Button) Slot3Button->OnClicked.AddUniqueDynamic(this, &UStartMenuWidget::SelectSlot3);
@@ -95,7 +138,18 @@ void UStartMenuWidget::ShowNewGameSlots()
 	if (bWorking) return;
 	bNewGame = true; RefreshSlots();
 	if (Pages) Pages->SetActiveWidgetIndex(1);
+	ForceLayoutPrepass();
 	if (Slot1Button) Slot1Button->SetKeyboardFocus();
+}
+
+void UStartMenuWidget::ShowCredits()
+{
+	if (bWorking || !Pages || !CreditsBackButton) return;
+	if (UWidget* Credits = WidgetTree->FindWidget(TEXT("CreditsPage")))
+	{
+		Pages->SetActiveWidget(Credits);
+		CreditsBackButton->SetKeyboardFocus();
+	}
 }
 
 void UStartMenuWidget::ShowLoadGameSlots()
@@ -103,6 +157,7 @@ void UStartMenuWidget::ShowLoadGameSlots()
 	if (bWorking) return;
 	bNewGame = false; RefreshSlots();
 	if (Pages) Pages->SetActiveWidgetIndex(1);
+	ForceLayoutPrepass();
 	if (BackButton) BackButton->SetKeyboardFocus();
 }
 
@@ -138,6 +193,7 @@ void UStartMenuWidget::SelectSlot(int32 SlotId)
 		PendingSlot = SlotId;
 		if (ConfirmText) ConfirmText->SetText(FText::Format(NSLOCTEXT("StartMenu", "OverwriteSlot", "슬롯 {0}의 기존 진행을 덮어쓰고 새 게임을 시작할까요?"), FText::AsNumber(SlotId)));
 		if (Pages) Pages->SetActiveWidgetIndex(2);
+		ForceLayoutPrepass();
 		if (CancelButton) CancelButton->SetKeyboardFocus();
 		return;
 	}
@@ -170,7 +226,7 @@ void UStartMenuWidget::CancelOverwrite()
 void UStartMenuWidget::SetBusy(bool bBusy)
 {
 	bWorking = bBusy;
-	UButton* Buttons[] = {NewGameButton, LoadGameButton, ExitButton, BackButton, ConfirmButton, CancelButton};
+	UButton* Buttons[] = {NewGameButton, LoadGameButton, ExitButton, BackButton, ConfirmButton, CancelButton, CreditsButton, CreditsBackButton};
 	for (UButton* Button : Buttons) if (Button) Button->SetIsEnabled(!bBusy);
 	RefreshSlots();
 	if (bBusy && SelectionText) SelectionText->SetText(NSLOCTEXT("StartMenu", "Starting", "준비 중…"));
@@ -192,9 +248,10 @@ FReply UStartMenuWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, const
 		TArray<UButton*> Buttons;
 		switch (Pages->GetActiveWidgetIndex())
 		{
-		case 0: Buttons = { NewGameButton, LoadGameButton, ExitButton }; break;
+		case 0: Buttons = { NewGameButton, LoadGameButton, ExitButton, CreditsButton }; break;
 		case 1: Buttons = { Slot1Button, Slot2Button, Slot3Button, BackButton }; break;
 		case 2: Buttons = { ConfirmButton, CancelButton }; break;
+		case 3: Buttons = { CreditsBackButton }; break;
 		default: return Super::NativeOnPreviewKeyDown(Geometry, Event);
 		}
 		int32 Current = INDEX_NONE;
@@ -223,6 +280,7 @@ FReply UStartMenuWidget::NativeOnKeyDown(const FGeometry& Geometry, const FKeyEv
 		if (bWorking) return FReply::Handled();
 		if (Pages->GetActiveWidgetIndex() == 2) { CancelOverwrite(); return FReply::Handled(); }
 		if (Pages->GetActiveWidgetIndex() == 1) { ShowMainMenu(); return FReply::Handled(); }
+		if (Pages->GetActiveWidget() == WidgetTree->FindWidget(TEXT("CreditsPage"))) { ShowMainMenu(); return FReply::Handled(); }
 	}
 	return Super::NativeOnKeyDown(Geometry, Event);
 }

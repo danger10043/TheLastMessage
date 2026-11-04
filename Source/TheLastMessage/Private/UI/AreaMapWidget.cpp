@@ -1,4 +1,5 @@
 #include "UI/AreaMapWidget.h"
+#include "UI/FactoryUIStyle.h"
 #include "Checkpoint/PlayerCheckpoint.h"
 #include "EngineUtils.h"
 #include "Map/AreaMapComponent.h"
@@ -10,8 +11,19 @@
 #include "Rendering/DrawElements.h"
 #include "Brushes/SlateImageBrush.h"
 #include "Engine/Texture2D.h"
+#include "Engine/Font.h"
+#include "UObject/ConstructorHelpers.h"
 #include "Styling/CoreStyle.h"
 #include "InputCoreTypes.h"
+
+UAreaMapWidget::UAreaMapWidget(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
+{
+	static ConstructorHelpers::FObjectFinder<UFont> UI(TEXT("/Game/Main/UI/Fonts/F_TLM_UI"));
+	static ConstructorHelpers::FObjectFinder<UFont> Title(TEXT("/Game/Main/UI/Fonts/F_TLM_Title"));
+	MapFont = UI.Object;
+	MapTitleFont = Title.Object;
+}
 
 bool UAreaMapWidget::OpenMap(UAreaMapComponent* Source, const UInputAction* Action)
 {
@@ -97,15 +109,21 @@ int32 UAreaMapWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geome
 	{
 		FSlateDrawElement::MakeBox(Out,Layer+Depth,Geometry.ToPaintGeometry(FVector2f(Dimensions),FSlateLayoutTransform(FVector2f(Position))),White,ESlateDrawEffect::None,Color);
 	};
-	auto Text = [&](const FText& Value, FVector2D Position, int32 FontSize, FLinearColor Color)
+	auto Text = [&](const FText& Value, FVector2D Position, int32 FontSize, FLinearColor Color, bool bHeading = false)
 	{
+		const UFont* Font = bHeading ? MapTitleFont.Get() : MapFont.Get();
 		FSlateDrawElement::MakeText(Out,Layer+8,Geometry.ToPaintGeometry(FVector2f(Size),FSlateLayoutTransform(FVector2f(Position))),Value,
-			FCoreStyle::GetDefaultFontStyle("Regular",FontSize),ESlateDrawEffect::None,Color);
+			Font ? FSlateFontInfo(Font, FontSize, TEXT("Regular")) : FCoreStyle::GetDefaultFontStyle("Regular",FontSize),
+			ESlateDrawEffect::None,Color);
 	};
-	const FLinearColor Cyan(0.22f,0.85f,1.0f);
-	Box(FVector2D::ZeroVector,Size,FLinearColor(0.003f,0.009f,0.02f,0.97f),1);
+	const FLinearColor Cyan = FactoryUI::Cyan;
+	Box(FVector2D::ZeroVector,Size,FLinearColor(0.003f,0.009f,0.014f,0.98f),1);
+	const FSlateBrush Frame = FactoryUI::Chamfer(FactoryUI::EPlate::Screen);
+	FSlateDrawElement::MakeBox(Out, Layer+2, Geometry.ToPaintGeometry(
+		FVector2f(FMath::Max(1.0, Size.X-40), FMath::Max(1.0, Size.Y-32)),
+		FSlateLayoutTransform(FVector2f(20,16))), &Frame, ESlateDrawEffect::None);
 	Box(FVector2D(36,90),FVector2D(FMath::Max(1.0,Size.X-72),1),FLinearColor(0.12f,0.25f,0.32f),2);
-	Text(NSLOCTEXT("AreaMap","Title","구역 지도"),FVector2D(40,28),28,Cyan);
+	Text(NSLOCTEXT("AreaMap","Title","구역 지도"),FVector2D(40,28),28,Cyan,true);
 	Text(NSLOCTEXT("AreaMap","Controls","휠: 확대  |  드래그: 이동  |  F: 현재 위치  |  지도 키 / ESC: 닫기"),FVector2D(40,Size.Y-42),13,FLinearColor(0.65f,0.76f,0.82f));
 	if (!MapSource || !MapSource->GetMapBounds().bIsValid)
 	{
@@ -113,7 +131,7 @@ int32 UAreaMapWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geome
 		return Layer+9;
 	}
 	if(!TravelStatus.IsEmpty()) Text(TravelStatus,FVector2D(280,66),14,FLinearColor(1.f,0.7f,0.3f));
-	Text(MapSource->GetCurrentRoomName(),FVector2D(40,66),14,FLinearColor(0.7f,0.8f,0.87f));
+	Text(MapSource->GetCurrentRoomName(),FVector2D(40,66),14,FLinearColor(0.7f,0.8f,0.87f),true);
 	Text(FText::Format(NSLOCTEXT("AreaMap","Progress","탐사 구역  {0} / {1}"),MapSource->GetExploredRoomCount(),MapSource->GetRooms().Num()),
 		FVector2D(FMath::Max(40.0,Size.X-240),40),16,FLinearColor::White);
 	Out.PushClip(FSlateClippingZone(Geometry.ToPaintGeometry(FVector2f(FMath::Max(1.0,Size.X-72),FMath::Max(1.0,Size.Y-170)),FSlateLayoutTransform(FVector2f(36,104)))));
@@ -133,24 +151,19 @@ int32 UAreaMapWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geome
 		}
 
 		const bool bCurrentRoom = Room.Id == MapSource->GetCurrentRoomId();
-		const FLinearColor Rock = bCurrentRoom ? FLinearColor(0.12f,0.26f,0.29f) : FLinearColor(0.07f,0.15f,0.19f);
-		const FLinearColor Edge = bCurrentRoom ? FLinearColor(0.37f,0.74f,0.69f) : FLinearColor(0.24f,0.49f,0.52f);
-		bool bHasTerrain = false;
+		const FLinearColor Rock = bCurrentRoom ? FLinearColor(0.18f,0.40f,0.48f) : FLinearColor(0.10f,0.25f,0.32f);
+		const FLinearColor Edge = bCurrentRoom ? FactoryUI::Cyan : FLinearColor(0.33f,0.61f,0.72f);
+		Box(Min, Max-Min, bCurrentRoom ? FLinearColor(0.024f,0.061f,0.079f) : FLinearColor(0.014f,0.035f,0.049f), 3);
 		Out.PushClip(FSlateClippingZone(Geometry.ToPaintGeometry(FVector2f(Max-Min),FSlateLayoutTransform(FVector2f(Min)))));
 		for (const FBox2D& Surface : MapSource->GetSurfaces())
 		{
 			if (!Surface.Intersect(Room.Bounds)) continue;
-			bHasTerrain = true;
 			const FVector2D A = ToMap(FVector2D(Surface.Min.X,Surface.Max.Y),Size);
 			const FVector2D B = ToMap(FVector2D(Surface.Max.X,Surface.Min.Y),Size);
-			Box(A, FVector2D(FMath::Max(1.0,B.X-A.X), FMath::Max(2.0,B.Y-A.Y)), Rock, 3);
+			Box(A, FVector2D(FMath::Max(1.0,B.X-A.X), FMath::Max(2.0,B.Y-A.Y)), Rock, 4);
 			Box(A, FVector2D(FMath::Max(1.0,B.X-A.X), 1.5), Edge, 4);
 		}
 		Out.PopClip();
-		if (!bHasTerrain)
-		{
-			Box(Min, Max-Min, FLinearColor(0.025f,0.09f,0.13f), 3);
-		}
 	}
 	for (TActorIterator<APlayerCheckpoint> It(GetWorld()); It; ++It)
     {
@@ -162,7 +175,7 @@ int32 UAreaMapWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geome
         if(!bVisible) continue;
         const FVector2D P=ToMap(WorldPoint,Size);
         const bool bTravel=It->CanFastTravel();
-        const FLinearColor Color=It->bAllowFastTravel ? (bTravel ? FLinearColor(0.3f,1.f,0.7f):FLinearColor(0.35f,0.4f,0.45f)):FLinearColor(0.95f,0.7f,0.25f);
+        const FLinearColor Color=It->bAllowFastTravel ? (bTravel ? FLinearColor(0.3f,1.f,0.7f):FLinearColor(0.35f,0.4f,0.45f)):FactoryUI::Amber;
         if(It->bAllowFastTravel)
         {
             TArray<FVector2D> Diamond={P+FVector2D(0,-9),P+FVector2D(9,0),P+FVector2D(0,9),P+FVector2D(-9,0),P+FVector2D(0,-9)};

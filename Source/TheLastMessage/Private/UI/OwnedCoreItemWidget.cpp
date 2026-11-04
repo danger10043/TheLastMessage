@@ -1,4 +1,5 @@
 #include "UI/OwnedCoreItemWidget.h"
+#include "UI/FactoryUIStyle.h"
 
 #include "Components/Border.h"
 #include "Components/Button.h"
@@ -14,6 +15,7 @@ void UOwnedCoreItemWidget::NativeOnInitialized()
 	Super::NativeOnInitialized();
 	CoreButton->OnClicked.AddDynamic(this, &ThisClass::HandleClicked);
 	DefaultIcon = CoreIcon->GetBrush();
+	SetSelected(false);
 }
 
 void UOwnedCoreItemWidget::SetEntry(const FOwnedCoreEntry& Entry)
@@ -47,7 +49,10 @@ void UOwnedCoreItemWidget::SetEntry(const FOwnedCoreEntry& Entry)
 
 void UOwnedCoreItemWidget::SetSelected(bool bSelected)
 {
-	SelectionFrame->SetBrushColor(bSelected ? SelectedColor : FLinearColor::Transparent);
+	CoreButton->SetStyle(FactoryUI::Button(bSelected));
+	CoreButton->SetBackgroundColor(FLinearColor::White);
+	SelectionFrame->SetBrushColor(FLinearColor::Transparent);
+	OverflowLevel->SetColorAndOpacity(bSelected ? FactoryUI::Amber : FactoryUI::Text);
 }
 
 void UOwnedCoreItemWidget::HandleClicked()

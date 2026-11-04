@@ -11,7 +11,7 @@ class UPlayerResourceBarWidget;
 class UPlayerWeaponSlotWidget;
 
 
-/** Gameplay binding only. Layout belongs to the derived Widget Blueprint. */
+/** Player status and the shared frame around the Blueprint's resource and weapon controls. */
 UCLASS(Abstract, Blueprintable)
 class THELASTMESSAGE_API UPlayerStatusWidget : public UUserWidget
 {

@@ -17,8 +17,8 @@ class THELASTMESSAGE_API UCoreTooltipWidget : public UUserWidget
 	GENERATED_BODY()
 
 public:
-	/** 카드에 표시한 것과 같은 이름·단계·설명을 받아 툴팁에 표시한다. */
-	void SetContent(const FText& InName, const FText& InLevel, const FText& InDescription);
+	/** 카드에 표시한 것과 같은 이름·단계·설명·조작 문구를 받아 툴팁에 표시한다. */
+	void SetContent(const FText& InName, const FText& InLevel, const FText& InDescription, const FText& InUsage);
 
 protected:
 	/** BindWidget은 WBP에서 같은 이름으로 배치한 위젯을 이 멤버와 연결한다. */
@@ -32,4 +32,8 @@ protected:
 	/** 신규/강화 단계 문구. 툴팁에 단계를 보여 주지 않을 WBP는 배치하지 않아도 된다. */
 	UPROPERTY(meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> CoreLevelText;
+
+	/** 조작 문구. 문구가 없는 코어에서는 접어서 숨긴다. */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> CoreUsageText;
 };

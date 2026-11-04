@@ -49,14 +49,20 @@ void UCoreChoiceCardWidget::SetCoreData(UCoreDataAsset* InCoreData, int32 InDisp
 
 	// 레이아웃은 WBP가 담당하고, C++은 데이터 에셋의 내용을 위젯에 표시한다.
 
-	// bHasCore가 true이면 코어 이름을 표시하고, false이면 빈 문자열을 표시한다.
-	// 카드와 툴팁이 같은 문구를 쓰도록 한 번만 만든다.
+	// 카드와 툴팁이 같은 문구를 쓰도록 한 번만 만든다. 코어가 없으면 모두 빈 문구다.
 	const FText NameText = bHasCore ? CoreData->CoreName : FText::GetEmpty();
 	const FText DescriptionText = bHasCore ? CoreDescriptionFormatter::MakeDescription(*CoreData, InCurrentLevel) : FText::GetEmpty();
 	const FText LevelText = bHasCore ? CoreDescriptionFormatter::MakeLevelText(*CoreData, InCurrentLevel) : FText::GetEmpty();
+	const FText UsageText = bHasCore ? CoreData->CoreUsage : FText::GetEmpty();
 	if (CoreNameText) CoreNameText->SetText(NameText);
 	if (CoreDescriptionText) CoreDescriptionText->SetText(DescriptionText);
 	if (CoreLevelText) CoreLevelText->SetText(LevelText);
+	// 조작 문구: 새 조작이 생기는 코어만 설명 아래에 사용법을 보여 준다. 없으면 줄 자체를 접어 빈 공간을 남기지 않는다.
+	if (CoreUsageText)
+	{
+		CoreUsageText->SetText(UsageText);
+		CoreUsageText->SetVisibility(UsageText.IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
+	}
 
 	// 툴팁: 카드 크기 때문에 설명이 잘려도 마우스를 올리면 전체 문구를 읽을 수 있게 한다.
 	// SetToolTip에 위젯을 넘기면 엔진이 마우스를 올렸을 때 커서 옆에 띄우고, 화면 밖으로 나가지 않게 위치를 잡는다.
@@ -69,7 +75,7 @@ void UCoreChoiceCardWidget::SetCoreData(UCoreDataAsset* InCoreData, int32 InDisp
 		}
 		if (CoreTooltip)
 		{
-			CoreTooltip->SetContent(NameText, LevelText, DescriptionText);
+			CoreTooltip->SetContent(NameText, LevelText, DescriptionText, UsageText);
 		}
 		CardButton->SetToolTip(bHasCore ? CoreTooltip.Get() : nullptr);
 	}

@@ -97,6 +97,10 @@ protected:
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UTextBlock> CoreDescriptionText;
 
+	/** 새 조작이 생기는 코어의 사용법. 문구가 없는 코어에서는 접어서 숨긴다. */
+	UPROPERTY(meta = (BindWidgetOptional))
+	TObjectPtr<UTextBlock> CoreUsageText;
+
 private:
 	/** 카드 버튼의 클릭을 코어 선택 알림으로 전달한다. */
 	UFUNCTION()

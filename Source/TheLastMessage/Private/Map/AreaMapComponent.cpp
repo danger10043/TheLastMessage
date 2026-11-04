@@ -41,6 +41,7 @@ void UAreaMapComponent::RefreshLayout()
 		if (It->RegionId.IsNone()) continue;
 		FAreaMapRoom& Room = Rooms.AddDefaulted_GetRef();
 		Room.Id = It->RegionId; Room.Name = It->RegionName; Room.Bounds = It->GetMapBounds();
+		Room.Silhouette = It->MapSilhouette.Get();
 		MapBounds += Room.Bounds;
 	}
 	for (TActorIterator<AActor> It(GetWorld()); It; ++It)

@@ -99,6 +99,7 @@ void AEnemyBase::BeginPlay()
 		DefaultMeshCollision = SkelMesh->GetCollisionEnabled();
 		DefaultMeshObjectType = SkelMesh->GetCollisionObjectType();
 		DefaultMeshResponses = SkelMesh->GetCollisionResponseToChannels();
+		DefaultMeshRelativeTransform = SkelMesh->GetRelativeTransform();
 	}
 
 	InitializeEnemy();
@@ -834,6 +835,9 @@ void AEnemyBase::OnReturnedToPool()
 {
 	bInPool = true;
 
+	// 풀에 보관되는 동안 사망 물리가 계속 돌며 아래로 떨어지지 않게 먼저 원래대로 되돌린다.
+	RestoreDeathPhysics();
+
 	GetWorldTimerManager().ClearAllTimersForObject(this);
 	EndHitFlash();
 	HideHealthBar();
@@ -948,6 +952,15 @@ void AEnemyBase::RestoreDeathPhysics()
 	SkelMesh->SetCollisionObjectType(DefaultMeshObjectType);
 	SkelMesh->SetCollisionResponseToChannels(DefaultMeshResponses);
 	SkelMesh->RecreatePhysicsState();
+
+	// 몸통 본(예: Pelvis)이 물리로 움직이면 메시 컴포넌트가 캡슐에서 떨어져 나가 따로 떨어진다.
+	// 캡슐에 다시 붙이고 원래 상대 위치로 되돌려야 몬스터와 모습이 함께 움직인다.
+	if (SkelMesh->GetAttachParent() != GetCapsuleComponent())
+	{
+		SkelMesh->AttachToComponent(GetCapsuleComponent(), FAttachmentTransformRules::KeepRelativeTransform);
+	}
+	SkelMesh->SetRelativeTransform(DefaultMeshRelativeTransform);
+
 	SkelMesh->RefreshBoneTransforms();
 }
 

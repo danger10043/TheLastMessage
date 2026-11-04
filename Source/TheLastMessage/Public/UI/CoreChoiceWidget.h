@@ -53,6 +53,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Core|UI")
 	void SetRerollEnabled(int32 ChoiceIndex, bool bEnabled);
 
+	/**
+	 * 고정 보상용 표시로 바꾼다. 고르는 화면이 아니라 획득한 코어 1장을 보여 주는 화면이므로
+	 * 리롤 버튼과 카드 순번을 숨기고, 안내 문구를 FixedRewardHint로 바꾼다.
+	 */
+	void SetFixedRewardMode();
+
 	/** 선택한 코어를 알린다. 호출한 쪽에서 지급 성공 여부를 확인한 뒤 화면을 닫는다. */
 	UPROPERTY(BlueprintAssignable, Category = "Core|UI")
 	FOnCoreChoiceSelected OnCoreSelected;
@@ -84,6 +90,10 @@ protected:
 	/** 동적으로 생성하는 카드의 바깥 여백. WBP의 클래스 기본값에서 카드 간격을 조절한다. */
 	UPROPERTY(EditDefaultsOnly, Category = "Core|Layout")
 	FMargin CardPadding = FMargin(12.0f, 0.0f);
+
+	/** 고정 보상 화면의 안내 문구. 선택형 화면은 WBP의 HintText 문구를 그대로 쓴다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Core|UI")
+	FText FixedRewardHint = NSLOCTEXT("CoreReward", "FixedRewardHint", "카드를 클릭해 코어를 장착하세요");
 
 	/** 선택 화면이 사라지는 데 걸리는 시간. 0이면 즉시 닫는다. */
 	UPROPERTY(EditDefaultsOnly, Category = "Core|Appearance", meta = (ClampMin = "0.0", UIMax = "1.0"))

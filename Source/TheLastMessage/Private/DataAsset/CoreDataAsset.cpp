@@ -1,9 +1,10 @@
 #include "DataAsset/CoreDataAsset.h"
 
-#include "Curves/RealCurve.h"
-#include "Engine/CurveTable.h"
 #include "GameplayEffect.h"
 #if WITH_EDITOR
+// 커브 헤더는 에디터 데이터 검증(강화 단계별 커브 확인)에서만 쓴다.
+#include "Curves/RealCurve.h"
+#include "Engine/CurveTable.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "GAS/CombatAttributeSet.h"
 #include "Misc/DataValidation.h"

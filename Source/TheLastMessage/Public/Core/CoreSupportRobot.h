@@ -19,7 +19,7 @@ struct FCollisionQueryParams;
  * 로봇은 "누구를 노릴지 → 어디서 쏠지 → 어떻게 갈지"를 스스로 정해 움직인다.
  *
  * [매 프레임]
- *   1. 전투 판단이 필요하면(1초마다, 또는 대상 변경·전투 시작·도착 직후) RunDecision을 실행한다.
+ *   1. 전투 판단이 필요하면(DecisionInterval마다, 또는 대상 변경·전투 시작·도착 직후) RunDecision을 실행한다.
  *   2. 경로가 있으면 다음 경유지, 없으면 플레이어 어깨 뒤를 목표로 한 걸음 이동한다(지형은 Sweep으로 막힘).
  *
  * [전투 판단 RunDecision]
@@ -29,8 +29,8 @@ struct FCollisionQueryParams;
  *   전투 중에는 몸을 노리는 적 쪽으로 돌리고 위아래로 기울여 조준하는 모습을 보인다.
  *
  * [사격]
- *   멈춰 쏠 수 있다고 판단될 때 쿨타임(1초)이 끝났으면 총구에서 예측 조준점으로 전용 탄을 쏜다.
- *   피해는 플레이어의 SupportRobotDamage 속성(코어 단계별 4/6/8)이며 플레이어의 피해 배율·치명타는 붙지 않는다.
+ *   멈춰 쏠 수 있다고 판단될 때 쿨타임(FireInterval)이 끝났으면 총구에서 예측 조준점으로 전용 탄을 쏜다.
+ *   피해는 플레이어의 SupportRobotDamage 속성(코어 단계별 값은 CT_CoreAbilityLevels)이며 플레이어의 피해 배율·치명타는 붙지 않는다.
  *   피해의 공격자는 로봇이고, 피해 함수가 공격자에서 ASC를 찾으므로 로봇은 플레이어 ASC를 돌려준다.
  *   연출(총구 섬광·발사음·사격 몽타주)은 몬스터처럼 C++ 값으로 지정하고 C++에서 재생한다. 대기·이동 애니메이션은 메시의 ABP가 맡는다.
  *
@@ -71,12 +71,6 @@ public:
 	/** 죽은 적처럼 더 노리면 안 되는 대상을 잊는다. */
 	void ForgetTarget(const AActor* Enemy);
 
-	/** 지금 노리는 적. 전투 판단에서 정해진다. */
-	AActor* GetTarget() const;
-
-	/** 경유지 하나로 된 경로를 정한다. */
-	void SetMoveGoal(const FVector& Goal);
-
 	/** 경유지를 차례로 따라가는 경로를 정한다. 전투가 끝나면 무시하고 플레이어를 따라간다. */
 	void SetMovePath(const TArray<FVector>& Waypoints);
 	void ClearMoveGoal();
@@ -85,7 +79,6 @@ public:
 	void TeleportToPlayer();
 
 	bool IsInCombat() const;
-	APlayerBase* GetPlayer() const;
 
 	/** 지금 플레이어 카메라에 보이는 플레이어 깊이 평면의 사각형(X·Z)을 구한다. 카메라가 없으면 false. */
 	bool GetScreenBounds(FBox2D& OutBounds) const;
@@ -183,7 +176,7 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Core|SupportRobot|Move", meta = (ClampMin = "0.0", ClampMax = "89.0"))
 	float MaxAimPitch = 45.0f;
 
-	/** 전투 판단(대상·자리 확인)을 반복하는 주기(초). 공격 주기와 같다. */
+	/** 전투 판단(대상·자리 확인)을 반복하는 주기(초). 사격 주기(FireInterval)와는 별개다. */
 	UPROPERTY(EditDefaultsOnly, Category = "Core|SupportRobot|Combat", meta = (ClampMin = "0.1"))
 	float DecisionInterval = 1.0f;
 
@@ -205,7 +198,7 @@ protected:
 
 	/**
 	 * 새 자리를 찾을 때 조준점과의 거리 띠(cm). 이 띠 안의 자리만 1·2등급 후보가 된다.
-	 * 쏘는 중에는 FireRange까지 허용하므로, 띠 바깥 9~12m는 "이미 있으면 머무르고 일부러 오지는 않는" 여유 구간이다.
+	 * 쏘는 중에는 FireRange까지 허용하므로, 띠 바깥부터 FireRange까지는 "이미 있으면 머무르고 일부러 오지는 않는" 여유 구간이다.
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Core|SupportRobot|Combat", meta = (ClampMin = "0.0"))
 	float GoalMinDistance = 400.0f;
@@ -292,6 +285,9 @@ private:
 
 	/** 지형 판정에서 빼야 할 액터(플레이어, 로봇이 쏜 탄)를 넣는다. */
 	void AddTerrainQueryIgnores(FCollisionQueryParams& Params) const;
+
+	/** 지형 판정용 채널 응답. 캐릭터 캡슐(Pawn)과 적 메시(PhysicsBody)는 가림으로 보지 않는다. */
+	static FCollisionResponseParams MakeTerrainResponse();
 
 	// ---- 전투 판단 ----
 

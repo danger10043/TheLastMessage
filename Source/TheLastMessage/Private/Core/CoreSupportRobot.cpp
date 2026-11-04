@@ -102,7 +102,7 @@ void ACoreSupportRobot::Tick(float DeltaSeconds)
 	}
 	if (bInCombat)
 	{
-		// 노리던 적이 죽거나 사라지면 1초를 기다리지 않고 다음 대상을 찾는다.
+		// 노리던 적이 죽거나 사라지면 다음 판단 주기를 기다리지 않고 다음 대상을 찾는다.
 		// IsExplicitlyNull은 "처음부터 대상이 없음"과 "있었는데 사라짐"을 구분한다.
 		if (!Target.IsExplicitlyNull() && !IsAliveEnemy(Target.Get())) bDecisionRequested = true;
 		DecisionElapsed += DeltaSeconds;
@@ -246,7 +246,7 @@ void ACoreSupportRobot::AdvancePath()
 		++PathIndex;
 		return;
 	}
-	// 마지막 경유지에 도착하면 그 자리에 떠 있고, 1초를 기다리지 않고 바로 쏠 수 있는지 판단한다.
+	// 마지막 경유지에 도착하면 그 자리에 떠 있고, 다음 판단 주기를 기다리지 않고 바로 쏠 수 있는지 판단한다.
 	// 교전 시작 이동도 여기서 끝난다.
 	if (!bArrivalHandled)
 	{
@@ -304,11 +304,6 @@ void ACoreSupportRobot::TeleportToPlayer()
 bool ACoreSupportRobot::HasPath() const
 {
 	return Path.IsValidIndex(PathIndex);
-}
-
-void ACoreSupportRobot::SetMoveGoal(const FVector& Goal)
-{
-	SetMovePath({ Goal });
 }
 
 void ACoreSupportRobot::SetMovePath(const TArray<FVector>& Waypoints)
@@ -409,11 +404,16 @@ bool ACoreSupportRobot::SweepTerrain(const FVector& Start, const FVector& End, f
 	// 그래서 이동에서는 적을 통과하고, 시야 판정에서는 사이에 낀 적을 가림으로 보지 않는다.
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(SupportRobotTerrain), false, this);
 	AddTerrainQueryIgnores(Params);
+	return World->SweepSingleByChannel(OutHit, Start, End, FQuat::Identity, ECC_WorldDynamic,
+		FCollisionShape::MakeSphere(Radius), Params, MakeTerrainResponse());
+}
+
+FCollisionResponseParams ACoreSupportRobot::MakeTerrainResponse()
+{
 	FCollisionResponseParams Response;
 	Response.CollisionResponse.SetResponse(ECC_Pawn, ECR_Ignore);
 	Response.CollisionResponse.SetResponse(ECC_PhysicsBody, ECR_Ignore);
-	return World->SweepSingleByChannel(OutHit, Start, End, FQuat::Identity, ECC_WorldDynamic,
-		FCollisionShape::MakeSphere(Radius), Params, Response);
+	return Response;
 }
 
 bool ACoreSupportRobot::IsPathBlocked(const FVector& Start, const FVector& End, float Radius) const
@@ -430,11 +430,8 @@ bool ACoreSupportRobot::IsSpotFree(const FVector& Location) const
 	// 이동 Sweep과 같은 기준으로, 로봇 몸이 그 자리에 놓이면 지형과 겹치는지 본다.
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(SupportRobotSpot), false, this);
 	AddTerrainQueryIgnores(Params);
-	FCollisionResponseParams Response;
-	Response.CollisionResponse.SetResponse(ECC_Pawn, ECR_Ignore);
-	Response.CollisionResponse.SetResponse(ECC_PhysicsBody, ECR_Ignore);
 	return !World->OverlapBlockingTestByChannel(Location, FQuat::Identity, ECC_WorldDynamic,
-		FCollisionShape::MakeSphere(CollisionRadius), Params, Response);
+		FCollisionShape::MakeSphere(CollisionRadius), Params, MakeTerrainResponse());
 }
 
 void ACoreSupportRobot::AddTerrainQueryIgnores(FCollisionQueryParams& Params) const
@@ -465,11 +462,11 @@ void ACoreSupportRobot::RunDecision()
 
 		// 처음 노리는 적이면 지금 자리에서 쏠 수 있어도 먼저 공격 위치로 날아간다.
 		// 따라다니던 자리에서 바로 쏘면 적을 알아챘다는 느낌이 나지 않기 때문이다.
-		// 날아가는 동안(교전 시작 이동)에는 1초 판단이 이동을 끊지 않고, 도착하면 바로 판단해 첫 발을 쏜다.
+		// 날아가는 동안(교전 시작 이동)에는 주기 판단이 이동을 끊지 않고, 도착하면 바로 판단해 첫 발을 쏜다.
 		const bool bNewTarget = EngagedTarget.Get() != Enemy;
 		if (!bNewTarget && bEngaging && HasPath()) return;
 
-		// 이미 교전 중인 적은 지금 자리에서 쏠 수 있으면 움직이지 않고 쏜다. 9~12m 여유 구간에서도 머무르는 이유가 이것이다.
+		// 이미 교전 중인 적은 지금 자리에서 쏠 수 있으면 움직이지 않고 쏜다. 띠 바깥 여유 구간에서도 머무르는 이유가 이것이다.
 		// 도착 직후에도 이 판단이 바로 불리므로, 쿨타임이 끝나 있으면 도착하자마자 첫 발이 나간다.
 		const FVector AimPoint = GetAimPoint(Enemy);
 		const bool bCanShootHere = CanShootFrom(GetActorLocation(), AimPoint);
@@ -611,7 +608,7 @@ int32 ACoreSupportRobot::RateSpot(const FVector& Spot, const FVector& AimPoint) 
 	const float Distance = FVector::Dist(Spot, AimPoint);
 	if (Distance > FireRange || IsPathBlocked(Spot, AimPoint, ProjectileRadius)) return 0;
 
-	// 4~9m 띠 밖이면 쏠 수는 있어도 너무 가깝거나 사거리 끝이라 최후 수단(3등급)이다.
+	// 거리 띠(GoalMinDistance~GoalMaxDistance) 밖이면 쏠 수는 있어도 너무 가깝거나 사거리 끝이라 최후 수단(3등급)이다.
 	// 띠 안이면서 조준점보다 충분히 높으면 내려다보며 쏘는 자리라 1등급이다. "위"는 중력과 관계없이 월드 +Z다.
 	if (Distance < GoalMinDistance || Distance > GoalMaxDistance) return 3;
 	return Spot.Z - AimPoint.Z >= AboveTargetHeight ? 1 : 2;
@@ -850,14 +847,4 @@ bool ACoreSupportRobot::IsInCombat() const
 {
 	const UWorld* World = GetWorld();
 	return World && World->GetTimeSeconds() < CombatEndTime;
-}
-
-AActor* ACoreSupportRobot::GetTarget() const
-{
-	return Target.Get();
-}
-
-APlayerBase* ACoreSupportRobot::GetPlayer() const
-{
-	return Player.Get();
 }

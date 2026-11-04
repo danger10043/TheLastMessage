@@ -6,12 +6,14 @@
 
 class UAreaMapComponent;
 class UInputAction;
+class UFont;
 
 UCLASS(Blueprintable)
 class THELASTMESSAGE_API UAreaMapWidget : public UUserWidget
 {
 	GENERATED_BODY()
 public:
+	UAreaMapWidget(const FObjectInitializer& ObjectInitializer);
 	bool OpenMap(UAreaMapComponent* Source, const UInputAction* Action);
 	UFUNCTION(BlueprintCallable, Category="Area Map") void CloseMap();
 	void SetMapSource(UAreaMapComponent* Source) { MapSource = Source; }
@@ -26,6 +28,8 @@ protected:
 	virtual void NativeTick(const FGeometry& Geometry, float DeltaTime) override;
 	virtual void NativeDestruct() override;
 private:
+	UPROPERTY() TObjectPtr<UFont> MapFont;
+	UPROPERTY() TObjectPtr<UFont> MapTitleFont;
 	void RestoreInput();
 	float GetMapScale(FVector2D Size) const;
 	FVector2D ToMap(FVector2D World, FVector2D Size) const;

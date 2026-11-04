@@ -43,7 +43,7 @@ void UPauseMenuWidget::BuildDefaultLayout(UWidgetTree* Tree)
 TSharedRef<SWidget> UPauseMenuWidget::RebuildWidget()
 {
 	if (WidgetTree && !WidgetTree->RootWidget) BuildDefaultLayout(WidgetTree);
-	return Super::RebuildWidget();
+	return FactoryMenuStyle::WithMenuFocusStyle(Super::RebuildWidget());
 }
 
 void UPauseMenuWidget::NativeConstruct()
@@ -92,10 +92,10 @@ void UPauseMenuWidget::ShowError(const FText& Message)
 void UPauseMenuWidget::Resume() { if (!bWorking) OnActionRequested.Broadcast(EPauseMenuAction::Resume); }
 void UPauseMenuWidget::Reload()
 {
-	if (bCheckpointAvailable) Ask(EPauseMenuAction::ReloadCheckpoint, NSLOCTEXT("Pause", "ReloadConfirm", "마지막 체크포인트 이후 진행이 사라집니다. 불러올까요?"));
+	if (bCheckpointAvailable) Ask(EPauseMenuAction::ReloadCheckpoint, NSLOCTEXT("Pause", "ReloadConfirm", "마지막 저장 시점을 불러옵니다."));
 }
-void UPauseMenuWidget::MainMenu() { Ask(EPauseMenuAction::MainMenu, NSLOCTEXT("Pause", "MenuConfirm", "마지막 저장 이후 진행이 사라집니다. 시작 메뉴로 나갈까요?")); }
-void UPauseMenuWidget::Quit() { Ask(EPauseMenuAction::QuitGame, NSLOCTEXT("Pause", "QuitConfirm", "마지막 저장 이후 진행이 사라집니다. 게임을 종료할까요?")); }
+void UPauseMenuWidget::MainMenu() { Ask(EPauseMenuAction::MainMenu, NSLOCTEXT("Pause", "MenuConfirm", "마지막 저장 이후의 진행 내용이 사라집니다.\n시작 메뉴로 나갈까요?")); }
+void UPauseMenuWidget::Quit() { Ask(EPauseMenuAction::QuitGame, NSLOCTEXT("Pause", "QuitConfirm", "마지막 저장 이후의 진행 내용이 사라집니다.\n게임을 종료할까요?")); }
 void UPauseMenuWidget::OpenSettings()
 {
 	if (bWorking || !Pages) return;
@@ -107,7 +107,11 @@ void UPauseMenuWidget::Ask(EPauseMenuAction Action, const FText& Message)
 	if (bWorking) return;
 	PendingAction = Action;
 	if (UTextBlock* Text = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("ConfirmText")))) Text->SetText(Message);
-	if (Pages) Pages->SetActiveWidgetIndex(1);
+	if (Pages)
+	{
+		Pages->SetActiveWidgetIndex(1);
+		ForceLayoutPrepass();
+	}
 	if (UWidget* Cancel = WidgetTree->FindWidget(TEXT("CancelButton"))) Cancel->SetKeyboardFocus();
 }
 void UPauseMenuWidget::Confirm() { if (!bWorking && Pages && Pages->GetActiveWidgetIndex() == 1) OnActionRequested.Broadcast(PendingAction); }

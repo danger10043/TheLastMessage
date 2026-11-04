@@ -1,6 +1,8 @@
 #include "UI/OwnedCoreWidget.h"
+#include "UI/FactoryUIStyle.h"
 
 #include "AbilitySystemComponent.h"
+#include "Components/Border.h"
 #include "Components/Button.h"
 #include "Components/Image.h"
 #include "Components/ScrollBox.h"
@@ -24,6 +26,34 @@ void UOwnedCoreWidget::NativeOnInitialized()
 	AbilityTab->OnClicked.AddDynamic(this, &ThisClass::ShowAbilityCores);
 	StatTab->OnClicked.AddDynamic(this, &ThisClass::ShowStatCores);
 	DefaultIcon = DetailIcon->GetBrush();
+	if (UImage* Screen = Cast<UImage>(GetWidgetFromName(TEXT("ScreenBackground"))))
+	{
+		Screen->SetBrush(FactoryUI::Chamfer(FactoryUI::EPlate::Screen));
+		Screen->SetColorAndOpacity(FLinearColor::White);
+	}
+	if (UTextBlock* Title = Cast<UTextBlock>(GetWidgetFromName(TEXT("ScreenTitle"))))
+	{
+		Title->SetColorAndOpacity(FactoryUI::Cyan);
+	}
+	const FSlateBrush DetailPlate = FactoryUI::Chamfer();
+	if (UWidget* Background = GetWidgetFromName(TEXT("DetailBackground")))
+	{
+		if (UBorder* Border = Cast<UBorder>(Background))
+		{
+			Border->SetBrush(DetailPlate);
+			Border->SetBrushColor(FLinearColor::White);
+		}
+		else if (UImage* Image = Cast<UImage>(Background))
+		{
+			Image->SetBrush(DetailPlate);
+			Image->SetColorAndOpacity(FLinearColor::White);
+		}
+	}
+	CloseButton->SetStyle(FactoryUI::Button());
+	CoreName->SetColorAndOpacity(FactoryUI::Text);
+	CoreLevel->SetColorAndOpacity(FactoryUI::Cyan);
+	CurrentEffect->SetColorAndOpacity(FactoryUI::Text);
+	NextEffect->SetColorAndOpacity(FactoryUI::Amber);
 }
 
 bool UOwnedCoreWidget::SetSources(UCoreComponent* Core, UAbilitySystemComponent* ASC, FKey InToggleKey)
@@ -89,6 +119,8 @@ void UOwnedCoreWidget::SetActiveCategory(ECoreCategory Category)
 	ActiveCategory = Category;
 	const bool bAbility = Category == ECoreCategory::Ability;
 	CategoryPages->SetActiveWidgetIndex(bAbility ? 0 : 1);
+	AbilityTab->SetStyle(FactoryUI::Button(bAbility));
+	StatTab->SetStyle(FactoryUI::Button(!bAbility));
 	AbilityTabIndicator->SetVisibility(bAbility ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
 	StatTabIndicator->SetVisibility(bAbility ? ESlateVisibility::Hidden : ESlateVisibility::HitTestInvisible);
 	const FName PreviousId = SelectedByCategory.FindRef(Category);

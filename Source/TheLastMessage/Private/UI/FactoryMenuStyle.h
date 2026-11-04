@@ -14,4 +14,8 @@ namespace FactoryMenuStyle
 	UTextBlock* AddText(UWidgetTree* Tree, UVerticalBox* Box, FName Name, const FText& Label, int32 Size);
 	void AddButton(UWidgetTree* Tree, UVerticalBox* Box, FName Name, FName TextName, const FText& Label, bool bCompact = false);
 	void UpdateFocus(UWidgetTree* Tree);
+	TSharedRef<SWidget> WithMenuFocusStyle(const TSharedRef<SWidget>& Content);
+#if WITH_EDITOR
+	void ApplyLayout(UWidgetTree* Tree, bool bPause);
+#endif
 }

@@ -20,6 +20,7 @@ class THELASTMESSAGE_API UStartMenuWidget : public UUserWidget
 public:
 	static void BuildDefaultLayout(UWidgetTree* Tree);
 	static bool AddConfirmationLayout(UWidgetTree* Tree);
+	static bool AddCreditsLayout(UWidgetTree* Tree);
 	UFUNCTION(BlueprintCallable, Category="Menu") void ShowMainMenu();
 	UFUNCTION(BlueprintCallable, Category="Menu") void ShowNewGameSlots();
 	UFUNCTION(BlueprintCallable, Category="Menu") void ShowLoadGameSlots();
@@ -39,6 +40,8 @@ protected:
 	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UButton> NewGameButton;
 	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UButton> LoadGameButton;
 	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UButton> ExitButton;
+	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UButton> CreditsButton;
+	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UButton> CreditsBackButton;
 	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UButton> Slot1Button;
 	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UButton> Slot2Button;
 	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UButton> Slot3Button;
@@ -58,6 +61,7 @@ private:
 	UFUNCTION() void SelectSlot2();
 	UFUNCTION() void SelectSlot3();
 	UFUNCTION() void RequestExit();
+	UFUNCTION() void ShowCredits();
 	UFUNCTION() void ConfirmOverwrite();
 	UFUNCTION() void CancelOverwrite();
 	bool bNewGame = true;

@@ -1,6 +1,10 @@
 #include "Tools/IntegratePlayerUICommandlet.h"
 
 #if WITH_EDITOR
+#include "UI/FactoryUIStyle.h"
+#include "UI/FactoryMenuStyle.h"
+#include "Components/ScaleBox.h"
+#include "Components/WrapBox.h"
 #include "UI/PlayerStatusWidget.h"
 #include "UI/PlayerResourceBarWidget.h"
 #include "UI/PlayerWeaponSlotWidget.h"
@@ -126,6 +130,281 @@ bool CompileSave(UWidgetBlueprint* BP)
 	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(BP);
 	FKismetEditorUtilities::CompileBlueprint(BP);
 	return BP->Status != BS_Error && Save(BP);
+}
+
+bool ApplyProjectFonts()
+{
+	UFont* Title = LoadObject<UFont>(nullptr, TEXT("/Game/Main/UI/Fonts/F_TLM_Title"));
+	UFont* UI = LoadObject<UFont>(nullptr, TEXT("/Game/Main/UI/Fonts/F_TLM_UI"));
+	UFont* Body = LoadObject<UFont>(nullptr, TEXT("/Game/Main/UI/Fonts/F_TLM_Body"));
+	if (!Title || !UI || !Body || !Title->GetCompositeFont() || !UI->GetCompositeFont() || !Body->GetCompositeFont()) return false;
+	if (Title->GetCompositeFont()->FallbackTypeface.Typeface.Fonts.Num() != 1 ||
+		UI->GetCompositeFont()->FallbackTypeface.Typeface.Fonts.Num() != 1 ||
+		Body->GetCompositeFont()->DefaultTypeface.Fonts.Num() != 4) return false;
+
+	struct FFontTarget { const TCHAR* Path; UFont* DefaultFont; };
+	const FFontTarget Targets[] = {
+		{TEXT("/Game/Main/UI/Menu/WBP_StartMenu"), Body},
+		{TEXT("/Game/Main/UI/Menu/WBP_PauseMenu"), Body},
+		{TEXT("/Game/Main/UI/HUD/WBP_PlayerUI"), UI},
+		{TEXT("/Game/Main/UI/HUD/WBP_WeaponCharge"), UI},
+		{TEXT("/Game/Main/UI/HUD/Components/WBP_WeaponSlot"), UI},
+		{TEXT("/Game/Main/UI/HUD/Components/WBP_ResourceBar"), UI},
+		{TEXT("/Game/Main/UI/Save/WBP_SaveNotification"), UI},
+		{TEXT("/Game/Test_Jihun/Core/WBP/WBP_OwnedCore"), Body},
+		{TEXT("/Game/Test_Jihun/Core/WBP/WBP_OwnedCoreItem"), UI},
+		{TEXT("/Game/Test_Jihun/Core/WBP/WBP_CoreChoice"), Body},
+		{TEXT("/Game/Test_Jihun/Core/WBP/WBP_CoreChoiceCard"), Body}
+	};
+	const TSet<FName> Headings{TEXT("Heading"), TEXT("SlotHeading"), TEXT("ConfirmHeading"),
+		TEXT("SettingsHeading"), TEXT("ScreenTitle"), TEXT("TitleText")};
+	const TSet<FName> SystemLabels{TEXT("NavigationHint"), TEXT("PausedLabel"), TEXT("StatusText"),
+		TEXT("SelectionText"), TEXT("HintText"), TEXT("SelectionCounter"), TEXT("ModuleNumberText")};
+	const TSet<FName> BodyWeights{TEXT("Regular"), TEXT("Medium"), TEXT("SemiBold"), TEXT("Bold")};
+	for (const FFontTarget& Target : Targets)
+	{
+		UWidgetBlueprint* BP = LoadObject<UWidgetBlueprint>(nullptr, Target.Path);
+		if (!BP || !BP->WidgetTree) return false;
+		int32 Count = 0;
+		BP->WidgetTree->ForEachWidget([&](UWidget* Widget)
+		{
+			UTextBlock* TextBlock = Cast<UTextBlock>(Widget);
+			if (!TextBlock) return;
+			FSlateFontInfo Font = TextBlock->GetFont();
+			const FName Name = TextBlock->GetFName();
+			UFont* Family = Headings.Contains(Name) ? Title : SystemLabels.Contains(Name) ? UI : Target.DefaultFont;
+			Font.FontObject = Family;
+			Font.CompositeFont.Reset();
+			if (Family != Body || !BodyWeights.Contains(Font.TypefaceFontName)) Font.TypefaceFontName = TEXT("Regular");
+			TextBlock->SetFont(Font);
+			++Count;
+		});
+		if (Count > 0 && !CompileSave(BP)) return false;
+		UE_LOG(LogTemp, Display, TEXT("TLM_FONT_APPLIED %s (%d text widgets)"), Target.Path, Count);
+	}
+	return true;
+}
+
+bool SaveUITexture(const FString& Path, int32 Size, const TArray<FColor>& Pixels, bool bRefresh = false)
+{
+	UTexture2D* Texture = LoadObject<UTexture2D>(nullptr, *Path, nullptr, LOAD_NoWarn);
+	if (Texture && !bRefresh) return true;
+	const bool bCreated = Texture == nullptr;
+	if (bCreated)
+	{
+		Texture = NewObject<UTexture2D>(CreatePackage(*Path),
+			FName(*FPackageName::GetLongPackageAssetName(Path)), RF_Public | RF_Standalone);
+	}
+	else Texture->PreEditChange(nullptr);
+	Texture->Source.Init(Size, Size, 1, 1, TSF_BGRA8, reinterpret_cast<const uint8*>(Pixels.GetData()));
+	Texture->CompressionSettings = TC_EditorIcon;
+	Texture->MipGenSettings = TMGS_NoMipmaps;
+	Texture->NeverStream = true;
+	Texture->SRGB = true;
+	Texture->UpdateResource();
+	if (bCreated) FAssetRegistryModule::AssetCreated(Texture);
+	else Texture->PostEditChange();
+	return Save(Texture);
+}
+
+bool SaveFactoryLayout()
+{
+	for (const FactoryUI::EPlate State : {FactoryUI::EPlate::Normal, FactoryUI::EPlate::Selected, FactoryUI::EPlate::Screen})
+	{
+		const FString Path = FactoryUI::PlatePath(State);
+		TArray<FColor> Pixels;
+		FactoryUI::MakePlatePixels(State, Pixels);
+		if (!SaveUITexture(Path, 64, Pixels, true)) return false;
+	}
+	return true;
+}
+
+bool BuildStatusPlate(UWidgetBlueprint* BP)
+{
+	UWidgetTree* WidgetTree = BP->WidgetTree;
+	UPlayerResourceBarWidget* HealthResource = Cast<UPlayerResourceBarWidget>(WidgetTree->FindWidget(TEXT("HealthResource")));
+	UPlayerResourceBarWidget* EnergyResource = Cast<UPlayerResourceBarWidget>(WidgetTree->FindWidget(TEXT("EnergyResource")));
+	UCanvasPanel* Canvas = WidgetTree ? Cast<UCanvasPanel>(WidgetTree->RootWidget) : nullptr;
+	if (!Canvas || !HealthResource || !EnergyResource || WidgetTree->FindWidget(TEXT("UnifiedStatusPlate"))) return Canvas != nullptr && HealthResource != nullptr && EnergyResource != nullptr;
+
+	UOverlay* Plate = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass(), TEXT("UnifiedStatusPlate"));
+	auto* Position = Canvas->AddChildToCanvas(Plate);
+	Position->SetAnchors(FAnchors(0, 1));
+	Position->SetAlignment(FVector2D(0, 1));
+	Position->SetPosition(FVector2D(28, -28));
+	Position->SetSize(FVector2D(530, 116));
+	UImage* Background = WidgetTree->ConstructWidget<UImage>();
+	Background->SetVisibility(ESlateVisibility::HitTestInvisible);
+	if (UTexture2D* Texture = LoadObject<UTexture2D>(nullptr, TEXT("/Game/Main/UI/HUD/Textures/T_HUD_ResourceFrame")))
+		Background->SetBrushFromTexture(Texture);
+	else Background->SetBrush(FactoryUI::Chamfer(FactoryUI::EPlate::Screen));
+	auto* BackgroundSlot = Plate->AddChildToOverlay(Background);
+	BackgroundSlot->SetHorizontalAlignment(HAlign_Fill);
+	BackgroundSlot->SetVerticalAlignment(VAlign_Fill);
+
+	UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>();
+	auto* RowSlot = Plate->AddChildToOverlay(Row);
+	RowSlot->SetPadding(FMargin(24, 12));
+	RowSlot->SetVerticalAlignment(VAlign_Center);
+	RowSlot->SetHorizontalAlignment(HAlign_Center);
+	UVerticalBox* Resources = WidgetTree->ConstructWidget<UVerticalBox>();
+	Row->AddChildToHorizontalBox(Resources)->SetVerticalAlignment(VAlign_Center);
+	for (UPlayerResourceBarWidget* Resource : {HealthResource, EnergyResource})
+	{
+		Resource->RemoveFromParent();
+		auto* Size = WidgetTree->ConstructWidget<USizeBox>();
+		Size->SetWidthOverride(244);
+		Size->SetHeightOverride(31);
+		auto* Scale = WidgetTree->ConstructWidget<UScaleBox>();
+		Scale->SetStretch(EStretch::ScaleToFit);
+		Size->AddChild(Scale);
+		Scale->AddChild(Resource);
+		Resources->AddChildToVerticalBox(Size)->SetPadding(FMargin(0, 1));
+	}
+
+	UImage* Divider = WidgetTree->ConstructWidget<UImage>();
+	Divider->SetBrush(FactoryUI::Plate(FactoryUI::Edge, FLinearColor::Transparent, 0));
+	Divider->SetDesiredSizeOverride(FVector2D(1, 60));
+	auto* DividerSlot = Row->AddChildToHorizontalBox(Divider);
+	DividerSlot->SetPadding(FMargin(9, 0));
+	DividerSlot->SetVerticalAlignment(VAlign_Center);
+	for (const TCHAR* Name : {TEXT("WeaponSlot1"), TEXT("WeaponSlot2"), TEXT("WeaponSlot3"), TEXT("WeaponSlot4")})
+	{
+		UPlayerWeaponSlotWidget* Card = Cast<UPlayerWeaponSlotWidget>(WidgetTree->FindWidget(Name));
+		if (!Card) return false;
+		Card->RemoveFromParent();
+		auto* Size = WidgetTree->ConstructWidget<USizeBox>();
+		Size->SetWidthOverride(49);
+		Size->SetHeightOverride(82);
+		auto* Scale = WidgetTree->ConstructWidget<UScaleBox>();
+		Scale->SetStretch(EStretch::ScaleToFit);
+		Size->AddChild(Scale);
+		Scale->AddChild(Card);
+		Row->AddChildToHorizontalBox(Size)->SetPadding(FMargin(2, 0));
+	}
+	return true;
+}
+
+bool ApplyMenuArtwork()
+{
+	UTexture2D* Normal = LoadObject<UTexture2D>(nullptr, TEXT("/Game/Main/UI/Menu/Textures/T_UI_MenuMetalNormal"));
+	UTexture2D* Focused = LoadObject<UTexture2D>(nullptr, TEXT("/Game/Main/UI/Menu/Textures/T_UI_MenuMetalSelected"));
+	UTexture2D* Panel = LoadObject<UTexture2D>(nullptr, TEXT("/Game/Main/UI/Menu/Textures/T_UI_MenuMetalPanel"));
+	if (!Normal || !Focused || !Panel) return false;
+	for (const TCHAR* Path : {TEXT("/Game/Main/UI/Menu/WBP_StartMenu"), TEXT("/Game/Main/UI/Menu/WBP_PauseMenu")})
+	{
+		UWidgetBlueprint* BP = LoadObject<UWidgetBlueprint>(nullptr, Path);
+		if (!BP || !BP->WidgetTree) return false;
+		const bool bPause = BP->WidgetTree->FindWidget(TEXT("PausePages")) != nullptr;
+		UWidget* Pages = BP->WidgetTree->FindWidget(bPause ? TEXT("PausePages") : TEXT("Pages"));
+		const UCanvasPanelSlot* PageSlot = Pages ? Cast<UCanvasPanelSlot>(Pages->Slot) : nullptr;
+		if (!PageSlot) return false;
+		if (UTextBlock* ConfirmText = Cast<UTextBlock>(BP->WidgetTree->FindWidget(TEXT("ConfirmText"))))
+		{
+			ConfirmText->SetAutoWrapText(false);
+			ConfirmText->SetWrapTextAt(FMath::Max(1.0, PageSlot->GetSize().X - 32.0));
+		}
+		if (bPause)
+		{
+			for (const TCHAR* Name : {TEXT("PausePanelArtwork"), TEXT("PausePages"), TEXT("NavigationHint")})
+			{
+				UWidget* Control = BP->WidgetTree->FindWidget(Name);
+				UCanvasPanelSlot* Slot = Control ? Cast<UCanvasPanelSlot>(Control->Slot) : nullptr;
+				if (Slot && Slot->GetAnchors().Minimum == FVector2D::ZeroVector && Slot->GetAnchors().Maximum == FVector2D::ZeroVector)
+				{
+					const FVector2D Position = Slot->GetPosition();
+					Slot->SetAnchors(FAnchors(0.5f));
+					Slot->SetPosition(Position - FVector2D(960, 540));
+				}
+			}
+		}
+		BP->WidgetTree->ForEachWidget([&](UWidget* Widget)
+		{
+			if (UButton* Button = Cast<UButton>(Widget))
+			{
+				FButtonStyle Style = Button->GetStyle();
+				Style.Normal.SetResourceObject(Normal);
+				Style.Normal.DrawAs = ESlateBrushDrawType::Image;
+				Style.Normal.Margin = FMargin(0);
+				Style.Normal.TintColor = FLinearColor::White;
+				Style.Disabled = Style.Normal;
+				Style.Disabled.TintColor = FLinearColor(0.48f, 0.48f, 0.48f);
+				Style.Hovered = Style.Normal;
+				Style.Hovered.SetResourceObject(Focused);
+				Style.Pressed = Style.Hovered;
+				Style.Pressed.TintColor = FLinearColor(0.75f, 0.75f, 0.75f);
+				Style.PressedPadding = Style.NormalPadding;
+				Button->SetStyle(Style);
+			}
+			if (Widget->GetFName() == TEXT("PausePanelArtwork"))
+			{
+				if (UImage* Image = Cast<UImage>(Widget))
+				{
+					FSlateBrush Brush = Image->GetBrush();
+					Brush.SetResourceObject(Panel);
+					Brush.DrawAs = ESlateBrushDrawType::Image;
+					Brush.Margin = FMargin(0);
+					Brush.SetUVRegion(FBox2f(ForceInit));
+					Image->SetBrush(Brush);
+				}
+			}
+		});
+		if (!CompileSave(BP)) return false;
+	}
+	return true;
+}
+
+bool ApplyFactoryLayout(bool bMenusOnly = false)
+{
+	if (!bMenusOnly && !SaveFactoryLayout()) return false;
+	auto SaveLayout = [](UWidgetBlueprint* BP)
+	{
+		BP->WidgetTree->ForEachWidget([BP](UWidget* Control)
+		{
+			if (!BP->WidgetVariableNameToGuidMap.Contains(Control->GetFName()))
+			{
+				BP->WidgetVariableNameToGuidMap.Add(Control->GetFName(), FGuid::NewGuid());
+			}
+		});
+		return CompileSave(BP);
+	};
+	const TCHAR* MenuPaths[] = {
+		TEXT("/Game/Main/UI/Menu/WBP_StartMenu"),
+		TEXT("/Game/Main/UI/Menu/WBP_PauseMenu")
+	};
+	for (int32 Index = 0; Index < UE_ARRAY_COUNT(MenuPaths); ++Index)
+	{
+		Backup(MenuPaths[Index]);
+		UWidgetBlueprint* BP = LoadObject<UWidgetBlueprint>(nullptr, MenuPaths[Index]);
+		if (!BP || !BP->WidgetTree) return false;
+		FactoryMenuStyle::ApplyLayout(BP->WidgetTree, Index == 1);
+		if (!SaveLayout(BP)) return false;
+	}
+	if (bMenusOnly) return true;
+	const TCHAR* HUDPath = TEXT("/Game/Main/UI/HUD/WBP_PlayerUI");
+	Backup(HUDPath);
+	UWidgetBlueprint* HUD = LoadObject<UWidgetBlueprint>(nullptr, HUDPath);
+	if (!HUD || !HUD->WidgetTree || !BuildStatusPlate(HUD) || !SaveLayout(HUD)) return false;
+
+	const TCHAR* ResourcePath = TEXT("/Game/Main/UI/HUD/Components/WBP_ResourceBar");
+	Backup(ResourcePath);
+	UWidgetBlueprint* Resource = LoadObject<UWidgetBlueprint>(nullptr, ResourcePath);
+	UWidget* Frame = Resource && Resource->WidgetTree ? Resource->WidgetTree->FindWidget(TEXT("ResourceFrame")) : nullptr;
+	if (!Frame) return false;
+	Frame->SetVisibility(ESlateVisibility::Hidden);
+	if (!CompileSave(Resource)) return false;
+
+	const TCHAR* CoresPath = TEXT("/Game/Test_Jihun/Core/WBP/WBP_OwnedCore");
+	Backup(CoresPath);
+	UWidgetBlueprint* Cores = LoadObject<UWidgetBlueprint>(nullptr, CoresPath);
+	if (!Cores || !Cores->WidgetTree) return false;
+	for (const TCHAR* Name : {TEXT("AbilityCoresBox"), TEXT("StatCoresBox")})
+	{
+		UWrapBox* Box = Cast<UWrapBox>(Cores->WidgetTree->FindWidget(Name));
+		if (!Box) return false;
+		Box->SetInnerSlotPadding(FVector2D(6, 6));
+	}
+	return CompileSave(Cores);
 }
 
 UTexture2D* MouseTexture(bool bLeft)
@@ -419,6 +698,7 @@ bool BuildMenuScaffold(bool bPreview)
 	else
 	{
 		bool bChanged = UStartMenuWidget::AddConfirmationLayout(BP->WidgetTree);
+		bChanged |= UStartMenuWidget::AddCreditsLayout(BP->WidgetTree);
 		BP->WidgetTree->ForEachWidget([&](UWidget* Control)
 		{
 			Control->bIsVariable = true;
@@ -479,6 +759,10 @@ bool BuildMenuScaffold(bool bPreview)
 		return Target && FImageUtils::ExportRenderTarget2DAsPNG(Target, PNG) && FFileHelper::SaveArrayToFile(PNG, *Filename);
 	};
 	bool bOK = Render(TEXT("Main.png"));
+	CastChecked<UButton>(Panel->WidgetTree->FindWidget(TEXT("CreditsButton")))->OnClicked.Broadcast();
+	bOK = Pages->GetActiveWidget() == Panel->WidgetTree->FindWidget(TEXT("CreditsPage")) && Render(TEXT("Credits.png")) && bOK;
+	CastChecked<UButton>(Panel->WidgetTree->FindWidget(TEXT("CreditsBackButton")))->OnClicked.Broadcast();
+	bOK = Pages->GetActiveWidgetIndex() == 0 && bOK;
 	CastChecked<UButton>(Panel->WidgetTree->FindWidget(TEXT("NewGameButton")))->OnClicked.Broadcast();
 	bOK = Pages->GetActiveWidgetIndex() == 1 && Slot1->GetIsEnabled() && Render(TEXT("NewGameSlots.png")) && bOK;
 	Slot1->OnClicked.Broadcast();
@@ -487,8 +771,10 @@ bool BuildMenuScaffold(bool bPreview)
 	bOK = Pages->GetActiveWidgetIndex() == 0 && bOK;
 	CastChecked<UButton>(Panel->WidgetTree->FindWidget(TEXT("LoadGameButton")))->OnClicked.Broadcast();
 	bOK = Pages->GetActiveWidgetIndex() == 1 && !Slot1->GetIsEnabled() && Render(TEXT("LoadSlots.png")) && bOK;
-	Panel->SetSlotPresentation(1, true, FText::FromString(TEXT("Saved game")));
-	bOK = Slot1->GetIsEnabled() && bOK;
+	Panel->SetSlotPresentation(1, true, FText::FromString(TEXT("2026. 11. 4. 오후 1:52:28")));
+	Panel->SetSlotPresentation(2, true, FText::FromString(TEXT("2026. 11. 4. 오전 9:25:41")));
+	Panel->SetSlotPresentation(3, true, FText::FromString(TEXT("2026. 10. 30. 오전 11:23:29")));
+	bOK = Slot1->GetIsEnabled() && Render(TEXT("LoadSlotsLong.png")) && bOK;
 	Panel->ShowNewGameSlots();
 	Slot1->OnClicked.Broadcast();
 	bOK = Pages->GetActiveWidgetIndex() == 2 && Render(TEXT("OverwriteConfirm.png")) && bOK;
@@ -620,6 +906,12 @@ UIntegratePlayerUICommandlet::UIntegratePlayerUICommandlet()
 
 int32 UIntegratePlayerUICommandlet::Main(const FString& Params)
 {
+#if WITH_EDITOR
+	if (FParse::Param(*Params, TEXT("ApplyFactoryLayout"))) return PlayerUIBuild::ApplyFactoryLayout() ? 0 : 1;
+	if (FParse::Param(*Params, TEXT("ApplyFactoryMenus"))) return PlayerUIBuild::ApplyFactoryLayout(true) ? 0 : 1;
+	if (FParse::Param(*Params, TEXT("ApplyMenuArtwork"))) return PlayerUIBuild::ApplyMenuArtwork() ? 0 : 1;
+	if (FParse::Param(*Params, TEXT("ApplyProjectFonts"))) return PlayerUIBuild::ApplyProjectFonts() ? 0 : 1;
+#endif
 #if WITH_EDITOR
 	if (FParse::Param(*Params, TEXT("MeleeReachHammerMaterial")))
 	{

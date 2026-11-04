@@ -16,9 +16,6 @@ class UPrimitiveComponent;
 class USphereComponent;
 class UStaticMeshComponent;
 
-/** 실제 보상 지급 성공 후에만 발생한다. 저장 상태 복원 시에는 발생하지 않는다. */
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnCorePickupConsumed, FGuid, PickupId);
-
 /**
  * 맵에 배치하여 플레이어에게 코어 보상을 제공하는 액터다.
  * 실제 코어의 능력과 효과 부여는 전달받은 UCoreComponent에 맡긴다.
@@ -40,23 +37,8 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Core|Persistence")
 	FGuid GetPickupId() const { return PickupId; }
 
-	UFUNCTION(BlueprintPure, Category = "Core|Persistence")
-	bool IsConsumed() const { return bConsumed; }
-
-	/** 로드 직후 적용한다. true면 소모 기록을 유지하고 보상 없이 액터를 제거한다. false는 미소모 픽업을 유지한다. */
-	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Core|Persistence")
-	void RestoreConsumedState(bool bWasConsumed);
 	void RestoreCheckpointConsumption(bool bWasConsumed);
 	void HideConsumedPickup();
-
-	/** 저장 담당자가 ID -> true를 기록할 연결점. 고정형/선택형 모두 실제 지급 성공 시 한 번 발생한다. */
-	UPROPERTY(BlueprintAssignable, Category = "Core|Persistence")
-	FOnCorePickupConsumed OnPickupConsumed;
-
-	/** 선택적인 외부 저장 조회 연결점. GameInstance의 실행 중 기록은 BP 연결 없이 먼저 확인한다. */
-	UFUNCTION(BlueprintNativeEvent, Category = "Core|Persistence")
-	bool QuerySavedConsumedState() const;
-	virtual bool QuerySavedConsumedState_Implementation() const;
 
 	/** 지정된 코어의 획득을 요청한다. 성공하면 보상을 소비하고 true를 반환한다. */
 	UFUNCTION(BlueprintCallable, Category = "Core|Reward")
@@ -119,7 +101,7 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Core|Idle", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float EmissivePulse = 0.3f;
 
-	/** 획득 후 코어가 플레이어에게 빨려 들어가는 시간(초). 0이면 연출 없이 바로 제거한다. */
+	/** 획득 후 코어가 플레이어에게 빨려 들어가는 시간(초). 0이면 연출 없이 바로 숨긴다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Core|Absorb", meta = (ClampMin = "0.0"))
 	float AbsorbDuration = 0.4f;
 
@@ -164,6 +146,9 @@ private:
 
 	void EnsurePickupId();
 	void MarkConsumed();
+
+	/** BeginPlay에서 이미 지급한 기록이 있으면 적용한다. 보상 없이 소모 상태로 바꾸고 픽업을 숨긴다. */
+	void RestoreConsumedState(bool bWasConsumed);
 	UCorePickupStateSubsystem* GetPickupStateSubsystem() const;
 	bool bPersistenceInitialized = false;
 
@@ -198,7 +183,7 @@ private:
 	/** 획득 범위를 끄고 대상에게 빨려 들어가는 연출을 시작한다. */
 	void StartAbsorb(AActor* Target);
 
-	/** 흡수 연출을 마친다. 이미 지급한 보상은 픽업을 제거하고, 화면으로 지급할 보상은 코어를 숨긴 뒤 화면을 연다. */
+	/** 흡수 연출을 마친다. 이미 지급한 보상은 픽업을 숨기고, 화면으로 지급할 보상은 코어를 숨긴 뒤 화면을 연다. */
 	void FinishAbsorb();
 
 	/** 확보한 후보로 선택 화면을 열고 입력 이벤트를 연결한다. 실패하면 선택 기록을 정리한다. */
@@ -216,7 +201,7 @@ private:
 	/** 발광 파라미터가 있으면 머티리얼의 발광 세기를 바꾼다. */
 	void SetEmissive(float Value);
 
-	/** 화면에서 선택한 코어의 지급을 요청한다. 성공하면 화면을 닫고 픽업을 제거한다. */
+	/** 화면에서 선택한 코어의 지급을 요청한다. 성공하면 화면을 닫고 픽업을 숨긴다. */
 	UFUNCTION()
 	void HandleCoreSelected(UCoreDataAsset* SelectedCore);
 

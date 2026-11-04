@@ -83,11 +83,6 @@ void ACorePickup::PostEditImport()
 }
 #endif
 
-bool ACorePickup::QuerySavedConsumedState_Implementation() const
-{
-	return false;
-}
-
 UCorePickupStateSubsystem* ACorePickup::GetPickupStateSubsystem() const
 {
 	UGameInstance* GameInstance = GetGameInstance();
@@ -105,10 +100,7 @@ void ACorePickup::RestoreConsumedState(bool bWasConsumed)
 	bHiddenForChoice = false;
 	AbsorbTarget.Reset();
 	ClearChoiceReward();
-	SetActorHiddenInGame(true);
-	SetActorEnableCollision(false);
-	SetActorTickEnabled(false);
-	// BeginPlay 처리 중이라면 엔진이 BeginPlay 종료 직후 안전하게 파괴한다.
+	// 체크포인트로 되돌아갈 때 다시 보여 줄 수 있도록 액터는 남기고 숨기기만 한다.
 	HideConsumedPickup();
 }
 
@@ -116,9 +108,8 @@ void ACorePickup::MarkConsumed()
 {
 	if (bConsumed) return;
 	bConsumed = true;
-	// 픽업이 사라지기 전에 GameInstance에 기록한다. 획득 알림을 받는 BP가 맵을 바꿔도 기록이 유지된다.
+	// GameInstance에 기록해 두면 맵을 다시 불러와도 같은 픽업을 다시 지급하지 않는다.
 	if (UCorePickupStateSubsystem* State = GetPickupStateSubsystem()) State->SetPickupConsumed(PickupId, true);
-	OnPickupConsumed.Broadcast(PickupId);
 }
 
 void ACorePickup::OnPickupBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor,
@@ -441,7 +432,7 @@ void ACorePickup::HandleCoreSelected(UCoreDataAsset* SelectedCore)
 			ClearChoiceReward();
 			return;
 		}
-		// 코어는 화면을 열기 전에 이미 빨려 들어갔으므로 바로 제거한다.
+		// 코어는 화면을 열기 전에 이미 빨려 들어갔으므로 바로 숨긴다.
 		MarkConsumed();
 		ClearChoiceReward(true);
 		HideConsumedPickup();
@@ -465,7 +456,7 @@ void ACorePickup::HandleCoreSelected(UCoreDataAsset* SelectedCore)
 		return;
 	}
 
-	// 코어는 선택 화면을 열기 전에 이미 빨려 들어갔으므로 바로 제거한다.
+	// 코어는 선택 화면을 열기 전에 이미 빨려 들어갔으므로 바로 숨긴다.
 	MarkConsumed();
 	ClearChoiceReward(true);
 	HideConsumedPickup();
@@ -568,7 +559,7 @@ void ACorePickup::BeginPlay()
 	if (HasAuthority())
 	{
 		const UCorePickupStateSubsystem* State = GetPickupStateSubsystem();
-		if ((State && State->IsPickupConsumed(PickupId)) || QuerySavedConsumedState()) RestoreConsumedState(true);
+		if (State && State->IsPickupConsumed(PickupId)) RestoreConsumedState(true);
 	}
 
 	// 머티리얼에 발광 파라미터가 있을 때만 인스턴스를 만들어 세기를 조절한다.
@@ -690,7 +681,7 @@ void ACorePickup::FinishAbsorb()
 		return;
 	}
 
-	// 선택형 보상은 코어를 숨긴 채 선택 화면을 연다. 선택에 성공해야 픽업을 제거하고,
+	// 선택형 보상은 코어를 숨긴 채 선택 화면을 연다. 선택에 성공해야 소모 상태로 남기고,
 	// 화면을 열지 못하거나 선택이 취소되면 ClearChoiceReward에서 제자리로 되돌린다.
 	bOpenChoiceAfterAbsorb = false;
 	bHiddenForChoice = true;

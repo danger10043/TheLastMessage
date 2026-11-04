@@ -17,12 +17,21 @@
 #include "Engine/GameViewportClient.h"
 #include "Kismet/GameplayStatics.h"
 #include "Widgets/SViewport.h"
+#include "Map/AreaMapComponent.h"
+#include "Engine/Font.h"
+#include "UObject/ConstructorHelpers.h"
+#include "UI/FactoryUIStyle.h"
+#include "Fonts/FontMeasure.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Rendering/SlateRenderer.h"
 
 APlayerHUD::APlayerHUD()
 {
 	PrimaryActorTick.bCanEverTick = true;
 	PrimaryActorTick.bStartWithTickEnabled = true;
 	SaveNotificationClass = USaveNotificationWidget::StaticClass();
+	static ConstructorHelpers::FObjectFinder<UFont> TitleFont(TEXT("/Game/Main/UI/Fonts/F_TLM_Title"));
+	RoomTitleFont = TitleFont.Object;
 }
 
 void APlayerHUD::BeginPlay()
@@ -77,6 +86,51 @@ void APlayerHUD::DrawHUD()
 {
 	Super::DrawHUD();
 	DrawGrappleIndicator();
+	DrawRoomTitle();
+}
+
+void APlayerHUD::DrawRoomTitle()
+{
+	const APlayerController* PC = GetOwningPlayerController();
+	APawn* Pawn = PC ? PC->GetPawn() : nullptr;
+	const UAreaMapComponent* Map = Pawn ? Pawn->FindComponentByClass<UAreaMapComponent>() : nullptr;
+	if (RoomTitlePawn.Get() != Pawn)
+	{
+		RoomTitlePawn = Pawn;
+		AnnouncedRoom = NAME_None;
+		RoomTitleEndTime = 0.0;
+	}
+	if (!Map || !Canvas || !RoomTitleFont) return;
+	const FName RoomId = Map->GetCurrentRoomId();
+	const FAreaMapRoom* Room = Map->GetRooms().FindByPredicate([RoomId](const FAreaMapRoom& Candidate)
+	{
+		return Candidate.Id == RoomId && !Candidate.bAutomatic && !Candidate.Name.IsEmpty();
+	});
+	const double Now = GetWorld()->GetTimeSeconds();
+	if (AnnouncedRoom != RoomId)
+	{
+		AnnouncedRoom = RoomId;
+		RoomTitleEndTime = Room ? Now + 2.5 : 0.0;
+	}
+	if (!Room || !bShowHUD || Now >= RoomTitleEndTime) return;
+
+	const float Alpha = FMath::Clamp((RoomTitleEndTime - Now) / 0.3, 0.0, 1.0);
+	const float Scale = FMath::Clamp(Canvas->SizeY / 1080.0f, 0.55f, 2.0f);
+	const FSlateFontInfo Font(RoomTitleFont, 32 * Scale, TEXT("Regular"));
+	FCanvasTextItem Title(FVector2D::ZeroVector, Room->Name, Font,
+		FactoryUI::Text.CopyWithNewOpacity(Alpha));
+	const FVector2D TextSize = FSlateApplication::Get().GetRenderer()->GetFontMeasureService()->Measure(Room->Name, Font);
+	const FVector2D Size = TextSize + FVector2D(66, 22) * Scale;
+	const FVector2D Position((Canvas->SizeX - Size.X) * 0.5, Canvas->SizeY * 0.09);
+	FCanvasTileItem Background(Position, Size, FactoryUI::Panel.CopyWithNewOpacity(0.92f * Alpha));
+	Background.BlendMode = SE_BLEND_Translucent;
+	Canvas->DrawItem(Background);
+	FCanvasTileItem Accent(Position + FVector2D(Size.X * 0.27, Size.Y), FVector2D(Size.X * 0.46, 2 * Scale),
+		FactoryUI::Cyan.CopyWithNewOpacity(Alpha));
+	Accent.BlendMode = SE_BLEND_Translucent;
+	Canvas->DrawItem(Accent);
+	Title.Position = Position + (Size - TextSize) * 0.5;
+	Canvas->DrawItem(Title);
 }
 
 bool APlayerHUD::ShouldUseGrappleCursor() const

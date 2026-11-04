@@ -13,6 +13,9 @@
 #include "HAL/IConsoleManager.h"
 #include "EngineUtils.h"
 #include "GameFramework/PlayerStart.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Interfaces/ISlateRHIRendererModule.h"
+#include "Modules/ModuleManager.h"
 
 namespace
 {
@@ -20,6 +23,9 @@ void PreviewAreaMap()
 {
 	UWorld* World=GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
 	if (!World || !FApp::CanEverRender()) return;
+	if (!FSlateApplication::IsInitialized())
+		FSlateApplication::InitializeAsStandaloneApplication(
+			FModuleManager::LoadModuleChecked<ISlateRHIRendererModule>(TEXT("SlateRHIRenderer")).CreateSlateRHIRenderer());
 	FActorSpawnParameters Params;Params.ObjectFlags|=RF_Transient;
 	APlayerBase* Player=World->SpawnActor<APlayerBase>(APlayerBase::StaticClass(),FTransform::Identity,Params);
 	for (TActorIterator<APlayerStart> It(World); It; ++It) { Player->SetActorLocation(It->GetActorLocation()); break; }

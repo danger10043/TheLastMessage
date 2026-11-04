@@ -12,6 +12,9 @@
 #include "Brushes/SlateImageBrush.h"
 #include "Engine/Texture2D.h"
 #include "Engine/Font.h"
+#include "Fonts/FontMeasure.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Rendering/SlateRenderer.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Styling/CoreStyle.h"
 #include "InputCoreTypes.h"
@@ -164,6 +167,26 @@ int32 UAreaMapWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geome
 			Box(A, FVector2D(FMath::Max(1.0,B.X-A.X), 1.5), Edge, 4);
 		}
 		Out.PopClip();
+	}
+	const auto Measure = FSlateApplication::Get().GetRenderer()->GetFontMeasureService();
+	for (const FAreaMapRoom& Room : Rooms)
+	{
+		if (Room.bAutomatic || Room.Name.IsEmpty() || !MapSource->IsExplored(Room.Id)) continue;
+		const FVector2D Center = ToMap(Room.Bounds.GetCenter(), Size);
+		const double AvailableWidth = Room.Bounds.GetSize().X * GetMapScale(Size) - 8;
+		FSlateFontInfo Font = MapTitleFont ? FSlateFontInfo(MapTitleFont, 15, TEXT("Regular")) : FCoreStyle::GetDefaultFontStyle("Regular", 15);
+		FVector2D LabelSize = Measure->Measure(Room.Name, Font);
+		if (LabelSize.X > AvailableWidth)
+		{
+			Font.Size = FMath::FloorToFloat(Font.Size * AvailableWidth / LabelSize.X);
+			if (Font.Size < 9) continue;
+			LabelSize = Measure->Measure(Room.Name, Font);
+		}
+		const FVector2D Position = Center - LabelSize * 0.5;
+		Box(Position - FVector2D(3, 2), LabelSize + FVector2D(6, 4), FactoryUI::Panel, 5);
+		FSlateDrawElement::MakeText(Out, Layer+6, Geometry.ToPaintGeometry(FVector2f(LabelSize),
+			FSlateLayoutTransform(FVector2f(Position))), Room.Name, Font, ESlateDrawEffect::None,
+			Room.Id == MapSource->GetCurrentRoomId() ? FactoryUI::Cyan : FactoryUI::Text);
 	}
 	for (TActorIterator<APlayerCheckpoint> It(GetWorld()); It; ++It)
     {

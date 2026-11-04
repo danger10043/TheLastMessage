@@ -8,4 +8,5 @@ namespace CoreGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(Event_GuardBlocked, "Event.Core.GuardBlocked");
 	UE_DEFINE_GAMEPLAY_TAG(Result_GuardPartial, "Combat.Result.GuardPartial");
 	UE_DEFINE_GAMEPLAY_TAG(Result_GuardPerfect, "Combat.Result.GuardPerfect");
+	UE_DEFINE_GAMEPLAY_TAG(Data_HealAmount, "Data.Core.HealAmount");
 }

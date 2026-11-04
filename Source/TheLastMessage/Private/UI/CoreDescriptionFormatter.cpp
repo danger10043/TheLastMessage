@@ -64,7 +64,7 @@ FText CoreDescriptionFormatter::MakeLevelText(const UCoreDataAsset& Data, int32 
 	if (Data.UpgradeLimitType == ECoreUpgradeLimitType::Custom)
 	{
 		Stage = FText::Format(LOCTEXT("LimitedLevel", "{0} / {1}"), Stage, FText::AsNumber(FMath::Max(1, Data.MaxLevel)));
-		if (CurrentLevel >= Data.MaxLevel) Stage = FText::Format(LOCTEXT("MaxLevel", "{0} · MAX"), Stage);
+		if (IsMaxLevel(Data, CurrentLevel)) Stage = FText::Format(LOCTEXT("MaxLevel", "{0} · MAX"), Stage);
 	}
 	return Stage;
 }
@@ -108,6 +108,25 @@ FText CoreDescriptionFormatter::MakeDescriptionAtLevel(const UCoreDataAsset& Dat
 	Level = FMath::Max(1, Level);
 	if (Data.UpgradeLimitType == ECoreUpgradeLimitType::Custom) Level = FMath::Min(Level, FMath::Max(1, Data.MaxLevel));
 	return MakeDescriptionForLevels(Data, Level, Level);
+}
+
+bool CoreDescriptionFormatter::IsMaxLevel(const UCoreDataAsset& Data, int32 Level)
+{
+	// 정수 한계까지 올라간 경우도 더 강화할 수 없으므로 최대 단계로 본다.
+	return Level == MAX_int32
+		|| (Data.UpgradeLimitType == ECoreUpgradeLimitType::Custom && Level >= Data.MaxLevel);
+}
+
+FText CoreDescriptionFormatter::MakeCurrentLevelText(const UCoreDataAsset& Data, int32 Level)
+{
+	// 제한이 있는 코어는 최대 단계와 함께, 무한 강화 코어는 지금 단계만 보여 준다.
+	if (Data.UpgradeLimitType != ECoreUpgradeLimitType::Custom)
+	{
+		return FText::Format(LOCTEXT("OwnedLevel", "Lv.{0}"), FText::AsNumber(Level));
+	}
+	const FText Stage = FText::Format(LOCTEXT("OwnedLimitedLevel", "Lv.{0} / {1}"),
+		FText::AsNumber(Level), FText::AsNumber(Data.MaxLevel));
+	return IsMaxLevel(Data, Level) ? FText::Format(LOCTEXT("OwnedMaxLevel", "{0} · MAX"), Stage) : Stage;
 }
 
 #undef LOCTEXT_NAMESPACE

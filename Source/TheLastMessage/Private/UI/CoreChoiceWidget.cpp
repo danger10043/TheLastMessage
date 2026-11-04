@@ -215,6 +215,16 @@ void UCoreChoiceWidget::SetRerollEnabled(int32 ChoiceIndex, bool bEnabled)
 	}
 }
 
+void UCoreChoiceWidget::SetFixedRewardMode()
+{
+	// 리롤할 후보가 없고 카드가 1장뿐이라 순번(01 / 01)도 의미가 없다.
+	if (RerollButtonsBox) RerollButtonsBox->SetVisibility(ESlateVisibility::Collapsed);
+	if (SelectionCounter) SelectionCounter->SetVisibility(ESlateVisibility::Collapsed);
+	// 기본 문구를 바꿔 두면 이후 ResetStatusMessage로 돌아가도 고정 보상 안내가 유지된다.
+	DefaultStatusMessage = FixedRewardHint;
+	ResetStatusMessage();
+}
+
 void UCoreChoiceWidget::HandleFirstReroll()
 {
 	HandleReroll(0);
@@ -250,17 +260,7 @@ bool UCoreChoiceWidget::CapturePlayerInput()
 				return false;
 			}
 		}
-		// 키 초기화만으로는 UI가 가져간 release 이벤트를 기다리는 공격이 끝나지 않는다.
-		if (APlayerBase* Pawn = Cast<APlayerBase>(Player->GetPawn())) Pawn->CancelWeaponInputsForUI();
-		// UIOnly는 입력을 UI에만 전달한다. TakeWidget은 이 UMG 위젯의 내부 Slate 위젯을 가져온다.
-		FInputModeUIOnly InputMode;
-		InputMode.SetWidgetToFocus(TakeWidget());
-		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
-		Player->SetInputMode(InputMode);
-		Player->SetShowMouseCursor(true);
-		// 화면을 열기 전에 누르고 있던 이동·공격 키 상태가 남지 않도록 비운다.
-		Player->FlushPressedKeys();
-		SetKeyboardFocus();
+		FCoreUIInputState::EnterUIOnly(*Player, *this);
 		return true;
 	}
 	return false;

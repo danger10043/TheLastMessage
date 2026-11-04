@@ -19,7 +19,7 @@ struct FCollisionQueryParams;
  * 로봇은 "누구를 노릴지 → 어디서 쏠지 → 어떻게 갈지"를 스스로 정해 움직인다.
  *
  * [매 프레임]
- *   1. 전투 판단이 필요하면(1초마다, 또는 대상 변경·전투 시작·도착 직후) RunDecision을 실행한다.
+ *   1. 전투 판단이 필요하면(DecisionInterval마다, 또는 대상 변경·전투 시작·도착 직후) RunDecision을 실행한다.
  *   2. 경로가 있으면 다음 경유지, 없으면 플레이어 어깨 뒤를 목표로 한 걸음 이동한다(지형은 Sweep으로 막힘).
  *
  * [전투 판단 RunDecision]
@@ -29,8 +29,8 @@ struct FCollisionQueryParams;
  *   전투 중에는 몸을 노리는 적 쪽으로 돌리고 위아래로 기울여 조준하는 모습을 보인다.
  *
  * [사격]
- *   멈춰 쏠 수 있다고 판단될 때 쿨타임(1초)이 끝났으면 총구에서 예측 조준점으로 전용 탄을 쏜다.
- *   피해는 플레이어의 SupportRobotDamage 속성(코어 단계별 4/6/8)이며 플레이어의 피해 배율·치명타는 붙지 않는다.
+ *   멈춰 쏠 수 있다고 판단될 때 쿨타임(FireInterval)이 끝났으면 총구에서 예측 조준점으로 전용 탄을 쏜다.
+ *   피해는 플레이어의 SupportRobotDamage 속성(코어 단계별 값은 CT_CoreAbilityLevels)이며 플레이어의 피해 배율·치명타는 붙지 않는다.
  *   피해의 공격자는 로봇이고, 피해 함수가 공격자에서 ASC를 찾으므로 로봇은 플레이어 ASC를 돌려준다.
  *   연출(총구 섬광·발사음·사격 몽타주)은 몬스터처럼 C++ 값으로 지정하고 C++에서 재생한다. 대기·이동 애니메이션은 메시의 ABP가 맡는다.
  *
@@ -198,7 +198,7 @@ protected:
 
 	/**
 	 * 새 자리를 찾을 때 조준점과의 거리 띠(cm). 이 띠 안의 자리만 1·2등급 후보가 된다.
-	 * 쏘는 중에는 FireRange까지 허용하므로, 띠 바깥 9~12m는 "이미 있으면 머무르고 일부러 오지는 않는" 여유 구간이다.
+	 * 쏘는 중에는 FireRange까지 허용하므로, 띠 바깥부터 FireRange까지는 "이미 있으면 머무르고 일부러 오지는 않는" 여유 구간이다.
 	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Core|SupportRobot|Combat", meta = (ClampMin = "0.0"))
 	float GoalMinDistance = 400.0f;

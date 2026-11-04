@@ -40,17 +40,6 @@ public:
 	void RestoreCheckpointConsumption(bool bWasConsumed);
 	void HideConsumedPickup();
 
-	/** 지정된 코어의 획득을 요청한다. 성공하면 보상을 소비하고 true를 반환한다. */
-	UFUNCTION(BlueprintCallable, Category = "Core|Reward")
-	bool TryAcquireFixedCore(UCoreComponent* InCoreComponent);
-
-	/**
-	 * 후보를 확보한 뒤 코어가 플레이어에게 빨려 들어가는 연출을 재생하고, 도착하면 선택 화면을 연다.
-	 * 선택에 성공하기 전에는 픽업을 소비하지 않으며, 취소되면 코어를 제자리로 되돌린다.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Core|Reward")
-	bool TryOpenCoreChoice(APlayerBase* Player);
-
 	/** 평소에는 코어를 떠다니게 하고, 흡수 연출 중에는 플레이어 쪽으로 옮긴다. */
 	virtual void Tick(float DeltaSeconds) override;
 
@@ -167,6 +156,15 @@ private:
 	void RestoreConsumedState(bool bWasConsumed);
 	UCorePickupStateSubsystem* GetPickupStateSubsystem() const;
 	bool bPersistenceInitialized = false;
+
+	/** 화면 WBP가 없는 고정 보상을 닿는 즉시 지급한다. 성공하면 보상을 소비하고 true를 반환한다. */
+	bool TryAcquireFixedCore(UCoreComponent* InCoreComponent);
+
+	/**
+	 * 후보를 확보한 뒤 코어가 플레이어에게 빨려 들어가는 연출을 재생하고, 도착하면 선택 화면을 연다.
+	 * 선택에 성공하기 전에는 픽업을 소비하지 않으며, 취소되면 코어를 제자리로 되돌린다.
+	 */
+	bool TryOpenCoreChoice(APlayerBase* Player);
 
 	/**
 	 * 고정 보상을 카드 1장 화면으로 보여 준다. 받을 수 있는 코어인지 먼저 확인하고,

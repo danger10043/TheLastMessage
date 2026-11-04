@@ -7,6 +7,7 @@
 #include "DataAsset/CoreDataAsset.h"
 #include "Engine/Texture2D.h"
 #include "UI/CoreDescriptionFormatter.h"
+#include "UI/CoreTooltipWidget.h"
 
 // 언리얼이 제공하는 UUserWidget::NativeOnInitialized()를 재정의하여, WBP에서 배치한 위젯과 연결하고 버튼 이벤트를 처리한다.
 void UCoreChoiceCardWidget::NativeOnInitialized()
@@ -49,16 +50,29 @@ void UCoreChoiceCardWidget::SetCoreData(UCoreDataAsset* InCoreData, int32 InDisp
 	// 레이아웃은 WBP가 담당하고, C++은 데이터 에셋의 내용을 위젯에 표시한다.
 
 	// bHasCore가 true이면 코어 이름을 표시하고, false이면 빈 문자열을 표시한다.
-	if (CoreNameText)
-	{
-		CoreNameText->SetText(bHasCore ? CoreData->CoreName : FText::GetEmpty());
-	}
+	// 카드와 툴팁이 같은 문구를 쓰도록 한 번만 만든다.
+	const FText NameText = bHasCore ? CoreData->CoreName : FText::GetEmpty();
+	const FText DescriptionText = bHasCore ? CoreDescriptionFormatter::MakeDescription(*CoreData, InCurrentLevel) : FText::GetEmpty();
+	const FText LevelText = bHasCore ? CoreDescriptionFormatter::MakeLevelText(*CoreData, InCurrentLevel) : FText::GetEmpty();
+	if (CoreNameText) CoreNameText->SetText(NameText);
+	if (CoreDescriptionText) CoreDescriptionText->SetText(DescriptionText);
+	if (CoreLevelText) CoreLevelText->SetText(LevelText);
 
-	if (CoreDescriptionText)
+	// 툴팁: 카드 크기 때문에 설명이 잘려도 마우스를 올리면 전체 문구를 읽을 수 있게 한다.
+	// SetToolTip에 위젯을 넘기면 엔진이 마우스를 올렸을 때 커서 옆에 띄우고, 화면 밖으로 나가지 않게 위치를 잡는다.
+	// 카드 버튼이 마우스를 받으므로 툴팁도 버튼에 붙인다. 코어가 없으면 툴팁을 떼어 빈 창이 뜨지 않게 한다.
+	if (CardButton && TooltipWidgetClass)
 	{
-		CoreDescriptionText->SetText(bHasCore ? CoreDescriptionFormatter::MakeDescription(*CoreData, InCurrentLevel) : FText::GetEmpty());
+		if (!CoreTooltip)
+		{
+			CoreTooltip = CreateWidget<UCoreTooltipWidget>(this, TooltipWidgetClass);
+		}
+		if (CoreTooltip)
+		{
+			CoreTooltip->SetContent(NameText, LevelText, DescriptionText);
+		}
+		CardButton->SetToolTip(bHasCore ? CoreTooltip.Get() : nullptr);
 	}
-	if (CoreLevelText) CoreLevelText->SetText(bHasCore ? CoreDescriptionFormatter::MakeLevelText(*CoreData, InCurrentLevel) : FText::GetEmpty());
 	if (CoreIconImage)
 	{
 		UTexture2D* IconTexture = nullptr;

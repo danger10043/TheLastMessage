@@ -8,6 +8,7 @@
 class UBorder;
 class UButton;
 class UCoreDataAsset;
+class UCoreTooltipWidget;
 class UImage;
 class UTextBlock;
 class UTexture2D;
@@ -80,6 +81,10 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Core|Appearance")
 	FLinearColor HighlightedSurfaceColor = FLinearColor(0.053f, 0.078f, 0.087f);
 
+	/** 마우스를 올렸을 때 전체 설명을 보여 줄 툴팁 WBP. 비워 두면 툴팁을 띄우지 않는다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Core|UI")
+	TSubclassOf<UCoreTooltipWidget> TooltipWidgetClass;
+
 	/** 코어별 아이콘을 표시하며, 개별 아이콘이 없으면 WBP의 기본 아이콘을 사용한다. */
 	UPROPERTY(meta = (BindWidget))
 	TObjectPtr<UImage> CoreIconImage;
@@ -108,6 +113,10 @@ private:
 	/** 데이터 교체 시 기본 이미지로 돌아갈 수 있도록 WBP에 지정된 아이콘을 보관한다. */
 	UPROPERTY(Transient)
 	TObjectPtr<UTexture2D> DefaultCoreIcon;
+
+	/** 카드마다 한 번만 만들어 두고, 표시할 코어가 바뀌면 내용만 갱신한다. */
+	UPROPERTY(Transient)
+	TObjectPtr<UCoreTooltipWidget> CoreTooltip;
 
 	/** 강조가 해제되면 WBP에서 정한 평상시 색상으로 복구한다. */
 	FLinearColor NormalFrameColor = FLinearColor::White;

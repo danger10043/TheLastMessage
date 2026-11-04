@@ -64,6 +64,7 @@ void ACorePickup::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
 	EnsurePickupId();
+	ApplyRewardColor();
 }
 
 void ACorePickup::PostLoad()
@@ -566,6 +567,9 @@ void ACorePickup::BeginPlay()
 		if (State && State->IsPickupConsumed(PickupId)) RestoreConsumedState(true);
 	}
 
+	// 색을 먼저 적용한다. 이때 만든 동적 머티리얼을 아래 발광 조절에서도 그대로 쓴다.
+	if (!bConsumed) ApplyRewardColor();
+
 	// 머티리얼에 발광 파라미터가 있을 때만 인스턴스를 만들어 세기를 조절한다.
 	UMaterialInterface* Material = bConsumed ? nullptr : CoreMesh->GetMaterial(0);
 	float DefaultEmissive = 0.0f;
@@ -691,6 +695,28 @@ void ACorePickup::FinishAbsorb()
 	bHiddenForChoice = true;
 	SetActorHiddenInGame(true);
 	OpenChoiceScreen();
+}
+
+FLinearColor ACorePickup::GetRewardColor() const
+{
+	if (RewardMode == ECoreRewardMode::Fixed) return FixedRewardColor;
+	return ChoiceCategory == ECoreCategory::Ability ? AbilityRewardColor : StatRewardColor;
+}
+
+void ACorePickup::ApplyRewardColor()
+{
+	// 머티리얼에 색 파라미터가 있을 때만 동적 머티리얼을 만든다. 이미 동적 머티리얼이면 그것을 그대로 쓴다.
+	UMaterialInterface* Material = CoreMesh ? CoreMesh->GetMaterial(0) : nullptr;
+	FLinearColor DefaultColor;
+	if (ColorParameter.IsNone() || !Material
+		|| !Material->GetVectorParameterValue(FHashedMaterialParameterInfo(ColorParameter), DefaultColor))
+	{
+		return;
+	}
+	if (UMaterialInstanceDynamic* Dynamic = CoreMesh->CreateDynamicMaterialInstance(0))
+	{
+		Dynamic->SetVectorParameterValue(ColorParameter, GetRewardColor());
+	}
 }
 
 void ACorePickup::SetEmissive(float Value)

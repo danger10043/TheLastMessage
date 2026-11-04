@@ -97,6 +97,22 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Core|Idle", meta = (ClampMin = "0.0"))
 	float IdleEmissive = 5.0f;
 
+	/** 보상 종류별 색을 넣을 머티리얼 Vector 파라미터 이름. 비우거나 머티리얼에 없으면 색은 바꾸지 않는다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Core|Color")
+	FName ColorParameter = TEXT("CoreColor");
+
+	/** 선택형 중 스탯 코어를 주는 픽업의 색. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Core|Color")
+	FLinearColor StatRewardColor = FLinearColor(0.2f, 0.75f, 1.0f);
+
+	/** 선택형 중 능력 코어를 주는 픽업의 색. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Core|Color")
+	FLinearColor AbilityRewardColor = FLinearColor(0.65f, 0.3f, 1.0f);
+
+	/** 정해진 코어 하나를 주는 고정형 픽업의 색. 더블 점프·그래플링 훅·가드처럼 핵심 기능을 여는 코어다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Core|Color")
+	FLinearColor FixedRewardColor = FLinearColor(1.0f, 0.75f, 0.15f);
+
 	/** 맥박에 맞춰 발광이 바뀌는 비율. 0.3이면 평소 세기의 ±30%로 깜빡인다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Core|Idle", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float EmissivePulse = 0.3f;
@@ -212,6 +228,15 @@ private:
 
 	/** 대상 쪽으로 가속하며 이동하고, 작아지면서 밝아진다. 도착하면 true를 반환한다. */
 	bool UpdateAbsorb(float DeltaSeconds);
+
+	/** 보상 방식(고정형)과 선택 분류(스탯·능력)에 맞는 픽업 색을 고른다. */
+	FLinearColor GetRewardColor() const;
+
+	/**
+	 * 픽업만 보고도 어떤 보상인지 알 수 있게 코어 색을 바꾼다.
+	 * 에디터에서 배치할 때도 보이도록 OnConstruction에서 부르고, 게임 시작 시 BeginPlay에서 다시 부른다.
+	 */
+	void ApplyRewardColor();
 
 	/** 발광 파라미터가 있으면 머티리얼의 발광 세기를 바꾼다. */
 	void SetEmissive(float Value);

@@ -80,11 +80,13 @@ bool AToggleSwitch::LoadToggleSwitchConfig()
 
 	Curve->GetTimeRange(MinTime, MaxTime);
 
-	// 커브의 시간과 진행도를 0~1로 통일
-	if (!FMath::IsNearlyEqual(MinTime, 0.0f)
-		|| !FMath::IsNearlyEqual(MaxTime, 1.0f)
-		|| !FMath::IsNearlyEqual(Curve->GetFloatValue(0.0f), 0.0f)
-		|| !FMath::IsNearlyEqual(Curve->GetFloatValue(1.0f), 1.0f))
+	// 커브 편집 과정에서 생기는 미세한 소수점 오차 허용
+	constexpr float CurveTolerance = 0.0001f;
+
+	if (!FMath::IsNearlyEqual(MinTime, 0.0f, CurveTolerance)
+		|| !FMath::IsNearlyEqual(MaxTime, 1.0f, CurveTolerance)
+		|| !FMath::IsNearlyEqual(Curve->GetFloatValue(0.0f), 0.0f, CurveTolerance)
+		|| !FMath::IsNearlyEqual(Curve->GetFloatValue(1.0f), 1.0f, CurveTolerance))
 	{
 		UE_LOG(LogTemp, Warning, TEXT("%s: 회전 커브는 시작 Time 0 / Value 0, 끝 Time 1 / Value 1로 설정해주세요."), *GetName());
 

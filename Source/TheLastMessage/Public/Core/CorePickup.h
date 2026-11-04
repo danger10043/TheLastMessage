@@ -140,9 +140,12 @@ protected:
 		meta = (EditCondition = "RewardMode == ECoreRewardMode::Fixed", EditConditionHides))
 	TObjectPtr<UCoreDataAsset> CoreData = nullptr;
 
-	/** 선택형 보상에 사용할 화면 WBP. 카드 배치와 모양은 해당 WBP에서 편집한다. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Core|Reward",
-		meta = (EditCondition = "RewardMode == ECoreRewardMode::Choice", EditConditionHides))
+	/**
+	 * 코어 카드를 보여 줄 화면 WBP. 카드 배치와 모양은 해당 WBP에서 편집한다.
+	 * 선택형은 후보 3장, 고정형은 지급할 코어 1장을 보여 주고 클릭하면 지급한다.
+	 * 고정형에서 비워 두면 화면 없이 닿는 즉시 지급한다.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Core|Reward")
 	TSubclassOf<UCoreChoiceWidget> ChoiceWidgetClass;
 
 	/** 선택형 보상을 추첨할 코어 분류다. */
@@ -164,6 +167,18 @@ private:
 	UCorePickupStateSubsystem* GetPickupStateSubsystem() const;
 	bool bPersistenceInitialized = false;
 
+	/**
+	 * 고정 보상을 카드 1장 화면으로 보여 준다. 받을 수 있는 코어인지 먼저 확인하고,
+	 * 흡수 연출이 끝나면 화면을 연다. 지급은 카드를 클릭했을 때 한다.
+	 */
+	bool TryOpenFixedCoreScreen(APlayerBase* Player);
+
+	/** 선택 화면을 열 플레이어를 기록하고, 선택 도중 사망·파괴되면 정리하도록 알림을 연결한다. */
+	void BeginChoosing(APlayerBase* Player);
+
+	/** 고정 보상 화면의 플레이어가 아직 유효한지 확인하고, 아니면 화면을 닫고 픽업을 되돌린다. */
+	UCoreComponent* GetValidFixedChooser();
+
 	/** 선택 권한과 소유자를 확인하고, 더 이상 유효하지 않은 선택은 정리한다. */
 	UCoreRewardSession* GetValidRewardSession();
 
@@ -183,7 +198,7 @@ private:
 	/** 획득 범위를 끄고 대상에게 빨려 들어가는 연출을 시작한다. */
 	void StartAbsorb(AActor* Target);
 
-	/** 흡수 연출을 마친다. 고정 보상은 픽업을 제거하고, 선택형 보상은 코어를 숨긴 뒤 선택 화면을 연다. */
+	/** 흡수 연출을 마친다. 이미 지급한 보상은 픽업을 제거하고, 화면으로 지급할 보상은 코어를 숨긴 뒤 화면을 연다. */
 	void FinishAbsorb();
 
 	/** 확보한 후보로 선택 화면을 열고 입력 이벤트를 연결한다. 실패하면 선택 기록을 정리한다. */

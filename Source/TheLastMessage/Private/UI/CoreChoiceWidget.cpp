@@ -215,6 +215,16 @@ void UCoreChoiceWidget::SetRerollEnabled(int32 ChoiceIndex, bool bEnabled)
 	}
 }
 
+void UCoreChoiceWidget::SetFixedRewardMode()
+{
+	// 리롤할 후보가 없고 카드가 1장뿐이라 순번(01 / 01)도 의미가 없다.
+	if (RerollButtonsBox) RerollButtonsBox->SetVisibility(ESlateVisibility::Collapsed);
+	if (SelectionCounter) SelectionCounter->SetVisibility(ESlateVisibility::Collapsed);
+	// 기본 문구를 바꿔 두면 이후 ResetStatusMessage로 돌아가도 고정 보상 안내가 유지된다.
+	DefaultStatusMessage = FixedRewardHint;
+	ResetStatusMessage();
+}
+
 void UCoreChoiceWidget::HandleFirstReroll()
 {
 	HandleReroll(0);

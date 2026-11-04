@@ -1,5 +1,7 @@
 #include "UI/CoreUIInputState.h"
 
+#include "Blueprint/UserWidget.h"
+#include "Character/Player/PlayerBase.h"
 #include "Engine/GameViewportClient.h"
 #include "Engine/LocalPlayer.h"
 #include "Engine/World.h"
@@ -38,6 +40,21 @@ void FCoreUIInputState::Restore(APlayerController& Controller) const
 	Controller.SetInputMode(*this);
 	Controller.SetShowMouseCursor(bShowCursor);
 	Controller.FlushPressedKeys();
+}
+
+void FCoreUIInputState::EnterUIOnly(APlayerController& Controller, UUserWidget& Screen)
+{
+	// 키 초기화만으로는 UI가 가져간 release 이벤트를 기다리는 공격이 끝나지 않는다.
+	if (APlayerBase* Pawn = Cast<APlayerBase>(Controller.GetPawn())) Pawn->CancelWeaponInputsForUI();
+	// UIOnly는 입력을 UI에만 전달한다. TakeWidget은 이 UMG 위젯의 내부 Slate 위젯을 가져온다.
+	FInputModeUIOnly InputMode;
+	InputMode.SetWidgetToFocus(Screen.TakeWidget());
+	InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+	Controller.SetInputMode(InputMode);
+	Controller.SetShowMouseCursor(true);
+	// 화면을 열기 전에 누르고 있던 이동·공격 키 상태가 남지 않도록 비운다.
+	Controller.FlushPressedKeys();
+	Screen.SetKeyboardFocus();
 }
 
 void FCoreUIInputState::ApplyInputMode(FReply& SlateOperations, UGameViewportClient& Viewport) const

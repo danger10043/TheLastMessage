@@ -260,17 +260,7 @@ bool UCoreChoiceWidget::CapturePlayerInput()
 				return false;
 			}
 		}
-		// 키 초기화만으로는 UI가 가져간 release 이벤트를 기다리는 공격이 끝나지 않는다.
-		if (APlayerBase* Pawn = Cast<APlayerBase>(Player->GetPawn())) Pawn->CancelWeaponInputsForUI();
-		// UIOnly는 입력을 UI에만 전달한다. TakeWidget은 이 UMG 위젯의 내부 Slate 위젯을 가져온다.
-		FInputModeUIOnly InputMode;
-		InputMode.SetWidgetToFocus(TakeWidget());
-		InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
-		Player->SetInputMode(InputMode);
-		Player->SetShowMouseCursor(true);
-		// 화면을 열기 전에 누르고 있던 이동·공격 키 상태가 남지 않도록 비운다.
-		Player->FlushPressedKeys();
-		SetKeyboardFocus();
+		FCoreUIInputState::EnterUIOnly(*Player, *this);
 		return true;
 	}
 	return false;

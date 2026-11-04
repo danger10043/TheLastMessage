@@ -5,6 +5,7 @@
 #include "AreaMapRegion.generated.h"
 
 class UBoxComponent;
+class UTexture2D;
 
 /** 방의 탐사 식별자와 지도 영역 */
 UCLASS()
@@ -19,6 +20,9 @@ public:
 	/** 지도에서 표시할 구역 이름 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Area Map", meta=(ToolTip="지도에서 표시할 구역 이름"))
 	FText RegionName;
+	/** 투명 배경의 X/Z 지도 실루엣. 이미지 전체가 방의 지도 범위에 맞춰진다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Area Map")
+	TObjectPtr<UTexture2D> MapSilhouette;
 	/** 방의 기본 탐사 범위 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Area Map", meta=(ToolTip="방의 기본 탐사 범위"))
 	TObjectPtr<UBoxComponent> RegionBounds;

@@ -17,7 +17,7 @@
 namespace GuardAnim
 {
     const TCHAR* SkeletonPath = TEXT("/Game/Test_Jihong/Blueprints/Player/Robbie_01_Skeleton.Robbie_01_Skeleton");
-    const TCHAR* DestDir = TEXT("/Game/Test_Jihong/Animations/Guard");
+    const TCHAR* DestDir = TEXT("/Game/Main/Animations/Player/Guard");
     const TCHAR* MontageName = TEXT("AM_PlayerGuard");
 
     bool Save(UObject* Object)

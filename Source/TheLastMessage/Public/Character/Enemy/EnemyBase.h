@@ -334,6 +334,9 @@ protected:
 	TEnumAsByte<ECollisionChannel> DefaultMeshObjectType = ECC_Pawn;
 	FCollisionResponseContainer DefaultMeshResponses;
 
+	/** 메시가 캡슐에 붙어 있던 원래 상대 위치·회전·크기. 몸통 본이 물리로 움직이면 메시가 캡슐에서 떨어져 나가므로, 복구할 때 다시 붙이는 데 쓴다. */
+	FTransform DefaultMeshRelativeTransform = FTransform::Identity;
+
 	/** 사망할 때 재생할 이펙트 */
 	UPROPERTY(EditDefaultsOnly, Category = "Enemy|Effects")
 	TObjectPtr<UNiagaraSystem> DeathEffect;

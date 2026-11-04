@@ -28,7 +28,6 @@ UGA_CoreGuard::UGA_CoreGuard()
 {
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> Plane(TEXT("/Engine/BasicShapes/Plane.Plane"));
 	BarrierMesh = Plane.Object;
-	GuardMontage = TSoftObjectPtr<UAnimMontage>(FSoftObjectPath(TEXT("/Game/Test_Jihong/Animations/Guard/AM_PlayerGuard.AM_PlayerGuard")));
 
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
 	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::ServerOnly;

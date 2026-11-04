@@ -5,6 +5,8 @@
 #include "GameFramework/SaveGame.h"
 #include "AreaMapComponent.generated.h"
 
+class UTexture2D;
+
 USTRUCT()
 struct FAreaMapRoom
 {
@@ -12,6 +14,7 @@ struct FAreaMapRoom
 	FName Id;
 	FText Name;
 	FBox2D Bounds = FBox2D(ForceInit);
+	TWeakObjectPtr<UTexture2D> Silhouette;
 	bool bAutomatic = false;
 };
 

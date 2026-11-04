@@ -41,6 +41,11 @@ protected:
 private:
 	UFUNCTION() void CheckpointSaveFinished(bool bSuccess);
 	void DrawGrappleIndicator();
+	void DrawRoomTitle();
+	UPROPERTY() TObjectPtr<UFont> RoomTitleFont;
+	TWeakObjectPtr<APawn> RoomTitlePawn;
+	FName AnnouncedRoom;
+	double RoomTitleEndTime = 0.0;
 	bool bGrappleWasCoolingDown = false;
 	float GrappleReadyFlashEnd = 0;
 	void EnsureWidgets();

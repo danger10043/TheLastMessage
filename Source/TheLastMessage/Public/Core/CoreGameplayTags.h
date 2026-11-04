@@ -22,4 +22,7 @@ namespace CoreGameplayTags
 
 	// 퍼펙트 가드로 막은 결과. 가드 이벤트의 TargetTags에만 담는다.
 	THELASTMESSAGE_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_GuardPerfect);
+
+	// 회복 GE(GE_Core_Heal)에 SetByCaller로 넘기는 회복량. 전력 흡수·잔여 전력 회수가 함께 쓴다.
+	THELASTMESSAGE_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Data_HealAmount);
 }

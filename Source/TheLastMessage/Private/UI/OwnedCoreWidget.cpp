@@ -155,11 +155,9 @@ void UOwnedCoreWidget::SelectCore(FName CoreId)
 	}
 	const UCoreDataAsset& Data = *Entry->CoreData;
 	CoreName->SetText(Data.CoreName);
-	const bool bLimited = Data.UpgradeLimitType == ECoreUpgradeLimitType::Custom;
-	const bool bMaxed = Entry->Level == MAX_int32 || (bLimited && Entry->Level >= Data.MaxLevel);
-	CoreLevel->SetText(FText::FromString(bLimited
-		? FString::Printf(TEXT("Lv.%d / %d%s"), Entry->Level, Data.MaxLevel, bMaxed ? TEXT(" · MAX") : TEXT(""))
-		: FString::Printf(TEXT("Lv.%d"), Entry->Level)));
+	// 단계 문구와 최대 단계 판단은 카드와 같은 포맷터 기준을 쓴다.
+	const bool bMaxed = CoreDescriptionFormatter::IsMaxLevel(Data, Entry->Level);
+	CoreLevel->SetText(CoreDescriptionFormatter::MakeCurrentLevelText(Data, Entry->Level));
 	// 현재 효과와 다음 강화의 효과를 각각의 GE 단계에서 읽는다.
 	CurrentEffect->SetText(CoreDescriptionFormatter::MakeDescriptionAtLevel(Data, Entry->Level));
 	NextEffect->SetText(bMaxed ? LOCTEXT("MaxStage", "최대 단계입니다.")

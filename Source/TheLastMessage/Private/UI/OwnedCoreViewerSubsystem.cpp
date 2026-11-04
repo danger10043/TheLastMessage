@@ -75,14 +75,7 @@ bool UOwnedCoreViewerSubsystem::OpenViewer()
 	Screen->OnClosed.AddUObject(this, &ThisClass::HandleClosed);
 	Screen->AddToPlayerScreen(110);
 	if (!Screen->IsInViewport()) { Screen->ReleaseSources(); HandleClosed(); return false; }
-	if (APlayerBase* Player = Cast<APlayerBase>(Pawn)) Player->CancelWeaponInputsForUI();
-	FInputModeUIOnly Mode;
-	Mode.SetWidgetToFocus(Screen->TakeWidget());
-	Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
-	Controller->SetInputMode(Mode);
-	Controller->SetShowMouseCursor(true);
-	Controller->FlushPressedKeys();
-	Screen->SetKeyboardFocus();
+	FCoreUIInputState::EnterUIOnly(*Controller, *Screen);
 	return true;
 }
 

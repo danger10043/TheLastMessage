@@ -71,12 +71,6 @@ public:
 	/** 죽은 적처럼 더 노리면 안 되는 대상을 잊는다. */
 	void ForgetTarget(const AActor* Enemy);
 
-	/** 지금 노리는 적. 전투 판단에서 정해진다. */
-	AActor* GetTarget() const;
-
-	/** 경유지 하나로 된 경로를 정한다. */
-	void SetMoveGoal(const FVector& Goal);
-
 	/** 경유지를 차례로 따라가는 경로를 정한다. 전투가 끝나면 무시하고 플레이어를 따라간다. */
 	void SetMovePath(const TArray<FVector>& Waypoints);
 	void ClearMoveGoal();
@@ -85,7 +79,6 @@ public:
 	void TeleportToPlayer();
 
 	bool IsInCombat() const;
-	APlayerBase* GetPlayer() const;
 
 	/** 지금 플레이어 카메라에 보이는 플레이어 깊이 평면의 사각형(X·Z)을 구한다. 카메라가 없으면 false. */
 	bool GetScreenBounds(FBox2D& OutBounds) const;
@@ -183,7 +176,7 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Core|SupportRobot|Move", meta = (ClampMin = "0.0", ClampMax = "89.0"))
 	float MaxAimPitch = 45.0f;
 
-	/** 전투 판단(대상·자리 확인)을 반복하는 주기(초). 공격 주기와 같다. */
+	/** 전투 판단(대상·자리 확인)을 반복하는 주기(초). 사격 주기(FireInterval)와는 별개다. */
 	UPROPERTY(EditDefaultsOnly, Category = "Core|SupportRobot|Combat", meta = (ClampMin = "0.1"))
 	float DecisionInterval = 1.0f;
 

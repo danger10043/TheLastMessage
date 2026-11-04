@@ -306,11 +306,6 @@ bool ACoreSupportRobot::HasPath() const
 	return Path.IsValidIndex(PathIndex);
 }
 
-void ACoreSupportRobot::SetMoveGoal(const FVector& Goal)
-{
-	SetMovePath({ Goal });
-}
-
 void ACoreSupportRobot::SetMovePath(const TArray<FVector>& Waypoints)
 {
 	if (Waypoints.IsEmpty())
@@ -850,14 +845,4 @@ bool ACoreSupportRobot::IsInCombat() const
 {
 	const UWorld* World = GetWorld();
 	return World && World->GetTimeSeconds() < CombatEndTime;
-}
-
-AActor* ACoreSupportRobot::GetTarget() const
-{
-	return Target.Get();
-}
-
-APlayerBase* ACoreSupportRobot::GetPlayer() const
-{
-	return Player.Get();
 }

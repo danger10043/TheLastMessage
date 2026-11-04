@@ -1068,6 +1068,29 @@ void ABossMonster::PlayPhaseSequence(EBossPuzzleType PuzzleType)
     Player->Play();
 }
 
+bool ABossMonster::TrySkipPhaseCinematic(APlayerController* RequestingController)
+{
+    ULevelSequencePlayer* Player = ActivePhaseSequencePlayer.Get();
+    if (!HasAuthority() || !IsValid(RequestingController)
+        || RequestingController->GetWorld() != GetWorld()
+        || CurrentState != EBossState::Cinematic
+        || !bPhaseSequencePlaying || bIsResettingBoss
+        || IsActorBeingDestroyed() || !IsValid(Player))
+    {
+        return false;
+    }
+
+    Player->GoToEndAndStop();
+
+    // OnStop에서 이미 처리했다면 다시 완료하지 않는다.
+    if (!IsActorBeingDestroyed() && bPhaseSequencePlaying
+        && ActivePhaseSequencePlayer.Get() == Player)
+    {
+        HandlePhaseSequenceFinished();
+    }
+    return true;
+}
+
 void ABossMonster::HandlePhaseSequenceFinished()
 {
     if (!bPhaseSequencePlaying || bIsResettingBoss)

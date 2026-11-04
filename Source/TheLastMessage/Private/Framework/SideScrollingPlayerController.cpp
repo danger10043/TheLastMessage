@@ -22,6 +22,7 @@
 #include "Kismet/KismetSystemLibrary.h"
 #include "Misc/PackageName.h"
 #include "UI/PlayerHUD.h"
+#include "Character/Boss/BossMonster.h"
 #include "Cinematics/OnceCinematicController.h"
 #include "EngineUtils.h"
 
@@ -55,6 +56,13 @@ void ASideScrollingPlayerController::SkipCinematic()
 void ASideScrollingPlayerController::ServerSkipCinematic_Implementation()
 {
 	if (UGameplayStatics::IsGamePaused(this)) return;
+	for (TActorIterator<ABossMonster> It(GetWorld()); It; ++It)
+	{
+		if (It->TrySkipPhaseCinematic(this))
+		{
+			return;
+		}
+	}
 	for (TActorIterator<AOnceCinematicController> It(GetWorld()); It; ++It)
 	{
 		if (It->IsPlaying()) It->SkipCinematic(this);

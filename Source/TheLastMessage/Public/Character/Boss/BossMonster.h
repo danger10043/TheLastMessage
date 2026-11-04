@@ -115,6 +115,8 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Boss|Puzzle")
     void FailShieldPuzzle();
 
+    bool TrySkipPhaseCinematic(class APlayerController* RequestingController);
+
     void StartPhaseCinematic(EBossPhase NextPhase);
 
     UFUNCTION(BlueprintCallable, Category = "Boss|Phase")

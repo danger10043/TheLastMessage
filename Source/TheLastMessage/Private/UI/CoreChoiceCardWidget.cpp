@@ -1,4 +1,5 @@
 #include "UI/CoreChoiceCardWidget.h"
+#include "UI/FactoryUIStyle.h"
 
 #include "Components/Border.h"
 #include "Components/Button.h"
@@ -21,13 +22,17 @@ void UCoreChoiceCardWidget::NativeOnInitialized()
 	{
 		DefaultCoreIcon = Cast<UTexture2D>(CoreIconImage->GetBrush().GetResourceObject());
 	}
-	if (FrameBorder) NormalFrameColor = FrameBorder->GetBrushColor();
-	if (SurfaceBorder) NormalSurfaceColor = SurfaceBorder->GetBrushColor();
+	if (FrameBorder) FrameBorder->SetBrushColor(NormalFrameColor = FactoryUI::Edge);
+	HighlightColor = FactoryUI::Amber;
+	HighlightedSurfaceColor = FactoryUI::SelectedPanel;
+	if (SurfaceBorder) SurfaceBorder->SetBrushColor(NormalSurfaceColor = FactoryUI::Panel);
 	if (ActionText) NormalActionColor = ActionText->GetColorAndOpacity();
 
 	// WBP에 배치된 버튼의 입력을 C++ 처리 함수에 연결한다.
 	if (CardButton)
 	{
+		CardButton->SetStyle(FactoryUI::Button());
+		CardButton->SetBackgroundColor(FLinearColor::White);
 		CardButton->OnClicked.AddDynamic(this, &UCoreChoiceCardWidget::HandleClicked);
 		CardButton->OnHovered.AddDynamic(this, &UCoreChoiceCardWidget::HandleHovered);
 		// 표시할 코어가 준비되기 전에는 카드를 선택할 수 없게 한다.
@@ -102,6 +107,7 @@ void UCoreChoiceCardWidget::SetHighlighted(bool bInHighlighted)
 {
 	if (bIsHighlighted == bInHighlighted) return;
 	bIsHighlighted = bInHighlighted;
+	if (CardButton) CardButton->SetStyle(FactoryUI::Button(bIsHighlighted));
 	// 같은 선택 상태를 마우스와 방향키 모두에 적용한다. 기본 색상은 WBP 설정으로 복구한다.
 	if (FrameBorder) FrameBorder->SetBrushColor(bIsHighlighted ? HighlightColor : NormalFrameColor);
 	if (SurfaceBorder) SurfaceBorder->SetBrushColor(bIsHighlighted ? HighlightedSurfaceColor : NormalSurfaceColor);

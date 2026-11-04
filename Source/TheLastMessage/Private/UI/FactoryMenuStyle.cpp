@@ -1,4 +1,6 @@
 #include "UI/FactoryMenuStyle.h"
+#include "UI/FactoryUIStyle.h"
+#include "Widgets/Layout/SBox.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/BackgroundBlur.h"
 #include "Components/Border.h"
@@ -7,9 +9,12 @@
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
 #include "Components/Image.h"
+#include "Components/HorizontalBox.h"
+#include "Components/HorizontalBoxSlot.h"
 #include "Components/Overlay.h"
 #include "Components/OverlaySlot.h"
 #include "Components/ScaleBox.h"
+#include "Components/ScaleBoxSlot.h"
 #include "Components/SizeBox.h"
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
@@ -21,9 +26,16 @@ namespace FactoryMenuStyle
 {
 namespace
 {
+class SMenuFocusScope : public SBox
+{
+public:
+	virtual TOptional<bool> OnQueryShowFocus(EFocusCause FocusCause) const override
+	{
+		return false;
+	}
+};
+
 const FLinearColor Ivory(0.94f, 0.91f, 0.82f);
-const FLinearColor Cyan(0.65f, 0.90f, 1.0f);
-const FLinearColor Amber(1.0f, 0.53f, 0.12f);
 
 UTexture2D* Texture(const TCHAR* Name)
 {
@@ -51,16 +63,11 @@ UImage* Image(UWidgetTree* Tree, FName Name, const TCHAR* Asset)
 	return Item;
 }
 
-FSlateBrush ButtonBrush()
-{
-	FSlateBrush Brush;
-	Brush.SetResourceObject(Texture(TEXT("T_Menu_Button")));
-	Brush.DrawAs = ESlateBrushDrawType::Image;
-	Brush.ImageSize = FVector2D(680, 124);
-	// Sample the visible plate only; keep the source PNG and alpha untouched.
-	Brush.SetUVRegion(FBox2f(FVector2f(0.019f, 0.210f), FVector2f(0.980f, 0.756f)));
-	return Brush;
 }
+
+TSharedRef<SWidget> WithMenuFocusStyle(const TSharedRef<SWidget>& Content)
+{
+	return SNew(SMenuFocusScope)[Content];
 }
 
 UTextBlock* AddText(UWidgetTree* Tree, UVerticalBox* Box, FName Name, const FText& Label, int32 Size)
@@ -82,13 +89,7 @@ void AddButton(UWidgetTree* Tree, UVerticalBox* Box, FName Name, FName TextName,
 	Box->AddChildToVerticalBox(Size)->SetPadding(FMargin(0, bCompact ? 5 : 9));
 	UButton* Button = Tree->ConstructWidget<UButton>(UButton::StaticClass(), Name);
 	Size->AddChild(Button);
-	FButtonStyle Style;
-	Style.Normal = ButtonBrush(); Style.Normal.TintColor = Cyan;
-	Style.Hovered = Style.Normal; Style.Hovered.TintColor = FLinearColor(0.8f, 1.0f, 1.0f);
-	Style.Pressed = Style.Normal; Style.Pressed.TintColor = Amber * 0.75f;
-	Style.Disabled = Style.Normal; Style.Disabled.TintColor = FLinearColor(0.24f, 0.27f, 0.29f);
-	Style.NormalPadding = FMargin(32, 5); Style.PressedPadding = FMargin(32, 7, 32, 3);
-	Button->SetStyle(Style);
+	Button->SetStyle(FactoryUI::Button());
 	Button->SetBackgroundColor(FLinearColor::White);
 	UTextBlock* Text = Tree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TextName);
 	Text->SetText(Label);
@@ -146,14 +147,153 @@ void UpdateFocus(UWidgetTree* Tree)
 	{
 		if (UButton* Button = Cast<UButton>(Widget))
 		{
-			const FLinearColor Tint = Button->HasAnyUserFocus() ? Amber : Cyan;
-			if (Button->GetStyle().Normal.TintColor.GetSpecifiedColor() != Tint)
+			const bool bFocused = Button->HasAnyUserFocus();
+			FButtonStyle Style = Button->GetStyle();
+			FSlateBrush Target = bFocused ? Style.Hovered : Style.Disabled;
+			if (!bFocused) Target.TintColor = FLinearColor::White;
+			if (Style.Normal.GetResourceObject() != Target.GetResourceObject() || Style.Normal.TintColor != Target.TintColor)
 			{
-				FButtonStyle Style = Button->GetStyle(); Style.Normal.TintColor = Tint;
-				Style.Hovered.TintColor = Button->HasAnyUserFocus() ? Amber : FLinearColor(0.8f, 1.0f, 1.0f);
+				Style.Normal = Target;
 				Button->SetStyle(Style);
 			}
 		}
 	});
 }
+
+#if WITH_EDITOR
+void ApplyLayout(UWidgetTree* Tree, bool bPause)
+{
+	if (!Tree) return;
+	const FVector2D Origin = bPause ? FVector2D(680, 214) : FVector2D(122, 420);
+	const FVector2D Size = bPause ? FVector2D(560, 604) : FVector2D(650, 480);
+	if (UWidget* Pages = Tree->FindWidget(bPause ? TEXT("PausePages") : TEXT("Pages")))
+	{
+		if (auto* Slot = Cast<UCanvasPanelSlot>(Pages->Slot))
+		{
+			Slot->SetPosition(Origin);
+			Slot->SetSize(Size);
+		}
+	}
+	if (UTextBlock* Heading = Cast<UTextBlock>(Tree->FindWidget(TEXT("SlotHeading"))))
+	{
+		auto Font = Heading->GetFont();
+		Font.Size = 25;
+		Heading->SetFont(Font);
+		Heading->SetAutoWrapText(false);
+		Heading->SetWrapTextAt(0);
+	}
+	if (bPause)
+	{
+		if (UBackgroundBlur* Blur = Cast<UBackgroundBlur>(Tree->FindWidget(TEXT("WorldBlur")))) Blur->SetBlurStrength(7.0f);
+		if (UImage* Panel = Cast<UImage>(Tree->FindWidget(TEXT("PausePanelArtwork"))))
+		{
+			Panel->SetBrush(FactoryUI::Chamfer(FactoryUI::EPlate::Screen));
+			if (auto* Slot = Cast<UCanvasPanelSlot>(Panel->Slot))
+			{
+				Slot->SetPosition(Origin - FVector2D(42, 36));
+				Slot->SetSize(Size + FVector2D(84, 90));
+			}
+		}
+		if (UWidget* Hint = Tree->FindWidget(TEXT("NavigationHint")))
+			if (auto* Slot = Cast<UCanvasPanelSlot>(Hint->Slot)) Slot->SetPosition(FVector2D(680, 842));
+		if (UTextBlock* Heading = Cast<UTextBlock>(Tree->FindWidget(TEXT("Heading"))))
+		{
+			auto Font = Heading->GetFont();
+			Font.Size = 47;
+			Heading->SetFont(Font);
+			Heading->SetJustification(ETextJustify::Center);
+			if (auto* Slot = Cast<UVerticalBoxSlot>(Heading->Slot)) Slot->SetPadding(FMargin(12, 0, 12, 17));
+		}
+		if (UTextBlock* Caption = Cast<UTextBlock>(Tree->FindWidget(TEXT("PausedLabel"))))
+		{
+			Caption->SetText(FText::FromString(TEXT("P A U S E D")));
+			Caption->SetColorAndOpacity(FactoryUI::Cyan);
+			Caption->SetJustification(ETextJustify::Center);
+			if (UVerticalBox* Column = Cast<UVerticalBox>(Caption->GetParent())) Column->ShiftChild(0, Caption);
+			if (auto* Slot = Cast<UVerticalBoxSlot>(Caption->Slot)) Slot->SetPadding(FMargin(12, 5, 12, 9));
+		}
+	}
+	struct FMenuIcon { const TCHAR* Name; const TCHAR* Asset; };
+	static const FMenuIcon Icons[] = {
+		{TEXT("NewGameButton"), TEXT("Play")}, {TEXT("LoadGameButton"), TEXT("Folder")},
+		{TEXT("ExitButton"), TEXT("Exit")}, {TEXT("ResumeButton"), TEXT("Play")},
+		{TEXT("ReloadButton"), TEXT("Retry")}, {TEXT("SettingsButton"), TEXT("Settings")},
+		{TEXT("MenuButton"), TEXT("Back")}, {TEXT("QuitButton"), TEXT("Power")},
+		{TEXT("BackButton"), TEXT("Back")}, {TEXT("SettingsBackButton"), TEXT("Back")},
+		{TEXT("ConfirmButton"), TEXT("Play")}, {TEXT("CancelButton"), TEXT("Back")},
+		{TEXT("Slot1Button"), TEXT("Save")}, {TEXT("Slot2Button"), TEXT("Save")}, {TEXT("Slot3Button"), TEXT("Save")}
+	};
+	TArray<UWidget*> Widgets;
+	Tree->GetAllWidgets(Widgets);
+	for (UWidget* Widget : Widgets)
+	{
+		UButton* Button = Cast<UButton>(Widget);
+		if (!Button) continue;
+		const FName Name = Button->GetFName();
+		const bool bStartPrimary = !bPause && (Name == TEXT("NewGameButton") || Name == TEXT("LoadGameButton") || Name == TEXT("ExitButton"));
+		Button->SetStyle(FactoryUI::Button());
+		Button->SetBackgroundColor(FLinearColor::White);
+		if (USizeBox* Box = Cast<USizeBox>(Button->GetParent()))
+		{
+			Box->SetHeightOverride(bPause ? 72 : bStartPrimary ? 94 : 56);
+			if (auto* Slot = Cast<UVerticalBoxSlot>(Box->Slot)) Slot->SetPadding(FMargin(0, bPause ? 8 : bStartPrimary ? 10 : 5));
+		}
+		UHorizontalBox* Row = Cast<UHorizontalBox>(Button->GetChildAt(0));
+		UTextBlock* Label = Cast<UTextBlock>(Row ? Row->GetChildAt(1) : Button->GetChildAt(0));
+		UScaleBox* Fit = Row ? Cast<UScaleBox>(Row->GetChildAt(1)) : nullptr;
+		if (Fit) Label = Cast<UTextBlock>(Fit->GetChildAt(0));
+		if (!Label) continue;
+		const FMenuIcon* Icon = nullptr;
+		for (const FMenuIcon& Candidate : Icons)
+		{
+			if (Button->GetFName() == FName(Candidate.Name))
+			{
+				Icon = &Candidate;
+				break;
+			}
+		}
+		if (!Icon) continue;
+		auto Font = Label->GetFont();
+		Font.Size = bPause ? 28 : bStartPrimary ? 38 : 23;
+		Label->SetFont(Font);
+		Label->SetAutoWrapText(false);
+		Label->SetWrapTextAt(0);
+		Label->SetJustification(ETextJustify::Left);
+		Label->SetColorAndOpacity(FactoryUI::Text);
+		if (!Row)
+		{
+			Button->RemoveChild(Label);
+			Row = Tree->ConstructWidget<UHorizontalBox>();
+			auto* RowSlot = CastChecked<UButtonSlot>(Button->AddChild(Row));
+			RowSlot->SetHorizontalAlignment(HAlign_Fill);
+			RowSlot->SetVerticalAlignment(VAlign_Fill);
+			RowSlot->SetPadding(FMargin(6, 0, 6, 0));
+			auto* IconSlot = Row->AddChildToHorizontalBox(Tree->ConstructWidget<UImage>());
+			IconSlot->SetPadding(FMargin(5, 0, 10, 0));
+			IconSlot->SetVerticalAlignment(VAlign_Center);
+		}
+		if (UImage* Glyph = Cast<UImage>(Row->GetChildAt(0)))
+		{
+			const FString Path = FString(TEXT("/Game/Main/UI/Icons/T_UI_Menu")) + Icon->Asset;
+			Glyph->SetBrushFromTexture(LoadObject<UTexture2D>(nullptr, *Path));
+			const float IconSize = bPause ? 24 : bStartPrimary ? 29 : 21;
+			Glyph->SetDesiredSizeOverride(FVector2D(IconSize));
+			Glyph->SetVisibility(ESlateVisibility::HitTestInvisible);
+		}
+		if (!Fit)
+		{
+			Label->RemoveFromParent();
+			Fit = Tree->ConstructWidget<UScaleBox>();
+			Fit->SetStretch(EStretch::ScaleToFit);
+			Fit->SetStretchDirection(EStretchDirection::DownOnly);
+			auto* FitSlot = CastChecked<UScaleBoxSlot>(Fit->AddChild(Label));
+			FitSlot->SetHorizontalAlignment(HAlign_Left);
+			FitSlot->SetVerticalAlignment(VAlign_Center);
+			auto* LabelSlot = Row->AddChildToHorizontalBox(Fit);
+			LabelSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+			LabelSlot->SetVerticalAlignment(VAlign_Fill);
+		}
+	}
+}
+#endif
 }

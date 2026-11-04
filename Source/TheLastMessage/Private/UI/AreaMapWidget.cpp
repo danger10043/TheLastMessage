@@ -8,6 +8,8 @@
 #include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
 #include "Rendering/DrawElements.h"
+#include "Brushes/SlateImageBrush.h"
+#include "Engine/Texture2D.h"
 #include "Styling/CoreStyle.h"
 #include "InputCoreTypes.h"
 
@@ -115,22 +117,40 @@ int32 UAreaMapWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geome
 	Text(FText::Format(NSLOCTEXT("AreaMap","Progress","탐사 구역  {0} / {1}"),MapSource->GetExploredRoomCount(),MapSource->GetRooms().Num()),
 		FVector2D(FMath::Max(40.0,Size.X-240),40),16,FLinearColor::White);
 	Out.PushClip(FSlateClippingZone(Geometry.ToPaintGeometry(FVector2f(FMath::Max(1.0,Size.X-72),FMath::Max(1.0,Size.Y-170)),FSlateLayoutTransform(FVector2f(36,104)))));
-	for (const FAreaMapRoom& Room : MapSource->GetRooms())
+	const auto& Rooms = MapSource->GetRooms();
+	for (const FAreaMapRoom& Room : Rooms)
 	{
 		if (!MapSource->IsExplored(Room.Id)) continue;
 		const FVector2D Min = ToMap(FVector2D(Room.Bounds.Min.X,Room.Bounds.Max.Y),Size);
 		const FVector2D Max = ToMap(FVector2D(Room.Bounds.Max.X,Room.Bounds.Min.Y),Size);
-		Box(Min,Max-Min,FLinearColor(0.025f,0.09f,0.13f),3);
+		if (UTexture2D* Silhouette = Room.Silhouette.Get())
+		{
+			const FSlateImageBrush Brush(Silhouette, FVector2D(Max-Min));
+			FSlateDrawElement::MakeBox(Out, Layer+4,
+				Geometry.ToPaintGeometry(FVector2f(Max-Min), FSlateLayoutTransform(FVector2f(Min))),
+				&Brush, ESlateDrawEffect::None);
+			continue;
+		}
+
+		const bool bCurrentRoom = Room.Id == MapSource->GetCurrentRoomId();
+		const FLinearColor Rock = bCurrentRoom ? FLinearColor(0.12f,0.26f,0.29f) : FLinearColor(0.07f,0.15f,0.19f);
+		const FLinearColor Edge = bCurrentRoom ? FLinearColor(0.37f,0.74f,0.69f) : FLinearColor(0.24f,0.49f,0.52f);
+		bool bHasTerrain = false;
 		Out.PushClip(FSlateClippingZone(Geometry.ToPaintGeometry(FVector2f(Max-Min),FSlateLayoutTransform(FVector2f(Min)))));
 		for (const FBox2D& Surface : MapSource->GetSurfaces())
 		{
 			if (!Surface.Intersect(Room.Bounds)) continue;
+			bHasTerrain = true;
 			const FVector2D A = ToMap(FVector2D(Surface.Min.X,Surface.Max.Y),Size);
 			const FVector2D B = ToMap(FVector2D(Surface.Max.X,Surface.Min.Y),Size);
-			Box(A,FVector2D(FMath::Max(1.0,B.X-A.X),FMath::Max(2.0,B.Y-A.Y)),FLinearColor(0.25f,0.46f,0.56f),4);
+			Box(A, FVector2D(FMath::Max(1.0,B.X-A.X), FMath::Max(2.0,B.Y-A.Y)), Rock, 3);
+			Box(A, FVector2D(FMath::Max(1.0,B.X-A.X), 1.5), Edge, 4);
 		}
-
 		Out.PopClip();
+		if (!bHasTerrain)
+		{
+			Box(Min, Max-Min, FLinearColor(0.025f,0.09f,0.13f), 3);
+		}
 	}
 	for (TActorIterator<APlayerCheckpoint> It(GetWorld()); It; ++It)
     {

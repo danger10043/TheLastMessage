@@ -25,4 +25,6 @@ protected:
 	UPROPERTY(meta=(BindWidgetOptional), BlueprintReadOnly) TObjectPtr<UImage> RightMouseIcon;
 	UPROPERTY(meta=(BindWidgetOptional), BlueprintReadOnly) TObjectPtr<UTextBlock> KeyLabel;
 	UPROPERTY(meta=(BindWidgetOptional), BlueprintReadOnly) TObjectPtr<UBorder> SelectionFrame;
+private:
+	TOptional<bool> StyledSelection;
 };

@@ -170,18 +170,26 @@ bool ACorePickup::TryAcquireFixedCore(UCoreComponent* InCoreComponent)
 	return true;
 }
 
-bool ACorePickup::TryOpenCoreChoice(APlayerBase* Player)
+UCoreComponent* ACorePickup::CanStartChoosing(APlayerBase* Player, ECoreRewardMode Mode) const
 {
+	// 다른 보상을 처리 중이거나 이미 화면이 열려 있으면 새 화면을 시작하지 않는다.
 	if (!HasAuthority() || !bPersistenceInitialized || IsActorBeingDestroyed() || bConsumed || bIsGrantingReward
-		|| RewardMode != ECoreRewardMode::Choice || IsValid(ActiveChoiceWidget) || IsValid(ActiveRewardSession)
+		|| RewardMode != Mode || IsValid(ActiveChoiceWidget) || IsValid(ActiveRewardSession)
 		|| !IsValid(Player) || Player->IsDead() || !ChoiceWidgetClass)
 	{
-		return false;
+		return nullptr;
 	}
 
-	APlayerController* Controller = Cast<APlayerController>(Player->GetController());
+	// 화면은 이 PC에서 조작하는 플레이어에게만 연다.
+	const APlayerController* Controller = Cast<APlayerController>(Player->GetController());
 	UCoreComponent* CoreComponent = Player->GetCoreComponent();
-	if (!IsValid(Controller) || !Controller->IsLocalController() || !IsValid(CoreComponent))
+	return IsValid(Controller) && Controller->IsLocalController() && IsValid(CoreComponent) ? CoreComponent : nullptr;
+}
+
+bool ACorePickup::TryOpenCoreChoice(APlayerBase* Player)
+{
+	UCoreComponent* CoreComponent = CanStartChoosing(Player, ECoreRewardMode::Choice);
+	if (!CoreComponent)
 	{
 		return false;
 	}
@@ -212,31 +220,14 @@ bool ACorePickup::TryOpenCoreChoice(APlayerBase* Player)
 	// 후보를 먼저 확보해 두면, 코어가 빨려 들어간 뒤 선택 화면을 열 수 없는 경우가 생기지 않는다.
 	ActiveRewardSession = Session;
 	Session->OnCancelled.AddUObject(this, &ACorePickup::HandleRewardCancelled);
-	BeginChoosing(Player);
-
-	// 코어가 플레이어에게 빨려 들어간 뒤 선택 화면을 연다. 연출 시간이 0이면 바로 연다.
-	if (AbsorbDuration > KINDA_SMALL_NUMBER)
-	{
-		bOpenChoiceAfterAbsorb = true;
-		StartAbsorb(Player);
-		return true;
-	}
-	return OpenChoiceScreen();
+	return StartChoosing(Player);
 }
 
 bool ACorePickup::TryOpenFixedCoreScreen(APlayerBase* Player)
 {
-	// 선택형과 같은 조건(권한·저장 상태·중복 처리·열린 화면)을 확인하고, 고정형 전용 조건을 더한다.
-	if (!HasAuthority() || !bPersistenceInitialized || IsActorBeingDestroyed() || bConsumed || bIsGrantingReward
-		|| RewardMode != ECoreRewardMode::Fixed || IsValid(ActiveChoiceWidget) || IsValid(ActiveRewardSession)
-		|| !IsValid(Player) || Player->IsDead() || !ChoiceWidgetClass || !IsValid(CoreData))
-	{
-		return false;
-	}
-
-	APlayerController* Controller = Cast<APlayerController>(Player->GetController());
-	UCoreComponent* CoreComponent = Player->GetCoreComponent();
-	if (!IsValid(Controller) || !Controller->IsLocalController() || !IsValid(CoreComponent))
+	// 선택형과 같은 시작 조건에 고정형 전용 조건(지급할 코어가 지정됨)을 더한다.
+	UCoreComponent* CoreComponent = IsValid(CoreData) ? CanStartChoosing(Player, ECoreRewardMode::Fixed) : nullptr;
+	if (!CoreComponent)
 	{
 		return false;
 	}
@@ -253,7 +244,17 @@ bool ACorePickup::TryOpenFixedCoreScreen(APlayerBase* Player)
 
 	// 흡수 연출 → 화면 열기 → 클릭 시 지급 순서는 선택형과 같다. 보상 세션(추첨·리롤 기록)만 쓰지 않는다.
 	TGuardValue<bool> GrantingRewardGuard(bIsGrantingReward, true);
-	BeginChoosing(Player);
+	return StartChoosing(Player);
+}
+
+bool ACorePickup::StartChoosing(APlayerBase* Player)
+{
+	// 선택 화면이 열려 있는 동안 플레이어가 죽거나 사라지면 화면을 닫고 픽업을 제자리로 되돌린다.
+	ChoosingPlayer = Player;
+	Player->OnPlayerDied.AddDynamic(this, &ACorePickup::HandleChoosingPlayerDied);
+	Player->OnDestroyed.AddDynamic(this, &ACorePickup::HandleChoosingPlayerDestroyed);
+
+	// 코어가 플레이어에게 빨려 들어간 뒤 화면을 연다. 연출 시간이 0이면 바로 연다.
 	if (AbsorbDuration > KINDA_SMALL_NUMBER)
 	{
 		bOpenChoiceAfterAbsorb = true;
@@ -263,12 +264,12 @@ bool ACorePickup::TryOpenFixedCoreScreen(APlayerBase* Player)
 	return OpenChoiceScreen();
 }
 
-void ACorePickup::BeginChoosing(APlayerBase* Player)
+void ACorePickup::FinishChosenReward()
 {
-	// 선택 화면이 열려 있는 동안 플레이어가 죽거나 사라지면 화면을 닫고 픽업을 제자리로 되돌린다.
-	ChoosingPlayer = Player;
-	Player->OnPlayerDied.AddDynamic(this, &ACorePickup::HandleChoosingPlayerDied);
-	Player->OnDestroyed.AddDynamic(this, &ACorePickup::HandleChoosingPlayerDestroyed);
+	// 코어는 화면을 열기 전에 이미 빨려 들어갔으므로 바로 숨긴다.
+	MarkConsumed();
+	ClearChoiceReward(true);
+	HideConsumedPickup();
 }
 
 bool ACorePickup::OpenChoiceScreen()
@@ -321,16 +322,26 @@ bool ACorePickup::OpenChoiceScreen()
 	return true;
 }
 
-UCoreRewardSession* ACorePickup::GetValidRewardSession()
+APlayerBase* ACorePickup::GetValidChooser()
 {
 	if (bConsumed || bIsGrantingReward) return nullptr;
 	APlayerBase* Player = ChoosingPlayer.Get();
-	if (!HasAuthority() || IsActorBeingDestroyed()
-		|| !IsValid(ActiveChoiceWidget)
-		|| !IsValid(Player) || Player->IsDead()
-		|| !IsValid(ActiveRewardSession) || !ActiveRewardSession->IsActive()
-		|| Player->GetCoreComponent() != ActiveRewardSession->GetCoreComponent()
-		|| Player->GetController() != ActiveChoiceWidget->GetOwningPlayer())
+	if (!HasAuthority() || IsActorBeingDestroyed() || !IsValid(ActiveChoiceWidget)
+		|| !IsValid(Player) || Player->IsDead() || Player->GetController() != ActiveChoiceWidget->GetOwningPlayer())
+	{
+		ClearChoiceReward();
+		return nullptr;
+	}
+	return Player;
+}
+
+UCoreRewardSession* ACorePickup::GetValidRewardSession()
+{
+	// 선택형은 화면을 연 뒤에도 같은 코어 컴포넌트의 보상 세션이 살아 있어야 한다.
+	APlayerBase* Player = GetValidChooser();
+	if (!Player) return nullptr;
+	if (!IsValid(ActiveRewardSession) || !ActiveRewardSession->IsActive()
+		|| Player->GetCoreComponent() != ActiveRewardSession->GetCoreComponent())
 	{
 		ClearChoiceReward();
 		return nullptr;
@@ -402,11 +413,10 @@ void ACorePickup::ShowUnavailableNotice(ECoreRewardStartResult Result) const
 
 UCoreComponent* ACorePickup::GetValidFixedChooser()
 {
-	if (bConsumed || bIsGrantingReward) return nullptr;
-	APlayerBase* Player = ChoosingPlayer.Get();
-	if (!HasAuthority() || IsActorBeingDestroyed() || !IsValid(ActiveChoiceWidget)
-		|| !IsValid(Player) || Player->IsDead() || !IsValid(CoreData)
-		|| Player->GetController() != ActiveChoiceWidget->GetOwningPlayer() || !IsValid(Player->GetCoreComponent()))
+	// 고정형은 지급할 코어와 받을 코어 컴포넌트만 있으면 된다.
+	APlayerBase* Player = GetValidChooser();
+	if (!Player) return nullptr;
+	if (!IsValid(CoreData) || !IsValid(Player->GetCoreComponent()))
 	{
 		ClearChoiceReward();
 		return nullptr;
@@ -432,10 +442,7 @@ void ACorePickup::HandleCoreSelected(UCoreDataAsset* SelectedCore)
 			ClearChoiceReward();
 			return;
 		}
-		// 코어는 화면을 열기 전에 이미 빨려 들어갔으므로 바로 숨긴다.
-		MarkConsumed();
-		ClearChoiceReward(true);
-		HideConsumedPickup();
+		FinishChosenReward();
 		return;
 	}
 
@@ -456,10 +463,7 @@ void ACorePickup::HandleCoreSelected(UCoreDataAsset* SelectedCore)
 		return;
 	}
 
-	// 코어는 선택 화면을 열기 전에 이미 빨려 들어갔으므로 바로 숨긴다.
-	MarkConsumed();
-	ClearChoiceReward(true);
-	HideConsumedPickup();
+	FinishChosenReward();
 }
 
 void ACorePickup::HandleCoreReroll(int32 ChoiceIndex)

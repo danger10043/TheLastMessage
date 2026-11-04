@@ -158,13 +158,28 @@ private:
 	 */
 	bool TryOpenFixedCoreScreen(APlayerBase* Player);
 
-	/** 선택 화면을 열 플레이어를 기록하고, 선택 도중 사망·파괴되면 정리하도록 알림을 연결한다. */
-	void BeginChoosing(APlayerBase* Player);
+	/**
+	 * 선택형·고정형 공통으로 화면을 시작할 수 있는지 확인한다(권한·저장 상태·중복 처리·열린 화면·로컬 플레이어).
+	 * 시작할 수 있으면 플레이어의 코어 컴포넌트를, 아니면 nullptr을 반환한다.
+	 */
+	UCoreComponent* CanStartChoosing(APlayerBase* Player, ECoreRewardMode Mode) const;
+
+	/**
+	 * 화면을 열 플레이어를 기록하고 선택 도중 사망·파괴되면 정리하도록 알림을 연결한 뒤,
+	 * 코어가 플레이어에게 빨려 들어가는 연출을 시작한다. 연출이 끝나면 화면을 열고, 연출 시간이 0이면 바로 연다.
+	 */
+	bool StartChoosing(APlayerBase* Player);
+
+	/** 화면에서 지급에 성공한 뒤 소모를 기록하고, 화면을 닫고, 이미 빨려 들어간 코어를 숨긴다. */
+	void FinishChosenReward();
+
+	/** 화면을 연 플레이어가 아직 선택할 수 있는지(생존·같은 컨트롤러) 확인하고, 아니면 화면을 닫고 픽업을 되돌린다. */
+	APlayerBase* GetValidChooser();
 
 	/** 고정 보상 화면의 플레이어가 아직 유효한지 확인하고, 아니면 화면을 닫고 픽업을 되돌린다. */
 	UCoreComponent* GetValidFixedChooser();
 
-	/** 선택 권한과 소유자를 확인하고, 더 이상 유효하지 않은 선택은 정리한다. */
+	/** 선택형 보상 세션이 아직 같은 플레이어의 것인지 확인하고, 더 이상 유효하지 않은 선택은 정리한다. */
 	UCoreRewardSession* GetValidRewardSession();
 
 	/** 대체 후보와 카드별 사용 횟수에 따라 각 리롤 버튼의 활성 상태를 갱신한다. */

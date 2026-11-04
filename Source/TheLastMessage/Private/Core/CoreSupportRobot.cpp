@@ -404,11 +404,16 @@ bool ACoreSupportRobot::SweepTerrain(const FVector& Start, const FVector& End, f
 	// 그래서 이동에서는 적을 통과하고, 시야 판정에서는 사이에 낀 적을 가림으로 보지 않는다.
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(SupportRobotTerrain), false, this);
 	AddTerrainQueryIgnores(Params);
+	return World->SweepSingleByChannel(OutHit, Start, End, FQuat::Identity, ECC_WorldDynamic,
+		FCollisionShape::MakeSphere(Radius), Params, MakeTerrainResponse());
+}
+
+FCollisionResponseParams ACoreSupportRobot::MakeTerrainResponse()
+{
 	FCollisionResponseParams Response;
 	Response.CollisionResponse.SetResponse(ECC_Pawn, ECR_Ignore);
 	Response.CollisionResponse.SetResponse(ECC_PhysicsBody, ECR_Ignore);
-	return World->SweepSingleByChannel(OutHit, Start, End, FQuat::Identity, ECC_WorldDynamic,
-		FCollisionShape::MakeSphere(Radius), Params, Response);
+	return Response;
 }
 
 bool ACoreSupportRobot::IsPathBlocked(const FVector& Start, const FVector& End, float Radius) const
@@ -425,11 +430,8 @@ bool ACoreSupportRobot::IsSpotFree(const FVector& Location) const
 	// 이동 Sweep과 같은 기준으로, 로봇 몸이 그 자리에 놓이면 지형과 겹치는지 본다.
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(SupportRobotSpot), false, this);
 	AddTerrainQueryIgnores(Params);
-	FCollisionResponseParams Response;
-	Response.CollisionResponse.SetResponse(ECC_Pawn, ECR_Ignore);
-	Response.CollisionResponse.SetResponse(ECC_PhysicsBody, ECR_Ignore);
 	return !World->OverlapBlockingTestByChannel(Location, FQuat::Identity, ECC_WorldDynamic,
-		FCollisionShape::MakeSphere(CollisionRadius), Params, Response);
+		FCollisionShape::MakeSphere(CollisionRadius), Params, MakeTerrainResponse());
 }
 
 void ACoreSupportRobot::AddTerrainQueryIgnores(FCollisionQueryParams& Params) const

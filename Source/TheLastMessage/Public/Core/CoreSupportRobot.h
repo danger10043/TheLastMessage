@@ -286,6 +286,9 @@ private:
 	/** 지형 판정에서 빼야 할 액터(플레이어, 로봇이 쏜 탄)를 넣는다. */
 	void AddTerrainQueryIgnores(FCollisionQueryParams& Params) const;
 
+	/** 지형 판정용 채널 응답. 캐릭터 캡슐(Pawn)과 적 메시(PhysicsBody)는 가림으로 보지 않는다. */
+	static FCollisionResponseParams MakeTerrainResponse();
+
 	// ---- 전투 판단 ----
 
 	/** 대상 선택부터 경로 결정까지 한 번의 전투 판단. */

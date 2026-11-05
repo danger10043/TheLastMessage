@@ -52,13 +52,6 @@ ECoreRewardStartResult UCoreRewardSession::Start(UCoreComponent* InCore,
 	return ECoreRewardStartResult::Started;
 }
 
-TArray<UCoreDataAsset*> UCoreRewardSession::GetChoices() const
-{
-	TArray<UCoreDataAsset*> Result;
-	for (const TObjectPtr<UCoreDataAsset>& Data : State.Choices) Result.Add(Data.Get());
-	return Result;
-}
-
 TArray<FCoreChoiceEntry> UCoreRewardSession::GetChoiceEntries() const
 {
 	TArray<FCoreChoiceEntry> Result;

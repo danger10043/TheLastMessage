@@ -110,6 +110,8 @@ protected:
 	/** 총구 소켓이 없을 때 쓰는 발사 위치(포탑 기준 로컬 좌표) */
 	FVector MuzzleOffset = FVector(120.f, 0.f, 0.f);
 
+	virtual FVector GetProjectileMuzzleLocation() const override { return GetMuzzleLocation(MuzzleSocketName, MuzzleOffset); }
+
 	UPROPERTY(VisibleInstanceOnly, Category = "Sentry")
 	bool bIsCharging = false;
 

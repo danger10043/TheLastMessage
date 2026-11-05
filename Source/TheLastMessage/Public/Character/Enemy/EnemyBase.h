@@ -23,6 +23,8 @@ class APlayerBase;
 class AEnemyBase;
 class AEnemyProjectile;
 class AEnemyHealthPickup;
+class UEnemyAimLaserComponent;
+class UStaticMesh;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEnemyStateChangedSignature, EEnemyState, NewState);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEnemyDamagedSignature, float, Damage);
@@ -129,6 +131,18 @@ public:
 	/** 진행 중인 공격(타이머·충전·돌진 등)을 취소한다. 서브클래스가 확장한다. */
 	virtual void CancelAttack();
 
+	/** 원거리 공격 예고용 빨간 레이저를 켠다. LockDelay초 동안 타겟을 따라가다가 고정된다. 레이저 메시·머티리얼이 없으면 아무것도 하지 않는다. */
+	void ShowAimLaser(float LockDelay);
+
+	/** 예고 레이저를 끈다. */
+	void HideAimLaser();
+
+	/** 예고 레이저의 방향이 고정되었는지 */
+	bool IsAimLaserLocked() const;
+
+	/** 고정된 예고 레이저 방향. 고정되지 않았으면 영벡터(그러면 발사할 때 타겟 방향을 새로 계산한다). */
+	FVector GetLockedAimDirection() const;
+
 	UFUNCTION(BlueprintPure, Category = "Enemy")
 	bool IsAttacking() const { return bIsAttacking; }
 
@@ -186,6 +200,24 @@ protected:
 
 	/** 총구 위치: 소켓(본)이 있으면 그 위치, 없으면 몬스터 기준 로컬 오프셋 */
 	FVector GetMuzzleLocation(FName SocketName, const FVector& LocalOffset) const;
+
+	/** 투사체가 나가는 위치. 예고 레이저가 여기서 시작한다. 원거리 몬스터가 자기 총구 위치로 오버라이드한다. */
+	virtual FVector GetProjectileMuzzleLocation() const { return GetActorLocation(); }
+
+	/** 예고 레이저로 쓸 평면 메시(가로세로 100). 비워 두면 예고 레이저가 보이지 않는다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Enemy|AimLaser")
+	TObjectPtr<UStaticMesh> AimLaserMesh;
+
+	/** 예고 레이저 머티리얼(빨간색, 양면). 비워 두면 예고 레이저가 보이지 않는다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Enemy|AimLaser")
+	TObjectPtr<UMaterialInterface> AimLaserMaterial;
+
+	/** 예고 레이저 선 굵기(cm), 최대 길이(cm). 데이터 에셋에서 복사된다. */
+	float AimLaserWidth = 6.f;
+	float AimLaserMaxLength = 2500.f;
+
+	/** 발사 직전 레이저를 고정하는 시간(초). 데이터 에셋에서 복사된다. */
+	float AimLaserLockTime = 0.3f;
 
 	/** 피해를 받았을 때 피격 이펙트를 재생한다. */
 	UFUNCTION()
@@ -396,6 +428,14 @@ protected:
 	void TryDropHeal();
 
 private:
+	friend class UEnemyAimLaserComponent;
+
+	/** 예고 레이저 컴포넌트. 처음 쓸 때 만든다. */
+	UPROPERTY(Transient)
+	TObjectPtr<UEnemyAimLaserComponent> AimLaserComponent;
+
+	bool bWarnedAimLaser = false;
+
 	/** 레벨에 맞춰 MaxHealth·Health·DamageMultiplier Attribute를 설정한다. */
 	/** bKeepHealthRatio가 true면 현재 체력 비율을 유지하고, false면 체력을 가득 채운다. */
 	void ApplyLevelScaling(bool bKeepHealthRatio = true);

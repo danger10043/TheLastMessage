@@ -3,6 +3,8 @@
 #include "Character/Enemy/EnemyAttributeSet.h"
 #include "Character/Enemy/Drop/EnemyHealthPickup.h"
 #include "Character/Enemy/EnemyProjectile.h"
+#include "Character/Enemy/EnemyAimLaserComponent.h"
+#include "Engine/StaticMesh.h"
 #include "Character/Player/PlayerBase.h"
 #include "Perception/AIPerceptionComponent.h"
 #include "Framework/ActorPoolSubsystem.h"
@@ -85,6 +87,9 @@ void AEnemyBase::ApplyEnemyData(const UEnemyDataAsset* Data)
 	HealDropChance = Data->HealDropChance;
 	HealDropAmount = Data->HealDropAmount;
 	HealDropHeight = Data->HealDropHeight;
+	AimLaserWidth = Data->AimLaserWidth;
+	AimLaserMaxLength = Data->AimLaserMaxLength;
+	AimLaserLockTime = Data->AimLaserLockTime;
 }
 
 void AEnemyBase::BeginPlay()
@@ -467,6 +472,54 @@ void AEnemyBase::CancelAttack()
 	}
 
 	bIsAttacking = false;
+	HideAimLaser();
+}
+
+void AEnemyBase::ShowAimLaser(float LockDelay)
+{
+	if (!AimLaserMesh || !AimLaserMaterial)
+	{
+		if (!bWarnedAimLaser)
+		{
+			bWarnedAimLaser = true;
+			UE_LOG(LogTemp, Warning, TEXT("[Enemy] %s: 예고 레이저를 표시하지 못했습니다. BP의 Aim Laser Mesh=%s, Aim Laser Material=%s"),
+				*GetName(), AimLaserMesh ? TEXT("있음") : TEXT("없음"), AimLaserMaterial ? TEXT("있음") : TEXT("없음"));
+		}
+		return;
+	}
+
+	if (!AimLaserComponent)
+	{
+		AimLaserComponent = NewObject<UEnemyAimLaserComponent>(this, TEXT("AimLaser"));
+		AimLaserComponent->SetupAttachment(GetRootComponent());
+		AimLaserComponent->RegisterComponent();
+	}
+
+	if (AimLaserComponent->GetStaticMesh() != AimLaserMesh)
+	{
+		AimLaserComponent->SetStaticMesh(AimLaserMesh);
+	}
+	AimLaserComponent->SetMaterial(0, AimLaserMaterial);
+	AimLaserComponent->Configure(AimLaserWidth, AimLaserMaxLength);
+	AimLaserComponent->Show(this, LockDelay);
+}
+
+void AEnemyBase::HideAimLaser()
+{
+	if (AimLaserComponent)
+	{
+		AimLaserComponent->Hide();
+	}
+}
+
+bool AEnemyBase::IsAimLaserLocked() const
+{
+	return AimLaserComponent && AimLaserComponent->IsLocked();
+}
+
+FVector AEnemyBase::GetLockedAimDirection() const
+{
+	return AimLaserComponent ? AimLaserComponent->GetLockedDirection() : FVector::ZeroVector;
 }
 
 void AEnemyBase::SpawnEffectAtLocation(UNiagaraSystem* System, const FVector& Location, const FRotator& Rotation, const FVector& Scale)
@@ -643,6 +696,7 @@ void AEnemyBase::PlayAttackMontage()
 void AEnemyBase::FinishAttack()
 {
 	bIsAttacking = false;
+	HideAimLaser();
 	StartAttackCooldown();
 }
 

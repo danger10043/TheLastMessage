@@ -80,6 +80,11 @@ protected:
 	/** 점사 안에서 발사 간격(초) */
 	float FireInterval = 0.12f;
 
+	/** 점사 전에 빨간 레이저로 경로를 보여 주는 시간(초). 점사마다 적용된다. 0이면 바로 쏜다. */
+	float AimWindup = 0.5f;
+
+	virtual FVector GetProjectileMuzzleLocation() const override { return GetMuzzleLocation(MuzzleSocketName, MuzzleOffset); }
+
 	/** 점사와 점사 사이의 간격(초). 마지막 점사 뒤에도 이만큼 기다린 뒤 다음 단계로 넘어간다. */
 	float BurstGap = 0.6f;
 
@@ -186,6 +191,9 @@ private:
 	/** 점사 단계를 시작한다. bInRetreat가 true면 뒤로 물러나며 쏜다. */
 	void StartRangedSequence(bool bInRetreat);
 	void StartBurst();
+
+	/** 예고 레이저가 끝난 뒤 점사를 실제로 시작한다(몽타주 재생 + 첫 발). */
+	void BeginBurstFire();
 	void FireShot();
 	void FinishRangedSequence();
 

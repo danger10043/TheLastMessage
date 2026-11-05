@@ -94,4 +94,46 @@ bool FAreaMapOffsetPlaneTest::RunTest(const FString& Parameters)
 	World->EndPlay(EEndPlayReason::Quit);World->DestroyWorld(false);GEngine->DestroyWorldContext(World);
 	return !HasAnyErrors();
 }
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAreaMapFogTest,"TheLastMessage.Map.FogRevealAndRestore",
+	EAutomationTestFlags::EditorContext|EAutomationTestFlags::EngineFilter)
+
+bool FAreaMapFogTest::RunTest(const FString& Parameters)
+{
+	UWorld::InitializationValues Values;
+	Values.AllowAudioPlayback(false).CreatePhysicsScene(true).CreateNavigation(false).CreateAISystem(false);
+	UWorld* World=UWorld::CreateWorld(EWorldType::Game,false,NAME_None,nullptr,true,ERHIFeatureLevel::Num,&Values);
+	GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World);
+	World->InitializeActorsForPlay(FURL());World->BeginPlay();World->GetWorldSettings()->NotifyBeginPlay();
+	APlayerBase* Player=World->SpawnActor<APlayerBase>();
+	UAreaMapComponent* Map=Player->FindComponentByClass<UAreaMapComponent>();
+	if (!TestNotNull(TEXT("Player owns map component"),Map)) {World->DestroyWorld(false);GEngine->DestroyWorldContext(World);return false;}
+	Map->bPersistExploration=false;
+	AAreaMapRegion* Room=World->SpawnActor<AAreaMapRegion>();
+	Room->RegionId=TEXT("FogRoom");Room->RegionName=FText::FromString(TEXT("Fog room"));
+	Room->RegionBounds->SetBoxExtent(FVector(500,500,400));Room->SetActorLocation(FVector(0,0,400));
+	Map->RefreshLayout();
+	const FVector2D Probe(0,100);
+	TestTrue(TEXT("Entering a room explores it"),Map->ExploreAt(FVector(0,0,100)));
+	TestTrue(TEXT("Entered room is shown on the map"),Map->IsRoomShown(Room->RegionId));
+	TestFalse(TEXT("Entering does not reveal cells by itself"),Map->IsPointRevealed(Probe));
+	TestTrue(TEXT("Nothing explored yet"),Map->GetExplorationPercent()<0.01f);
+	Map->RevealRoom(Room->RegionId);
+	TestTrue(TEXT("Revealed cell is reported"),Map->IsPointRevealed(Probe));
+	TestTrue(TEXT("Exploration percent rises"),Map->GetExplorationPercent()>0.f);
+
+	const float Before=Map->GetExplorationPercent();
+	TMap<FName,FProgressRoomFog> Saved;
+	Map->ExportFog(Saved);
+	TestTrue(TEXT("Fog is exported per room"),Saved.Contains(Room->RegionId));
+	TSet<FName> Explored;Explored.Add(Room->RegionId);
+	Map->RestoreExploration(Explored,&Saved);
+	TestTrue(TEXT("Fog survives export and restore"),FMath::IsNearlyEqual(Map->GetExplorationPercent(),Before,0.01f)&&Map->IsPointRevealed(Probe));
+
+	Map->RestoreExploration(Explored,nullptr);
+	TestTrue(TEXT("Old saves without cell data show the whole room"),Map->IsPointRevealed(Probe));
+	Map->RestoreExploration(TSet<FName>(),nullptr);
+	TestFalse(TEXT("Cleared exploration hides the room"),Map->IsPointRevealed(Probe)||Map->IsRoomShown(Room->RegionId));
+	World->EndPlay(EEndPlayReason::Quit);World->DestroyWorld(false);GEngine->DestroyWorldContext(World);
+	return !HasAnyErrors();
+}
 #endif

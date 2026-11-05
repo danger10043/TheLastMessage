@@ -18,11 +18,24 @@ struct FProgressActorState
 	UPROPERTY(SaveGame, BlueprintReadWrite) TArray<uint8> Payload;
 };
 
+/** 방 하나의 지도 안개 기록. 방을 Columns x Rows 칸으로 나눠 시야가 닿은 칸을 비트로 저장한다(칸 번호 = Row * Columns + Column). */
+USTRUCT(BlueprintType)
+struct FProgressRoomFog
+{
+	GENERATED_BODY()
+	UPROPERTY(SaveGame, BlueprintReadWrite) int32 Columns = 0;
+	UPROPERTY(SaveGame, BlueprintReadWrite) int32 Rows = 0;
+	UPROPERTY(SaveGame, BlueprintReadWrite) TArray<uint8> Bits;
+};
+
 USTRUCT(BlueprintType)
 struct FProgressMapState
 {
 	GENERATED_BODY()
+	/** 들어가 본 방. 지도에 방 이름이 표시된다. 칸 기록(RevealedCells)이 없는 방은 방 전체가 밝혀진 것으로 본다(이전 세이브 호환). */
 	UPROPERTY(SaveGame, BlueprintReadWrite) TSet<FName> ExploredRooms;
+	/** 방 이름 -> 그 방에서 시야가 닿은 칸. */
+	UPROPERTY(SaveGame, BlueprintReadWrite) TMap<FName, FProgressRoomFog> RevealedCells;
 	UPROPERTY(SaveGame, BlueprintReadWrite) TSet<FGuid> VisitedCheckpoints;
 	UPROPERTY(SaveGame, BlueprintReadWrite) TSet<FName> PlayedCinematics;
 	/** Authored stable IDs; never use runtime actor names as persistence IDs. */

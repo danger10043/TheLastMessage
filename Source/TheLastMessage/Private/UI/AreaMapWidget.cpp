@@ -34,6 +34,7 @@ bool UAreaMapWidget::OpenMap(UAreaMapComponent* Source, const UInputAction* Acti
 	if (!PC || !PC->GetPawn() || !Source || UGameplayStatics::IsGamePaused(this)) return false;
 	MapSource = Source; TravelStatus=FText::GetEmpty();
 	Source->LoadExploration(); Source->RefreshLayout(); Source->ExploreAt(PC->GetPawn()->GetActorLocation());
+	Source->RevealFromView(PC->GetPawn()->GetActorLocation());
 	InputOwner = PC; ObservedPawn = PC->GetPawn();
 	bPreviousCursor = PC->bShowMouseCursor;
 	ToggleKeys.Reset();
@@ -135,13 +136,41 @@ int32 UAreaMapWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geome
 	}
 	if(!TravelStatus.IsEmpty()) Text(TravelStatus,FVector2D(280,66),14,FLinearColor(1.f,0.7f,0.3f));
 	Text(MapSource->GetCurrentRoomName(),FVector2D(40,66),14,FLinearColor(0.7f,0.8f,0.87f),true);
-	Text(FText::Format(NSLOCTEXT("AreaMap","Progress","탐사 구역  {0} / {1}"),MapSource->GetExploredRoomCount(),MapSource->GetRooms().Num()),
+	Text(FText::Format(NSLOCTEXT("AreaMap","Progress","탐사율  {0}%"),FMath::FloorToInt(MapSource->GetExplorationPercent())),
 		FVector2D(FMath::Max(40.0,Size.X-240),40),16,FLinearColor::White);
 	Out.PushClip(FSlateClippingZone(Geometry.ToPaintGeometry(FVector2f(FMath::Max(1.0,Size.X-72),FMath::Max(1.0,Size.Y-170)),FSlateLayoutTransform(FVector2f(36,104)))));
 	const auto& Rooms = MapSource->GetRooms();
+	// 아직 시야가 닿지 않은 칸을 배경색으로 덮는다. 가로로 이어진 칸은 한 번에 그린다.
+	// 모든 방의 지형을 다 그린 뒤 더 높은 레이어에서 그려서, 다른 방의 지형이 안개 위로 올라오지 않게 한다.
+	// 방이 겹쳐 있으면 다른 방에서 이미 밝혀진 자리는 가리지 않는다.
+	auto DrawFog = [&](const FAreaMapRoom& Room)
+	{
+		const FAreaMapFog* RoomFog = MapSource->FindFog(Room.Id);
+		if (!RoomFog || RoomFog->Columns < 1 || RoomFog->Rows < 1) return;
+		const FVector2D RoomSize = Room.Bounds.GetSize();
+		const double CellW = RoomSize.X / RoomFog->Columns, CellH = RoomSize.Y / RoomFog->Rows;
+		const FLinearColor FogColor(0.003f,0.009f,0.014f,1.f);
+		for (int32 Row = 0; Row < RoomFog->Rows; ++Row)
+		{
+			int32 RunStart = -1;
+			for (int32 Column = 0; Column <= RoomFog->Columns; ++Column)
+			{
+				bool bHidden = Column < RoomFog->Columns && !RoomFog->IsRevealed(Column, Row);
+				if (bHidden && MapSource->IsPointRevealed(FVector2D(Room.Bounds.Min.X + (Column + 0.5) * CellW, Room.Bounds.Min.Y + (Row + 0.5) * CellH))) bHidden = false;
+				if (bHidden && RunStart < 0) RunStart = Column;
+				if (!bHidden && RunStart >= 0)
+				{
+					const FVector2D A = ToMap(FVector2D(Room.Bounds.Min.X + RunStart * CellW, Room.Bounds.Min.Y + (Row + 1) * CellH),Size);
+					const FVector2D B = ToMap(FVector2D(Room.Bounds.Min.X + Column * CellW, Room.Bounds.Min.Y + Row * CellH),Size);
+					Box(A, (B - A) + FVector2D(0.75,0.75), FogColor, 5);
+					RunStart = -1;
+				}
+			}
+		}
+	};
 	for (const FAreaMapRoom& Room : Rooms)
 	{
-		if (!MapSource->IsExplored(Room.Id)) continue;
+		if (!MapSource->IsRoomShown(Room.Id)) continue;
 		const FVector2D Min = ToMap(FVector2D(Room.Bounds.Min.X,Room.Bounds.Max.Y),Size);
 		const FVector2D Max = ToMap(FVector2D(Room.Bounds.Max.X,Room.Bounds.Min.Y),Size);
 		if (UTexture2D* Silhouette = Room.Silhouette.Get())
@@ -168,6 +197,8 @@ int32 UAreaMapWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geome
 		}
 		Out.PopClip();
 	}
+	for (const FAreaMapRoom& Room : Rooms)
+		if (MapSource->IsRoomShown(Room.Id)) DrawFog(Room);
 	const auto Measure = FSlateApplication::Get().GetRenderer()->GetFontMeasureService();
 	for (const FAreaMapRoom& Room : Rooms)
 	{
@@ -192,9 +223,8 @@ int32 UAreaMapWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geome
     {
         const FVector Location=It->GetActorLocation();
         const FVector2D WorldPoint(Location.X,Location.Z);
-        bool bVisible=It->HasBeenVisited();
-        for(const auto& Room:MapSource->GetRooms())
-            if(Room.Bounds.IsInside(WorldPoint) && MapSource->IsExplored(Room.Id)) bVisible=true;
+        // 방문한 체크포인트이거나, 그 자리의 칸이 시야에 들어온 적이 있어야 지도에 보인다.
+        const bool bVisible=It->HasBeenVisited() || MapSource->IsPointRevealed(WorldPoint);
         if(!bVisible) continue;
         const FVector2D P=ToMap(WorldPoint,Size);
         const bool bTravel=It->CanFastTravel();

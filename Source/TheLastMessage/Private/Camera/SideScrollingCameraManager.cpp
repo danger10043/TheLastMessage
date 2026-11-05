@@ -5,6 +5,11 @@
 #include "GameFramework/PlayerController.h"
 #include "Engine/World.h"
 #include "CollisionQueryParams.h"
+#include "Map/AreaMapRegion.h"
+#include "Components/BoxComponent.h"
+#include "Curves/CurveFloat.h"
+#include "EngineUtils.h"
+#include "Character/Player/PlayerBase.h"
 
 void ASideScrollingCameraManager::UpdateViewTarget(FTViewTarget& OutVT, float DeltaTime)
 {
@@ -100,4 +105,96 @@ void ASideScrollingCameraManager::FinalizeViewTarget(FTViewTarget& OutVT, float 
 	ApplyCameraModifiers(DeltaTime, OutVT.POV);
 	SetActorLocationAndRotation(OutVT.POV.Location, OutVT.POV.Rotation, false);
 	UpdateCameraLensEffects(OutVT);
+}
+
+void ASideScrollingCameraManager::UpdateCamera(float DeltaTime)
+{
+	UpdateRegionZoom(DeltaTime);
+	Super::UpdateCamera(DeltaTime);
+}
+
+void ASideScrollingCameraManager::UpdateRegionZoom(float DeltaTime)
+{
+	APawn* Pawn = PCOwner ? PCOwner->GetPawn() : nullptr;
+	const APlayerBase* Player = Cast<APlayerBase>(Pawn);
+	if (!IsValid(Pawn) || !Pawn->IsLocallyControlled() || (Player && Player->IsDead()))
+	{
+		ZoomRegion.Reset();
+		ZoomPawn.Reset();
+		ActiveZoomCurve = nullptr;
+		bInsideZoomRegion = false;
+		return;
+	}
+	if (ZoomPawn.Get() != Pawn)
+	{
+		ZoomRegion.Reset();
+		ActiveZoomCurve = nullptr;
+		bInsideZoomRegion = false;
+		ZoomPawn = Pawn;
+	}
+
+	const FVector Position = Pawn->GetActorLocation();
+	auto ContainsPlayer = [&Position](const AAreaMapRegion* Region)
+		{
+			if (!IsValid(Region) || !IsValid(Region->RegionBounds.Get())) return false;
+			const FVector Local = Region->RegionBounds->GetComponentTransform().InverseTransformPosition(Position);
+			const FVector Extent = Region->RegionBounds->GetUnscaledBoxExtent();
+			return FMath::Abs(Local.X) <= Extent.X && FMath::Abs(Local.Y) <= Extent.Y
+				&& FMath::Abs(Local.Z) <= Extent.Z;
+		};
+	auto IsZoomEnabled = [](const AAreaMapRegion* Region)
+		{
+			return IsValid(Region) && FMath::IsFinite(Region->TargetZoomValue)
+				&& Region->TargetZoomValue > 0.0f && FMath::IsFinite(Region->ZoomDuration)
+				&& Region->ZoomDuration > 0.0f && IsValid(Region->ZoomCurve.Get());
+		};
+
+	AAreaMapRegion* Candidate = nullptr;
+	if (bInsideZoomRegion && ContainsPlayer(ZoomRegion.Get()) && IsZoomEnabled(ZoomRegion.Get()))
+	{
+		Candidate = ZoomRegion.Get();
+	}
+	else
+	{
+		for (TActorIterator<AAreaMapRegion> It(GetWorld()); It; ++It)
+		{
+			AAreaMapRegion* Region = *It;
+			if (!IsZoomEnabled(Region) || !ContainsPlayer(Region)) continue;
+			if (!Candidate || Region->GetPathName().Compare(Candidate->GetPathName()) < 0)
+				Candidate = Region;
+		}
+	}
+
+	if (Candidate && (!bInsideZoomRegion || Candidate != ZoomRegion.Get()))
+	{
+		if (Candidate != ZoomRegion.Get() || !IsValid(ActiveZoomCurve.Get()))
+		{
+			RegionEntryZoom = CurrentZoom;
+			RegionTargetZoom = Candidate->TargetZoomValue;
+			RegionZoomDuration = Candidate->ZoomDuration;
+			RegionZoomTime = 0.0f;
+			ActiveZoomCurve = Candidate->ZoomCurve;
+		}
+		ZoomRegion = Candidate;
+		bInsideZoomRegion = true;
+	}
+	else if (!Candidate)
+	{
+		bInsideZoomRegion = false;
+	}
+
+	if (!IsValid(ActiveZoomCurve.Get())) return;
+	const float Step = FMath::Max(DeltaTime, 0.0f);
+	RegionZoomTime = FMath::Clamp(RegionZoomTime + (bInsideZoomRegion ? Step : -Step),
+		0.0f, RegionZoomDuration);
+	const float Progress = RegionZoomTime / RegionZoomDuration;
+	const float Alpha = ActiveZoomCurve->GetFloatValue(Progress);
+	CurrentZoom = FMath::Lerp(RegionEntryZoom, RegionTargetZoom, Alpha);
+	if (RegionZoomTime >= RegionZoomDuration) CurrentZoom = RegionTargetZoom;
+	if (!bInsideZoomRegion && RegionZoomTime <= 0.0f)
+	{
+		CurrentZoom = RegionEntryZoom;
+		ZoomRegion.Reset();
+		ActiveZoomCurve = nullptr;
+	}
 }

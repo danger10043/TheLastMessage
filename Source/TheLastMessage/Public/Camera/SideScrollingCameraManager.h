@@ -6,6 +6,8 @@
 #include "Camera/PlayerCameraManager.h"
 #include "SideScrollingCameraManager.generated.h"
 
+class AAreaMapRegion;
+class UCurveFloat;
 /**
  *  Simple side scrolling camera with smooth scrolling and horizontal bounds
  */
@@ -66,4 +68,17 @@ protected:
 	float SmoothedFramingOffset = 0.0f;
 	float TerrainProbeTimer = 0.0f;
 	bool bHasLowerTerrain = true;
+
+	virtual void UpdateCamera(float DeltaTime) override;
+	void UpdateRegionZoom(float DeltaTime);
+
+	TWeakObjectPtr<AAreaMapRegion> ZoomRegion;
+	TWeakObjectPtr<APawn> ZoomPawn;
+	UPROPERTY(Transient)
+	TObjectPtr<UCurveFloat> ActiveZoomCurve = nullptr;
+	float RegionEntryZoom = 0.0f;
+	float RegionTargetZoom = 0.0f;
+	float RegionZoomDuration = 0.0f;
+	float RegionZoomTime = 0.0f;
+	bool bInsideZoomRegion = false;
 };

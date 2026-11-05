@@ -6,6 +6,7 @@
 
 class UBoxComponent;
 class UTexture2D;
+class UCurveFloat;
 
 /** 방의 탐사 식별자와 지도 영역 */
 UCLASS()
@@ -34,4 +35,13 @@ public:
 	FBox AuthoredLayoutBounds = FBox(ForceInit);
 	UFUNCTION(BlueprintCallable, CallInEditor, Category="Area Map") void CaptureLayoutBounds();
 	FBox2D GetMapBounds() const;
+
+	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Area Map|Zoom", meta = (ClampMin = "0.0", Units = "cm"))
+	float TargetZoomValue = 0.0f;
+
+	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Area Map|Zoom", meta = (ClampMin = "0.0", Units = "s"))
+	float ZoomDuration = 0.0f;
+
+	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Area Map|Zoom")
+	TObjectPtr<UCurveFloat> ZoomCurve = nullptr;
 };

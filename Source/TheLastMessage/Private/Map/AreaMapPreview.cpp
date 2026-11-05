@@ -42,6 +42,7 @@ void PreviewAreaMap()
 		{
 			const FVector2D Center=Map->GetRooms()[Index].Bounds.GetCenter();
 			Map->ExploreAt(FVector(Center.X,0,Center.Y));
+			Map->RevealRoom(Map->GetRooms()[Index].Id);
 		}
 		const FVector2D Center=Map->GetRooms()[0].Bounds.GetCenter();
 		Player->SetActorLocation(FVector(Center.X,0,Center.Y));Map->ExploreAt(Player->GetActorLocation());

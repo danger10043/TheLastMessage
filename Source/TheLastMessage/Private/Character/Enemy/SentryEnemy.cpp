@@ -148,6 +148,9 @@ void ASentryEnemy::StartCharge()
 		}
 	}
 
+	// 충전하는 동안 빨간 레이저로 발사 경로를 보여 준다. 발사 직전에는 방향이 고정되어 플레이어가 피할 수 있다.
+	ShowAimLaser(ChargeTime - AimLaserLockTime);
+
 	GetWorldTimerManager().SetTimer(ChargeTimerHandle, this, &ASentryEnemy::FireProjectile, ChargeTime, false);
 }
 
@@ -171,13 +174,21 @@ void ASentryEnemy::FireProjectile()
 
 	StopChargeEffect();
 
+	// 예고 레이저가 고정한 방향이 있으면 그 방향으로 쏜다(보여 준 경로와 같아야 한다).
+	const FVector LockedDirection = GetLockedAimDirection();
+
 	FRotator FlashRotation = GetActorRotation();
-	if (const AActor* Target = GetCurrentTarget())
+	if (!LockedDirection.IsNearlyZero())
+	{
+		FlashRotation = LockedDirection.Rotation();
+	}
+	else if (const AActor* Target = GetCurrentTarget())
 	{
 		FlashRotation = (Target->GetActorLocation() - Muzzle).Rotation();
 	}
 
-	SpawnEnemyProjectile(ProjectileConfig, Muzzle);
+	HideAimLaser();
+	SpawnEnemyProjectile(ProjectileConfig, Muzzle, LockedDirection);
 	SpawnEffectAtSocket(MuzzleFlashEffect, MuzzleSocketName, MuzzleOffset, FlashRotation);
 
 	if (FireSound)

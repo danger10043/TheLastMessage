@@ -19,7 +19,7 @@ bool UTLMFontSetupLibrary::ConfigureCompositeFont(UFont* Font,
 	Font->Modify();
 	Font->FontCacheType = EFontCacheType::Runtime;
 
-	FCompositeFont& Composite = Font->CompositeFont;
+	FCompositeFont& Composite = Font->GetMutableInternalCompositeFont();
 	Composite.DefaultTypeface.Fonts.Reset();
 	for (int32 Index = 0; Index < Faces.Num(); ++Index)
 	{

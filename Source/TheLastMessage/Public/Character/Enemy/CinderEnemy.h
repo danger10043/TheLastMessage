@@ -116,6 +116,8 @@ protected:
 
 	FVector MuzzleOffset = FVector(80.f, 0.f, 30.f);
 
+	virtual FVector GetProjectileMuzzleLocation() const override { return GetMuzzleLocation(MuzzleSocketName, MuzzleOffset); }
+
 	UPROPERTY(EditDefaultsOnly, Category = "Cinder|Ranged")
 	TObjectPtr<UNiagaraSystem> MuzzleFlashEffect;
 

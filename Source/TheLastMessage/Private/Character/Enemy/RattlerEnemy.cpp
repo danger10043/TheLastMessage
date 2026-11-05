@@ -29,6 +29,7 @@ void ARattlerEnemy::ApplyEnemyData(const UEnemyDataAsset* Data)
 	BurstCount = S.BurstCount;
 	FireInterval = S.FireInterval;
 	BurstCooldown = S.BurstCooldown;
+	AimWindup = S.AimWindup;
 	MuzzleOffset = S.MuzzleOffset;
 	ProjectileConfig.Speed = S.ProjectileSpeed;
 	ProjectileConfig.Lifetime = S.ProjectileLifetime;
@@ -50,6 +51,25 @@ void ARattlerEnemy::StartBurst()
 	RemainingBurst = BurstCount;
 	bAimLocked = false;
 	FaceTarget();
+
+	// 쏘기 전에 빨간 레이저로 경로를 보여 준다. 마지막 순간에는 방향이 고정되어 플레이어가 피할 수 있다.
+	if (AimWindup > 0.f)
+	{
+		ShowAimLaser(AimWindup - AimLaserLockTime);
+		GetWorldTimerManager().SetTimer(BurstTimerHandle, this, &ARattlerEnemy::BeginFiring, AimWindup, false);
+		return;
+	}
+
+	BeginFiring();
+}
+
+void ARattlerEnemy::BeginFiring()
+{
+	if (IsDead() || !bIsAttacking)
+	{
+		return;
+	}
+
 	PlayAttackMontage();
 
 	FireOnce();
@@ -74,8 +94,10 @@ void ARattlerEnemy::FireOnce()
 	// 연발의 첫 발을 쏘는 순간의 플레이어 위치로 조준 방향을 고정한다. 나머지 발도 같은 방향이라 일자로 날아간다.
 	if (!bAimLocked)
 	{
-		LockedAimDirection = ComputeAimDirection(Muzzle);
+		// 예고 레이저가 고정한 방향이 있으면 그대로 쏜다(보여 준 경로와 같아야 한다).
+		LockedAimDirection = IsAimLaserLocked() ? GetLockedAimDirection() : ComputeAimDirection(Muzzle);
 		bAimLocked = !LockedAimDirection.IsNearlyZero();
+		HideAimLaser();
 	}
 
 	const FRotator FlashRotation = bAimLocked ? LockedAimDirection.Rotation() : GetActorRotation();

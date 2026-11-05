@@ -20,6 +20,9 @@ public:
 	virtual void CancelAttack() override;
 
 	void StartBurst();
+
+	/** 예고 레이저가 끝난 뒤 연발을 실제로 시작한다. */
+	void BeginFiring();
 	void FireOnce();
 	void EndBurst();
 
@@ -43,6 +46,11 @@ protected:
 
 	/** 연발 종료 후 다음 공격까지 대기 시간(초) */
 	float BurstCooldown = 1.5f;
+
+	/** 연발 전에 빨간 레이저로 경로를 보여 주는 시간(초). 0이면 바로 쏜다. */
+	float AimWindup = 0.6f;
+
+	virtual FVector GetProjectileMuzzleLocation() const override { return GetMuzzleLocation(MuzzleSocketName, MuzzleOffset); }
 
 	/** 발사할 때 재생할 소리. 총구 위치에서 재생된다. 비워 두면 재생하지 않는다. */
 	UPROPERTY(EditDefaultsOnly, Category = "Rattler|Sound")

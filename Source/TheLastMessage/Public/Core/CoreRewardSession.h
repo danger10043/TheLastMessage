@@ -17,7 +17,6 @@ class THELASTMESSAGE_API UCoreRewardSession : public UObject
 
 public:
 	ECoreRewardStartResult Start(UCoreComponent* InCore, const TArray<UCoreDataAsset*>& Pool, ECoreCategory Category);
-	TArray<UCoreDataAsset*> GetChoices() const;
 	/** 현재 카드와 각 코어의 보유 단계. 선택 화면은 이 값만 표시하고 Pawn을 직접 조회하지 않는다. */
 	TArray<FCoreChoiceEntry> GetChoiceEntries() const;
 	bool IsActive() const { return bActive && Core.IsValid(); }

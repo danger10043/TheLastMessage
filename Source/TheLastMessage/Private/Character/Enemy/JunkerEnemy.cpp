@@ -45,6 +45,7 @@ void AJunkerEnemy::ApplyEnemyData(const UEnemyDataAsset* Data)
 	const FJunkerSettings& S = Data->Junker;
 	ShotsPerBurst = S.ShotsPerBurst;
 	FireInterval = S.FireInterval;
+	AimWindup = S.AimWindup;
 	BurstGap = S.BurstGap;
 	EndDelay = S.EndDelay;
 	ShootMontageBlendOut = S.ShootMontageBlendOut;
@@ -168,6 +169,7 @@ void AJunkerEnemy::ResetPhase()
 	GetWorldTimerManager().ClearTimer(RushTimerHandle);
 	GetWorldTimerManager().ClearTimer(RushCheckTimerHandle);
 
+	HideAimLaser();
 	StopShootMontage();
 	StopRetreatMovement();
 	StopRushSpeed();
@@ -208,6 +210,26 @@ void AJunkerEnemy::StartBurst()
 	FaceTarget();
 
 	ActiveShootMontage = bRetreating ? RetreatShootMontage : BurstMontage;
+
+	// 쏘기 전에 빨간 레이저로 경로를 보여 준다. 마지막 순간에는 방향이 고정되어 플레이어가 피할 수 있다.
+	if (AimWindup > 0.f)
+	{
+		ShowAimLaser(AimWindup - AimLaserLockTime);
+		GetWorldTimerManager().SetTimer(SequenceTimerHandle, this, &AJunkerEnemy::BeginBurstFire, AimWindup, false);
+		return;
+	}
+
+	BeginBurstFire();
+}
+
+void AJunkerEnemy::BeginBurstFire()
+{
+	if (IsDead() || !GetCurrentTarget())
+	{
+		HideAimLaser();
+		return;
+	}
+
 	if (ActiveShootMontage)
 	{
 		PlayAnimMontage(ActiveShootMontage);
@@ -228,8 +250,10 @@ void AJunkerEnemy::FireShot()
 	// 점사의 첫 발을 쏘는 순간의 플레이어 위치로 조준 방향을 고정한다. 나머지 발도 같은 방향이라 일자로 날아간다.
 	if (!bAimLocked)
 	{
-		LockedAimDirection = ComputeAimDirection(Muzzle);
+		// 예고 레이저가 고정한 방향이 있으면 그대로 쏜다(보여 준 경로와 같아야 한다).
+		LockedAimDirection = IsAimLaserLocked() ? GetLockedAimDirection() : ComputeAimDirection(Muzzle);
 		bAimLocked = !LockedAimDirection.IsNearlyZero();
+		HideAimLaser();
 	}
 
 	const FRotator FlashRotation = bAimLocked ? LockedAimDirection.Rotation() : GetActorRotation();

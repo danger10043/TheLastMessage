@@ -37,6 +37,10 @@ struct FRattlerSettings
 	/** 투사체 수명(초) */
 	UPROPERTY(EditAnywhere, meta = (ClampMin = "0.1"))
 	float ProjectileLifetime = 5.f;
+
+	/** 연발을 쏘기 전에 빨간 레이저로 경로를 보여 주는 시간(초). 0이면 레이저 없이 바로 쏜다. */
+	UPROPERTY(EditAnywhere, meta = (ClampMin = "0.0"))
+	float AimWindup = 0.6f;
 };
 
 /** Flea의 수치. 몽타주·이펙트·소켓 이름 같은 에셋 참조는 몬스터 블루프린트에 둔다. */
@@ -313,6 +317,10 @@ struct FJunkerSettings
 	/** 점사 안에서 발사 간격(초) */
 	UPROPERTY(EditAnywhere, meta = (ClampMin = "0.01"))
 	float FireInterval = 0.12f;
+
+	/** 점사를 쏘기 전에 빨간 레이저로 경로를 보여 주는 시간(초). 점사마다 적용된다. 0이면 레이저 없이 바로 쏜다. */
+	UPROPERTY(EditAnywhere, meta = (ClampMin = "0.0"))
+	float AimWindup = 0.5f;
 
 	/** 점사와 점사 사이의 간격(초). 마지막 점사 뒤에도 이만큼 기다린 뒤 다음 단계로 넘어간다. */
 	UPROPERTY(EditAnywhere, meta = (ClampMin = "0.0"))

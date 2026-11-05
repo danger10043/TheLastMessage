@@ -16,7 +16,7 @@
 UGA_CoreAssistStrikeArm::UGA_CoreAssistStrikeArm()
 {
 	static ConstructorHelpers::FClassFinder<ACoreAssistAfterimage> AfterimagePreset(
-		TEXT("/Game/Test_Jihun/Core/VFX/AssistStrikeArm/BP_CoreAssistAfterimage"));
+		TEXT("/Game/Main/Blueprints/Core/Effects/BP_CoreAssistAfterimage"));
 	AfterimageClass = AfterimagePreset.Class ? AfterimagePreset.Class.Get() : ACoreAssistAfterimage::StaticClass();
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
 	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::ServerOnly;

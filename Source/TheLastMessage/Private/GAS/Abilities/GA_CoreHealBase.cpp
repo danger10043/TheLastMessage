@@ -11,7 +11,7 @@
 UGA_CoreHealBase::UGA_CoreHealBase()
 {
 	static ConstructorHelpers::FClassFinder<UGameplayEffect> HealEffect(
-		TEXT("/Game/Test_Jihun/Core/Stat/GE/GE_Core_Heal"));
+		TEXT("/Game/Main/GAS/GameplayEffect/Core/GE_Core_Heal"));
 	HealEffectClass = HealEffect.Class;
 
 	// 회복은 서버에서만 계산하고, 사망 중에는 실행하지 않는다.

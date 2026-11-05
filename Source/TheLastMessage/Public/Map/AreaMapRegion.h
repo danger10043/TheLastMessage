@@ -123,6 +123,7 @@ private:
 	float MaskAlpha = 1.f;
 	bool bMaskInitialized = false;
 
+public:
 	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Area Map|Zoom", meta = (ClampMin = "0.0", Units = "cm"))
 	float TargetZoomValue = 0.0f;
 

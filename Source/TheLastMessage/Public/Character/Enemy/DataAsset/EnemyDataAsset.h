@@ -108,6 +108,18 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Enemy|Death")
 	bool bDeathPhysicsLockToPlane = true;
 
+	/** 원거리 공격 예고 레이저 선의 굵기(cm) */
+	UPROPERTY(EditAnywhere, Category = "Enemy|AimLaser", meta = (ClampMin = "0.1"))
+	float AimLaserWidth = 6.f;
+
+	/** 예고 레이저의 최대 길이(cm). 벽에 막히면 벽까지만 보인다. */
+	UPROPERTY(EditAnywhere, Category = "Enemy|AimLaser", meta = (ClampMin = "1.0"))
+	float AimLaserMaxLength = 2500.f;
+
+	/** 발사 직전 이 시간(초) 동안은 레이저가 플레이어를 따라가지 않고 고정된다. 이 시간만큼 플레이어가 피할 수 있다. 0이면 마지막까지 따라간다. */
+	UPROPERTY(EditAnywhere, Category = "Enemy|AimLaser", meta = (ClampMin = "0.0"))
+	float AimLaserLockTime = 0.3f;
+
 	// ---- 몬스터 종류별 수치 ----
 
 	/** Rattler 전용 수치. Rattler 몬스터만 읽는다. 다른 몬스터의 에셋에서는 건드리지 않아도 된다. */

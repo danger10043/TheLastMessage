@@ -12,6 +12,7 @@
 #include "Engine/World.h"
 #include "Engine/OverlapResult.h"
 #include "Interface/SideScrollingInteractable.h"
+#include "Gimmick/DirectionalStairs.h"
 
 ASideScrollingCharacter::ASideScrollingCharacter()
 {
@@ -253,6 +254,14 @@ void ASideScrollingCharacter::CheckForSoftCollision()
 	DropValue = 0.0f;
 	UCharacterMovementComponent* Movement = GetCharacterMovement();
 	UPrimitiveComponent* Floor = Movement->CurrentFloor.HitResult.GetComponent();
+	if (Floor)
+	{
+		if (ADirectionalStairs* Stairs = Cast<ADirectionalStairs>(Floor->GetOwner()))
+		{
+			Stairs->RequestDropThrough(this);
+			return;
+		}
+	}
 	// Drop only through the floor we're standing on, never a floor farther below.
 	if (!Movement->IsMovingOnGround() || !Floor || Floor->GetCollisionObjectType() != ECC_GameTraceChannel1)
 	{

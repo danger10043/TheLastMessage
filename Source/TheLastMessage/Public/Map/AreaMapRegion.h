@@ -145,13 +145,4 @@ private:
 	/** 막이 덮인 정도(0 = 걷힘, 1 = 가림). 시간에 따라 일정한 속도로 움직이고, 머티리얼에는 부드러운 곡선으로 바꿔 전달한다. */
 	float MaskAlpha = 1.f;
 	bool bMaskInitialized = false;
-
-	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Area Map|Zoom", meta = (ClampMin = "0.0", Units = "cm"))
-	float TargetZoomValue = 0.0f;
-
-	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Area Map|Zoom", meta = (ClampMin = "0.0", Units = "s"))
-	float ZoomDuration = 0.0f;
-
-	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Area Map|Zoom")
-	TObjectPtr<UCurveFloat> ZoomCurve = nullptr;
 };

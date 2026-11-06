@@ -1787,11 +1787,12 @@ void ABossMonster::UpdateBossUI()
         && FMath::IsFinite(MaxHealth) && MaxHealth > 0.f
         ? FMath::Clamp(Health / MaxHealth, 0.f, 1.f) : 0.f;
 
+    const bool bShieldActive = IsValid(ShieldComponent.Get())
+        && ShieldComponent->IsShieldActive();
+
     bool bShowPuzzle = false;
     float PuzzleRatio = 0.f;
-    if (CurrentState == EBossState::ShieldPuzzle
-        && IsValid(ShieldComponent.Get())
-        && ShieldComponent->IsShieldActive())
+    if (CurrentState == EBossState::ShieldPuzzle && bShieldActive)
     {
         const float TimeLimit = ShieldComponent->GetPuzzleTimeLimit();
         const float Remaining = ShieldComponent->GetRemainingPuzzleTime();
@@ -1803,7 +1804,8 @@ void ABossMonster::UpdateBossUI()
         }
     }
 
-    BossUIWidget->SetBossStatus(HealthRatio, bShowPuzzle, PuzzleRatio);
+    BossUIWidget->SetBossStatus(
+        HealthRatio, bShowPuzzle, PuzzleRatio, bShieldActive);
     BossUIWidget->SetVisibility(ESlateVisibility::HitTestInvisible);
 }
 

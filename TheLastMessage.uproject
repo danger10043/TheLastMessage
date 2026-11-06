@@ -50,6 +50,10 @@
 			"Enabled": false
 		},
 		{
+			"Name": "MCPClientToolset",
+			"Enabled": true
+		},
+		{
 			"Name": "ModelContextProtocol",
 			"Enabled": true
 		},

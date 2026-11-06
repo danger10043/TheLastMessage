@@ -92,7 +92,9 @@ void ADirectionalStairs::Tick(float DeltaSeconds)
 		{
 			const FVector Head = GetActorTransform().InverseTransformPosition(Capsule->GetComponentLocation() + FVector(0,0,Capsule->GetScaledCapsuleHalfHeight()));
 			const float SurfaceZ = (50.0f - LocalPosition.X) * (200.0f / 350.0f);
-			if (bGrappling || Head.Z < SurfaceZ - 30 || LocalPosition.X < -500 || LocalPosition.X > 200 || FMath::Abs(LocalPosition.Y) > 350)
+			const bool bLandedElsewhere = Movement->IsMovingOnGround() && Movement->CurrentFloor.HitResult.GetActor() != this;
+			const double Clearance = (SurfaceZ - Head.Z) * GetActorScale3D().Z;
+			if (bGrappling || bLandedElsewhere || Clearance > 30.0 || LocalPosition.X < -500 || LocalPosition.X > 200 || FMath::Abs(LocalPosition.Y) > 350)
 			{
 				DroppingCharacters.Remove(Character);
 				bDropping = false;
@@ -100,10 +102,10 @@ void ADirectionalStairs::Tick(float DeltaSeconds)
 		}
 		const FVector Feet = GetActorTransform().InverseTransformPosition(Capsule->GetComponentLocation() - FVector(0,0,Capsule->GetScaledCapsuleHalfHeight()));
 		const bool bAbove = Feet.Z > (50.0f - LocalPosition.X) * (200.0f / 350.0f) + 20;
-		const bool bAllow = bDropping || ShouldAllowWalkThrough(
+		const bool bAllow = bDropping || (!bWasDropping && ShouldAllowWalkThrough(
 			LocalPosition,
 			GetActorTransform().InverseTransformVector(Character->GetVelocity()),
-			Movement->IsWalking() || Movement->IsFalling(), bGrappling, bWasPassing && !bWasDropping && !bAbove);
+			Movement->IsWalking() || Movement->IsFalling(), bGrappling, bWasPassing && !bAbove));
 		if (bAllow != bWasPassing)
 		{
 			// Only this character's movement ignores the stairs. Weapon traces and

@@ -85,8 +85,68 @@ void APlayerHUD::Tick(float DeltaSeconds)
 void APlayerHUD::DrawHUD()
 {
 	Super::DrawHUD();
+	DrawDamageVignette();
 	DrawGrappleIndicator();
 	DrawRoomTitle();
+}
+
+void APlayerHUD::PlayDamageVignette()
+{
+	const APlayerController* PC = GetOwningPlayerController();
+	if (!GetWorld() || !PC || !PC->IsLocalController() || !PC->GetPawn()) return;
+	DamageVignettePawn = PC->GetPawn();
+	DamageVignetteStartTime = GetWorld()->GetRealTimeSeconds();
+}
+
+void APlayerHUD::DrawDamageVignette()
+{
+	const APlayerController* PC = GetOwningPlayerController();
+	if (!Canvas || !GetWorld() || !PC || !bShowHUD || DamageVignetteStartTime < 0.0) return;
+	if (!DamageVignettePawn.IsValid() || DamageVignettePawn.Get() != PC->GetPawn())
+	{
+		DamageVignetteStartTime = -1.0;
+		return;
+	}
+	// Real time keeps the flash short even during combat hit stop.
+	const float Age = GetWorld()->GetRealTimeSeconds() - DamageVignetteStartTime;
+	constexpr float Duration = 0.45f;
+	if (Age >= Duration)
+	{
+		DamageVignetteStartTime = -1.0;
+		return;
+	}
+	const float Fade = 1.0f - FMath::Clamp((Age - 0.035f) / (Duration - 0.035f), 0.0f, 1.0f);
+	const float Opacity = 0.65f * Fade * Fade;
+	// A small vertex-colored mesh gives soft edges without a texture or material asset.
+	constexpr int32 Columns = 48, Rows = 32;
+	FCanvasTriangleItem Item(FVector2D::ZeroVector, FVector2D::ZeroVector, FVector2D::ZeroVector, GWhiteTexture);
+	Item.TriangleList.Reset();
+	Item.BlendMode = SE_BLEND_Translucent;
+	auto ColorAt = [Opacity](FVector2D UV)
+	{
+		const float Edge = FMath::Min(FMath::Min(UV.X, 1.0 - UV.X), FMath::Min(UV.Y, 1.0 - UV.Y));
+		const float Mask = FMath::Clamp(1.0f - Edge / 0.13f, 0.0f, 1.0f);
+		return FLinearColor(0.65f, 0.005f, 0.012f, Opacity * Mask * Mask);
+	};
+	auto AddTriangle = [&](FVector2D A, FVector2D B, FVector2D C)
+	{
+		const FLinearColor CA = ColorAt(A), CB = ColorAt(B), CC = ColorAt(C);
+		if (CA.A + CB.A + CC.A <= 0.0f) return;
+		FCanvasUVTri Tri;
+		const FVector2D Size(Canvas->ClipX, Canvas->ClipY);
+		Tri.V0_Pos = A * Size; Tri.V1_Pos = B * Size; Tri.V2_Pos = C * Size;
+		Tri.V0_Color = CA; Tri.V1_Color = CB; Tri.V2_Color = CC;
+		Item.TriangleList.Add(Tri);
+	};
+	for (int32 Y = 0; Y < Rows; ++Y)
+	for (int32 X = 0; X < Columns; ++X)
+	{
+		const FVector2D A(double(X) / Columns, double(Y) / Rows);
+		const FVector2D B(double(X + 1) / Columns, double(Y + 1) / Rows);
+		AddTriangle(A, FVector2D(B.X, A.Y), B);
+		AddTriangle(A, B, FVector2D(A.X, B.Y));
+	}
+	Canvas->DrawItem(Item);
 }
 
 void APlayerHUD::DrawRoomTitle()

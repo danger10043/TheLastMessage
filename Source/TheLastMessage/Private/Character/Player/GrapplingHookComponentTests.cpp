@@ -126,6 +126,27 @@ struct FWorld
 };
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGrapplePresentationMaskTest, "TheLastMessage.Grappling.PresentationMaskExcluded",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FGrapplePresentationMaskTest::RunTest(const FString& Parameters)
+{
+	GrapplingProbeTest::FWorld Fixture;
+	APlayerBase* Player = Fixture.SpawnPlayer();
+	UGrapplingHookComponent* Grapple = Player->FindComponentByClass<UGrapplingHookComponent>();
+	if (!TestNotNull(TEXT("Grapple component"), Grapple)) return false;
+	UStaticMeshComponent* Mask = Fixture.MakeSurface(150);
+	Mask->ComponentTags.Add(TEXT("GrappleIgnore"));
+	Mask->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	Fixture.MakeSurface(400);
+	Player->UpdateAimFromWorldRay(FVector(800, 500, 0), FVector(0, -1, 0));
+	Player->RequestGrapplingHook();
+	TestTrue(TEXT("Disabled presentation mask is skipped and real terrain connects"),
+		Grapple->HasGrappleAnchor() && Grapple->ProbeState.AnchorPoint.Equals(FVector(375, 0, 0), 0.1f));
+	TestTrue(TEXT("Presentation collision remains disabled"), Mask->GetCollisionEnabled() == ECollisionEnabled::NoCollision);
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGrapplingProbeTest, "TheLastMessage.Grappling.ProbeAndFixedAnchor",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 

@@ -5,6 +5,7 @@
 #include "GameFramework/PlayerController.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Engine/World.h"
+#include "UI/PlayerHUD.h"
 
 UCombatFeedbackComponent::UCombatFeedbackComponent()
 {
@@ -48,7 +49,12 @@ void UCombatFeedbackComponent::ClientPlayFeedback_Implementation(bool bReceived,
 {
 	const APawn* Pawn = Cast<APawn>(GetOwner());
 	APlayerController* PC = Pawn ? Cast<APlayerController>(Pawn->GetController()) : nullptr;
-	if (!bEnableCameraShake || !PC || !PC->IsLocalController() || !PC->PlayerCameraManager) return;
+	if (!PC || !PC->IsLocalController()) return;
+	if (bReceived)
+	{
+		if (APlayerHUD* HUD = Cast<APlayerHUD>(PC->GetHUD())) HUD->PlayDamageVignette();
+	}
+	if (!bEnableCameraShake || !PC->PlayerCameraManager) return;
 	APlayerCameraManager* Manager = PC->PlayerCameraManager;
 	if (CameraManager.Get() != Manager || !CameraModifier.IsValid())
 	{

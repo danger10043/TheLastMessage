@@ -17,6 +17,8 @@ public:
 	APlayerHUD();
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void DrawHUD() override;
+	/** Restart the brief edge flash only after actual incoming damage. */
+	void PlayDamageVignette();
 	bool ShouldUseGrappleCursor() const;
 	virtual void ShowHUD() override;
 	/** Explicit visibility control for cinematics; also applies to widgets created later. */
@@ -42,6 +44,9 @@ private:
 	UFUNCTION() void CheckpointSaveFinished(bool bSuccess);
 	void DrawGrappleIndicator();
 	void DrawRoomTitle();
+	void DrawDamageVignette();
+	double DamageVignetteStartTime = -1.0;
+	TWeakObjectPtr<APawn> DamageVignettePawn;
 	UPROPERTY() TObjectPtr<UFont> RoomTitleFont;
 	TWeakObjectPtr<APawn> RoomTitlePawn;
 	FName AnnouncedRoom;

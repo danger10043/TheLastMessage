@@ -11,6 +11,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Engine/World.h"
+#include "Sound/SoundBase.h"
 
 namespace
 {
@@ -144,6 +145,12 @@ void UGA_BossGunShot::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
     ASC->CurrentMontageSetNextSectionName(GunShotEndSection, NAME_None);
     GetWorld()->GetTimerManager().SetTimer(
         UpdateTimer, this, &UGA_BossGunShot::UpdatePattern, 0.01f, true);
+
+    if (PatternStartSound)
+    {
+        Boss->MulticastGunBurstSound(PatternStartSound.Get(), Boss->GetActorLocation());
+    }
+
     HandleSectionChanged(AttackMontage.Get(), Instance->GetCurrentSection(), false);
 }
 
@@ -225,9 +232,17 @@ bool UGA_BossGunShot::FireFan()
             return false;
         }
 
-        if (Index == 0 && IsValid(Boss) && MuzzleEffect)
+        if (Index == 0 && IsValid(Boss))
         {
-            Boss->MulticastGunBurstMuzzle(MuzzleEffect.Get(), MuzzleSocketName);
+            if (MuzzleEffect)
+            {
+                Boss->MulticastGunBurstMuzzle(MuzzleEffect.Get(), MuzzleSocketName);
+            }
+
+            if (ShotSound)
+            {
+                Boss->MulticastGunBurstSound(ShotSound.Get(), Origin);
+            }
         }
     }
     return true;

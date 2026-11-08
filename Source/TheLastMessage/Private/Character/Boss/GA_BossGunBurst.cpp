@@ -10,6 +10,7 @@
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Engine/World.h"
+#include "Sound/SoundBase.h"
 
 namespace
 {
@@ -173,6 +174,12 @@ void UGA_BossGunBurst::ActivateAbility(
     ASC->CurrentMontageSetNextSectionName(ReadySection, FireSection);
     ASC->CurrentMontageSetNextSectionName(FireSection, EndSection);
     ASC->CurrentMontageSetNextSectionName(EndSection, NAME_None);
+
+
+    if (PatternStartSound)
+    {
+        Boss->MulticastGunBurstSound(PatternStartSound.Get(), Boss->GetActorLocation());
+    }
 }
 
 bool UGA_BossGunBurst::IsContextValid() const
@@ -326,6 +333,12 @@ bool UGA_BossGunBurst::FireBullet()
     {
         Boss->MulticastGunBurstMuzzle(MuzzleEffect.Get(), MuzzleSocketName);
     }
+
+    if (IsValid(Boss) && ShotSound)
+    {
+        Boss->MulticastGunBurstSound(ShotSound.Get(), Origin);
+    }
+
     return true;
 }
 

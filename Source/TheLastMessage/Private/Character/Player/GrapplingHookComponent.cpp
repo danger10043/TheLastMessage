@@ -26,7 +26,7 @@ namespace
 {
 bool IsGrappleMesh(const UPrimitiveComponent* Component)
 {
-	if (!Component) return false;
+	if (!Component || Component->ComponentHasTag(TEXT("GrappleIgnore"))) return false;
 	const AActor* Actor = Component->GetOwner();
 	if (!Actor) return false;
 	// 캐릭터가 소유하거나 부착한 장비도 제외

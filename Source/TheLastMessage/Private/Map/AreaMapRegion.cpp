@@ -41,6 +41,9 @@ void AAreaMapRegion::BeginPlay()
 	}
 
 	MaskComponent = NewObject<UStaticMeshComponent>(this, TEXT("RegionMask"));
+	// Presentation-only: grapple fallback probes temporarily enable mesh collision.
+	// Exclude this plane even while it is visible or fading out.
+	MaskComponent->ComponentTags.AddUnique(TEXT("GrappleIgnore"));
 	MaskComponent->SetStaticMesh(MaskMesh);
 	MaskComponent->SetMobility(EComponentMobility::Movable);
 	MaskComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);

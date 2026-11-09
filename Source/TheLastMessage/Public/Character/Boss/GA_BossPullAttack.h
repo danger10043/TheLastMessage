@@ -11,6 +11,7 @@ class UAbilityTask_PlayMontageAndWait;
 class UNiagaraSystem;
 class UNiagaraComponent;
 class APlayerBase;
+class USoundBase;
 
 UCLASS()
 class THELASTMESSAGE_API UGA_BossPullAttack
@@ -58,6 +59,12 @@ protected:
 
     UPROPERTY(EditDefaultsOnly, Category = "Boss|Pull|Animation")
     FName EndSection = TEXT("PullEnd");
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|Pull|Audio")
+    TObjectPtr<USoundBase> PatternStartSound;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|Pull|Audio")
+    TObjectPtr<USoundBase> PullLoopEntrySound;
 
     UPROPERTY(EditDefaultsOnly, Category = "Boss|Pull", meta = (ClampMin = "0.01", Units = "s"))
     float PullDuration = 5.f;

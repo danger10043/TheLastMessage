@@ -123,6 +123,11 @@ void UGA_BossLightningAttack::ActivateAbility(
     Anim->Montage_SetNextSection(TEXT("LightningLoop"), TEXT("LightningLoop"), AttackMontage.Get());
     Anim->Montage_SetNextSection(TEXT("LightningEnd"), NAME_None, AttackMontage.Get());
 
+    if (PatternStartSound)
+    {
+        Boss->MulticastGunBurstSound(PatternStartSound.Get(), Boss->GetActorLocation());
+    }
+
     GetWorld()->GetTimerManager().SetTimer(
         ContextTimer, this, &UGA_BossLightningAttack::CheckPatternContext, 0.05f, true);
     if (Anim->Montage_GetCurrentSection(AttackMontage.Get()) == TEXT("LightningLoop"))
@@ -200,6 +205,12 @@ void UGA_BossLightningAttack::StartStorm()
     GetWorld()->GetTimerManager().SetTimer(
         StormTimer, this, &UGA_BossLightningAttack::StopStorm,
         ActiveConfig.StormDuration, false);
+
+    if (StormLoopSound)
+    {
+        Boss->MulticastUpdateLightningStormAudio(StormLoopSound.Get(), nullptr);
+    }
+
     GetWorld()->GetTimerManager().SetTimer(
         SpawnTimer, this, &UGA_BossLightningAttack::SpawnLightning,
         ActiveConfig.SpawnInterval, true);
@@ -271,6 +282,13 @@ void UGA_BossLightningAttack::StopStorm()
     GetWorld()->GetTimerManager().ClearTimer(SpawnTimer);
     GetWorld()->GetTimerManager().ClearTimer(StormTimer);
 
+
+    if (ABossMonster* Boss = GetBossOwner();
+        IsValid(Boss) && Boss->HasAuthority() && (StormLoopSound || StormEndSound))
+    {
+        Boss->MulticastUpdateLightningStormAudio(nullptr, StormEndSound.Get());
+    }
+
     UAnimInstance* Anim = BoundAnimInstance.Get();
     FAnimMontageInstance* Instance = Anim
         ? Anim->GetActiveInstanceForMontage(AttackMontage.Get()) : nullptr;
@@ -326,6 +344,13 @@ void UGA_BossLightningAttack::EndAbility(
         return;
     }
     TGuardValue<bool> EndingGuard(bEnding, true);
+    if (bStormActive && StormLoopSound)
+    {
+        if (ABossMonster* Boss = GetBossOwner(); IsValid(Boss) && Boss->HasAuthority())
+        {
+            Boss->MulticastUpdateLightningStormAudio(nullptr, nullptr);
+        }
+    }
     bStormActive = false;
     StopStormEffect();
     if (UWorld* World = GetWorld())

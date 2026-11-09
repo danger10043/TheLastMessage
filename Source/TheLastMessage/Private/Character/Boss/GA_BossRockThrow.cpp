@@ -8,6 +8,7 @@
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "Animation/AnimMontage.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "CollisionQueryParams.h"
 #include "Engine/World.h"
 #include "GameFramework/CharacterMovementComponent.h"
 
@@ -140,7 +141,8 @@ void UGA_BossRockThrow::HandleNotify(
     FName NotifyName, const FBranchingPointNotifyPayload& Payload)
 {
     if (!IsActive() || bEnding || bThrown
-        || NotifyName != TEXT("RockThrow") || !IsContextValid())
+        || (NotifyName != TEXT("RockThrowReady") && NotifyName != TEXT("RockThrow"))
+        || !IsContextValid())
     {
         return;
     }
@@ -156,10 +158,42 @@ void UGA_BossRockThrow::HandleNotify(
         return;
     }
 
+    const FVector FeedbackLocation = Boss->GetActorLocation();
+    FHitResult GroundHit;
+    FCollisionObjectQueryParams GroundObjects;
+    GroundObjects.AddObjectTypesToQuery(ECC_WorldStatic);
+    GroundObjects.AddObjectTypesToQuery(ECC_WorldDynamic);
+    const FCollisionQueryParams GroundQuery(SCENE_QUERY_STAT(BossRockThrowGround), false, Boss);
+    const FVector TraceEnd = FeedbackLocation - FVector(0.f, 0.f, 3000.f);
+    const bool bHasGround = GetWorld()->LineTraceSingleByObjectType(
+        GroundHit, FeedbackLocation, TraceEnd, GroundObjects, GroundQuery);
+    if (NotifyName == TEXT("RockThrowReady"))
+    {
+        if (ReadySound)
+        {
+            Boss->MulticastGunBurstSound(ReadySound.Get(), FeedbackLocation);
+        }
+        if (ReadyEffect && bHasGround)
+        {
+            Boss->MulticastGroundEffect(ReadyEffect.Get(), GroundHit.ImpactPoint);
+        }
+        return;
+    }
+
     bThrown = true;
     if (!ThrowRock())
     {
         HandleCancelled();
+        return;
+    }
+
+    if (ThrowSound)
+    {
+        Boss->MulticastGunBurstSound(ThrowSound.Get(), FeedbackLocation);
+    }
+    if (ThrowEffect && bHasGround)
+    {
+        Boss->MulticastGroundEffect(ThrowEffect.Get(), GroundHit.ImpactPoint);
     }
 }
 
@@ -192,7 +226,8 @@ bool UGA_BossRockThrow::ThrowRock()
         Rock->ReturnToPool();
         return false;
     }
-    if (!Rock->StartBullet(Damage, RockSpeed, RockLifetime))
+    if (!Rock->StartBullet(Damage, RockSpeed, RockLifetime,
+        RockFlightLoopSound.Get(), RockImpactSound.Get()))
     {
         Rock->ReturnToPool();
         return false;

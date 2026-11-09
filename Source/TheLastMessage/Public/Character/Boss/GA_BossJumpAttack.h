@@ -12,6 +12,7 @@ class UNiagaraComponent;
 class UAnimMontage;
 class UPrimitiveComponent;
 class UAbilityTask_PlayMontageAndWait;
+class USoundBase;
 
 UCLASS()
 class THELASTMESSAGE_API UGA_BossJumpAttack : public UGA_BossLandingAttackBase
@@ -52,6 +53,15 @@ protected:
 
     UPROPERTY(EditDefaultsOnly, Category = "Boss|Jump|GroundEffect")
     TObjectPtr<UNiagaraSystem> JumpStartGroundEffect;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|Jump|Audio")
+    TObjectPtr<USoundBase> PatternStartSound;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|Jump|Audio")
+    TObjectPtr<USoundBase> JumpStartSound;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|Jump|Audio")
+    TObjectPtr<USoundBase> LandingSound;
 
     UPROPERTY(EditDefaultsOnly, Category = "Boss|Jump|Damage", meta = (ClampMin = "0.0"))
     float Damage = 10.f;

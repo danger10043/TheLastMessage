@@ -10,6 +10,7 @@ class ABossBullet;
 class APlayerBase;
 class UAnimMontage;
 class UNiagaraSystem;
+class USoundBase;
 class UAbilityTask_PlayMontageAndWait;
 
 USTRUCT(BlueprintType)
@@ -81,6 +82,12 @@ protected:
 
     UPROPERTY(EditDefaultsOnly, Category = "Boss|GunBurst|Animation")
     TObjectPtr<UAnimMontage> AttackMontage;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|GunBurst|Audio")
+    TObjectPtr<USoundBase> PatternStartSound;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|GunBurst|Audio")
+    TObjectPtr<USoundBase> ShotSound;
 
     UPROPERTY(EditDefaultsOnly, Category = "Boss|GunBurst|Aim")
     FVector AimOriginOffset = FVector(0.f, 0.f, 150.f);

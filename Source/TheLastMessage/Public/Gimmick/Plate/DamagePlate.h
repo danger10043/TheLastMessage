@@ -26,6 +26,9 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Gimmick|DamagePlate")
     bool LoadDamageConfig();
 
+    // 스위치에서 전달받은 활성 상태 적용
+    virtual void ApplyActiveState(bool bNewActive) override;
+
 protected:
     virtual void BeginPlay() override;
 
@@ -51,6 +54,10 @@ protected:
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Gimmick|Components")
     TObjectPtr<UNiagaraComponent> DamagePlateEffect;
 
+    // 스위치 없이 사용하는 발판은 시작부터 작동하도록 설정
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|DamagePlate")
+    bool bStartActive = true;
+
 private:
     // 범위 안의 플레이어에게 피해 적용
     void ApplyDamageToPlayers();
@@ -60,4 +67,7 @@ private:
 
     // 설정을 정상적으로 읽었는지 확인
     bool bDamageConfigLoaded = false;
+
+    // 현재 작동 상태에 맞춰 나이아가라 갱신
+    void UpdateDamagePlateEffect();
 };

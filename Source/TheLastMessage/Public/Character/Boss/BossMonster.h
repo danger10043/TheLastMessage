@@ -25,6 +25,7 @@ class ALaserReflector;
 class UMaterialInterface;
 struct FOnAttributeChangeData;
 class UNiagaraSystem;
+class USoundBase;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
     FOnBossPhaseChangedSignature, EBossPhase, NewPhase);
@@ -63,6 +64,9 @@ public:
 
     UFUNCTION(NetMulticast, Unreliable)
     void MulticastGunBurstMuzzle(UNiagaraSystem* Effect, FName SocketName);
+
+    UFUNCTION(NetMulticast, Unreliable)
+    void MulticastGunBurstSound(USoundBase* Sound, FVector Location);
 
     UFUNCTION(NetMulticast, Reliable)
     void MulticastGroundEffect(UNiagaraSystem* Effect, FVector Location);

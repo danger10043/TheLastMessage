@@ -10,6 +10,7 @@ class USphereComponent;
 class UStaticMeshComponent;
 class UNiagaraSystem;
 class UNiagaraComponent;
+class USoundBase;
 class UProjectileMovementComponent;
 
 UCLASS()
@@ -67,6 +68,9 @@ protected:
 
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Boss|Bullet")
     TObjectPtr<UNiagaraSystem> BulletStrike;
+
+    UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Boss|Bullet|Audio")
+    TObjectPtr<USoundBase> ImpactSound;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Boss|Bullet")
     TObjectPtr<UNiagaraComponent> TrailComponent;

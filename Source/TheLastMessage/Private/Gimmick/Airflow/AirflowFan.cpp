@@ -153,6 +153,23 @@ bool AAirflowFan::LoadAirflowConfig()
 	AirflowEffect->SetRelativeRotation(AirflowRotation);
 	AirflowEffect->SetAsset(AirflowConfig.AirflowEffect.Get());
 
+	// +추가----
+	// Box Extent는 절반 길이이므로 전체 기류 길이로 변환
+	const float AirflowLength = HalfLength * 2.0f;
+
+	// NS_Airflow의 Add Velocity Z 값과 동일하게 유지
+	constexpr float EffectSpeed = 500.0f;
+	AirflowEffect->SetVariableFloat(
+		FName(TEXT("User.AirflowLifetime")), AirflowLength / EffectSpeed);
+
+	// 입자 그림의 크기까지 포함해 긴 기류가 화면에서 잘리지 않도록 설정
+	constexpr double BoundsPadding = 200.0;
+	const FVector BoxExtent = AirflowArea->GetUnscaledBoxExtent();
+	AirflowEffect->SetSystemFixedBounds(FBox(
+		FVector(-BoxExtent.X - BoundsPadding, -BoxExtent.Y - BoundsPadding, -BoundsPadding),
+		FVector(BoxExtent.X + BoundsPadding, BoxExtent.Y + BoundsPadding, AirflowLength + BoundsPadding)));
+	// +--------
+
 	bAirflowConfigLoaded = true;
 
 	return true;

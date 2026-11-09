@@ -11,6 +11,11 @@
 #include "Components/TimelineComponent.h"
 #include "Curves/CurveFloat.h"
 
+// +추가----
+#include "Engine/World.h"
+#include "TimerManager.h"
+// +--------
+
 AToggleSwitch::AToggleSwitch()
 {
 	PrimaryActorTick.bCanEverTick = false;
@@ -217,6 +222,19 @@ void AToggleSwitch::BeginPlay()
 {
 	Super::BeginPlay();
 
+	// +추가----
+	// 사용 가능한 스위치에 에디터에서 선택한 시작 상태 적용
+	ApplyActiveState(bStartActive && bIsEnabled);
+
+	// 연결 장치의 초기화가 끝난 뒤 현재 상태 전달
+	// 체크포인트에서 상태가 복구됐다면 복구된 현재 상태를 사용
+	GetWorldTimerManager().SetTimerForNextTick(
+		FTimerDelegate::CreateWeakLambda(this, [this]()
+		{
+			NotifyLinkedDevices(bIsActive);
+		}));
+	// +--------
+
 	TInlineComponentArray<USceneComponent*> SceneComponents;
 	GetComponents<USceneComponent>(SceneComponents);
 
@@ -244,10 +262,13 @@ void AToggleSwitch::BeginPlay()
 		return;
 	}
 
-	// 시작 시 현재 활성 상태에 맞는 각도로 배치
+	// +수정----
+	// 시작할 때는 움직이는 연출 없이 현재 상태의 각도로 바로 배치
+	LeverTimeline->Stop();
 	const float InitialPosition = bIsActive ? 1.0f : 0.0f;
 
 	LeverTimeline->SetPlaybackPosition(InitialPosition, false, true);
+	// +--------
 }
 
 void AToggleSwitch::UpdateSwitchIndicator()

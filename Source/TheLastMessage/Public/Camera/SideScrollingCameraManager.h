@@ -7,6 +7,8 @@
 #include "SideScrollingCameraManager.generated.h"
 
 class AAreaMapRegion;
+class UCurveFloat;
+class AAreaMapRegion;
 
 /** 카메라를 제한하는 방(리전) 하나의 정보. 범위는 주기적으로 갱신해서 저장해 둔다. */
 struct FCameraConfineEntry
@@ -113,4 +115,17 @@ protected:
 
 	/** 플레이어가 있는 방의 제한을 카메라 목표 위치에 적용한다. */
 	void ApplyRegionConfine(float DeltaTime, const FVector2D& PlayerPoint, double HalfWidth, double HalfHeight, FVector& InOutGoal, bool bSnap);
+
+	virtual void UpdateCamera(float DeltaTime) override;
+	void UpdateRegionZoom(float DeltaTime);
+
+	TWeakObjectPtr<AAreaMapRegion> ZoomRegion;
+	TWeakObjectPtr<APawn> ZoomPawn;
+	UPROPERTY(Transient)
+	TObjectPtr<UCurveFloat> ActiveZoomCurve = nullptr;
+	float RegionEntryZoom = 0.0f;
+	float RegionTargetZoom = 0.0f;
+	float RegionZoomDuration = 0.0f;
+	float RegionZoomTime = 0.0f;
+	bool bInsideZoomRegion = false;
 };

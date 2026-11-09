@@ -14,7 +14,7 @@ AAreaMapRegion::AAreaMapRegion()
 {
 	RegionBounds = CreateDefaultSubobject<UBoxComponent>(TEXT("RegionBounds"));
 	SetRootComponent(RegionBounds);
-	RegionBounds->SetBoxExtent(FVector(1200,500,700));
+	RegionBounds->SetBoxExtent(FVector(1200, 500, 700));
 	RegionBounds->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	RegionBounds->SetGenerateOverlapEvents(false);
 	RegionBounds->SetCanEverAffectNavigation(false);
@@ -41,6 +41,9 @@ void AAreaMapRegion::BeginPlay()
 	}
 
 	MaskComponent = NewObject<UStaticMeshComponent>(this, TEXT("RegionMask"));
+	// Presentation-only: grapple fallback probes temporarily enable mesh collision.
+	// Exclude this plane even while it is visible or fading out.
+	MaskComponent->ComponentTags.AddUnique(TEXT("GrappleIgnore"));
 	MaskComponent->SetStaticMesh(MaskMesh);
 	MaskComponent->SetMobility(EComponentMobility::Movable);
 	MaskComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
@@ -85,7 +88,9 @@ void AAreaMapRegion::UpdateMask(float DeltaTime)
 	const FBox2D Bounds = GetMapBounds();
 
 	// 방 안에 있으면 걷고, 밖이면 덮는다. 다시 덮지 않는 설정이면 한 번 탐사한 방은 계속 걷어 둔다.
-	bool bOpen = Bounds.ExpandBy(FVector2D(MaskOpenMargin, MaskOpenMargin)).IsInside(FVector2D(PlayerLocation.X, PlayerLocation.Z));
+	// 막이 방 바깥으로 번지는 경우에는, 번지는 구간에 플레이어가 들어가기 전에 막이 걷히도록 열리는 여유를 번짐 폭 이상으로 한다.
+	const double OpenMargin = bFeatherOutsideRegion ? FMath::Max(MaskOpenMargin, MaskFeather) : MaskOpenMargin;
+	bool bOpen = Bounds.ExpandBy(FVector2D(OpenMargin, OpenMargin)).IsInside(FVector2D(PlayerLocation.X, PlayerLocation.Z));
 	if (!bOpen && !bCoverAgainWhenLeft && !RegionId.IsNone())
 	{
 		if (const UAreaMapComponent* Map = Pawn->FindComponentByClass<UAreaMapComponent>()) bOpen = Map->IsExplored(RegionId);
@@ -93,8 +98,11 @@ void AAreaMapRegion::UpdateMask(float DeltaTime)
 	const float Target = bOpen ? 0.f : 1.f;
 
 	// 막의 위치와 크기. 플레이어가 서 있는 평면에 놓고, 카메라 쪽으로 옮긴 만큼 같은 화면 영역을 덮도록 크기를 줄인다.
-	const FBox2D Padded = Bounds.ExpandBy(FVector2D(MaskPadding, MaskPadding));
+	// 기본은 방 범위 + Padding 크기이고, 번지는 구간이 그 안쪽에 들어간다. 바깥으로 번지게 하면 Feather만큼 더 키운다.
+	const double Margin = MaskPadding + (bFeatherOutsideRegion ? MaskFeather : 0.f);
+	const FBox2D Padded = Bounds.ExpandBy(FVector2D(Margin, Margin));
 	FVector2D Min = Padded.Min, Max = Padded.Max;
+	double DepthScale = 1.0;
 	const double PlaneY = PlayerLocation.Y + MaskOffsetY;
 	if (!FMath::IsNearlyZero(MaskOffsetY))
 	{
@@ -106,6 +114,7 @@ void AAreaMapRegion::UpdateMask(float DeltaTime)
 			if (RegionDepth > 10.0)
 			{
 				const double Scale = MaskDepth / RegionDepth;
+				DepthScale = Scale;
 				const FVector2D CameraPoint(CameraLocation.X, CameraLocation.Z);
 				Min = CameraPoint + (Min - CameraPoint) * Scale;
 				Max = CameraPoint + (Max - CameraPoint) * Scale;
@@ -117,6 +126,11 @@ void AAreaMapRegion::UpdateMask(float DeltaTime)
 	// Plane을 세워서 카메라(+Y쪽)를 향하게 한다. Y 스케일이 세로(Z) 길이가 된다.
 	MaskComponent->SetWorldLocationAndRotation(FVector(Center.X, PlaneY, Center.Y), FRotator(0.f, 0.f, -90.f));
 	MaskComponent->SetWorldScale3D(FVector(FMath::Max(Size.X, 1.0) / 100.0, FMath::Max(Size.Y, 1.0) / 100.0, 1.0));
+
+	// 머티리얼이 가장자리를 부드럽게 풀 수 있도록 막의 실제 크기와 번짐 폭(cm)을 알려 준다.
+	MaskMaterialInstance->SetScalarParameterValue(TEXT("MaskSizeX"), (float)Size.X);
+	MaskMaterialInstance->SetScalarParameterValue(TEXT("MaskSizeZ"), (float)Size.Y);
+	MaskMaterialInstance->SetScalarParameterValue(TEXT("MaskFeather"), (float)(MaskFeather * DepthScale));
 
 	// 처음에는 바로 맞추고, 이후에는 서서히 바꾼다.
 	if (!bMaskInitialized)
@@ -156,13 +170,13 @@ FBox2D AAreaMapRegion::GetMapBounds() const
 	FBox Current(ForceInit);
 	for (const AActor* Actor : LayoutActors) if (IsValid(Actor)) Current += Actor->GetComponentsBoundingBox(true);
 	if (!Current.IsValid || !AuthoredLayoutBounds.IsValid)
-		return FBox2D(FVector2D(Base.Min.X,Base.Min.Z),FVector2D(Base.Max.X,Base.Max.Z));
+		return FBox2D(FVector2D(Base.Min.X, Base.Min.Z), FVector2D(Base.Max.X, Base.Max.Z));
 	const FVector ReferenceSize = AuthoredLayoutBounds.GetSize();
 	const FVector CurrentSize = Current.GetSize();
 	const double ScaleX = ReferenceSize.X > 1 ? CurrentSize.X / ReferenceSize.X : 1;
 	const double ScaleZ = ReferenceSize.Z > 1 ? CurrentSize.Z / ReferenceSize.Z : 1;
-	return FBox2D(FVector2D(Current.Min.X + (Base.Min.X-AuthoredLayoutBounds.Min.X)*ScaleX,
-		Current.Min.Z + (Base.Min.Z-AuthoredLayoutBounds.Min.Z)*ScaleZ),
-		FVector2D(Current.Min.X + (Base.Max.X-AuthoredLayoutBounds.Min.X)*ScaleX,
-		Current.Min.Z + (Base.Max.Z-AuthoredLayoutBounds.Min.Z)*ScaleZ));
+	return FBox2D(FVector2D(Current.Min.X + (Base.Min.X - AuthoredLayoutBounds.Min.X) * ScaleX,
+		Current.Min.Z + (Base.Min.Z - AuthoredLayoutBounds.Min.Z) * ScaleZ),
+		FVector2D(Current.Min.X + (Base.Max.X - AuthoredLayoutBounds.Min.X) * ScaleX,
+			Current.Min.Z + (Base.Max.Z - AuthoredLayoutBounds.Min.Z) * ScaleZ));
 }

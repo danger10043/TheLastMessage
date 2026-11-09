@@ -43,8 +43,8 @@ ADamagePlate::ADamagePlate()
     DamagePlateEffect->SetRelativeLocation(FVector::ZeroVector);
     DamagePlateEffect->SetRelativeRotation(FRotator::ZeroRotator);
 
-    // 게임 시작 시 자동 재생
-    DamagePlateEffect->SetAutoActivate(true);
+    // 발판의 활성 상태에 따라 직접 재생
+    DamagePlateEffect->SetAutoActivate(false);
 }
 
 bool ADamagePlate::LoadDamageConfig()
@@ -111,11 +111,20 @@ bool ADamagePlate::LoadDamageConfig()
     return true;
 }
 
+void ADamagePlate::ApplyActiveState(bool bNewActive)
+{
+    Super::ApplyActiveState(bNewActive && bIsEnabled);
+
+    UpdateDamagePlateEffect();
+}
+
 void ADamagePlate::BeginPlay()
 {
     Super::BeginPlay();
 
     LoadDamageConfig();
+
+    ApplyActiveState(bIsActive || bStartActive);
 }
 
 void ADamagePlate::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -130,7 +139,7 @@ void ADamagePlate::EndPlay(const EEndPlayReason::Type EndPlayReason)
 
 void ADamagePlate::ApplyDamageToPlayers()
 {
-    if (!HasAuthority() || !bDamageConfigLoaded || !bIsEnabled || !IsValid(DamageTrigger) || DamageConfig.DamageAmount <= 0.0f)
+    if (!HasAuthority() || !bDamageConfigLoaded || !bIsEnabled || !bIsActive || !IsValid(DamageTrigger) || DamageConfig.DamageAmount <= 0.0f)
     {
         return;
     }
@@ -180,5 +189,29 @@ void ADamagePlate::ApplyDamageToPlayers()
         EffectSpec.Data->SetSetByCallerMagnitude(DamageTag, DamageConfig.DamageAmount);
 
         ASC->ApplyGameplayEffectSpecToSelf(*EffectSpec.Data.Get());
+    }
+}
+
+void ADamagePlate::UpdateDamagePlateEffect()
+{
+    if (!IsValid(DamagePlateEffect))
+    {
+        return;
+    }
+
+    const bool bShouldPlay = bDamageConfigLoaded && bIsEnabled && bIsActive;
+
+    if (bShouldPlay)
+    {
+        // 이미 재생 중이면 처음부터 다시 시작하지 않음
+        if (!DamagePlateEffect->IsActive())
+        {
+            DamagePlateEffect->Activate(true);
+        }
+    }
+    else
+    {
+        // 꺼지는 즉시 남아 있는 입자도 제거
+        DamagePlateEffect->DeactivateImmediate();
     }
 }

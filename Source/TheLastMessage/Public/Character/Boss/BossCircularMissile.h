@@ -12,6 +12,7 @@ class UNiagaraSystem;
 class UMaterialInstanceDynamic;
 class UGameplayEffect;
 class UCurveFloat;
+class USoundBase;
 
 UCLASS()
 class THELASTMESSAGE_API ABossCircularMissile : public AActor, public IPoolableInterface
@@ -68,6 +69,9 @@ protected:
 
     UPROPERTY(EditDefaultsOnly, Category = "Boss|Missile")
     TObjectPtr<UNiagaraSystem> ExplosionVFX;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|Missile|Audio")
+    TObjectPtr<USoundBase> ExplosionSound;
 
     UPROPERTY(EditDefaultsOnly, Category = "Boss|Missile")
     TSubclassOf<UGameplayEffect> DamageEffectClass;

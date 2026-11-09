@@ -11,6 +11,7 @@ class UStaticMeshComponent;
 class UNiagaraSystem;
 class UMaterialInstanceDynamic;
 class UGameplayEffect;
+class USoundBase;
 
 UCLASS()
 class THELASTMESSAGE_API ABossLightning : public AActor, public IPoolableInterface
@@ -46,6 +47,12 @@ protected:
 
     UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Boss|Lightning")
     TObjectPtr<UNiagaraSystem> LightningEffect;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|Lightning|Audio")
+    TObjectPtr<USoundBase> WarningSound;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|Lightning|Audio")
+    TObjectPtr<USoundBase> StrikeSound;
 
     UPROPERTY(EditDefaultsOnly, Category = "Boss|Lightning")
     TSubclassOf<UGameplayEffect> DamageEffectClass;

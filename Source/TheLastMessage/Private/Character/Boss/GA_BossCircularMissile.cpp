@@ -223,6 +223,11 @@ void UGA_BossCircularMissile::SpawnNextMissile()
         return;
     }
 
+    if (LaunchSound)
+    {
+        Boss->MulticastGunBurstSound(LaunchSound.Get(), SpawnLocation);
+    }
+
     ++SpawnedCount;
     UE_LOG(LogTemp, Log,
         TEXT("BossCircularMissile: shot %d/%d, missile=%s, target=%s"),

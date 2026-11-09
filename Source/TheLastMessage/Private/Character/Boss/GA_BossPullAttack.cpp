@@ -129,6 +129,10 @@ void UGA_BossPullAttack::ActivateAbility(
     Anim->Montage_SetNextSection(ReadySection, LoopSection, AttackMontage.Get());
     Anim->Montage_SetNextSection(LoopSection, LoopSection, AttackMontage.Get());
     Anim->Montage_SetNextSection(EndSection, NAME_None, AttackMontage.Get());
+    if (PatternStartSound)
+    {
+        Boss->MulticastGunBurstSound(PatternStartSound.Get(), Boss->GetActorLocation());
+    }
     SetTickableTickType(ETickableTickType::Conditional);
     if (Anim->Montage_GetCurrentSection(AttackMontage.Get()) == LoopSection)
     {
@@ -220,6 +224,11 @@ void UGA_BossPullAttack::StartPull()
     }
     bPullStarted = true;
     bPullActive = true;
+    if (PullLoopEntrySound)
+    {
+        ABossMonster* Boss = GetBossOwner();
+        Boss->MulticastGunBurstSound(PullLoopEntrySound.Get(), Boss->GetActorLocation());
+    }
     const double Now = GetWorld()->GetTimeSeconds();
     PullEndTime = Now + PullDuration;
     NextDamageTime = Now;
@@ -265,7 +274,7 @@ void UGA_BossPullAttack::Tick(float DeltaTime)
             0.0, GetWorld()->GetTimeSeconds() - RangeEffectStartTime);
         const float Progress = static_cast<float>(
             FMath::Clamp(Elapsed / RangeFadeInDuration, 0.0, 1.0));
-        RangeComponent->SetVariableFloat(AlphaParameter, 0.5f * Progress);
+        RangeComponent->SetVariableFloat(AlphaParameter, 0.15f * Progress);
     }
 
     if (!bPullActive || !IsActive() || bEnding)

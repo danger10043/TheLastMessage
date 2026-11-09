@@ -2,6 +2,7 @@
 #include "Character/Player/PlayerBase.h"
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/AudioComponent.h"
 #include "GameFramework/ProjectileMovementComponent.h"
 #include "GameFramework/Pawn.h"
 #include "Kismet/GameplayStatics.h"
@@ -107,15 +108,23 @@ void ABossBullet::HandleImpact(AActor* OtherActor, const FHitResult& Hit)
         ? FVector(Hit.ImpactPoint) : GetActorLocation();
     const FRotator StrikeRotation = Hit.bBlockingHit
         ? Hit.ImpactNormal.Rotation() : GetActorRotation();
-    MulticastStrike(StrikeLocation, StrikeRotation);
+    MulticastStrike(StrikeLocation, StrikeRotation,
+        FlightImpactSound.Get(), FlightSerial);
     ReturnToPool();
 }
 
-void ABossBullet::MulticastStrike_Implementation(FVector Location, FRotator Rotation)
+void ABossBullet::MulticastStrike_Implementation(FVector Location, FRotator Rotation,
+    USoundBase* OverrideSound, uint32 StrikeFlightSerial)
 {
     if (GetNetMode() == NM_DedicatedServer)
     {
         return;
+    }
+
+    LastStruckFlightSerial = StrikeFlightSerial;
+    if (PlayingFlightSerial == StrikeFlightSerial)
+    {
+        StopFlightLoop();
     }
 
     if (BulletStrike)
@@ -124,9 +133,10 @@ void ABossBullet::MulticastStrike_Implementation(FVector Location, FRotator Rota
             this, BulletStrike.Get(), Location, Rotation);
     }
 
-    if (ImpactSound)
+    USoundBase* Sound = IsValid(OverrideSound) ? OverrideSound : ImpactSound.Get();
+    if (Sound)
     {
-        UGameplayStatics::PlaySoundAtLocation(this, ImpactSound.Get(), Location);
+        UGameplayStatics::PlaySoundAtLocation(this, Sound, Location);
     }
 }
 
@@ -137,6 +147,7 @@ void ABossBullet::GetLifetimeReplicatedProps(
     Super::GetLifetimeReplicatedProps(OutLifetimeProps);
     DOREPLIFETIME(ABossBullet, bFlightActive);
     DOREPLIFETIME(ABossBullet, FlightSerial);
+    DOREPLIFETIME(ABossBullet, FlightLoopSound);
 }
 
 void ABossBullet::OnRep_FlightState()
@@ -145,6 +156,20 @@ void ABossBullet::OnRep_FlightState()
     {
         return;
     }
+    if (!bFlightActive || !FlightLoopSound || FlightSerial == LastStruckFlightSerial)
+    {
+        StopFlightLoop();
+    }
+    else if (!FlightLoopComponent.IsValid() || PlayingFlightSerial != FlightSerial)
+    {
+        StopFlightLoop();
+        PlayingFlightSerial = FlightSerial;
+        FlightLoopComponent = UGameplayStatics::SpawnSoundAttached(
+            FlightLoopSound.Get(), Collision.Get(), NAME_None, FVector::ZeroVector,
+            EAttachLocation::KeepRelativeOffset, true, 1.f, 1.f, 0.f,
+            nullptr, nullptr, true);
+    }
+
     if (bFlightActive && BulletTrail)
     {
         TrailComponent->SetAsset(BulletTrail.Get());
@@ -154,6 +179,15 @@ void ABossBullet::OnRep_FlightState()
     {
         TrailComponent->DeactivateImmediate();
     }
+}
+
+void ABossBullet::StopFlightLoop()
+{
+    if (UAudioComponent* Audio = FlightLoopComponent.Get())
+    {
+        Audio->Stop();
+    }
+    FlightLoopComponent.Reset();
 }
 
 void ABossBullet::OnAcquiredFromPool()
@@ -171,7 +205,8 @@ void ABossBullet::OnAcquiredFromPool()
     ProjectileMovement->SetUpdatedComponent(Collision);
 }
 
-bool ABossBullet::StartBullet(float InDamage, float InSpeed, float Lifetime)
+bool ABossBullet::StartBullet(float InDamage, float InSpeed, float Lifetime,
+    USoundBase* InFlightLoopSound, USoundBase* InImpactSound)
 {
     if (!HasAuthority() || bInPool || bReady || IsActorBeingDestroyed())
     {
@@ -184,6 +219,9 @@ bool ABossBullet::StartBullet(float InDamage, float InSpeed, float Lifetime)
         ReturnToPool();
         return false;
     }
+
+    FlightLoopSound = InFlightLoopSound;
+    FlightImpactSound = InImpactSound;
 
     Damage = InDamage;
     Speed = InSpeed;
@@ -234,6 +272,8 @@ void ABossBullet::OnReturnedToPool()
     bReady = false;
     bImpactHandled = true;
     bFlightActive = false;
+    FlightLoopSound = nullptr;
+    FlightImpactSound = nullptr;
     GetWorldTimerManager().ClearTimer(FlightTimer);
     SetLifeSpan(0.f);
     ProjectileMovement->StopMovementImmediately();

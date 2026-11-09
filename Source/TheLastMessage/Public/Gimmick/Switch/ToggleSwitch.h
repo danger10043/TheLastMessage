@@ -56,6 +56,12 @@ public:
 protected:
 	virtual void BeginPlay() override;
 
+	// +추가----
+	// 게임 시작 시 스위치를 켜진 상태로 배치할지 여부
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Switch")
+	bool bStartActive = false;
+	// +--------
+
 	// 스위치 외형
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Gimmick|Components")
 	TObjectPtr<UStaticMeshComponent> SwitchMesh;

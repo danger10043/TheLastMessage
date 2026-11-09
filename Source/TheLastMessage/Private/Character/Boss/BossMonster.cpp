@@ -28,6 +28,8 @@
 #include "Materials/MaterialInterface.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
+#include "Kismet/GameplayStatics.h"
+#include "Sound/SoundBase.h"
 #include "LevelSequenceActor.h"
 #include "LevelSequencePlayer.h"
 #include "Character/Boss/BossActivationCore.h"
@@ -1941,6 +1943,14 @@ void ABossMonster::MulticastGunBurstMuzzle_Implementation(
         Effect, GunMesh.Get(), SocketName,
         FVector::ZeroVector, FRotator::ZeroRotator,
         EAttachLocation::SnapToTarget, true);
+}
+
+void ABossMonster::MulticastGunBurstSound_Implementation(USoundBase* Sound, FVector Location)
+{
+    if (GetNetMode() != NM_DedicatedServer && IsValid(Sound))
+    {
+        UGameplayStatics::PlaySoundAtLocation(this, Sound, Location);
+    }
 }
 
 void ABossMonster::MulticastGroundEffect_Implementation(

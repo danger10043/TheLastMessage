@@ -29,6 +29,19 @@ EBTNodeResult::Type UBTTask_BossCrossLaser::ExecuteTask(
     if (!IsValid(Boss) || !Boss->HasAuthority()
         || !IsValid(ASC) || !CrossLaserAbilityClass)
     {
+        const TCHAR* FailureReason = !IsValid(AI)
+            ? TEXT("AI controller is invalid")
+            : !IsValid(Boss)
+            ? TEXT("AI pawn is missing or is not an ABossMonster")
+            : !Boss->HasAuthority()
+            ? TEXT("boss has no server authority")
+            : !IsValid(ASC)
+            ? TEXT("boss ASC is invalid")
+            : TEXT("CrossLaserAbilityClass is unset");
+
+        UE_LOG(LogTemp, Warning,
+            TEXT("Boss Cross Laser Task: ExecuteTask failed: %s. AI=%s Boss=%s"),
+            FailureReason, *GetNameSafe(AI), *GetNameSafe(Boss));
         return EBTNodeResult::Failed;
     }
 
@@ -36,7 +49,10 @@ EBTNodeResult::Type UBTTask_BossCrossLaser::ExecuteTask(
     if (!Spec || Spec->IsActive())
     {
         UE_LOG(LogTemp, Warning,
-            TEXT("Boss Cross Laser Task: ability not granted or already active. Check DefaultAbilities."));
+            TEXT("Boss Cross Laser Task: ExecuteTask failed: %s. Boss=%s AbilityClass=%s"),
+            !Spec ? TEXT("no granted spec matches the exact ability class")
+            : TEXT("ability is already active"),
+            *GetNameSafe(Boss), *GetNameSafe(CrossLaserAbilityClass.Get()));
         return EBTNodeResult::Failed;
     }
 
@@ -45,8 +61,27 @@ EBTNodeResult::Type UBTTask_BossCrossLaser::ExecuteTask(
     EndedDelegateHandle = ASC->OnAbilityEnded.AddUObject(
         this, &UBTTask_BossCrossLaser::HandleAbilityEnded);
 
-    if (!ASC->TryActivateAbility(ActiveHandle, false))
+    FGameplayTagContainer FailureTags;
+    const FDelegateHandle FailureDelegateHandle = ASC->AbilityFailedCallbacks.AddLambda(
+        [AbilityClass = CrossLaserAbilityClass.Get(), &FailureTags](
+            const UGameplayAbility* FailedAbility, const FGameplayTagContainer& Tags)
+        {
+            if (FailedAbility && FailedAbility->GetClass() == AbilityClass)
+            {
+                FailureTags.AppendTags(Tags);
+            }
+        });
+
+    const bool bActivated = ASC->TryActivateAbility(ActiveHandle, false);
+    ASC->AbilityFailedCallbacks.Remove(FailureDelegateHandle);
+
+    if (!bActivated)
     {
+        const FString FailureTagText = FailureTags.IsEmpty()
+            ? TEXT("<none>") : FailureTags.ToString();
+        UE_LOG(LogTemp, Warning,
+            TEXT("Boss Cross Laser Task: TryActivateAbility returned false. Boss=%s AbilityClass=%s FailureTags=%s"),
+            *GetNameSafe(Boss), *GetNameSafe(CrossLaserAbilityClass.Get()), *FailureTagText);
         Cleanup(false);
         return EBTNodeResult::Failed;
     }
@@ -74,6 +109,12 @@ void UBTTask_BossCrossLaser::TickTask(
 {
     if (bAbilityEnded)
     {
+        if (bAbilityCancelled)
+        {
+            UE_LOG(LogTemp, Warning,
+                TEXT("Boss Cross Laser Task: ability ended with bWasCancelled=true. AI=%s AbilityClass=%s"),
+                *GetNameSafe(OwnerComp.GetAIOwner()), *GetNameSafe(CrossLaserAbilityClass.Get()));
+        }
         FinishLatentTask(OwnerComp,
             bAbilityCancelled ? EBTNodeResult::Failed : EBTNodeResult::Succeeded);
         return;
@@ -84,6 +125,15 @@ void UBTTask_BossCrossLaser::TickTask(
         ? ASC->FindAbilitySpecFromHandle(ActiveHandle) : nullptr;
     if (!Spec || !Spec->IsActive())
     {
+        const TCHAR* FailureReason = !IsValid(ASC)
+            ? TEXT("tracked ASC is invalid")
+            : !Spec ? TEXT("tracked ability spec is missing")
+            : TEXT("tracked ability spec is inactive");
+
+        UE_LOG(LogTemp, Warning,
+            TEXT("Boss Cross Laser Task: no matching ability-ended callback: %s. AI=%s AbilityClass=%s"),
+            FailureReason, *GetNameSafe(OwnerComp.GetAIOwner()),
+            *GetNameSafe(CrossLaserAbilityClass.Get()));
         FinishLatentTask(OwnerComp, EBTNodeResult::Failed);
     }
 }

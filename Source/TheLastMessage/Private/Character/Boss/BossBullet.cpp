@@ -12,6 +12,7 @@
 #include "Engine/World.h"
 #include "Net/UnrealNetwork.h"
 #include "TimerManager.h"
+#include "Sound/SoundBase.h"
 
 ABossBullet::ABossBullet()
 {
@@ -112,10 +113,20 @@ void ABossBullet::HandleImpact(AActor* OtherActor, const FHitResult& Hit)
 
 void ABossBullet::MulticastStrike_Implementation(FVector Location, FRotator Rotation)
 {
-    if (GetNetMode() != NM_DedicatedServer && BulletStrike)
+    if (GetNetMode() == NM_DedicatedServer)
+    {
+        return;
+    }
+
+    if (BulletStrike)
     {
         UNiagaraFunctionLibrary::SpawnSystemAtLocation(
             this, BulletStrike.Get(), Location, Rotation);
+    }
+
+    if (ImpactSound)
+    {
+        UGameplayStatics::PlaySoundAtLocation(this, ImpactSound.Get(), Location);
     }
 }
 

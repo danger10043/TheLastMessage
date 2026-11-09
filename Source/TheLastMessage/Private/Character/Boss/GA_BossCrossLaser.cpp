@@ -69,32 +69,75 @@ void UGA_BossCrossLaser::ActivateAbility(const FGameplayAbilitySpecHandle Handle
 {
     ABossMonster* Boss = GetBossOwner();
     UAnimInstance* Anim = ActorInfo ? ActorInfo->GetAnimInstance() : nullptr;
-    if (!Boss || !Boss->HasAuthority() || !GetWorld() || !Anim
-        || !Boss->GetCharacterMovement() || !IsValid(Boss->BossFlyLocator)
-        || !IsValid(Boss->BossLaserCenter) || !JumpMontage || !ChargeMontage
-        || !ReadyFlame || !FlyFlame || !WarningMaterial || !LaserMaterial
-        || !WarningTriangleMaterial || !FiringTriangleMaterial
-        || !Boss->GetMesh()->DoesSocketExist(FlameSocket))
+    const TCHAR* MissingRequirement = [&]() -> const TCHAR*
+        {
+            if (!Boss) return TEXT("Boss owner");
+            if (!Boss->HasAuthority()) return TEXT("Server authority");
+            if (!GetWorld()) return TEXT("World");
+            if (!Anim) return TEXT("AnimInstance");
+            if (!Boss->GetCharacterMovement()) return TEXT("CharacterMovement");
+            if (!IsValid(Boss->BossFlyLocator)) return TEXT("BossFlyLocator");
+            if (!IsValid(Boss->BossLaserCenter)) return TEXT("BossLaserCenter");
+            if (!JumpMontage) return TEXT("JumpMontage");
+            if (!ChargeMontage) return TEXT("ChargeMontage");
+            if (!ReadyFlame) return TEXT("ReadyFlame");
+            if (!FlyFlame) return TEXT("FlyFlame");
+            if (!WarningMaterial) return TEXT("WarningMaterial");
+            if (!LaserMaterial) return TEXT("LaserMaterial");
+            if (!WarningTriangleMaterial) return TEXT("WarningTriangleMaterial");
+            if (!FiringTriangleMaterial) return TEXT("FiringTriangleMaterial");
+            if (!Boss->GetMesh()) return TEXT("Boss skeletal mesh");
+            if (!Boss->GetMesh()->DoesSocketExist(FlameSocket)) return TEXT("FlameSocket");
+            return nullptr;
+        }();
+
+    if (MissingRequirement)
     {
+        UE_LOG(LogTemp, Warning,
+            TEXT("CrossLaser: startup requirement failed. Requirement=%s Boss=%s Ability=%s FlameSocket=%s"),
+            MissingRequirement, *GetNameSafe(Boss), *GetNameSafe(GetClass()),
+            *FlameSocket.ToString());
         Finish(true);
         return;
     }
     LockedPhase = Boss->GetBossPhase();
     Config = LockedPhase == EBossPhase::Phase1 ? Phase1
         : LockedPhase == EBossPhase::Phase2 ? Phase2 : Phase3;
-    const float PositiveValues[] = { ExitDistance, ExitDuration, RiseDepth, RiseDuration,
-TraceLength, BeamWidth, DamageInterval, Config.Duration, LaserImpactInterval };
-    for (float Value : PositiveValues)
+    const struct
     {
-        if (!FMath::IsFinite(Value) || Value <= 0.f) { Finish(true); return; }
-    }
-    const float NonNegativeValues[] = {
-    JumpHeight, ExitDropHeight, OffMapDelay,
-    Config.Damage, Config.MaxDegreesPerSecond
+        const TCHAR* Name;
+        float Value;
+        bool bAllowZero;
+    } StartupValues[] = {
+        { TEXT("ExitDistance"), ExitDistance, false },
+        { TEXT("ExitDuration"), ExitDuration, false },
+        { TEXT("RiseDepth"), RiseDepth, false },
+        { TEXT("RiseDuration"), RiseDuration, false },
+        { TEXT("TraceLength"), TraceLength, false },
+        { TEXT("BeamWidth"), BeamWidth, false },
+        { TEXT("DamageInterval"), DamageInterval, false },
+        { TEXT("Config.Duration"), Config.Duration, false },
+        { TEXT("LaserImpactInterval"), LaserImpactInterval, false },
+        { TEXT("JumpHeight"), JumpHeight, true },
+        { TEXT("ExitDropHeight"), ExitDropHeight, true },
+        { TEXT("OffMapDelay"), OffMapDelay, true },
+        { TEXT("Config.Damage"), Config.Damage, true },
+        { TEXT("Config.MaxDegreesPerSecond"), Config.MaxDegreesPerSecond, true },
     };
-    for (float Value : NonNegativeValues)
+
+    for (const auto& Setting : StartupValues)
     {
-        if (!FMath::IsFinite(Value) || Value < 0.f) { Finish(true); return; }
+        const bool bInRange = Setting.bAllowZero
+            ? Setting.Value >= 0.f : Setting.Value > 0.f;
+        if (!FMath::IsFinite(Setting.Value) || !bInRange)
+        {
+            UE_LOG(LogTemp, Warning,
+                TEXT("CrossLaser: invalid startup value. Boss=%s Phase=%d Field=%s Value=%g Expected=%s"),
+                *GetNameSafe(Boss), static_cast<int32>(LockedPhase), Setting.Name,
+                Setting.Value, Setting.bAllowZero ? TEXT("finite and >= 0") : TEXT("finite and > 0"));
+            Finish(true);
+            return;
+        }
     }
     RiseEnd = Boss->BossFlyLocator->GetActorLocation();
     RiseStart = RiseEnd - FVector(0.f, 0.f, RiseDepth);
@@ -117,6 +160,12 @@ TraceLength, BeamWidth, DamageInterval, Config.Duration, LaserImpactInterval };
         || !FMath::IsFinite(MissileConfig.Damage) || MissileConfig.Damage < 0.f
         || !FMath::IsFinite(MissileConfig.DamageRadius) || MissileConfig.DamageRadius < 1.f))
     {
+        UE_LOG(LogTemp, Warning,
+            TEXT("CrossLaser: invalid circular missile settings. Boss=%s Phase=%d Class=%s Count=%d Offset=%s Interval=%g LaunchTime=%g Damage=%g Radius=%g"),
+            *GetNameSafe(Boss), static_cast<int32>(LockedPhase),
+            *GetNameSafe(MissileConfig.CircularMissileClass.Get()), MissileConfig.MissileCount,
+            *MissileSpawnOffset.ToString(), MissileConfig.SpawnInterval,
+            MissileConfig.LaunchTime, MissileConfig.Damage, MissileConfig.DamageRadius);
         Finish(true);
         return;
     }
@@ -128,7 +177,14 @@ TraceLength, BeamWidth, DamageInterval, Config.Duration, LaserImpactInterval };
         Finish(true);
         return;
     }
-    if (!CommitAbility(Handle, ActorInfo, ActivationInfo)) { Finish(true); return; }
+    if (!CommitAbility(Handle, ActorInfo, ActivationInfo))
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("CrossLaser: CommitAbility returned false. Boss=%s Ability=%s Phase=%d"),
+            *GetNameSafe(Boss), *GetNameSafe(GetClass()), static_cast<int32>(LockedPhase));
+        Finish(true);
+        return;
+    }
 
     SavedTransform = Boss->GetActorTransform();
     UCharacterMovementComponent* Move = Boss->GetCharacterMovement();
@@ -152,7 +208,13 @@ TraceLength, BeamWidth, DamageInterval, Config.Duration, LaserImpactInterval };
     MontageInstanceID = INDEX_NONE;
     Boss->OnBossStateChanged.AddUniqueDynamic(this, &UGA_BossCrossLaser::OnStateChanged);
     Boss->SetBossState(EBossState::Attacking);
-    if (!IsActive()) return;
+    if (!IsActive())
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("CrossLaser: ability ended during SetBossState(Attacking). Boss=%s State=%d"),
+            *GetNameSafe(Boss), static_cast<int32>(Boss->GetBossState()));
+        return;
+    }
 
     Geometry = NewObject<UProceduralMeshComponent>(Boss);
     Boss->AddInstanceComponent(Geometry);
@@ -168,14 +230,36 @@ TraceLength, BeamWidth, DamageInterval, Config.Duration, LaserImpactInterval };
     SwitchFlame(ReadyFlame);
     MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(
         this, NAME_None, JumpMontage, 1.f, NAME_None, true, 1.f, 0.f, true);
-    if (!MontageTask) { Finish(true); return; }
+    if (!MontageTask)
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("CrossLaser: could not create jump montage task. Boss=%s Montage=%s"),
+            *GetNameSafe(Boss), *GetNameSafe(JumpMontage.Get()));
+        Finish(true);
+        return;
+    }
+
     MontageTask->OnCompleted.AddDynamic(this, &UGA_BossCrossLaser::OnMontageCompleted);
     MontageTask->OnInterrupted.AddDynamic(this, &UGA_BossCrossLaser::OnMontageCancelled);
     MontageTask->OnCancelled.AddDynamic(this, &UGA_BossCrossLaser::OnMontageCancelled);
     MontageTask->ReadyForActivation();
-    if (!IsActive()) return;
+    if (!IsActive())
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("CrossLaser: ability ended during jump montage task activation. Boss=%s Montage=%s"),
+            *GetNameSafe(Boss), *GetNameSafe(JumpMontage.Get()));
+        return;
+    }
+
     FAnimMontageInstance* Instance = Anim->GetActiveInstanceForMontage(JumpMontage);
-    if (!Instance) { Finish(true); return; }
+    if (!Instance)
+    {
+        UE_LOG(LogTemp, Warning,
+            TEXT("CrossLaser: no active jump montage instance after activation. Boss=%s Montage=%s AnimInstance=%s"),
+            *GetNameSafe(Boss), *GetNameSafe(JumpMontage.Get()), *GetNameSafe(Anim));
+        Finish(true);
+        return;
+    }
     MontageInstanceID = Instance->GetInstanceID();
     GetWorld()->GetTimerManager().SetTimer(UpdateTimer, this,
         &UGA_BossCrossLaser::UpdatePattern, 1.f / 60.f, true);

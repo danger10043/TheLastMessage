@@ -192,7 +192,10 @@ void UBossCorePuzzleComponent::ScheduleNextPuzzleMissile()
 
     const float Progress = FMath::Clamp(
         1.f - Remaining / InitialPuzzleTime, 0.f, 1.f);
-    const float Interval = FMath::Lerp(1.f, 0.08f, Progress);
+    const float MinInterval = FMath::IsFinite(PuzzleMissileMinFireInterval)
+        ? FMath::Clamp(PuzzleMissileMinFireInterval, 0.01f, 1.f)
+        : 0.08f;
+    const float Interval = FMath::Lerp(1.f, MinInterval, Progress);
 
     GetWorld()->GetTimerManager().SetTimer(
         PuzzleMissileTimer, this,
@@ -348,6 +351,11 @@ void UBossCorePuzzleComponent::SpawnNextPuzzleMissile()
         TEXT("Boss core puzzle: step=%d, missile=%s, target=%s"),
         PuzzleMissileStep + 1, *Missile->GetName(),
         *FireLocation.ToString());
+
+    if (PuzzleMissileLaunchSound)
+    {
+        Boss->MulticastGunBurstSound(PuzzleMissileLaunchSound.Get(), SpawnLocation);
+    }
 
     if (PuzzleMissileStep == 0)
     {

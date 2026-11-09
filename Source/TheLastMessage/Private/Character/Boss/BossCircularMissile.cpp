@@ -290,6 +290,10 @@ void ABossCircularMissile::Explode()
 
     if (HasAuthority())
     {
+        if (ExplosionSound && IsValid(SourceBoss.Get()))
+        {
+            SourceBoss->MulticastGunBurstSound(ExplosionSound.Get(), ImpactLocation);
+        }
         ApplyExplosionDamage();
 
         TArray<TEnumAsByte<EObjectTypeQuery>> ObjectTypes;

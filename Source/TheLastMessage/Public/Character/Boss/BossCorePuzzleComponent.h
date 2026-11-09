@@ -8,6 +8,7 @@
 class ABossActivationCore;
 class ABossCircularMissile;
 class APlayerBase;
+class USoundBase;
 
 UCLASS()
 class THELASTMESSAGE_API UBossCorePuzzleComponent : public UActorComponent
@@ -44,6 +45,13 @@ private:
     UPROPERTY(EditDefaultsOnly, Category = "Boss|CorePuzzle|Missile",
         meta = (ClampMin = "0.01"))
     float PuzzleMissileLaunchTime = 2.f;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CorePuzzle|Missile",
+        meta = (ClampMin = "0.01", ClampMax = "1.0", Units = "s"))
+    float PuzzleMissileMinFireInterval = 0.08f;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CorePuzzle|Missile")
+    TObjectPtr<USoundBase> PuzzleMissileLaunchSound;
 
     UPROPERTY(EditDefaultsOnly, Category = "Boss|CorePuzzle|Missile",
         meta = (ClampMin = "0.0"))

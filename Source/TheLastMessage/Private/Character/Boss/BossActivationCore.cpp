@@ -2,6 +2,7 @@
 #include "Character/Boss/BossCorePuzzleComponent.h"
 #include "Character/Boss/BossCircularMissile.h"
 #include "Components/SphereComponent.h"
+#include "Character/Boss/BossMonster.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
@@ -156,6 +157,14 @@ void ABossActivationCore::HandleMissileHit(AActor* Missile)
     ActiveVFX->DeactivateImmediate();
     CollisionComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     CoreState = ECoreState::Breaking;
+
+    if (BreakSound)
+    {
+        if (ABossMonster* Boss = Cast<ABossMonster>(PuzzleComponent->GetOwner()); IsValid(Boss))
+        {
+            Boss->MulticastGunBurstSound(BreakSound.Get(), GetActorLocation());
+        }
+    }
 
     if (IsValid(BreakEffect.Get()) && GetNetMode() != NM_DedicatedServer)
     {

@@ -10,6 +10,7 @@ class APlayerBase;
 class ABossCircularMissile;
 class UAnimMontage;
 class UAbilityTask_PlayMontageAndWait;
+class USoundBase;
 
 UCLASS()
 class THELASTMESSAGE_API UGA_BossCircularMissile : public UGA_BossAttackBase
@@ -37,6 +38,9 @@ protected:
 
     UPROPERTY(EditDefaultsOnly, Category = "Boss|CircularMissile|Animation")
     FName LaunchNotifyName = TEXT("LaunchStart");
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CircularMissile|Audio")
+    TObjectPtr<USoundBase> LaunchSound;
 
     UPROPERTY(EditDefaultsOnly, Category = "Boss|CircularMissile")
     FVector MissileSpawnOffset = FVector(0.f, 0.f, 150.f);

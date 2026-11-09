@@ -69,6 +69,12 @@ public:
     void MulticastGunBurstSound(USoundBase* Sound, FVector Location);
 
     UFUNCTION(NetMulticast, Reliable)
+    void MulticastUpdateLightningStormAudio(USoundBase* LoopSound, USoundBase* EndSound);
+
+    UFUNCTION(NetMulticast, Reliable)
+    void MulticastUpdateCrossLaserAudio(USoundBase* LoopSound, USoundBase* FadeOutSound);
+
+    UFUNCTION(NetMulticast, Reliable)
     void MulticastGroundEffect(UNiagaraSystem* Effect, FVector Location);
 
     UStaticMeshComponent* GetGunMesh() const { return GunMesh.Get(); }
@@ -272,6 +278,9 @@ protected:
     TSubclassOf<UGameplayEffect> InitialStatsEffect;
 
 private:
+    TWeakObjectPtr<class UAudioComponent> LightningStormAudioComponent;
+    TWeakObjectPtr<class UAudioComponent> CrossLaserAudioComponent;
+
     void PlayDeathMontage();
 
     void HandleBossHealthChanged(const FOnAttributeChangeData& Data);

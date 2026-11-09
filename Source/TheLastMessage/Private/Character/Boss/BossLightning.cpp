@@ -138,6 +138,11 @@ bool ABossLightning::StartLightning(
     WarningCylinder->SetVisibility(true);
     SetActorTickEnabled(true);
 
+    if (HasAuthority() && WarningSound)
+    {
+        SourceBoss->MulticastGunBurstSound(WarningSound.Get(), StrikeLocation);
+    }
+
     if (WarningTime == 0.f)
     {
         Strike();
@@ -187,6 +192,11 @@ void ABossLightning::Strike()
 
     if (HasAuthority())
     {
+        if (StrikeSound && IsValid(SourceBoss.Get()))
+        {
+            SourceBoss->MulticastGunBurstSound(StrikeSound.Get(), StrikeLocation);
+        }
+
         ApplyStrikeDamage();
     }
 

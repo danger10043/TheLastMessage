@@ -261,6 +261,10 @@ void UGA_BossCrossLaser::ActivateAbility(const FGameplayAbilitySpecHandle Handle
         return;
     }
     MontageInstanceID = Instance->GetInstanceID();
+    if (PatternStartSound)
+    {
+        Boss->MulticastGunBurstSound(PatternStartSound.Get(), Boss->GetActorLocation());
+    }
     GetWorld()->GetTimerManager().SetTimer(UpdateTimer, this,
         &UGA_BossCrossLaser::UpdatePattern, 1.f / 60.f, true);
 }
@@ -385,6 +389,10 @@ void UGA_BossCrossLaser::UpdatePattern()
             SwitchFlame(FlyFlame);
             Boss->SetActorLocation(RiseStart, false, nullptr, ETeleportType::TeleportPhysics);
             Stage = EStage::Rising;
+            if (RisingSound)
+            {
+                Boss->MulticastGunBurstSound(RisingSound.Get(), Boss->GetActorLocation());
+            }
             StageStart = Now;
         }
         break;
@@ -415,6 +423,10 @@ void UGA_BossCrossLaser::UpdatePattern()
             MontageInstanceID = INDEX_NONE;
 
             Stage = EStage::Warning;
+            if (WarningSound)
+            {
+                Boss->MulticastGunBurstSound(WarningSound.Get(), Boss->GetActorLocation());
+            }
             StageStart = Now;
             DrawLasers(false, Now);
 
@@ -461,6 +473,11 @@ void UGA_BossCrossLaser::UpdatePattern()
         {
             Stage = EStage::Firing;
             StageStart = PreviousTime = NextMissileTime = Now;
+            if (FiringStartSound)
+            {
+                Boss->MulticastGunBurstSound(FiringStartSound.Get(), Boss->GetActorLocation());
+            }
+            TryStartFiringLoop(Boss, 0.f);
             Angle = 0.f;
 
 
@@ -482,6 +499,12 @@ void UGA_BossCrossLaser::UpdatePattern()
             }
 
             DrawLasers(true, Now);
+
+            if (IsActive() && !bEnding)
+            {
+                bLaserFadeOutSoundPlayed = false;
+                TryPlayLaserFadeOutSound(Boss, 0.f);
+            }
 
             if (IsActive() && !bEnding && Config.bFireCircularMissiles)
             {
@@ -505,6 +528,8 @@ void UGA_BossCrossLaser::UpdatePattern()
             T += Step;
         }
         PreviousTime = End;
+        TryStartFiringLoop(Boss, Elapsed);
+        TryPlayLaserFadeOutSound(Boss, Elapsed);
         if (Elapsed >= Config.Duration)
         {
             BeginLaserFadeOut(Now);
@@ -730,6 +755,10 @@ void UGA_BossCrossLaser::SpawnMissile(double Now)
     Missile->StartMissile();
     if (!IsActive() || bEnding) return;
     if (!Missile->IsMissileActive()) { Finish(true); return; }
+    if (LockedPhase == EBossPhase::Phase3 && CircularMissileLaunchSound)
+    {
+        Boss->MulticastGunBurstSound(CircularMissileLaunchSound.Get(), Location);
+    }
     ++MissileCount;
     NextMissileTime = Now + MissileConfig.SpawnInterval;
 }
@@ -802,10 +831,47 @@ bool UGA_BossCrossLaser::PlayFollowMontage(UAnimMontage* Montage)
     return true;
 }
 
+void UGA_BossCrossLaser::TryStartFiringLoop(ABossMonster* Boss, float Elapsed)
+{
+    if (bFiringLoopStarted || !FiringLoopSound
+        || !FMath::IsFinite(FiringLoopDelay)
+        || Elapsed < FMath::Max(0.f, FiringLoopDelay) || Elapsed >= Config.Duration)
+    {
+        return;
+    }
+
+    bFiringLoopStarted = true;
+    Boss->MulticastUpdateCrossLaserAudio(FiringLoopSound.Get(), nullptr);
+}
+
+void UGA_BossCrossLaser::TryPlayLaserFadeOutSound(ABossMonster* Boss, float Elapsed)
+{
+    const float LeadTime = FMath::IsFinite(FiringLoopDelay)
+        ? FMath::Clamp(FiringLoopDelay, 0.f, Config.Duration) : 0.f;
+    if (bLaserFadeOutSoundPlayed || !LaserFadeOutSound
+        || Elapsed < Config.Duration - LeadTime)
+    {
+        return;
+    }
+
+    bLaserFadeOutSoundPlayed = true;
+    Boss->MulticastGunBurstSound(LaserFadeOutSound.Get(), Boss->GetActorLocation());
+}
+
 void UGA_BossCrossLaser::BeginLaserFadeOut(double Now)
 {
     Stage = EStage::LaserFadeOut;
     StageStart = Now;
+
+    if (bFiringLoopStarted)
+    {
+        bFiringLoopStarted = false;
+        if (ABossMonster* Boss = GetBossOwner(); IsValid(Boss) && Boss->HasAuthority())
+        {
+            Boss->MulticastUpdateCrossLaserAudio(nullptr, nullptr);
+        }
+    }
+
     FadeStartProgress = FMath::Clamp(Config.Duration / FiringFadeInDuration, 0.f, 1.f);
     if (IsValid(FiringEffectComponent.Get()))
     {
@@ -964,6 +1030,10 @@ void UGA_BossCrossLaser::UpdateFollowUp(double Now)
             FollowRiseEnd = FollowRiseStart + FVector(0.f, 0.f, FollowRiseHeight);
             Stage = EStage::FollowRise;
             StageStart = Now;
+            if (FollowRiseSound)
+            {
+                Boss->MulticastGunBurstSound(FollowRiseSound.Get(), Boss->GetActorLocation());
+            }
             if (!PlayFollowMontage(FollowRiseMontage)) Finish(true);
         }
         break;
@@ -1033,6 +1103,10 @@ void UGA_BossCrossLaser::UpdateFollowUp(double Now)
         if (T >= 1.f)
         {
             bDropLanded = true;
+            if (LandingSound)
+            {
+                Boss->MulticastGunBurstSound(LandingSound.Get(), DropGroundPoint);
+            }
             ClearDropWarning();
             AActor* FacingTarget = LockedTarget.Get();
             const float LandingWindow = LandingMontage
@@ -1092,6 +1166,14 @@ void UGA_BossCrossLaser::EndAbility(const FGameplayAbilitySpecHandle Handle,
 {
     if (bEnding || !IsEndAbilityValid(Handle, ActorInfo)) return;
     TGuardValue<bool> Guard(bEnding, true);
+    if (bFiringLoopStarted)
+    {
+        bFiringLoopStarted = false;
+        if (ABossMonster* Boss = GetBossOwner(); IsValid(Boss) && Boss->HasAuthority())
+        {
+            Boss->MulticastUpdateCrossLaserAudio(nullptr, nullptr);
+        }
+    }
     if (!bWasCancelled && bDropLanded)
     {
         FacingTurn.Finish();

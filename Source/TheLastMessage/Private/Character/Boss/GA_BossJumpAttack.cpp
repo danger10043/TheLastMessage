@@ -204,6 +204,10 @@ void UGA_BossJumpAttack::ActivateAbility(
     }
     GetWorld()->GetTimerManager().SetTimer(
         ContextTimer, this, &ThisClass::CheckContext, 0.02f, true);
+    if (PatternStartSound)
+    {
+        Boss->MulticastGunBurstSound(PatternStartSound.Get(), Boss->GetActorLocation());
+    }
     if (Anim->Montage_GetCurrentSection(AttackMontage.Get()) != TEXT("JumpReady"))
     {
         StartJump();
@@ -343,6 +347,10 @@ void UGA_BossJumpAttack::StartJump()
     Move->SetMovementMode(MOVE_Falling);
     Move->Velocity = LaunchVelocity;
     bStartedJump = true;
+    if (JumpStartSound)
+    {
+        Boss->MulticastGunBurstSound(JumpStartSound.Get(), JumpGroundPoint);
+    }
     SetEffect(StartEffect.Get());
 
     UCapsuleComponent* Capsule = Boss->GetCapsuleComponent();
@@ -439,6 +447,11 @@ void UGA_BossJumpAttack::OnLanded(const FHitResult& Hit)
         return;
     }
     bLanded = true;
+    if (ABossMonster* Boss = GetBossOwner();
+        IsValid(Boss) && Boss->HasAuthority() && LandingSound)
+    {
+        Boss->MulticastGunBurstSound(LandingSound.Get(), Hit.ImpactPoint);
+    }
     SetEffect(nullptr);
     if (UCharacterMovementComponent* Move = GetBossOwner()->GetCharacterMovement())
     {

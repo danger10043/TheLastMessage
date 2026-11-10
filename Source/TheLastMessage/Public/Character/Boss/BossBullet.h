@@ -28,7 +28,8 @@ public:
         TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
     // Pool -> configure -> launch. BeginPlay no longer launches automatically.
-    bool StartBullet(float InDamage, float InSpeed, float Lifetime);
+    bool StartBullet(float InDamage, float InSpeed, float Lifetime,
+        USoundBase* InFlightLoopSound = nullptr, USoundBase* InImpactSound = nullptr);
     void ReturnToPool();
 
 private:
@@ -40,6 +41,17 @@ private:
 
     UPROPERTY(ReplicatedUsing = OnRep_FlightState)
     uint32 FlightSerial = 0;
+
+    UPROPERTY(ReplicatedUsing = OnRep_FlightState)
+    TObjectPtr<USoundBase> FlightLoopSound;
+
+    UPROPERTY(Transient)
+    TObjectPtr<USoundBase> FlightImpactSound;
+
+    TWeakObjectPtr<class UAudioComponent> FlightLoopComponent;
+    uint32 PlayingFlightSerial = 0;
+    uint32 LastStruckFlightSerial = 0;
+    void StopFlightLoop();
 
     bool bInPool = true;
     FTimerHandle FlightTimer;
@@ -93,5 +105,6 @@ private:
     void HandleImpact(AActor* OtherActor, const FHitResult& Hit);
 
     UFUNCTION(NetMulticast, Reliable)
-    void MulticastStrike(FVector Location, FRotator Rotation);
+    void MulticastStrike(FVector Location, FRotator Rotation,
+        USoundBase* OverrideSound, uint32 StrikeFlightSerial);
 };

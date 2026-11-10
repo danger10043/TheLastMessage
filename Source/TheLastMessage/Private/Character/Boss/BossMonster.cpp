@@ -29,6 +29,7 @@
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
 #include "Kismet/GameplayStatics.h"
+#include "Components/AudioComponent.h"
 #include "Sound/SoundBase.h"
 #include "LevelSequenceActor.h"
 #include "LevelSequencePlayer.h"
@@ -1950,6 +1951,62 @@ void ABossMonster::MulticastGunBurstSound_Implementation(USoundBase* Sound, FVec
     if (GetNetMode() != NM_DedicatedServer && IsValid(Sound))
     {
         UGameplayStatics::PlaySoundAtLocation(this, Sound, Location);
+    }
+}
+
+void ABossMonster::MulticastUpdateLightningStormAudio_Implementation(
+    USoundBase* LoopSound, USoundBase* EndSound)
+{
+    if (GetNetMode() == NM_DedicatedServer)
+    {
+        return;
+    }
+
+    if (UAudioComponent* Audio = LightningStormAudioComponent.Get())
+    {
+        Audio->Stop();
+    }
+    LightningStormAudioComponent.Reset();
+
+    if (IsValid(LoopSound) && IsValid(GetRootComponent()))
+    {
+        LightningStormAudioComponent = UGameplayStatics::SpawnSoundAttached(
+            LoopSound, GetRootComponent(), NAME_None, FVector::ZeroVector,
+            EAttachLocation::KeepRelativeOffset, true, 1.f, 1.f, 0.f,
+            nullptr, nullptr, true);
+    }
+
+    if (IsValid(EndSound))
+    {
+        UGameplayStatics::PlaySoundAtLocation(this, EndSound, GetActorLocation());
+    }
+}
+
+void ABossMonster::MulticastUpdateCrossLaserAudio_Implementation(
+    USoundBase* LoopSound, USoundBase* FadeOutSound)
+{
+    if (GetNetMode() == NM_DedicatedServer)
+    {
+        return;
+    }
+
+    if (UAudioComponent* Audio = CrossLaserAudioComponent.Get())
+    {
+        Audio->Stop();
+    }
+    CrossLaserAudioComponent.Reset();
+
+    if (IsValid(LoopSound) && IsValid(GetRootComponent()))
+    {
+        CrossLaserAudioComponent = UGameplayStatics::SpawnSoundAttached(
+            LoopSound, GetRootComponent(), NAME_None, FVector::ZeroVector,
+            EAttachLocation::KeepRelativeOffset, true, 1.f, 1.f, 0.f,
+            nullptr, nullptr, true);
+    }
+
+    if (IsValid(FadeOutSound))
+    {
+        UGameplayStatics::PlaySoundAtLocation(this, FadeOutSound, GetActorLocation());
     }
 }
 

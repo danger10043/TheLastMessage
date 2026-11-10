@@ -10,6 +10,8 @@ class ABossRockProjectile;
 class APlayerBase;
 class UAnimMontage;
 class UAbilityTask_PlayMontageAndWait;
+class UNiagaraSystem;
+class USoundBase;
 
 UCLASS()
 class THELASTMESSAGE_API UGA_BossRockThrow : public UGA_BossAttackBase
@@ -44,6 +46,24 @@ protected:
 
     UPROPERTY(EditDefaultsOnly, Category = "Boss|RockThrow")
     TSubclassOf<ABossRockProjectile> RockClass;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|RockThrow|Audio")
+    TObjectPtr<USoundBase> ReadySound;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|RockThrow|Audio")
+    TObjectPtr<USoundBase> ThrowSound;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|RockThrow|Audio")
+    TObjectPtr<USoundBase> RockFlightLoopSound;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|RockThrow|Audio")
+    TObjectPtr<USoundBase> RockImpactSound;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|RockThrow|Effects")
+    TObjectPtr<UNiagaraSystem> ReadyEffect;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|RockThrow|Effects")
+    TObjectPtr<UNiagaraSystem> ThrowEffect;
 
     UPROPERTY(EditDefaultsOnly, Category = "Boss|RockThrow", meta = (ClampMin = "0.0"))
     float Damage = 10.f;

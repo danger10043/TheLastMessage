@@ -11,6 +11,7 @@ class UMaterialInstanceDynamic;
 class UBossCorePuzzleComponent;
 class UNiagaraSystem;
 class UNiagaraComponent;
+class USoundBase;
 
 UCLASS()
 class THELASTMESSAGE_API ABossActivationCore : public AActor
@@ -53,6 +54,9 @@ protected:
 
     UPROPERTY(EditDefaultsOnly, Category = "Boss|Core|Effects")
     TObjectPtr<UNiagaraSystem> BreakEffect;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|Core|Audio")
+    TObjectPtr<USoundBase> BreakSound;
 
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Boss|Core|Effects")
     TObjectPtr<UNiagaraComponent> ActiveVFX;

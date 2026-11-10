@@ -49,16 +49,29 @@ bool ADirectionalStairs::ShouldAllowWalkThrough(FVector P, FVector V,
 	if (P.X < -500 || P.X > 200 || FMath::Abs(P.Y) > 350 || P.Z < -200 || P.Z > 300) return false;
 	if (bAlreadyPassing) return true;
 	const float SurfaceZ = (50.0f - P.X) * (200.0f / 350.0f);
-	return ((P.X < -250 && V.X > 1) || V.Z > 1) && P.Z < SurfaceZ - 20;
+	// After dropping onto the floor, either neighboring module can overlap the
+	// capsule. Entering its underside must work in both horizontal directions;
+	// approaching the walkable top from the low end still fails the height test.
+	// A blocked movement sweep can zero horizontal velocity before the next tick.
+	// Being underneath is sufficient; requiring speed would deadlock that contact.
+	return P.Z < SurfaceZ - 20;
 }
 
 bool ADirectionalStairs::RequestDropThrough(ACharacter* Character)
 {
 	if (!Character || !Character->GetCharacterMovement()->IsMovingOnGround()) return false;
 	if (Character->GetCharacterMovement()->CurrentFloor.HitResult.GetActor() != this) return false;
-	DroppingCharacters.Add(Character);
-	PassingCharacters.Add(Character);
-	Character->GetCapsuleComponent()->IgnoreActorWhenMoving(this, true);
+	// At a modular stair seam the capsule can touch both ramps. Ignoring only
+	// the supporting actor leaves the neighboring ramp trapping the falling capsule.
+	const FBox DropBounds = Character->GetCapsuleComponent()->Bounds.GetBox().ExpandBy(10.f);
+	for (TActorIterator<ADirectionalStairs> It(GetWorld()); It; ++It)
+	{
+		ADirectionalStairs* Stairs = *It;
+		if (Stairs != this && !Stairs->SolidRamp->Bounds.GetBox().Intersect(DropBounds)) continue;
+		Stairs->DroppingCharacters.Add(Character);
+		Stairs->PassingCharacters.Add(Character);
+		Character->GetCapsuleComponent()->IgnoreActorWhenMoving(Stairs, true);
+	}
 	Character->StopJumping();
 	Character->SetBase(static_cast<FMovementBaseInterfaceData*>(nullptr));
 	Character->GetCharacterMovement()->SetMovementMode(MOVE_Falling);
@@ -93,8 +106,9 @@ void ADirectionalStairs::Tick(float DeltaSeconds)
 			const FVector Head = GetActorTransform().InverseTransformPosition(Capsule->GetComponentLocation() + FVector(0,0,Capsule->GetScaledCapsuleHalfHeight()));
 			const float SurfaceZ = (50.0f - LocalPosition.X) * (200.0f / 350.0f);
 			const bool bLandedElsewhere = Movement->IsMovingOnGround() && Movement->CurrentFloor.HitResult.GetActor() != this;
+			const bool bCapsuleClear = !SolidRamp->Bounds.GetBox().Intersect(Capsule->Bounds.GetBox().ExpandBy(2.f));
 			const double Clearance = (SurfaceZ - Head.Z) * GetActorScale3D().Z;
-			if (bGrappling || bLandedElsewhere || Clearance > 30.0 || LocalPosition.X < -500 || LocalPosition.X > 200 || FMath::Abs(LocalPosition.Y) > 350)
+			if (bGrappling || (bLandedElsewhere && bCapsuleClear) || Clearance > 30.0 || LocalPosition.X < -500 || LocalPosition.X > 200 || FMath::Abs(LocalPosition.Y) > 350)
 			{
 				DroppingCharacters.Remove(Character);
 				bDropping = false;

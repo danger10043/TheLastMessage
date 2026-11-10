@@ -16,6 +16,9 @@ bool FDirectionalStairsPassageTest::RunTest(const FString& Parameters)
 {
 	using S = ADirectionalStairs;
 	TestTrue(TEXT("Walk from upper-end underside"), S::ShouldAllowWalkThrough({-350,0,90},{200,0,0},true,false,false));
+	TestTrue(TEXT("Walk right under the middle after landing below"), S::ShouldAllowWalkThrough({-125,0,-80},{200,0,0},true,false,false));
+	TestTrue(TEXT("Walk left into a neighboring underside"), S::ShouldAllowWalkThrough({50,0,-80},{-200,0,0},true,false,false));
+	TestTrue(TEXT("Stopped contact underneath can resume movement"), S::ShouldAllowWalkThrough({-125,0,-80},{0,0,0},true,false,false));
 	TestFalse(TEXT("Uphill approach stays blocked"), S::ShouldAllowWalkThrough({100,0,90},{-200,0,0},true,false,false));
 	TestFalse(TEXT("Jump cannot start passage"), S::ShouldAllowWalkThrough({-350,0,90},{200,0,0},false,false,false));
 	TestTrue(TEXT("Rising jump can pass from below"), S::ShouldAllowWalkThrough({-150,0,20},{0,0,400},true,false,false));
@@ -69,6 +72,26 @@ bool FDirectionalStairsCollisionTest::RunTest(const FString& Parameters)
 	Walker->SetActorLocation(FVector(-125,0,-200));
 	Stairs->Tick(0.016f);
 	TestFalse(TEXT("Drop collision restored after capsule clears"), Walker->GetCapsuleComponent()->GetMoveIgnoreActors().Contains(Stairs));
+	ADirectionalStairs* Neighbor = World->SpawnActor<ADirectionalStairs>(FVector(-350,0,200), FRotator::ZeroRotator);
+	Walker->SetActorLocation(FVector(-290,0,290));
+	Walker->GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+	Walker->GetCharacterMovement()->CurrentFloor.SetFromSweep(FloorHit, 0, true);
+	TestTrue(TEXT("Drop at a modular seam is accepted"), Stairs->RequestDropThrough(Walker));
+	TestTrue(TEXT("Adjacent ramp is ignored at the seam"), Walker->GetCapsuleComponent()->GetMoveIgnoreActors().Contains(Neighbor));
+	// The floor can be less than one capsule height below the ramp. Landing
+	// there must not re-enable the ramp while the character still intersects it.
+	AActor* LowerFloor = World->SpawnActor<AActor>();
+	Walker->SetActorLocation(FVector(-290,0,90));
+	Walker->GetCharacterMovement()->SetMovementMode(MOVE_Walking);
+	FHitResult LowerHit(LowerFloor, nullptr, FVector(-290,0,2), FVector::UpVector);
+	Walker->GetCharacterMovement()->CurrentFloor.SetFromSweep(LowerHit, 0, true);
+	Stairs->Tick(0.016f);
+	TestTrue(TEXT("Landing below does not trap an overlapping capsule"), Walker->GetCapsuleComponent()->GetMoveIgnoreActors().Contains(Stairs));
+	Walker->SetActorLocation(FVector(1000,0,90));
+	Stairs->Tick(0.016f);
+	Neighbor->Tick(0.016f);
+	TestFalse(TEXT("Moving clear restores the supporting ramp"), Walker->GetCapsuleComponent()->GetMoveIgnoreActors().Contains(Stairs));
+	TestFalse(TEXT("Moving clear restores the adjacent ramp"), Walker->GetCapsuleComponent()->GetMoveIgnoreActors().Contains(Neighbor));
 	World->EndPlay(EEndPlayReason::Quit);
 	World->DestroyWorld(false);
 	GEngine->DestroyWorldContext(World);

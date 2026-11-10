@@ -1,4 +1,5 @@
 #include "UI/AreaMapWidget.h"
+#include "UI/FactoryCursor.h"
 #include "UI/FactoryUIStyle.h"
 #include "Checkpoint/PlayerCheckpoint.h"
 #include "EngineUtils.h"
@@ -66,6 +67,7 @@ void UAreaMapWidget::RestoreInput()
 		Mode.SetHideCursorDuringCapture(false); Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
 		PC->SetInputMode(Mode); PC->SetShowMouseCursor(bPreviousCursor); PC->FlushPressedKeys();
 		if (bPausedByMap) PC->SetPause(false);
+		if (PC->IsLocalController()) FactoryCursor::FocusGameViewport(PC->GetWorld()->GetGameViewport());
 	}
 	bPausedByMap = false; InputOwner.Reset(); ObservedPawn.Reset();
 }

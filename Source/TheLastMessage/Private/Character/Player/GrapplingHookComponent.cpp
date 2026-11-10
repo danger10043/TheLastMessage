@@ -11,6 +11,7 @@
 #include "NativeGameplayTags.h"
 #include "Components/CapsuleComponent.h"
 #include "GAS/WeaponGameplayTags.h"
+#include "Core/CoreGameplayTags.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -295,6 +296,46 @@ void UGrapplingHookComponent::ClearAnchor()
 	}
 }
 
+bool UGrapplingHookComponent::GetProbeSegment(const FVector& WorldAimPoint, FVector& OutStart, FVector& OutEnd) const
+{
+	const APlayerBase* Player = Cast<APlayerBase>(GetOwner());
+	if (!Player || WorldAimPoint.ContainsNaN()) return false;
+	OutStart = Player->GetActorLocation();
+	FVector Direction = WorldAimPoint - OutStart;
+	const UCharacterMovementComponent* Movement = Player->GetCharacterMovement();
+	if (Movement->bConstrainToPlane)
+	{
+		Direction = FVector::VectorPlaneProject(Direction, Movement->GetPlaneConstraintNormal());
+	}
+	if (Direction.ContainsNaN() || !Direction.Normalize() || !FMath::IsFinite(MaxGrappleDistance) || MaxGrappleDistance <= 0.0f) return false;
+	OutEnd = OutStart + Direction * MaxGrappleDistance;
+	return true;
+}
+
+bool UGrapplingHookComponent::TraceGrappleSurface(const FVector& Start, const FVector& End, FHitResult& Hit) const
+{
+	const APlayerBase* Player = Cast<APlayerBase>(GetOwner());
+	UWorld* World = GetWorld();
+	if (!Player || !World) return false;
+	// Authored terrain shares its simple movement shapes with the hook. These
+	// meshes may have no complex collision even though their simple shapes work.
+	const bool bAuthoredCollision = World->GetWorldSettings()->ActorHasTag(TEXT("GrappleCollisionAuthored"));
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(GrapplingProbe), !bAuthoredCollision, Player);
+	// Ignore anything attached to the character, including future weapon actors.
+	TArray<AActor*> AttachedActors;
+	Player->GetAttachedActors(AttachedActors, true, true);
+	Params.AddIgnoredActors(AttachedActors);
+	// 숨겨진 충돌 프록시와 적을 건너뛰고 실제 메시 검사
+	FScopedGrappleCollision CollisionScope(World);
+	while (World->LineTraceSingleByChannel(Hit, Start, End, TraceChannel, Params))
+	{
+		if (IsGrappleMesh(Hit.GetComponent())) return true;
+		if (!Hit.GetComponent()) break;
+		Params.AddIgnoredComponent(Hit.GetComponent());
+	}
+	return false;
+}
+
 void UGrapplingHookComponent::ProbeForAnchor(FVector WorldAimPoint)
 {
 	const APlayerBase* Player = Cast<APlayerBase>(GetOwner());
@@ -302,39 +343,10 @@ void UGrapplingHookComponent::ProbeForAnchor(FVector WorldAimPoint)
 		|| Player->GetCharacterMovement()->MovementMode == MOVE_None
 		|| Player->GetAbilitySystemComponent()->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking)) return;
 	ClearAnchor();
-	const FVector Start = Player->GetActorLocation();
-	FVector Direction = WorldAimPoint - Start;
-	const UCharacterMovementComponent* Movement = Player->GetCharacterMovement();
-	if (Movement->bConstrainToPlane)
-	{
-		Direction = FVector::VectorPlaneProject(Direction, Movement->GetPlaneConstraintNormal());
-	}
-	if (Direction.ContainsNaN() || !Direction.Normalize() || !FMath::IsFinite(MaxGrappleDistance) || MaxGrappleDistance <= 0.0f) return;
-	const FVector End = Start + Direction * MaxGrappleDistance;
+	FVector Start, End;
+	if (!GetProbeSegment(WorldAimPoint, Start, End)) return;
 	FHitResult Hit;
-	// Authored terrain shares its simple movement shapes with the hook. These
-	// meshes may have no complex collision even though their simple shapes work.
-	const bool bAuthoredCollision = GetWorld()->GetWorldSettings()->ActorHasTag(TEXT("GrappleCollisionAuthored"));
-	FCollisionQueryParams Params(SCENE_QUERY_STAT(GrapplingProbe), !bAuthoredCollision, Player);
-	// Ignore anything attached to the character, including future weapon actors.
-	TArray<AActor*> AttachedActors;
-	Player->GetAttachedActors(AttachedActors, true, true);
-	Params.AddIgnoredActors(AttachedActors);
-	bool bHit = false;
-	// 숨겨진 충돌 프록시와 적을 건너뛰고 실제 메시 검사
-	{
-		FScopedGrappleCollision CollisionScope(GetWorld());
-		while (GetWorld()->LineTraceSingleByChannel(Hit, Start, End, TraceChannel, Params))
-		{
-			if (IsGrappleMesh(Hit.GetComponent()))
-			{
-				bHit = true;
-				break;
-			}
-			if (!Hit.GetComponent()) break;
-			Params.AddIgnoredComponent(Hit.GetComponent());
-		}
-	}
+	const bool bHit = TraceGrappleSurface(Start, End, Hit);
 	ProbeState.TraceStart = Start;
 	ProbeState.TraceEnd = bHit ? Hit.ImpactPoint : End;
 	ProbeState.Result = bHit ? EGrapplingProbeResult::Blocked : EGrapplingProbeResult::Miss;
@@ -352,6 +364,21 @@ void UGrapplingHookComponent::ProbeForAnchor(FVector WorldAimPoint)
 	}
 	UpdateCable();
 	GetOwner()->ForceNetUpdate();
+}
+
+bool UGrapplingHookComponent::CanGrappleAt(const FVector& WorldAimPoint) const
+{
+	// APlayerBase::RequestGrapplingHook / RequestGrapple / ProbeForAnchor 의 거부 조건과 동일
+	const APlayerBase* Player = Cast<APlayerBase>(GetOwner());
+	const UAbilitySystemComponent* ASC = Player ? Player->GetAbilitySystemComponent() : nullptr;
+	if (!ASC || !IsGrappleUnlocked() || GetCooldownRemaining() > 0 || HasGrappleAnchor() || bMovementOverrideActive
+		|| Player->IsCarryTransitionActive() || Player->IsDead() || Player->IsHitReacting()
+		|| Player->GetCharacterMovement()->MovementMode == MOVE_None
+		|| ASC->HasMatchingGameplayTag(CoreGameplayTags::State_Guarding)
+		|| ASC->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking)) return false;
+	FVector Start, End;
+	FHitResult Hit;
+	return GetProbeSegment(WorldAimPoint, Start, End) && TraceGrappleSurface(Start, End, Hit) && !Hit.bStartPenetrating;
 }
 
 FVector UGrapplingHookComponent::GetPullDestination() const

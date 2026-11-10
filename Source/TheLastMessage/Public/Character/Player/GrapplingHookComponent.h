@@ -87,6 +87,8 @@ public:
 	float GetCooldownProgress() const;
 	UFUNCTION(BlueprintPure, Category="Player|Grappling")
 	bool IsGrappleUnlocked() const;
+	// 지금 이 조준점으로 요청하면 훅이 실제로 걸리는지 검사한다(커서 색상 미리보기용, 상태 변경 없음).
+	bool CanGrappleAt(const FVector& WorldAimPoint) const;
 	/** 훅 도착이나 취소 후 다시 사용할 때까지 걸리는 시간 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Player|Grappling|Cooldown", meta=(ClampMin="0", Units="s", ToolTip="훅 도착이나 취소 후 다시 사용할 때까지 걸리는 시간"))
 	float CooldownDuration = 1.0f;
@@ -175,6 +177,8 @@ private:
 	bool CanPlayPresentation() const;
 	float GetThrowDuration() const;
 	void ProbeForAnchor(FVector WorldAimPoint);
+	bool GetProbeSegment(const FVector& WorldAimPoint, FVector& OutStart, FVector& OutEnd) const;
+	bool TraceGrappleSurface(const FVector& Start, const FVector& End, FHitResult& OutHit) const;
 	void BeginPull();
 	void EndPull();
 	void UpdatePull(float DeltaTime);

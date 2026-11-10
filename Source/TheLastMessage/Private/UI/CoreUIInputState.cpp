@@ -8,6 +8,7 @@
 #include "Framework/Application/SlateUser.h"
 #include "Input/Reply.h"
 #include "Widgets/SViewport.h"
+#include "UI/FactoryCursor.h"
 
 void FCoreUIInputState::Capture(const APlayerController& Controller)
 {
@@ -40,6 +41,13 @@ void FCoreUIInputState::Restore(APlayerController& Controller) const
 	Controller.SetInputMode(*this);
 	Controller.SetShowMouseCursor(bShowCursor);
 	Controller.FlushPressedKeys();
+	// 이전 포커스가 뷰포트였거나 사라졌다면 클릭 없이 바로 게임 커서가 갱신되도록 한다.
+	const TSharedPtr<SWidget> Previous = FocusedWidget.Pin();
+	UGameViewportClient* Viewport = Controller.GetWorld() ? Controller.GetWorld()->GetGameViewport() : nullptr;
+	if (Controller.IsLocalController() && Viewport && (!Previous.IsValid() || Previous == Viewport->GetGameViewportWidget()))
+	{
+		FactoryCursor::FocusGameViewport(Viewport);
+	}
 }
 
 void FCoreUIInputState::EnterUIOnly(APlayerController& Controller, UUserWidget& Screen)

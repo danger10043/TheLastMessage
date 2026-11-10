@@ -12,6 +12,7 @@ class UAnimMontage;
 class UAbilityTask_PlayMontageAndWait;
 class UNiagaraSystem;
 class UNiagaraComponent;
+class USoundBase;
 
 USTRUCT(BlueprintType)
 struct FBossLightningPhaseConfig
@@ -69,6 +70,15 @@ protected:
 
     UPROPERTY(EditDefaultsOnly, Category = "Boss|Lightning|Effects")
     TObjectPtr<UNiagaraSystem> StormEffect;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|Lightning|Audio")
+    TObjectPtr<USoundBase> PatternStartSound;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|Lightning|Audio")
+    TObjectPtr<USoundBase> StormLoopSound;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|Lightning|Audio")
+    TObjectPtr<USoundBase> StormEndSound;
 
     UPROPERTY(EditDefaultsOnly, Category = "Boss|Lightning")
     FBossLightningPhaseConfig Phase1Config;

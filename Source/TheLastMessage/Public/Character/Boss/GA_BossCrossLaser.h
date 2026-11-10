@@ -14,6 +14,7 @@ class UMaterialInterface;
 class UMaterialInstanceDynamic;
 class UProceduralMeshComponent;
 class UAbilityTask_PlayMontageAndWait;
+class USoundBase;
 
 USTRUCT(BlueprintType)
 struct FBossCrossLaserPhaseConfig
@@ -71,6 +72,37 @@ protected:
 
     UPROPERTY(EditDefaultsOnly, Category = "Boss|CrossLaser|VFX")
     TObjectPtr<UNiagaraSystem> FiringEffect;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CrossLaser|Audio")
+    TObjectPtr<USoundBase> PatternStartSound;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CrossLaser|Audio")
+    TObjectPtr<USoundBase> RisingSound;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CrossLaser|Audio")
+    TObjectPtr<USoundBase> WarningSound;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CrossLaser|Audio")
+    TObjectPtr<USoundBase> FiringStartSound;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CrossLaser|Audio")
+    TObjectPtr<USoundBase> FiringLoopSound;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CrossLaser|Audio")
+    TObjectPtr<USoundBase> LaserFadeOutSound;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CrossLaser|Audio")
+    TObjectPtr<USoundBase> FollowRiseSound;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CrossLaser|Audio")
+    TObjectPtr<USoundBase> LandingSound;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CrossLaser|Audio")
+    TObjectPtr<USoundBase> CircularMissileLaunchSound;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|CrossLaser|Audio",
+        meta = (ClampMin = "0.0", Units = "s"))
+    float FiringLoopDelay = 0.f;
 
     UPROPERTY(EditDefaultsOnly, Category = "Boss|CrossLaser|Impact")
     TObjectPtr<UNiagaraSystem> LaserImpactEffect;
@@ -251,6 +283,10 @@ private:
     UFUNCTION()
     void OnStateChanged(EBossState NewState);
     void UpdatePattern();
+    void TryStartFiringLoop(ABossMonster* Boss, float Elapsed);
+    bool bFiringLoopStarted = false;
+    void TryPlayLaserFadeOutSound(ABossMonster* Boss, float Elapsed);
+    bool bLaserFadeOutSoundPlayed = false;
     void SwitchFlame(UNiagaraSystem* System);
     bool BuildRiseIntegral();
     float RiseAlpha(float Time) const;

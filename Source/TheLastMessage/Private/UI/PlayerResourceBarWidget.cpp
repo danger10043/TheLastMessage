@@ -10,7 +10,12 @@ void UPlayerResourceBarWidget::NativePreConstruct()
 	Super::NativePreConstruct();
 	if (ValueBar)
 	{
-		ValueBar->SetWidgetStyle(FactoryUI::Meter(ValueBar->GetWidgetStyle()));
+		// The Widget Blueprint owns the chamfered meter brushes (T_HUD_MeterTrack / T_HUD_MeterFill).
+		// Only fall back to the generated rounded meter when no fill texture was assigned.
+		if (!ValueBar->GetWidgetStyle().FillImage.GetResourceObject())
+		{
+			ValueBar->SetWidgetStyle(FactoryUI::Meter(ValueBar->GetWidgetStyle()));
+		}
 		ValueBar->SetFillColorAndOpacity(FillColor);
 	}
 	if (ValueText) ValueText->SetColorAndOpacity(FactoryUI::Text);
@@ -36,13 +41,17 @@ int32 UPlayerResourceBarWidget::NativePaint(const FPaintArgs& Args, const FGeome
 	const FVector2D Size = Meter.GetLocalSize();
 	if (Size.X < 20 || Size.Y < 4) return Layer;
 
+	// Quarter ticks: short notches along the bottom edge only, so they never cut through
+	// the label / value glyphs (full-height dividers read like "|" or made "N" look like "PI").
 	const FSlateBrush* Brush = FCoreStyle::Get().GetBrush("WhiteBrush");
-	for (int32 Segment = 1; Segment < 5; ++Segment)
+	constexpr float EdgeInset = 3.0f;              // matches the fill inset in T_HUD_MeterFill
+	const float TickHeight = FMath::Max(3.0f, static_cast<float>(Size.Y) * 0.22f);
+	for (int32 Segment = 1; Segment < 4; ++Segment)
 	{
-		const float X = Size.X * Segment / 5.0f;
+		const float X = static_cast<float>(Size.X) * Segment / 4.0f - 0.75f;
 		FSlateDrawElement::MakeBox(Out, Layer+1, Meter.ToPaintGeometry(
-			FVector2f(1.5f, Size.Y-2), FSlateLayoutTransform(FVector2f(X, 1))),
-			Brush, ESlateDrawEffect::None, FLinearColor(0.007f, 0.013f, 0.018f, 0.85f));
+			FVector2f(1.5f, TickHeight), FSlateLayoutTransform(FVector2f(X, static_cast<float>(Size.Y) - EdgeInset - TickHeight))),
+			Brush, ESlateDrawEffect::None, FLinearColor(0.0f, 0.0f, 0.0f, 0.45f));
 	}
 	return Layer+1;
 }

@@ -20,6 +20,8 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Appearance") FLinearColor SelectedColor = FLinearColor(0.1f, 0.7f, 1.0f);
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Appearance") FLinearColor FrameColor = FLinearColor(0.035f, 0.04f, 0.05f);
 protected:
+	virtual int32 NativePaint(const FPaintArgs& Args, const FGeometry& Geometry, const FSlateRect& Culling,
+		FSlateWindowElementList& Out, int32 Layer, const FWidgetStyle& Style, bool bEnabled) const override;
 	UPROPERTY(meta=(BindWidgetOptional), BlueprintReadOnly) TObjectPtr<UImage> WeaponIcon;
 	UPROPERTY(meta=(BindWidgetOptional), BlueprintReadOnly) TObjectPtr<UImage> LeftMouseIcon;
 	UPROPERTY(meta=(BindWidgetOptional), BlueprintReadOnly) TObjectPtr<UImage> RightMouseIcon;
@@ -27,4 +29,5 @@ protected:
 	UPROPERTY(meta=(BindWidgetOptional), BlueprintReadOnly) TObjectPtr<UBorder> SelectionFrame;
 private:
 	TOptional<bool> StyledSelection;
+	TOptional<EWeaponType> PresentedType;
 };

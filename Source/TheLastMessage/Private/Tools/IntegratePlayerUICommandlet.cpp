@@ -46,6 +46,7 @@
 #include "Misc/Paths.h"
 #include "Misc/FileHelper.h"
 #include "HAL/FileManager.h"
+#include "HAL/IConsoleManager.h"
 #include "UObject/SavePackage.h"
 #include "UObject/UnrealType.h"
 #include "Engine/World.h"
@@ -284,6 +285,66 @@ bool BuildStatusPlate(UWidgetBlueprint* BP)
 	}
 	return true;
 }
+
+bool RefreshPlayerHUD()
+{
+ const TCHAR* Paths[] = {TEXT("/Game/Main/UI/HUD/Components/WBP_ResourceBar"), TEXT("/Game/Main/UI/HUD/Components/WBP_WeaponSlot"), TEXT("/Game/Main/UI/HUD/WBP_PlayerUI")};
+ UTexture2D* Metal = LoadObject<UTexture2D>(nullptr, TEXT("/Game/Main/UI/Menu/Textures/T_UI_MenuMetalPanel"));
+ if (!Metal) return false;
+ for (int32 Index=0; Index<3; ++Index)
+ {
+  UWidgetBlueprint* BP=LoadObject<UWidgetBlueprint>(nullptr,Paths[Index]);
+  if (!BP || !BP->WidgetTree) return false;
+  Backup(Paths[Index]);
+  UWidgetTree* Tree=BP->WidgetTree;
+  Tree->ForEachWidget([&](UWidget* W)
+  {
+   W->SetVisibility(W->GetVisibility()==ESlateVisibility::Collapsed ? ESlateVisibility::Collapsed : W->GetVisibility()==ESlateVisibility::Hidden ? ESlateVisibility::Hidden : ESlateVisibility::HitTestInvisible);
+   if (UTextBlock* T=Cast<UTextBlock>(W))
+   {
+    auto Font=T->GetFont(); Font.FontObject=LoadObject<UFont>(nullptr,TEXT("/Game/Main/UI/Fonts/F_TLM_UI")); Font.Size=Index==0 ? 19 : 20; T->SetFont(Font); T->SetColorAndOpacity(FLinearColor(0.94f,0.91f,0.82f));
+   }
+  });
+  if (Index==0)
+  {
+   if(auto* Bar=Tree->FindWidget<UProgressBar>(TEXT("ValueBar"))) if(auto* Slot=Cast<UOverlaySlot>(Bar->Slot)) Slot->SetPadding(FMargin(26,3));
+   if(auto* Size=Tree->FindWidget<USizeBox>(TEXT("ResourceSize"))) {Size->SetWidthOverride(340);Size->SetHeightOverride(40);}
+  }
+  if (Index==1)
+  {
+   if(auto* Size=Tree->FindWidget<USizeBox>(TEXT("CardSize"))) {Size->SetWidthOverride(86);Size->SetHeightOverride(156);}
+   if(auto* Mouse=Tree->FindWidget<USizeBox>(TEXT("MouseSize"))) {Mouse->SetWidthOverride(22);Mouse->SetHeightOverride(26);}
+   if(auto* Size=Tree->FindWidget<USizeBox>(TEXT("IconSize"))) {Size->SetWidthOverride(81);Size->SetHeightOverride(68);}
+   if(auto* B=Tree->FindWidget<UBorder>(TEXT("IconBackground"))) {B->SetBrushColor(FLinearColor::Transparent);B->SetPadding(FMargin(3));}
+  }
+  if(Index==2)
+  {
+   UWidget* Plate=Tree->FindWidget(TEXT("UnifiedStatusPlate"));
+   if(!Plate) return false;
+   if(auto* Slot=Cast<UCanvasPanelSlot>(Plate->Slot)) {Slot->SetSize(FVector2D(790,180));Slot->SetPosition(FVector2D(24,-24));}
+   UOverlay* Overlay=Cast<UOverlay>(Plate);
+   if(!Overlay) return false;
+   if(auto* Image=Cast<UImage>(Overlay->GetChildAt(0)))
+   {
+    FSlateBrush Brush;Brush.SetResourceObject(Metal);Brush.DrawAs=ESlateBrushDrawType::Box;Brush.Margin=FMargin(0.12f);Brush.TintColor=FLinearColor::White;Image->SetBrush(Brush);
+   }
+   Tree->ForEachWidget([](UWidget* W)
+   {
+    USizeBox* Size=Cast<USizeBox>(W);
+    if(!Size) return;
+    UScaleBox* Scale=Cast<UScaleBox>(Size->GetContent());
+    UWidget* Content=Scale ? Scale->GetContent() : nullptr;
+    if(Cast<UPlayerResourceBarWidget>(Content)){Size->SetWidthOverride(340);Size->SetHeightOverride(44);}
+    if(Cast<UPlayerWeaponSlotWidget>(Content)){Size->SetWidthOverride(86);Size->SetHeightOverride(156);}
+   });
+  }
+  if(!CompileSave(BP)) return false;
+ }
+ UE_LOG(LogTemp,Display,TEXT("TLM_HUD_REFRESH_SAVED"));
+ return true;
+}
+
+static FAutoConsoleCommand RefreshHUDCommand(TEXT("TLM.UI.RefreshHUD"),TEXT("Apply and save the player HUD presentation"),FConsoleCommandDelegate::CreateLambda([](){RefreshPlayerHUD();}));
 
 bool ApplyMenuArtwork()
 {

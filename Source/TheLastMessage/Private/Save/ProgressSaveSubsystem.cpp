@@ -1,5 +1,6 @@
 #include "Save/ProgressSaveSubsystem.h"
 #include "Core/CorePickup.h"
+#include "Weapon/WeaponPickup.h"
 #include "Character/Boss/BossMonster.h"
 #include "Projectile/ProjectileBase.h"
 #include "Async/Async.h"
@@ -370,6 +371,9 @@ bool UProgressSaveSubsystem::RestoreLoadedCheckpointInPlace(APlayerBase* Player)
   if (It->GetBossState() != EBossState::Idle && !It->ResetBossForCheckpoint()) return false;
  if (!Player->RespawnAtCheckpoint() || !RestorePlayerIfPending(Player)) return false;
  for (TActorIterator<ACorePickup> It(Player->GetWorld()); It; ++It)
+  It->RestoreCheckpointConsumption(WorkingProgress->CorePickupStates.FindRef(It->GetPickupId()));
+ // 무기 픽업도 코어 픽업과 같은 기록을 쓴다.
+ for (TActorIterator<AWeaponPickup> It(Player->GetWorld()); It; ++It)
   It->RestoreCheckpointConsumption(WorkingProgress->CorePickupStates.FindRef(It->GetPickupId()));
  UE_LOG(LogTemp, Log, TEXT("In-place checkpoint restore: %.1f ms"), (FPlatformTime::Seconds()-Start)*1000.0);
  return true;

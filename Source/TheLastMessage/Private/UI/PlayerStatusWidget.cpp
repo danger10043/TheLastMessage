@@ -6,6 +6,8 @@
 #include "UI/PlayerResourceBarWidget.h"
 #include "UI/PlayerWeaponSlotWidget.h"
 #include "DataAsset/WeaponDataAsset.h"
+#include "Blueprint/WidgetTree.h"
+#include "Framework/Application/SlateApplication.h"
 
 void UPlayerStatusWidget::SetObservedPlayer(APlayerBase* Player)
 {
@@ -62,6 +64,17 @@ void UPlayerStatusWidget::HandleAttributeChanged(const FOnAttributeChangeData& D
 void UPlayerStatusWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
+	// Observe cursor geometry without entering Slate's hit-test path: aiming and
+	// firing must still reach the game through every part of the status panel.
+	if (WidgetTree && FSlateApplication::IsInitialized())
+	{
+		if (UWidget* Plate = WidgetTree->FindWidget(TEXT("UnifiedStatusPlate")))
+		{
+			const FGeometry& Geometry = Plate->GetCachedGeometry();
+			const bool bOver = Geometry.IsUnderLocation(FSlateApplication::Get().GetCursorPos());
+			Plate->SetRenderOpacity(FMath::FInterpTo(Plate->GetRenderOpacity(), bOver ? 0.28f : 1.0f, InDeltaTime, 12.0f));
+		}
+	}
 	RefreshLoadout();
 	RefreshEnergyDisplay();
 }

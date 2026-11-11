@@ -13,7 +13,8 @@ enum class EEnemyType : uint8
 	Flea,
 	Rattler,
 	Juggernaut,
-	Junker
+	Junker,
+	Dummy
 };
 
 UENUM(BlueprintType)

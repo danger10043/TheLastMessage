@@ -9,6 +9,8 @@
 #include "Camera/PlayerCameraManager.h"
 #include "Camera/CameraComponent.h"
 #include "Camera/SideScrollingCameraManager.h"
+#include "Components/CapsuleComponent.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "MoviePlayer.h"
 #include "Widgets/Layout/SBorder.h"
@@ -39,6 +41,8 @@ void ULoadingTransitionSubsystem::PreLoad(const FString& Map)
 {
  if(IsRunningDedicatedServer()) return;
  Started=FPlatformTime::Seconds(); ReadyAt=IndicatorAt=0; bLoading=true; bArrived=bFading=false;
+ bWaitingForSpawnFloor=bLoggedMissingSpawnFloor=false;
+ LockedSpawnPlayer.Reset();
  Overlay=SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush"))
  .BorderBackgroundColor_Lambda([this](){return FLinearColor(0,0,0,bFading ? 1.f-FMath::Clamp(float((FPlatformTime::Seconds()-ReadyAt)/0.5),0.f,1.f):1.f);})
  [SNew(SOverlay)+SOverlay::Slot().HAlign(HAlign_Right).VAlign(VAlign_Bottom).Padding(40)
@@ -50,7 +54,26 @@ void ULoadingTransitionSubsystem::PreLoad(const FString& Map)
 }
 void ULoadingTransitionSubsystem::OnMapLoaded(UWorld* World)
 {
- if(World && World->GetGameInstance()==GetGameInstance()) bArrived=true;
+ if(!bLoading || !World || World->GetGameInstance()!=GetGameInstance()) return;
+ bArrived=true;
+ const auto* Saves=GetGameInstance()->GetSubsystem<UProgressSaveSubsystem>();
+ const auto* Progress=Saves->GetWorkingProgress();
+ bWaitingForSpawnFloor=Saves->GetActiveSlot()>0 && Progress
+  && Progress->MapPackage==UWorld::RemovePIEPrefix(World->GetOutermost()->GetName());
+ if(auto* PC=GetGameInstance()->GetFirstLocalPlayerController())
+  LockSpawnMovement(Cast<APlayerBase>(PC->GetPawn()));
+}
+
+void ULoadingTransitionSubsystem::LockSpawnMovement(APlayerBase* Player)
+{
+ if(!bWaitingForSpawnFloor || !IsValid(Player) || !Player->IsLocallyControlled()
+  || Player->GetWorld()!=GetGameInstance()->GetWorld()) return;
+
+ auto* Movement=Player->GetCharacterMovement();
+ if(Movement->MovementMode==MOVE_None) return;
+ LockedSpawnPlayer=Player;
+ Movement->StopMovementImmediately();
+ Movement->DisableMovement();
 }
 bool ULoadingTransitionSubsystem::BeginDeath(APlayerBase* Player,float Delay)
 {
@@ -109,8 +132,32 @@ bool ULoadingTransitionSubsystem::Tick(float Delta)
  auto* PC=GetGameInstance()->GetFirstLocalPlayerController(); if(!PC) return true;
  if(!PC->IsMoveInputIgnored()) PC->SetIgnoreMoveInput(true); if(!PC->IsLookInputIgnored()) PC->SetIgnoreLookInput(true);
  if(PC->GetPawn()) PC->GetPawn()->DisableInput(PC);
+ auto* Player=Cast<APlayerBase>(PC->GetPawn());
+ LockSpawnMovement(Player);
  if(Now-Started>=1 && !IndicatorAt) IndicatorAt=Now;
  if((GetGameInstance()->GetSubsystem<UProgressSaveSubsystem>()->GetActiveSlot()>0 && !PC->GetPawn()) || GetGameInstance()->GetSubsystem<UProgressSaveSubsystem>()->IsRestoringProgress()) return true;
+ if(bWaitingForSpawnFloor && Player)
+ {
+  auto* Movement=Player->GetCharacterMovement();
+  FFindFloorResult Floor;
+  // Some PlayerStarts are several meters above the floor. This query follows character gravity.
+  constexpr float SpawnFloorDistance=600.f;
+  Movement->ComputeFloorDist(Player->GetActorLocation(), SpawnFloorDistance, SpawnFloorDistance,
+   Floor, Player->GetCapsuleComponent()->GetScaledCapsuleRadius());
+  if(!Floor.IsWalkableFloor())
+  {
+   if(!bLoggedMissingSpawnFloor && Now-Started>=15.0)
+   {
+    bLoggedMissingSpawnFloor=true;
+    UE_LOG(LogTemp, Warning, TEXT("Loading is waiting for walkable floor below %s at %s"),
+     *GetNameSafe(Player), *Player->GetActorLocation().ToString());
+   }
+   return true;
+  }
+  bWaitingForSpawnFloor=false;
+  if(LockedSpawnPlayer.Get()==Player) Movement->SetDefaultMovementMode();
+  LockedSpawnPlayer.Reset();
+ }
  if(!bFading && (!IndicatorAt || Now-IndicatorAt>=0.3)){bFading=true;ReadyAt=Now;}
  if(bFading && Now-ReadyAt>=0.5)
  {

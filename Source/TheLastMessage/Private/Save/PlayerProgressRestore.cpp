@@ -1,5 +1,6 @@
 #include "Character/Player/PlayerBase.h"
 #include "Save/ProgressSaveSubsystem.h"
+#include "UI/LoadingTransitionSubsystem.h"
 #include "Core/CoreComponent.h"
 #include "DataAsset/CoreDataAsset.h"
 #include "DataAsset/WeaponDataAsset.h"
@@ -68,6 +69,10 @@ bool APlayerBase::RestoreCheckpointProgress(const UProgressSaveGame* Save)
 	if (!TeleportTo(Save->RespawnTransform.GetLocation(), Save->RespawnTransform.Rotator())) return false;
 	GetCharacterMovement()->StopMovementImmediately();
 	GetCharacterMovement()->SetMovementMode(MOVE_Falling);
+	if (auto* GameInstance = GetGameInstance())
+	{
+		GameInstance->GetSubsystem<ULoadingTransitionSubsystem>()->LockSpawnMovement(this);
+	}
 	if (!SetCheckpoint(Save->RespawnTransform)) return false;
 	CombatAttributes->SetHealth(FMath::Clamp(Save->Player.Health, 1.f, CombatAttributes->GetMaxHealth()));
 	WeaponSlotAttributes->SetSharedEnergy(FMath::Clamp(Save->Player.Energy, 0.f, WeaponSlotAttributes->GetSharedMaxEnergy()));

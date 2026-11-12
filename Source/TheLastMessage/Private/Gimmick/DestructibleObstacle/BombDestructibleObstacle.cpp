@@ -6,6 +6,8 @@
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Gimmick/PushPull/ExplosiveBomb.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
 
 ABombDestructibleObstacle::ABombDestructibleObstacle()
 {
@@ -42,9 +44,30 @@ void ABombDestructibleObstacle::DestroyObstacle()
     {
         return;
     }
+    
+    // 장애물을 숨기기 전에 메시 중심 위치와 회전을 구한다.
+    const bool bHasMesh = IsValid(ObstacleMesh.Get());
 
+    const FVector EffectLocation = bHasMesh ? ObstacleMesh->Bounds.Origin : GetActorLocation();
+
+    const FRotator EffectRotation = bHasMesh ? ObstacleMesh->GetComponentRotation() : GetActorRotation();
+
+    // 기존 파괴 상태 처리
     ApplyDestroyedState(true);
     SetGimmickEnabled(false);
+
+    // 장애물 액터와 독립적으로 생성해서 끝까지 재생한다.
+    if (GetWorld() && IsValid(DestructionEffect.Get()))
+    {
+        UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+            this,
+            DestructionEffect.Get(),
+            EffectLocation,
+            EffectRotation,
+            DestructionEffectScale,
+            true // 재생이 끝나면 Niagara 컴포넌트 자동 제거
+        );
+    }
 }
 
 FProgressActorState ABombDestructibleObstacle::CaptureProgress() const

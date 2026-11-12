@@ -9,6 +9,7 @@
 
 class AExplosiveBomb;
 class UStaticMeshComponent;
+class UNiagaraSystem;
 /**
  * 
  */
@@ -36,6 +37,14 @@ protected:
     // 통로를 막는 장애물 메시
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Gimmick|Components")
     TObjectPtr<UStaticMeshComponent> ObstacleMesh;
+
+    // 장애물이 파괴될 때 한 번 재생할 Niagara
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|BombObstacle|Effects")
+    TObjectPtr<UNiagaraSystem> DestructionEffect = nullptr;
+
+    // 파괴 이펙트의 크기
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|BombObstacle|Effects", meta = (ClampMin = "0.01"))
+    FVector DestructionEffectScale = FVector::OneVector;
 
     // 중복 파괴 방지
     UPROPERTY(Transient, VisibleInstanceOnly, BlueprintReadOnly, Category = "Gimmick|BombObstacle")

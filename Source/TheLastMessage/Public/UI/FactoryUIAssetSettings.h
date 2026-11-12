@@ -5,6 +5,7 @@
 #include "FactoryUIAssetSettings.generated.h"
 
 class UFont;
+class USoundBase;
 class UTexture2D;
 
 UCLASS(Config=Game, DefaultConfig, meta=(DisplayName="Factory UI Assets"))
@@ -48,4 +49,20 @@ public:
 
 	UPROPERTY(Config, EditAnywhere, Category="Fonts")
 	TSoftObjectPtr<UFont> TitleFont;
+
+	/** Mouse-over and keyboard focus moves on menu buttons. */
+	UPROPERTY(Config, EditAnywhere, Category="Sounds")
+	TSoftObjectPtr<USoundBase> HoverSound;
+
+	/** Buttons that open a page or switch a tab. */
+	UPROPERTY(Config, EditAnywhere, Category="Sounds")
+	TSoftObjectPtr<USoundBase> ClickSound;
+
+	/** Buttons that commit a decision, such as starting a game or confirming a prompt. */
+	UPROPERTY(Config, EditAnywhere, Category="Sounds")
+	TSoftObjectPtr<USoundBase> ConfirmSound;
+
+	/** Back, cancel, close, and resume. */
+	UPROPERTY(Config, EditAnywhere, Category="Sounds")
+	TSoftObjectPtr<USoundBase> CancelSound;
 };

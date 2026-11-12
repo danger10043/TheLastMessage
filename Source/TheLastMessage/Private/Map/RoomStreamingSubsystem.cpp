@@ -184,17 +184,41 @@ void URoomStreamingSubsystem::Update()
 	}
 }
 
-bool URoomStreamingSubsystem::PrepareRegionForRespawn(FName RegionId)
+bool URoomStreamingSubsystem::PrepareRegionForRespawn(FName RegionId, const FVector& Location, const FVector& Gravity)
 {
 	UWorld* World = GetWorld();
 	if (!World || RegionId.IsNone()) return true;
 	TSet<FName> Rooms;
 	if (!BuildDesiredRooms(RegionId, Rooms)) return true; // 설정에 없는 리전: 올릴 방이 없다.
 
+	const double Now = World->GetTimeSeconds();
+	const bool bNewHold = HoldRegionId != RegionId || Now >= HoldExpireTime;
 	HoldRegionId = RegionId;
-	HoldExpireTime = World->GetTimeSeconds() + 30.0;
+	HoldExpireTime = Now + 30.0;
 	Update(); // 기다리지 않고 바로 로드를 요청한다.
-	return AreDesiredRoomsLoaded();
+
+	if (bNewHold)
+	{
+		LoadedSince = -1.0;
+		bHoldNeededLoading = !AreDesiredRoomsLoaded();
+	}
+	if (!AreDesiredRoomsLoaded())
+	{
+		LoadedSince = -1.0;
+		return false;
+	}
+	if (LoadedSince < 0.0) LoadedSince = Now;
+	// 방을 새로 올린 경우에만 충돌과 바닥이 자리 잡을 시간을 더 준다.
+	const double Settle = bHoldNeededLoading ? GetDefault<URoomStreamingSettings>()->RespawnSettleSeconds : 0.0;
+	if (Now - LoadedSince < Settle) return false;
+
+	// 부활 위치에 실제로 바닥 충돌이 있는지 확인한다. 로드는 끝났어도 충돌이 아직 없으면 플레이어가 빈 곳으로 떨어진다.
+	const FVector Down = Gravity.GetSafeNormal(SMALL_NUMBER, FVector(0, 0, -1));
+	FCollisionObjectQueryParams Objects;
+	Objects.AddObjectTypesToQuery(ECC_WorldStatic);
+	Objects.AddObjectTypesToQuery(ECC_WorldDynamic);
+	FHitResult Hit;
+	return World->LineTraceSingleByObjectType(Hit, Location - Down * 100.0, Location + Down * 800.0, Objects);
 }
 
 bool URoomStreamingSubsystem::AreDesiredRoomsLoaded() const

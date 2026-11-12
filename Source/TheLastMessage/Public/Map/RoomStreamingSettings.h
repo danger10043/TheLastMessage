@@ -59,6 +59,13 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category = "Room Streaming", meta = (ClampMin = "0"))
 	float UnloadDelaySeconds = 6.f;
 
+	/**
+	 * 체크포인트 부활 때 필요한 방이 다 올라온 뒤 충돌과 바닥이 자리 잡을 때까지 더 기다리는 시간(초).
+	 * 부활 위치에서 바닥이 확인되기 전에는 이 시간이 지나도 부활하지 않는다.
+	 */
+	UPROPERTY(Config, EditAnywhere, Category = "Room Streaming", meta = (ClampMin = "0"))
+	float RespawnSettleSeconds = 0.75f;
+
 	/** 플레이어가 어느 리전에 있는지 확인하는 간격(초). */
 	UPROPERTY(Config, EditAnywhere, Category = "Room Streaming", meta = (ClampMin = "0.05"))
 	float UpdateIntervalSeconds = 0.25f;

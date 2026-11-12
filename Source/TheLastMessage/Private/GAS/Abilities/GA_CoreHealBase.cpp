@@ -6,13 +6,11 @@
 #include "GAS/CombatAttributeSet.h"
 #include "GAS/WeaponGameplayTags.h"
 #include "GameplayEffect.h"
-#include "UObject/ConstructorHelpers.h"
+#include "DataAsset/GameplayAssetSettings.h"
 
 UGA_CoreHealBase::UGA_CoreHealBase()
 {
-	static ConstructorHelpers::FClassFinder<UGameplayEffect> HealEffect(
-		TEXT("/Game/Main/GAS/GameplayEffect/Core/GE_Core_Heal"));
-	HealEffectClass = HealEffect.Class;
+	HealEffectClass = GetDefault<UGameplayAssetSettings>()->CoreHealEffect.LoadSynchronous();
 
 	// 회복은 서버에서만 계산하고, 사망 중에는 실행하지 않는다.
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;

@@ -239,9 +239,9 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Melee Collision", meta=(ClampMin="0", ClampMax="300", Units="cm"))
 	float MeleeReachExtraDistance = 100.f;
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Melee|Reach")
-	TSoftObjectPtr<UMaterialInterface> MeleeReachMaterial{FSoftObjectPath(TEXT("/Game/Main/Effects/M_MeleeReach.M_MeleeReach"))};
+	TSoftObjectPtr<UMaterialInterface> MeleeReachMaterial;
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Melee|Reach")
-	TSoftObjectPtr<UMaterialInterface> MeleeReachTrailSurface{FSoftObjectPath(TEXT("/Game/Main/Effects/M_MeleeReach_Hammer.M_MeleeReach_Hammer"))};
+	TSoftObjectPtr<UMaterialInterface> MeleeReachTrailSurface;
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Melee|Reach")
 	FLinearColor MeleeReachColor = FLinearColor(1.0f, 0.72f, 0.3f, 0.85f);
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Weapon|Effect|Melee|Reach", meta=(ClampMin="0.03", ClampMax="0.3"))

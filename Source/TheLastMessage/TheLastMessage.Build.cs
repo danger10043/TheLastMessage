@@ -11,7 +11,7 @@ public class TheLastMessage : ModuleRules
         PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore",
                                                             "GameplayAbilities", "GameplayTags", "GameplayTasks",
                                                             "AIModule", "NavigationSystem","Niagara", "EnhancedInput",
-                                                            "StateTreeModule", "GameplayStateTreeModule", "UMG", "Slate", "ProceduralMeshComponent"});
+                                                            "StateTreeModule", "GameplayStateTreeModule", "UMG", "Slate", "ProceduralMeshComponent", "DeveloperSettings"});
 
         // UI 입력 처리에 쓰는 FReply와 화면 배치 정보인 FGeometry 등 Slate 기본 타입을 사용한다.
         PrivateDependencyModuleNames.AddRange(new string[] { "MoviePlayer", "SlateCore", "CableComponent", "LevelSequence", "MovieScene" });

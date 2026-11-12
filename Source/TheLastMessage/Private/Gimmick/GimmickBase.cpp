@@ -229,9 +229,14 @@ FProgressActorState AGimmickBase::CaptureProgress() const
 
 void AGimmickBase::RestoreProgress(const FProgressActorState& State)
 {
+    if (bRestoreActorTransform)
+    {
+        SetActorTransform(State.Transform, false, nullptr, ETeleportType::TeleportPhysics);
+    }
     bIsEnabled = State.bEnabled;
     bIsActive = State.bActive;
     RefreshRestoredState();
+    OnCheckpointStateRestored();
 }
 
 void AGimmickBase::RefreshRestoredState()
@@ -245,6 +250,7 @@ void AGimmickBase::RestoreLinkedActiveState(bool bActive)
 {
     bIsActive = bActive && bIsEnabled;
     RefreshRestoredState();
+    OnCheckpointStateRestored();
 }
 
 void AGimmickBase::FinishRestoreProgress(const FProgressActorState& State)

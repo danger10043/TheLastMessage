@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Engine/EngineTypes.h"
 #include "Gimmick/GimmickBase.h"
 #include "BombDestructibleObstacle.generated.h"
 
@@ -28,6 +29,9 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Gimmick|BombObstacle")
     void DestroyObstacle();
 
+    virtual FProgressActorState CaptureProgress() const override;
+    virtual void RestoreProgress(const FProgressActorState& State) override;
+
 protected:
     // 통로를 막는 장애물 메시
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Gimmick|Components")
@@ -36,4 +40,12 @@ protected:
     // 중복 파괴 방지
     UPROPERTY(Transient, VisibleInstanceOnly, BlueprintReadOnly, Category = "Gimmick|BombObstacle")
     bool bIsDestroyed = false;
+
+private:
+    void ApplyDestroyedState(bool bDestroyed);
+
+    ECollisionEnabled::Type IntactMeshCollision = ECollisionEnabled::NoCollision;
+    bool bIntactMeshVisible = true;
+    bool bIntactActorCollision = true;
+    bool bIntactActorHidden = false;
 };

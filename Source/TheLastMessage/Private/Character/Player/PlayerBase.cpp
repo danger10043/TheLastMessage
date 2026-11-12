@@ -52,6 +52,7 @@
 #include "Components/AudioComponent.h"
 #include "Sound/SoundBase.h"
 #include "Kismet/GameplayStatics.h"
+#include "DataAsset/GameplayAssetSettings.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraComponent.h"
 #include "Weapon/EnergyMuzzleFlash.h"
@@ -83,6 +84,33 @@ static TAutoConsoleVariable<int32> CVarDebugAim(
 
 APlayerBase::APlayerBase()
 {
+	if (HasAnyFlags(RF_ClassDefaultObject) && GetClass() == StaticClass())
+	{
+		const auto* Defaults = GetDefault<UGameplayAssetSettings>();
+		MovementAudio.FootstepSound = Defaults->FootstepSound.LoadSynchronous();
+		MovementAudio.FootstepStartTimes = Defaults->FootstepStartTimes;
+		MovementAudio.FootstepDuration = Defaults->FootstepDuration;
+		MovementAudio.LandingSound = Defaults->LandingSound.LoadSynchronous();
+		for (const auto& Sound : Defaults->GrappleLaunchSounds)
+		{
+			if (USoundBase* Loaded = Sound.LoadSynchronous())
+			{
+				MovementAudio.GrappleLaunchSounds.Add(Loaded);
+			}
+		}
+		MovementAudio.GrappleAttachSound = Defaults->GrappleAttachSound.LoadSynchronous();
+		MovementAudio.GrappleReleaseSound = Defaults->GrappleReleaseSound.LoadSynchronous();
+		MovementAudio.GrappleLaunchVolume = Defaults->GrappleLaunchVolume;
+		MovementAudio.GrappleAttachVolume = Defaults->GrappleAttachVolume;
+		MovementAudio.GrappleReleaseVolume = Defaults->GrappleReleaseVolume;
+	}
+	else
+	{
+		// Blueprint spawning copies only properties that differ from native defaults.
+		// Initialize the native defaults here before Blueprint overrides are applied.
+		MovementAudio = GetDefault<APlayerBase>()->MovementAudio;
+	}
+
 	WeaponChoices.SetNum(4);
 	OwnedWeaponChoices.SetNumZeroed(4);
 	WeaponSelectionActions.SetNum(4);
@@ -333,6 +361,7 @@ void APlayerBase::UpdateGimmickAnimation()
 void APlayerBase::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	UpdateFootstepAudio(DeltaSeconds);
 	if (HasAuthority() && PendingAttackInput.IsValid()
 		&& !AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking))
 	{
@@ -450,10 +479,104 @@ void APlayerBase::OnJumped_Implementation()
 	Super::OnJumped_Implementation();
 }
 
+void APlayerBase::UpdateFootstepAudio(float DeltaSeconds)
+{
+	if (!IsLocallyControlled() || !MovementAudio.FootstepSound) return;
+
+	const UCharacterMovementComponent* Movement = GetCharacterMovement();
+	const FVector GroundVelocity = FVector::VectorPlaneProject(Movement->Velocity, Movement->GetGravityDirection());
+	if (IsDead() || !Movement->IsMovingOnGround() || GroundVelocity.SizeSquared() < FMath::Square(25.0f))
+	{
+		PreviousStepDirection = FVector::ZeroVector;
+		TimeSinceFootstep = 0.0f;
+		FootSeparationTrend = 0;
+		LastPlantedFoot = 0;
+		return;
+	}
+
+	// Some locomotion blends and upper-body montages don't produce a clear foot swing.
+	// Keep a slower fallback, with a shared minimum interval for both triggers.
+	constexpr float MinStepInterval = 0.30f;
+	constexpr float MissingPoseStepInterval = 0.55f;
+	TimeSinceFootstep += DeltaSeconds;
+	const auto PlayStep = [this]()
+	{
+		TimeSinceFootstep = 0.0f;
+		PlayFootstepAudio();
+	};
+
+	static const FName LeftFootBone(TEXT("foot_l"));
+	static const FName RightFootBone(TEXT("foot_r"));
+	const USkeletalMeshComponent* Body = GetMesh();
+	if (!Body || !Body->DoesSocketExist(LeftFootBone) || !Body->DoesSocketExist(RightFootBone))
+	{
+		if (TimeSinceFootstep >= MissingPoseStepInterval) PlayStep();
+		return;
+	}
+
+	const FVector LeftFoot = Body->GetSocketLocation(LeftFootBone);
+	const FVector RightFoot = Body->GetSocketLocation(RightFootBone);
+	const FVector Direction = GroundVelocity.GetSafeNormal();
+	const float Separation = FVector::DotProduct(LeftFoot - RightFoot, Direction);
+	if (FVector::DotProduct(Direction, PreviousStepDirection) < 0.5f)
+	{
+		PreviousStepDirection = Direction;
+		PreviousFootSeparation = Separation;
+		FootSeparationTrend = 0;
+		LastPlantedFoot = 0;
+		return;
+	}
+
+	const float Delta = Separation - PreviousFootSeparation;
+	const float LastSeparation = PreviousFootSeparation;
+	PreviousFootSeparation = Separation;
+	if (FMath::Abs(Delta) >= 0.05f)
+	{
+		// The leading foot plants as its forward swing turns into the stance phase.
+		const int32 Trend = Delta > 0.0f ? 1 : -1;
+		const int32 PlantedFoot = FootSeparationTrend == -Trend && LastSeparation * FootSeparationTrend > 12.0f
+			? FootSeparationTrend : 0;
+		FootSeparationTrend = Trend;
+		if (PlantedFoot != 0 && PlantedFoot != LastPlantedFoot && TimeSinceFootstep >= MinStepInterval)
+		{
+			LastPlantedFoot = PlantedFoot;
+			PlayStep();
+			return;
+		}
+	}
+	if (TimeSinceFootstep >= MissingPoseStepInterval) PlayStep();
+}
+
+void APlayerBase::PlayFootstepAudio()
+{
+	const int32 Count = MovementAudio.FootstepStartTimes.Num();
+	int32 Sample = FMath::RandHelper(Count);
+	if (Count > 1 && Sample == LastFootstepSample)
+	{
+		Sample = (Sample + 1 + FMath::RandHelper(Count - 1)) % Count;
+	}
+	LastFootstepSample = Sample;
+	const float StartTime = Count > 0 ? MovementAudio.FootstepStartTimes[Sample] : 0.0f;
+	if (UAudioComponent* Step = UGameplayStatics::SpawnSound2D(
+		this, MovementAudio.FootstepSound, 0.85f, 1.0f, StartTime))
+	{
+		if (MovementAudio.FootstepDuration > 0.0f)
+		{
+			Step->StopDelayed(MovementAudio.FootstepDuration);
+		}
+	}
+}
+
 void APlayerBase::Landed(const FHitResult& Hit)
 {
 	bGrappleCancelJumpAvailable = false;
 	Super::Landed(Hit);
+	PreviousStepDirection = FVector::ZeroVector;
+	TimeSinceFootstep = 0.0f;
+	if (IsLocallyControlled() && !IsDead() && MovementAudio.LandingSound)
+	{
+		UGameplayStatics::PlaySound2D(this, MovementAudio.LandingSound);
+	}
 }
 
 bool APlayerBase::IsGrappling() const

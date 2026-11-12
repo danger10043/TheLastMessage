@@ -4,6 +4,8 @@
 #include "Engine/GameInstance.h"
 #include "Character/Player/GrapplingHookComponent.h"
 #include "Map/AreaMapComponent.h"
+#include "Map/RoomStreamingSubsystem.h"
+#include "Engine/StaticMesh.h"
 #include "Character/Player/CombatFeedbackComponent.h"
 #include "AbilitySystemComponent.h"
 #include "Abilities/GameplayAbility.h"
@@ -1518,21 +1520,49 @@ bool APlayerBase::SetCheckpoint(const FTransform& Transform)
 	bCheckpointGravityReversed = AbilitySystemComponent->HasMatchingGameplayTag(
 		FGameplayTag::RequestGameplayTag(TEXT("State.Gravity.Reversed")));
 	bHasCheckpoint = true;
+	// 방 스트리밍: 지금 있는 리전을 기억해 둔다. 아직 리전을 못 찾은 시작 지점이면 비어 있다.
+	CheckpointRegionId = NAME_None;
+	if (const URoomStreamingSubsystem* Rooms = GetWorld() ? GetWorld()->GetSubsystem<URoomStreamingSubsystem>() : nullptr)
+		CheckpointRegionId = Rooms->GetCurrentRegionId();
 	return true;
 }
 
 void APlayerBase::TryAutoRespawn()
 {
-	// A temporarily obstructed checkpoint is retried instead of reviving inside geometry.
-	if (IsDead() && !RespawnAtCheckpoint())
+	if (!IsDead()) return;
+	ULoadingTransitionSubsystem* Loading = GetGameInstance() ? GetGameInstance()->GetSubsystem<ULoadingTransitionSubsystem>() : nullptr;
+	if (RespawnAtCheckpoint())
 	{
-		GetWorldTimerManager().SetTimer(RespawnTimer, this, &APlayerBase::TryAutoRespawn, 0.5f, false);
+		if (URoomStreamingSubsystem* Rooms = GetWorld() ? GetWorld()->GetSubsystem<URoomStreamingSubsystem>() : nullptr)
+			Rooms->ReleaseRegionHold();
+		if (Loading) Loading->FinishRespawnWait(this);
+		return;
 	}
+	// 체크포인트 방이 올라오는 중이면 로딩 화면을 띄우고 짧은 간격으로 다시 시도한다.
+	// 막혀서 못 부활하는 경우(체크포인트가 다른 것에 가려짐)는 지금처럼 0.5초마다 다시 시도한다.
+	if (bRespawnWaitingForRooms && Loading) Loading->ShowRespawnWait();
+	GetWorldTimerManager().SetTimer(RespawnTimer, this, &APlayerBase::TryAutoRespawn, bRespawnWaitingForRooms ? 0.1f : 0.5f, false);
 }
 
 bool APlayerBase::RespawnAtCheckpoint()
 {
 	if (!HasAuthority() || !DeathState.bDead || !bHasCheckpoint || CombatAttributes->GetMaxHealth() <= 0.0f) return false;
+	// 방 스트리밍: 체크포인트가 있는 방과 바닥이 준비되기 전에는 부활하지 않는다(10초가 지나면 기다리지 않는다).
+	bRespawnWaitingForRooms = false;
+	if (!CheckpointRegionId.IsNone())
+	{
+		if (URoomStreamingSubsystem* Rooms = GetWorld()->GetSubsystem<URoomStreamingSubsystem>())
+		{
+			const double Now = GetWorld()->GetTimeSeconds();
+			if (RespawnRoomWaitStart < 0.0) RespawnRoomWaitStart = Now;
+			if (Now - RespawnRoomWaitStart < 10.0
+				&& !Rooms->PrepareRegionForRespawn(CheckpointRegionId, CheckpointTransform.GetLocation(), CheckpointGravity))
+			{
+				bRespawnWaitingForRooms = true;
+				return false;
+			}
+		}
+	}
 	const UCapsuleComponent* Capsule = GetCapsuleComponent();
 	FCollisionQueryParams Query(SCENE_QUERY_STAT(CheckpointRespawn), false, this);
 	const FCollisionShape SpawnShape = FCollisionShape::MakeCapsule(
@@ -1552,6 +1582,7 @@ bool APlayerBase::RespawnAtCheckpoint()
 		}
 	}
 	if (!bPlaced) return false;
+	RespawnRoomWaitStart = -1.0;
 	GetWorldTimerManager().ClearTimer(RespawnTimer);
 	// Keep equipment, core grants and permanent effects on the existing ASC.
 	const bool bGravityReversed = AbilitySystemComponent->HasMatchingGameplayTag(

@@ -12,6 +12,7 @@
 #include "InputCoreTypes.h"
 
 #include "UI/FactoryMenuStyle.h"
+#include "UI/FactoryUIStyle.h"
 namespace {
 UTextBlock* AddText(UWidgetTree* Tree, UVerticalBox* Box, FName Name, const FText& Label, int32 FontSize) { return FactoryMenuStyle::AddText(Tree, Box, Name, Label, FontSize); }
 void AddButton(UWidgetTree* Tree, UVerticalBox* Box, FName Name, FName TextName, const FText& Label) {
@@ -121,6 +122,15 @@ void UStartMenuWidget::NativeConstruct()
 	if (BackButton) BackButton->OnClicked.AddUniqueDynamic(this, &UStartMenuWidget::ShowMainMenu);
 	if (ConfirmButton) ConfirmButton->OnClicked.AddUniqueDynamic(this, &UStartMenuWidget::ConfirmOverwrite);
 	if (CancelButton) CancelButton->OnClicked.AddUniqueDynamic(this, &UStartMenuWidget::CancelOverwrite);
+	using FactoryUI::ESound;
+	UButton* ClickButtons[] = {NewGameButton, LoadGameButton, ExitButton, CreditsButton};
+	for (UButton* Button : ClickButtons) FactoryUI::ApplyButtonSounds(Button, ESound::Click);
+	UButton* CancelButtons[] = {BackButton, CreditsBackButton, CancelButton};
+	for (UButton* Button : CancelButtons) FactoryUI::ApplyButtonSounds(Button, ESound::Cancel);
+	FactoryUI::ApplyButtonSounds(ConfirmButton, ESound::Confirm);
+	// Slot presses pick their sound in SelectSlot: an overwrite prompt is a click, starting the game is a confirm.
+	UButton* SlotButtons[] = {Slot1Button, Slot2Button, Slot3Button};
+	for (UButton* Button : SlotButtons) FactoryUI::ApplyButtonSounds(Button, NullOpt);
 	SetIsFocusable(true);
 	ShowMainMenu();
 }
@@ -191,6 +201,7 @@ void UStartMenuWidget::SelectSlot(int32 SlotId)
 	if (bNewGame && Occupied[SlotId - 1])
 	{
 		PendingSlot = SlotId;
+		FactoryUI::PlayUISound(FactoryUI::ESound::Click);
 		if (ConfirmText) ConfirmText->SetText(FText::Format(NSLOCTEXT("StartMenu", "OverwriteSlot", "슬롯 {0}의 기존 진행을 덮어쓰고 새 게임을 시작할까요?"), FText::AsNumber(SlotId)));
 		if (Pages) Pages->SetActiveWidgetIndex(2);
 		ForceLayoutPrepass();
@@ -198,6 +209,7 @@ void UStartMenuWidget::SelectSlot(int32 SlotId)
 		return;
 	}
 	if (SelectionText) SelectionText->SetText(FText::Format(NSLOCTEXT("StartMenu", "Selected", "선택한 슬롯: {0}"), FText::AsNumber(SlotId)));
+	FactoryUI::PlayUISound(FactoryUI::ESound::Confirm);
 	OnSlotSelected.Broadcast(SlotId, bNewGame);
 }
 
@@ -264,6 +276,7 @@ FReply UStartMenuWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, const
 			UButton* Button = Buttons[(Current + Direction * Step + Buttons.Num()) % Buttons.Num()];
 			if (Button && Button->GetIsEnabled() && Button->IsVisible())
 			{
+				if (!Button->HasAnyUserFocus()) FactoryUI::PlayUISound(FactoryUI::ESound::Hover);
 				Button->SetKeyboardFocus();
 				break;
 			}
@@ -278,9 +291,9 @@ FReply UStartMenuWidget::NativeOnKeyDown(const FGeometry& Geometry, const FKeyEv
 	if (Event.GetKey() == EKeys::Escape && Pages)
 	{
 		if (bWorking) return FReply::Handled();
-		if (Pages->GetActiveWidgetIndex() == 2) { CancelOverwrite(); return FReply::Handled(); }
-		if (Pages->GetActiveWidgetIndex() == 1) { ShowMainMenu(); return FReply::Handled(); }
-		if (Pages->GetActiveWidget() == WidgetTree->FindWidget(TEXT("CreditsPage"))) { ShowMainMenu(); return FReply::Handled(); }
+		if (Pages->GetActiveWidgetIndex() == 2) { FactoryUI::PlayUISound(FactoryUI::ESound::Cancel); CancelOverwrite(); return FReply::Handled(); }
+		if (Pages->GetActiveWidgetIndex() == 1) { FactoryUI::PlayUISound(FactoryUI::ESound::Cancel); ShowMainMenu(); return FReply::Handled(); }
+		if (Pages->GetActiveWidget() == WidgetTree->FindWidget(TEXT("CreditsPage"))) { FactoryUI::PlayUISound(FactoryUI::ESound::Cancel); ShowMainMenu(); return FReply::Handled(); }
 	}
 	return Super::NativeOnKeyDown(Geometry, Event);
 }

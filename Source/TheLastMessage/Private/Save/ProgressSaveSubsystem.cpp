@@ -4,6 +4,7 @@
 #include "Character/Boss/BossMonster.h"
 #include "Projectile/ProjectileBase.h"
 #include "Async/Async.h"
+#include "UObject/Package.h"
 #include "HAL/FileManager.h"
 #include "HAL/PlatformProcess.h"
 #include "Kismet/GameplayStatics.h"
@@ -24,6 +25,8 @@
 #include "Components/SceneComponent.h"
 #include "EngineUtils.h"
 #include "Gimmick/GimmickBase.h"
+#include "Gimmick/Flag/WorldFlagSubsystem.h"
+#include "Map/RoomStreamingSubsystem.h"
 #include "Gimmick/RespawnPoint/BombRespawnPoint.h"
 #include "TimerManager.h"
 #include "Engine/World.h"
@@ -84,6 +87,8 @@ bool UProgressSaveSubsystem::StartNewGame(int32 SlotId, bool bOverwriteExisting)
 	WorkingProgress = NewObject<UProgressSaveGame>(this);
 	if (UCorePickupStateSubsystem* Pickups = GetGameInstance()->GetSubsystem<UCorePickupStateSubsystem>())
 		Pickups->ResetPickupStates();
+	if (UWorldFlagSubsystem* Flags = GetGameInstance()->GetSubsystem<UWorldFlagSubsystem>())
+		Flags->ResetFlags();
 	bLoadedSession = false;
 	LoadedMap = NAME_None;
 	WorkingProgress->SlotId = SlotId;
@@ -102,6 +107,8 @@ bool UProgressSaveSubsystem::ContinueGame(int32 SlotId)
 	// Restore before travelling: pickups query this registry before their Blueprint BeginPlay.
 	if (UCorePickupStateSubsystem* Pickups = GetGameInstance()->GetSubsystem<UCorePickupStateSubsystem>())
 		Pickups->RestorePickupStates(Loaded->CorePickupStates);
+	if (UWorldFlagSubsystem* Flags = GetGameInstance()->GetSubsystem<UWorldFlagSubsystem>())
+		Flags->RestoreFlags(Loaded->WorldFlags);
 	bLoadedSession = true;
 	LoadedMap = FName(*FPackageName::GetShortName(Loaded->MapPackage));
 	bRestorePending = Loaded->CheckpointId.IsValid();
@@ -118,6 +125,8 @@ bool UProgressSaveSubsystem::EndSession()
 	WorkingProgress = nullptr;
 	if (UCorePickupStateSubsystem* Pickups = GetGameInstance()->GetSubsystem<UCorePickupStateSubsystem>())
 		Pickups->ResetPickupStates();
+	if (UWorldFlagSubsystem* Flags = GetGameInstance()->GetSubsystem<UWorldFlagSubsystem>())
+		Flags->ResetFlags();
 	bLoadedSession = false;
 	LoadedMap = NAME_None;
 	ActiveSlot = 0;
@@ -134,6 +143,9 @@ bool UProgressSaveSubsystem::ReloadActiveProgress()
 	// Replace unsaved pickups too, so death/reload rolls back to the checkpoint snapshot.
 	if (UCorePickupStateSubsystem* Pickups = GetGameInstance()->GetSubsystem<UCorePickupStateSubsystem>())
 		Pickups->RestorePickupStates(Loaded->CorePickupStates);
+	// 체크포인트 이후에 켠 플래그도 되돌린다. 받는 쪽은 기믹 복원 뒤 OnGimmickRestoreFinished로 다시 맞춘다.
+	if (UWorldFlagSubsystem* Flags = GetGameInstance()->GetSubsystem<UWorldFlagSubsystem>())
+		Flags->RestoreFlags(Loaded->WorldFlags);
 	bLoadedSession = true;
 	LoadedMap = FName(*FPackageName::GetShortName(Loaded->MapPackage));
 	bRestorePending = true;
@@ -176,8 +188,12 @@ bool UProgressSaveSubsystem::SaveCheckpoint(APlayerBase* Player, APlayerCheckpoi
 	UProgressSaveGame* Snapshot = DuplicateObject<UProgressSaveGame>(WorkingProgress, this);
 	if (const UCorePickupStateSubsystem* Pickups = GetGameInstance()->GetSubsystem<UCorePickupStateSubsystem>())
 		Snapshot->CorePickupStates = Pickups->GetPickupStates();
+	if (const UWorldFlagSubsystem* Flags = GetGameInstance()->GetSubsystem<UWorldFlagSubsystem>())
+		Snapshot->WorldFlags = Flags->GetFlags();
 	Snapshot->MapPackage = UWorld::RemovePIEPrefix(Player->GetWorld()->GetOutermost()->GetName());
 	Snapshot->CheckpointId = Checkpoint->GetPersistentId();
+	if (const URoomStreamingSubsystem* Rooms = Player->GetWorld()->GetSubsystem<URoomStreamingSubsystem>())
+		Snapshot->CheckpointRegionId = Rooms->GetCurrentRegionId();
 	Snapshot->RespawnTransform = Checkpoint->RespawnPoint->GetComponentTransform();
 	Snapshot->RespawnGravity = Player->GetCharacterMovement()->GetGravityDirection();
 	FProgressPlayerState& State = Snapshot->Player;
@@ -342,6 +358,8 @@ void UProgressSaveSubsystem::RestoreQueuedGimmicks()
         if (Weak.IsValid()) if (const FProgressActorState* State = Records.Find(Weak.Get())) Weak->RestoreProgress(*State);
     for (const TWeakObjectPtr<AGimmickBase>& Weak : Pending)
         if (Weak.IsValid()) if (const FProgressActorState* State = Records.Find(Weak.Get())) Weak->FinishRestoreProgress(*State);
+    // 복원된 기믹 상태 위에 현재 월드 플래그를 다시 적용한다(예: 체크포인트 이후 방이 새로 로드된 문).
+    OnGimmickRestoreFinished.Broadcast();
 }
 
 bool UProgressSaveSubsystem::RestoreCheckpointInPlace(APlayerBase* Player)

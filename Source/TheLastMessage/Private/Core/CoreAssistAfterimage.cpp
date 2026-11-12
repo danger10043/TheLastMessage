@@ -7,6 +7,7 @@
 #include "Character/Player/PlayerBase.h"
 #include "Character/Enemy/EnemyBase.h"
 #include "Character/Boss/BossMonster.h"
+#include "Components/AudioComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -15,8 +16,10 @@
 #include "DataAsset/WeaponDataAsset.h"
 #include "Engine/World.h"
 #include "GAS/WeaponGameplayTags.h"
+#include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Net/UnrealNetwork.h"
+#include "TimerManager.h"
 #include "UObject/StrongObjectPtr.h"
 
 ACoreAssistAfterimage::ACoreAssistAfterimage()
@@ -66,6 +69,7 @@ bool ACoreAssistAfterimage::Initialize(APlayerBase* Player, const UMeleeAttackEv
 	FCoreAfterimageAppearance Visual;
 	Visual.CharacterMesh = Attack->SkeletalMesh;
 	Visual.WeaponMesh = Attack->WeaponData->WeaponMesh;
+	Visual.WeaponData = Attack->WeaponData;
 	Visual.Montage = Attack->AttackMontage;
 	Visual.Section = Attack->AttackSection;
 	Visual.ContinuationSection = Attack->ContinuationSection;
@@ -189,9 +193,27 @@ void ACoreAssistAfterimage::StartPresentation()
 	CharacterMesh->SetHiddenInGame(true, false);
 	WeaponMesh->SetVisibility(true, false);
 	WeaponMesh->SetHiddenInGame(false);
+	// 원래 공격의 무기 설정을 사용해 파이프와 해머의 휘두르기 소리를 구분한다.
+	if (GetNetMode() != NM_DedicatedServer && Appearance.WeaponData && Appearance.WeaponData->AttackSound)
+	{
+		const float SoundDelay = Appearance.WeaponData->MeleeAttackFeedbackDelay / PlaybackRate;
+		if (SoundDelay > 0.0f)
+			GetWorldTimerManager().SetTimer(SwingSoundTimer, this, &ACoreAssistAfterimage::PlaySwingSound, SoundDelay, false);
+		else PlaySwingSound();
+	}
 	SetActorTickEnabled(true);
 	// 종료 알림과 별도로 수명 상한을 두어 잔상이 남지 않도록 한다.
 	SetLifeSpan(Duration + Appearance.Montage->BlendOut.GetBlendTime() + 0.2f);
+}
+
+void ACoreAssistAfterimage::PlaySwingSound()
+{
+	const UWeaponDataAsset* Data = Appearance.WeaponData;
+	if (!bPresentationStarted || IsActorBeingDestroyed() || GetNetMode() == NM_DedicatedServer || !Data || !Data->AttackSound) return;
+	const FName Socket = WeaponMesh->DoesSocketExist(Data->MeleeAttackEffectSocketName) ? Data->MeleeAttackEffectSocketName : NAME_None;
+	SwingAudio = UGameplayStatics::SpawnSoundAttached(Data->AttackSound, WeaponMesh, Socket,
+		Data->MeleeAttackEffectOffset.GetLocation(), EAttachLocation::KeepRelativeOffset, true,
+		Data->AttackSoundVolume, Data->AttackSoundPitch, 0.0f, Data->WeaponSoundAttenuation);
 }
 
 void ACoreAssistAfterimage::Tick(float DeltaSeconds)
@@ -287,6 +309,9 @@ void ACoreAssistAfterimage::HandleCoreChanged(FName CoreId, int32 OldLevel, int3
 
 void ACoreAssistAfterimage::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	GetWorldTimerManager().ClearTimer(SwingSoundTimer);
+	if (IsValid(SwingAudio)) SwingAudio->Stop();
+	SwingAudio = nullptr;
 	if (MeleeHitHandle.IsValid())
 	{
 		if (auto* Events = AbilitySystemComponent->GenericGameplayEventCallbacks.Find(WeaponGameplayTags::Event_MeleeHit)) Events->Remove(MeleeHitHandle);

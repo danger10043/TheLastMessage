@@ -6,6 +6,7 @@
 
 class ACoreAssistAfterimage;
 class UGameplayEffect;
+class USoundBase;
 class UStaticMesh;
 
 UCLASS(Config=Game, DefaultConfig, meta=(DisplayName="Gameplay Assets"))
@@ -22,4 +23,50 @@ public:
 
 	UPROPERTY(Config, EditAnywhere, Category="Gimmicks")
 	TSoftObjectPtr<UStaticMesh> DirectionalStairsMesh;
+
+	// Initial defaults inherited by player Blueprints. Gameplay reads the Blueprint properties.
+	UPROPERTY(Config)
+	TSoftObjectPtr<USoundBase> FootstepSound;
+
+	UPROPERTY(Config)
+	TArray<float> FootstepStartTimes;
+
+	UPROPERTY(Config)
+	float FootstepDuration = 0.36f;
+
+	UPROPERTY(Config)
+	TSoftObjectPtr<USoundBase> LandingSound;
+
+	UPROPERTY(Config)
+	TSoftObjectPtr<USoundBase> JumpSound;
+
+	UPROPERTY(Config)
+	TArray<TSoftObjectPtr<USoundBase>> GrappleLaunchSounds;
+
+	UPROPERTY(Config)
+	TSoftObjectPtr<USoundBase> GrappleAttachSound;
+
+	UPROPERTY(Config)
+	TSoftObjectPtr<USoundBase> GrappleReleaseSound;
+
+	UPROPERTY(Config)
+	float GrappleLaunchVolume = 0.8f;
+
+	UPROPERTY(Config)
+	float GrappleAttachVolume = 1.4f;
+
+	UPROPERTY(Config)
+	float GrappleReleaseVolume = 1.5f;
+
+	UPROPERTY(Config)
+	TArray<TSoftObjectPtr<USoundBase>> HitSounds;
+
+	UPROPERTY(Config)
+	TSoftObjectPtr<USoundBase> HitLayerSound;
+
+	UPROPERTY(Config)
+	TSoftObjectPtr<USoundBase> DeathSound;
+
+	UPROPERTY(Config)
+	TSoftObjectPtr<USoundBase> DeathImpactSound;
 };

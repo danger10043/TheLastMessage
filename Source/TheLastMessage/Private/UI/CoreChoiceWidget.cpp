@@ -14,6 +14,7 @@
 #include "InputCoreTypes.h"
 #include "Kismet/GameplayStatics.h"
 #include "UI/CoreChoiceCardWidget.h"
+#include "UI/FactoryUIStyle.h"
 
 
 
@@ -72,6 +73,9 @@ void UCoreChoiceWidget::NativeOnInitialized()
 	if (FirstRerollButton) FirstRerollButton->OnClicked.AddDynamic(this, &UCoreChoiceWidget::HandleFirstReroll);
 	if (SecondRerollButton) SecondRerollButton->OnClicked.AddDynamic(this, &UCoreChoiceWidget::HandleSecondReroll);
 	if (ThirdRerollButton) ThirdRerollButton->OnClicked.AddDynamic(this, &UCoreChoiceWidget::HandleThirdReroll);
+	// Core cards stay silent; only the reroll buttons get menu sounds.
+	for (UButton* Button : {FirstRerollButton.Get(), SecondRerollButton.Get(), ThirdRerollButton.Get()})
+		FactoryUI::ApplyButtonSounds(Button, FactoryUI::ESound::Click);
 	for (int32 Index = 0; Index < CoreRewardRules::MaxChoices; ++Index) SetRerollEnabled(Index, false);
 }
 

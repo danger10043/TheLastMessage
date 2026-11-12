@@ -1,5 +1,6 @@
 #include "Character/Boss/GA_BossJumpAttack.h"
 #include "Character/Boss/BossMonster.h"
+#include "Character/Boss/BossAttackTrailComponent.h"
 #include "Character/Boss/BossCharacterMovementComponent.h"
 #include "Character/Player/PlayerBase.h"
 #include "GAS/CombatAttributeSet.h"
@@ -347,6 +348,7 @@ void UGA_BossJumpAttack::StartJump()
     Move->SetMovementMode(MOVE_Falling);
     Move->Velocity = LaunchVelocity;
     bStartedJump = true;
+    UBossAttackTrailComponent::StartForBoss(Boss, EBossTrailType::JumpAttack);
     if (JumpStartSound)
     {
         Boss->MulticastGunBurstSound(JumpStartSound.Get(), JumpGroundPoint);
@@ -447,6 +449,7 @@ void UGA_BossJumpAttack::OnLanded(const FHitResult& Hit)
         return;
     }
     bLanded = true;
+    UBossAttackTrailComponent::StopForBoss(GetBossOwner());
     if (ABossMonster* Boss = GetBossOwner();
         IsValid(Boss) && Boss->HasAuthority() && LandingSound)
     {
@@ -555,6 +558,7 @@ void UGA_BossJumpAttack::EndAbility(
         return;
     }
     TGuardValue<bool> EndingGuard(bEnding, true);
+    UBossAttackTrailComponent::StopForBoss(GetBossOwner());
     SetEffect(nullptr);
     if (UWorld* World = GetWorld())
     {

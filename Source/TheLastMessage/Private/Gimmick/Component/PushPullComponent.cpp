@@ -927,10 +927,12 @@ bool UPushPullComponent::FindSharedMoveLocation(UPrimitiveComponent* Component, 
 
             const FVector FloorNormal = GetSurfaceNormal(FloorHit);
 
-            // 너무 가파른 면은 받쳐 주는 바닥으로 인정하지 않음
+            // 받쳐 줄 수 없는 면이면 바닥이 없는 것으로 처리.
+    // 수평 경로가 통과 가능한 경우 이동 후 중력으로 낙하하도록 허용.
             if (FloorNormal.Z + KINDA_SMALL_NUMBER < MinFloorNormalZ)
             {
-                return false;
+                return true;
+         
             }
 
             // 깊이 겹친 상태를 강제 위치 이동으로 해결하지 않음

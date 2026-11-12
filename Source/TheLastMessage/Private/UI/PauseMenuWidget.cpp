@@ -1,5 +1,6 @@
 #include "UI/PauseMenuWidget.h"
 #include "UI/FactoryMenuStyle.h"
+#include "UI/FactoryUIStyle.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/Border.h"
 #include "Components/Button.h"
@@ -55,6 +56,13 @@ void UPauseMenuWidget::NativeConstruct()
 	BIND_PAUSE("MenuButton", MainMenu); BIND_PAUSE("QuitButton", Quit); BIND_PAUSE("ConfirmButton", Confirm);
 	BIND_PAUSE("CancelButton", Back); BIND_PAUSE("SettingsBackButton", Back);
 #undef BIND_PAUSE
+	using FactoryUI::ESound;
+	const TPair<const TCHAR*, ESound> ButtonSounds[] = {
+		{TEXT("ResumeButton"), ESound::Cancel}, {TEXT("ReloadButton"), ESound::Click}, {TEXT("SettingsButton"), ESound::Click},
+		{TEXT("MenuButton"), ESound::Click}, {TEXT("QuitButton"), ESound::Click}, {TEXT("ConfirmButton"), ESound::Confirm},
+		{TEXT("CancelButton"), ESound::Cancel}, {TEXT("SettingsBackButton"), ESound::Cancel}};
+	for (const auto& Entry : ButtonSounds)
+		FactoryUI::ApplyButtonSounds(Cast<UButton>(WidgetTree->FindWidget(Entry.Key)), Entry.Value);
 	if (Pages) Pages->SetActiveWidgetIndex(0);
 	SetBusy(false);
 }
@@ -131,13 +139,30 @@ FReply UPauseMenuWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, const
 	const UEnhancedInputLocalPlayerSubsystem* Inputs = Local ? Local->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>() : nullptr;
 	if (Inputs && PauseInputAction && Inputs->QueryKeysMappedToAction(PauseInputAction).Contains(Event.GetKey()))
 	{
-		if (!Event.IsRepeat() && !bWorking) { if (Pages && Pages->GetActiveWidgetIndex() != 0) Back(); else Resume(); }
+		if (!Event.IsRepeat() && !bWorking)
+		{
+			FactoryUI::PlayUISound(FactoryUI::ESound::Cancel);
+			if (Pages && Pages->GetActiveWidgetIndex() != 0) Back(); else Resume();
+		}
 		return FReply::Handled();
 	}
+	const FKey Key = Event.GetKey();
+	if (Key == EKeys::Up || Key == EKeys::Down || Key == EKeys::Left || Key == EKeys::Right || Key == EKeys::Tab)
+		bNavigationKeyPending = true;
 	return Super::NativeOnPreviewKeyDown(Geometry, Event);
 }
 
-void UPauseMenuWidget::NativeTick(const FGeometry& Geometry, float DeltaTime) { Super::NativeTick(Geometry, DeltaTime); FactoryMenuStyle::UpdateFocus(WidgetTree); }
+void UPauseMenuWidget::NativeTick(const FGeometry& Geometry, float DeltaTime)
+{
+	Super::NativeTick(Geometry, DeltaTime);
+	FactoryMenuStyle::UpdateFocus(WidgetTree);
+	// Arrow keys move focus through Slate navigation, so compare the focused button after the key.
+	UWidget* Focused = nullptr;
+	WidgetTree->ForEachWidget([&Focused](UWidget* Widget) { if (!Focused && Widget->IsA<UButton>() && Widget->HasAnyUserFocus()) Focused = Widget; });
+	if (bNavigationKeyPending && Focused && Focused != FocusedButton.Get()) FactoryUI::PlayUISound(FactoryUI::ESound::Hover);
+	bNavigationKeyPending = false;
+	FocusedButton = Focused;
+}
 
 FReply UPauseMenuWidget::NativeOnFocusReceived(const FGeometry& Geometry, const FFocusEvent& Event)
 {

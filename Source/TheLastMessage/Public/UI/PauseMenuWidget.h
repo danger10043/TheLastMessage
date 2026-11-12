@@ -45,5 +45,8 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UInputAction> PauseInputAction;
 	bool bWorking = false;
 	bool bCheckpointAvailable = false;
+	/** Set by a navigation key; NativeTick plays the hover sound if focus moved to another button. */
+	bool bNavigationKeyPending = false;
+	TWeakObjectPtr<UWidget> FocusedButton;
 	EPauseMenuAction PendingAction = EPauseMenuAction::Resume;
 };

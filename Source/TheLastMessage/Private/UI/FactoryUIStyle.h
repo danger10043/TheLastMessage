@@ -5,6 +5,7 @@
 #include "UObject/SoftObjectPtr.h"
 
 class UTexture2D;
+class UButton;
 
 namespace FactoryUI
 {
@@ -19,6 +20,14 @@ enum class EPlate : uint8 { Normal, Selected, Screen, Count };
 const TSoftObjectPtr<UTexture2D>& GetPlateTexture(EPlate State);
 void MakePlatePixels(EPlate State, TArray<FColor>& Pixels);
 FSlateBrush Chamfer(EPlate State = EPlate::Normal);
+
+/** Menu sound roles. The assets are set in Project Settings > Factory UI Assets. */
+enum class ESound : uint8 { Hover, Click, Confirm, Cancel };
+/** Plays through Slate, so it is heard while the game is paused. */
+void PlayUISound(ESound Sound);
+/** Hover sound on mouse-over, plus Press on mouse click or Enter. Pass NullOpt to keep presses silent.
+ *  Call again after replacing the style with FactoryUI::Button(), which has no sounds. */
+void ApplyButtonSounds(UButton* Button, TOptional<ESound> Press);
 
 inline FSlateRoundedBoxBrush Plate(FLinearColor Fill, FLinearColor Outline, float Radius = 4.0f)
 {

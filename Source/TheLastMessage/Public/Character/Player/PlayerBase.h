@@ -236,6 +236,9 @@ public:
 
 	// 체력이 실제로 감소했고 아직 살아 있을 때 AttributeSet에서 호출한다.
 	void HandleHitReaction(FName ReactionSection = NAME_None);
+	/** Called by the AttributeSet when health drops and no guard handled the hit (guards have their own sounds). */
+	UFUNCTION(NetMulticast, Unreliable)
+	void MulticastDamageSound();
 	FName GetDamageReactionSection(const FGameplayEffectContextHandle& Context) const;
 
 	UFUNCTION(BlueprintPure, Category = "Player|Combat")
@@ -358,6 +361,29 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Animation", meta = (ClampMin = "0.01"))
 	float DeathPlayRate = 1.0f;
+
+	/** One is picked at random for each hit that lowers health. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Audio")
+	TArray<TObjectPtr<USoundBase>> HitSounds;
+
+	/** Electric layer played together with HitSounds. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Audio")
+	TObjectPtr<USoundBase> HitLayerSound;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Audio", meta = (ClampMin = "0.0"))
+	float HitLayerVolume = 0.4f;
+
+	/** Played when the death presentation starts. Fades out on respawn. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Audio")
+	TObjectPtr<USoundBase> DeathSound;
+
+	/** Played when the collapsing body reaches the floor. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Audio")
+	TObjectPtr<USoundBase> DeathImpactSound;
+
+	/** Time into the death montage, at play rate 1, when the body reaches the floor. An airborne death also waits for landing. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Audio", meta = (ClampMin = "0.0", Units = "s"))
+	float DeathImpactDelay = 1.0f;
 
 	// 시작할 때 각 슬롯에 장착할 무기의 설정 데이터.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, ReplicatedUsing=OnRep_VisibleWeaponSlot, Category = "Player|Weapon")
@@ -500,6 +526,11 @@ private:
 	FTimerHandle HitReactionTimer;
 	double HitReactionImmunityEndTime = 0.0;
 	bool bDeathPresentationStarted = false;
+	void PlayDeathImpactSound();
+	FTimerHandle DeathImpactTimer;
+	bool bDeathImpactPending = false;
+	TWeakObjectPtr<UAudioComponent> DeathSoundComponent;
+	double LastDamageSoundTime = -1.0;
 	// ServerOnly 공격 능력은 눌림/해제를 동일한 서버 경로로 전달한다.
 	UFUNCTION(Server, Reliable)
 	void ServerAbilityInput(FGameplayTag InputTag, uint8 InputState, FVector_NetQuantize AimPoint);

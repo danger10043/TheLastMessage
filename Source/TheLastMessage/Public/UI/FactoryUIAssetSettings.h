@@ -52,17 +52,17 @@ public:
 
 	/** Mouse-over and keyboard focus moves on menu buttons. */
 	UPROPERTY(Config, EditAnywhere, Category="Sounds")
-	TSoftObjectPtr<USoundBase> HoverSound = TSoftObjectPtr<USoundBase>(FSoftObjectPath(TEXT("/Game/_ExternalAssets/MEGA_FULL_BUNDLE/SPACE_GAME_SOUNDS_/CUES/space_beep_Cue.space_beep_Cue")));
+	TSoftObjectPtr<USoundBase> HoverSound;
 
 	/** Buttons that open a page or switch a tab. */
 	UPROPERTY(Config, EditAnywhere, Category="Sounds")
-	TSoftObjectPtr<USoundBase> ClickSound = TSoftObjectPtr<USoundBase>(FSoftObjectPath(TEXT("/Game/_ExternalAssets/MEGA_FULL_BUNDLE/SPACE_GAME_SOUNDS_/CUES/touch_screen_button_Cue.touch_screen_button_Cue")));
+	TSoftObjectPtr<USoundBase> ClickSound;
 
 	/** Buttons that commit a decision, such as starting a game or confirming a prompt. */
 	UPROPERTY(Config, EditAnywhere, Category="Sounds")
-	TSoftObjectPtr<USoundBase> ConfirmSound = TSoftObjectPtr<USoundBase>(FSoftObjectPath(TEXT("/Game/_ExternalAssets/MEGA_FULL_BUNDLE/SPACE_GAME_SOUNDS_/CUES/spaceship_button_v7_Cue.spaceship_button_v7_Cue")));
+	TSoftObjectPtr<USoundBase> ConfirmSound;
 
 	/** Back, cancel, close, and resume. */
 	UPROPERTY(Config, EditAnywhere, Category="Sounds")
-	TSoftObjectPtr<USoundBase> CancelSound = TSoftObjectPtr<USoundBase>(FSoftObjectPath(TEXT("/Game/_ExternalAssets/MEGA_FULL_BUNDLE/SPACE_GAME_SOUNDS_/CUES/spaceship_button_Cue.spaceship_button_Cue")));
+	TSoftObjectPtr<USoundBase> CancelSound;
 };

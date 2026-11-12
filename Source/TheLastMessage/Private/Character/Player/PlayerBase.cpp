@@ -103,13 +103,25 @@ APlayerBase::APlayerBase()
 		MovementAudio.GrappleReleaseSound = Defaults->GrappleReleaseSound.LoadSynchronous();
 		MovementAudio.GrappleLaunchVolume = Defaults->GrappleLaunchVolume;
 		MovementAudio.GrappleAttachVolume = Defaults->GrappleAttachVolume;
+		for (const auto& Sound : Defaults->HitSounds)
+		{
+			if (USoundBase* Loaded = Sound.LoadSynchronous()) HitSounds.Add(Loaded);
+		}
+		HitLayerSound = Defaults->HitLayerSound.LoadSynchronous();
+		DeathSound = Defaults->DeathSound.LoadSynchronous();
+		DeathImpactSound = Defaults->DeathImpactSound.LoadSynchronous();
 		MovementAudio.GrappleReleaseVolume = Defaults->GrappleReleaseVolume;
 	}
 	else
 	{
 		// Blueprint spawning copies only properties that differ from native defaults.
 		// Initialize the native defaults here before Blueprint overrides are applied.
-		MovementAudio = GetDefault<APlayerBase>()->MovementAudio;
+		const APlayerBase* NativeDefaults = GetDefault<APlayerBase>();
+		MovementAudio = NativeDefaults->MovementAudio;
+		HitSounds = NativeDefaults->HitSounds;
+		HitLayerSound = NativeDefaults->HitLayerSound;
+		DeathSound = NativeDefaults->DeathSound;
+		DeathImpactSound = NativeDefaults->DeathImpactSound;
 	}
 
 	WeaponChoices.SetNum(4);
@@ -581,6 +593,12 @@ void APlayerBase::Landed(const FHitResult& Hit)
 	if (IsLocallyControlled() && !IsDead() && MovementAudio.LandingSound)
 	{
 		UGameplayStatics::PlaySound2D(this, MovementAudio.LandingSound);
+	}
+	// An airborne death collapses in the air, so its impact waits for this landing.
+	if (bDeathImpactPending && bDeathPresentationStarted && DeathImpactSound)
+	{
+		bDeathImpactPending = false;
+		UGameplayStatics::PlaySound2D(this, DeathImpactSound);
 	}
 }
 
@@ -1574,6 +1592,19 @@ void APlayerBase::MulticastHitReaction_Implementation(FName ReactionSection)
 	}
 }
 
+void APlayerBase::MulticastDamageSound_Implementation()
+{
+	if (IsDead() || bDeathPresentationStarted || !IsLocallyControlled()) return;
+	// Hits that land in the same instant play one sound.
+	const double Now = GetWorld()->GetTimeSeconds();
+	if (Now - LastDamageSoundTime < 0.08) return;
+	LastDamageSoundTime = Now;
+	TArray<USoundBase*, TInlineAllocator<8>> Choices;
+	for (USoundBase* Sound : HitSounds) if (Sound) Choices.Add(Sound);
+	if (!Choices.IsEmpty()) UGameplayStatics::PlaySound2D(this, Choices[FMath::RandRange(0, Choices.Num() - 1)]);
+	if (HitLayerSound && HitLayerVolume > 0.0f) UGameplayStatics::PlaySound2D(this, HitLayerSound, HitLayerVolume);
+}
+
 void APlayerBase::HandleHitMontageEnded(UAnimMontage* Montage, bool bInterrupted)
 {
 	if (Montage == HitReactMontage) FinishHitReaction();
@@ -1604,6 +1635,16 @@ void APlayerBase::PlayDeathPresentation(FName ReactionSection)
 {
 	if (bDeathPresentationStarted) return;
 	bDeathPresentationStarted = true;
+	if (IsLocallyControlled())
+	{
+		if (DeathSound) DeathSoundComponent = UGameplayStatics::SpawnSound2D(this, DeathSound);
+		bDeathImpactPending = false;
+		if (DeathImpactSound)
+		{
+			const float Delay = DeathImpactDelay / FMath::Max(0.01f, DeathPlayRate);
+			GetWorldTimerManager().SetTimer(DeathImpactTimer, this, &APlayerBase::PlayDeathImpactSound, FMath::Max(0.01f, Delay), false);
+		}
+	}
 	StopJumping();
 	GetCharacterMovement()->StopMovementImmediately();
 	// Keep gravity active so an airborne death can settle on the ground.
@@ -1622,6 +1663,18 @@ void APlayerBase::PlayDeathPresentation(FName ReactionSection)
 			Instance->bEnableAutoBlendOut = false;
 		}
 	}
+}
+
+void APlayerBase::PlayDeathImpactSound()
+{
+	if (!bDeathPresentationStarted || !DeathImpactSound) return;
+	// Still in the air: Landed plays it when the body reaches the floor.
+	if (!GetCharacterMovement()->IsMovingOnGround())
+	{
+		bDeathImpactPending = true;
+		return;
+	}
+	UGameplayStatics::PlaySound2D(this, DeathImpactSound);
 }
 
 void APlayerBase::HandleDeath(FName ReactionSection)
@@ -1746,6 +1799,10 @@ void APlayerBase::ResetRespawnPresentation()
 	CancelCarryTransition();
 	HeldWeaponChoices.Reset();
 	bDeathPresentationStarted = false;
+	GetWorldTimerManager().ClearTimer(DeathImpactTimer);
+	bDeathImpactPending = false;
+	if (UAudioComponent* Sound = DeathSoundComponent.Get()) Sound->FadeOut(0.3f, 0.0f);
+	DeathSoundComponent.Reset();
 	if (UAnimInstance* Anim = GetMesh()->GetAnimInstance()) Anim->StopAllMontages(0.0f);
 	ActionValueY = DropValue = 0.0f;
 	bHasDoubleJumped = bMovingHorizontally = false;

@@ -39,11 +39,33 @@ void ULoadingTransitionSubsystem::Deinitialize()
  if(Overlay && GetGameInstance()->GetGameViewportClient()) GetGameInstance()->GetGameViewportClient()->RemoveViewportWidgetContent(Overlay.ToSharedRef());
  Overlay.Reset(); Super::Deinitialize();
 }
+void ULoadingTransitionSubsystem::RemoveOverlay()
+{
+ if(Overlay && GetGameInstance()->GetGameViewportClient()) GetGameInstance()->GetGameViewportClient()->RemoveViewportWidgetContent(Overlay.ToSharedRef());
+ Overlay.Reset();
+}
+void ULoadingTransitionSubsystem::ShowRespawnWait()
+{
+ if(bRespawnOverlay || bLoading) return;
+ bRespawnOverlay=true; PreLoad(TEXT(""));
+ // "불러오는 중…" 표시가 1초 뒤에야 나오는 기존 동작은 짧은 대기에서는 보이지 않으므로 처음부터 보이게 한다.
+ Started=FPlatformTime::Seconds()-1.0;
+}
+void ULoadingTransitionSubsystem::FinishRespawnWait(APlayerBase* Player)
+{
+ if(!bRespawnOverlay) return;
+ bRespawnOverlay=false; bArrived=true;
+ // 부활한 자리에서 바닥이 확인될 때까지 플레이어를 붙잡아 두고(최대 12초) 로딩 화면을 유지한다.
+ bWaitingForSpawnFloor=true; bRespawnFloorWait=true; RespawnFloorStart=FPlatformTime::Seconds();
+ LockSpawnMovement(Player);
+}
 void ULoadingTransitionSubsystem::PreLoad(const FString& Map)
 {
  if(IsRunningDedicatedServer()) return;
+ // 이미 떠 있는 로딩 화면(부활 대기 중)이 있으면 겹쳐 남지 않게 먼저 걷는다.
+ RemoveOverlay();
  Started=FPlatformTime::Seconds(); ReadyAt=IndicatorAt=0; bLoading=true; bArrived=bFading=false;
- bWaitingForSpawnFloor=bLoggedMissingSpawnFloor=false;
+ bWaitingForSpawnFloor=bLoggedMissingSpawnFloor=false; bRespawnFloorWait=false;
  LockedSpawnPlayer.Reset();
  Overlay=SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush"))
  .BorderBackgroundColor_Lambda([this](){return FLinearColor(0,0,0,bFading ? 1.f-FMath::Clamp(float((FPlatformTime::Seconds()-ReadyAt)/0.5),0.f,1.f):1.f);})
@@ -115,10 +137,17 @@ bool ULoadingTransitionSubsystem::Tick(float Delta)
   if(Elapsed>=DeathDelay+0.4f)
   {
    auto* Saves=GetGameInstance()->GetSubsystem<UProgressSaveSubsystem>(); if(Saves->IsSaving()) return true;
-   // 방 스트리밍이 켜져 있으면 체크포인트가 있던 방이 올라올 때까지 암전 상태로 기다린다(최대 10초). 안 기다리면 빈 공간에 부활한다.
+   // 방 스트리밍이 켜져 있으면 체크포인트가 있던 방이 올라오고 바닥 충돌이 확인될 때까지 로딩 화면을 띄우고 기다린다(최대 10초).
+   // 안 기다리면 아직 없는 맵에 끼거나 빈 공간으로 떨어진다.
    URoomStreamingSubsystem* Rooms=GetGameInstance()->GetWorld()?GetGameInstance()->GetWorld()->GetSubsystem<URoomStreamingSubsystem>():nullptr;
-   if(Rooms && Saves->GetWorkingProgress() && Elapsed<DeathDelay+0.4f+10.f
-    && !Rooms->PrepareRegionForRespawn(Saves->GetWorkingProgress()->CheckpointRegionId)) return true;
+   const UProgressSaveGame* RespawnProgress=Saves->GetWorkingProgress();
+   if(Rooms && RespawnProgress && Elapsed<DeathDelay+0.4f+10.f
+    && !Rooms->PrepareRegionForRespawn(RespawnProgress->CheckpointRegionId,RespawnProgress->RespawnTransform.GetLocation(),RespawnProgress->RespawnGravity))
+   {
+    // 기존 로딩 화면은 "불러오는 중…" 표시를 1초 뒤에야 보여 주는데, 방이 금방 올라오면 검은 화면만 보이므로 처음부터 보이게 한다.
+    if(!bRespawnOverlay){bRespawnOverlay=true; PreLoad(TEXT("")); Started=Now-1.0;}
+    return true;
+   }
    bDeath=false; bLoading=true;
    const bool bRestoredInPlace=Saves->RestoreCheckpointInPlace(Player);
    if(Rooms) Rooms->ReleaseRegionHold();
@@ -127,12 +156,15 @@ bool ULoadingTransitionSubsystem::Tick(float Delta)
     if(PC) if(auto* Camera=Cast<ASideScrollingCameraManager>(PC->PlayerCameraManager)) Camera->CurrentZoom=OriginalZoom;
     if(auto* Arm=Player->FindComponentByClass<USpringArmComponent>()) Arm->TargetArmLength=OriginalArm;
     else if(auto* Camera=Player->FindComponentByClass<UCameraComponent>()){auto Location=Camera->GetRelativeLocation();Location.Y=OriginalArm;Camera->SetRelativeLocation(Location);}
-    // Reuse the overlay/fade without scheduling another map load.
-    PreLoad(TEXT("")); bArrived=true;
+    // Reuse the overlay/fade without scheduling another map load. 대기 중에 이미 띄운 로딩 화면은 그대로 쓴다.
+    if(!bRespawnOverlay) PreLoad(TEXT(""));
+    bRespawnOverlay=false; bArrived=true;
+    // 방 스트리밍 중에는 부활한 자리에서 바닥이 확인될 때까지 플레이어를 붙잡아 둔다(최대 12초).
+    if(Rooms){bWaitingForSpawnFloor=true; bRespawnFloorWait=true; RespawnFloorStart=Now; LockSpawnMovement(Player);}
     if(PC && PC->PlayerCameraManager) PC->PlayerCameraManager->SetManualCameraFade(0,FLinearColor::Black,false);
    }
-   else if(Saves->ReloadActiveProgress()) UGameplayStatics::OpenLevel(GetGameInstance(),FName(*Saves->GetWorkingProgress()->MapPackage));
-   else {bLoading=false; if(PC) if(auto* Camera=Cast<ASideScrollingCameraManager>(PC->PlayerCameraManager)) Camera->CurrentZoom=OriginalZoom; if(PC && PC->PlayerCameraManager) PC->PlayerCameraManager->SetManualCameraFade(0,FLinearColor::Black,false); if(auto* Arm=Player->FindComponentByClass<USpringArmComponent>()) Arm->TargetArmLength=OriginalArm; Player->RespawnAtCheckpoint(); UE_LOG(LogTemp,Error,TEXT("Checkpoint load failed; used in-memory respawn"));}
+   else if(Saves->ReloadActiveProgress()) {bRespawnOverlay=false; UGameplayStatics::OpenLevel(GetGameInstance(),FName(*Saves->GetWorkingProgress()->MapPackage));}
+   else {bRespawnOverlay=false; RemoveOverlay(); bLoading=false; if(PC) if(auto* Camera=Cast<ASideScrollingCameraManager>(PC->PlayerCameraManager)) Camera->CurrentZoom=OriginalZoom; if(PC && PC->PlayerCameraManager) PC->PlayerCameraManager->SetManualCameraFade(0,FLinearColor::Black,false); if(auto* Arm=Player->FindComponentByClass<USpringArmComponent>()) Arm->TargetArmLength=OriginalArm; Player->RespawnAtCheckpoint(); UE_LOG(LogTemp,Error,TEXT("Checkpoint load failed; used in-memory respawn"));}
    return true;
   }
  }
@@ -152,7 +184,9 @@ bool ULoadingTransitionSubsystem::Tick(float Delta)
   constexpr float SpawnFloorDistance=600.f;
   Movement->ComputeFloorDist(Player->GetActorLocation(), SpawnFloorDistance, SpawnFloorDistance,
    Floor, Player->GetCapsuleComponent()->GetScaledCapsuleRadius());
-  if(!Floor.IsWalkableFloor())
+  // 부활 뒤 바닥 확인은 12초까지만 기다리고, 그래도 없으면 플레이어를 풀어 준다(영원히 갇히지 않게).
+  const bool bGiveUpRespawnFloor=bRespawnFloorWait && Now-RespawnFloorStart>=12.0;
+  if(!Floor.IsWalkableFloor() && !bGiveUpRespawnFloor)
   {
    if(!bLoggedMissingSpawnFloor && Now-Started>=15.0)
    {
@@ -162,7 +196,7 @@ bool ULoadingTransitionSubsystem::Tick(float Delta)
    }
    return true;
   }
-  bWaitingForSpawnFloor=false;
+  bWaitingForSpawnFloor=false; bRespawnFloorWait=false;
   if(LockedSpawnPlayer.Get()==Player) Movement->SetDefaultMovementMode();
   LockedSpawnPlayer.Reset();
  }

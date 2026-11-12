@@ -183,6 +183,8 @@ public:
     UFUNCTION(BlueprintPure, Category="Player|Checkpoint") bool IsRespawnProtected() const;
 
 	bool RestoreCheckpointProgress(const UProgressSaveGame* Save);
+	/** 저장된 체크포인트의 리전을 불러올 때 쓴다. */
+	void SetCheckpointRegionId(FName RegionId) { CheckpointRegionId = RegionId; }
 
 	virtual void FellOutOfWorld(const UDamageType& DamageType) override;
 
@@ -415,6 +417,11 @@ private:
 	FTransform CheckpointTransform;
 	FVector CheckpointGravity = FVector(0, 0, -1);
 	bool bHasCheckpoint = false;
+	/** 체크포인트를 잡았을 때 있던 리전. 방 스트리밍이 켜져 있으면 부활 전에 그 방이 올라와 있어야 한다. 비어 있으면 기다리지 않는다. */
+	FName CheckpointRegionId;
+	/** 부활을 방 로드 때문에 미룬 상태인가, 그리고 처음 미룬 시각(10초가 지나면 기다리지 않고 부활). */
+	bool bRespawnWaitingForRooms = false;
+	double RespawnRoomWaitStart = -1.0;
 	bool bCheckpointGravityReversed = false;
 	FTimerHandle RespawnTimer;
 	void TryAutoRespawn();

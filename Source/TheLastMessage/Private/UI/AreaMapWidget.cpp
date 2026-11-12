@@ -1,6 +1,7 @@
 #include "UI/AreaMapWidget.h"
 #include "UI/FactoryCursor.h"
 #include "UI/FactoryUIStyle.h"
+#include "UI/FactoryUIAssetSettings.h"
 #include "Checkpoint/PlayerCheckpoint.h"
 #include "EngineUtils.h"
 #include "Map/AreaMapComponent.h"
@@ -16,23 +17,16 @@
 #include "Fonts/FontMeasure.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Rendering/SlateRenderer.h"
-#include "UObject/ConstructorHelpers.h"
 #include "Styling/CoreStyle.h"
 #include "InputCoreTypes.h"
-
-UAreaMapWidget::UAreaMapWidget(const FObjectInitializer& ObjectInitializer)
-	: Super(ObjectInitializer)
-{
-	static ConstructorHelpers::FObjectFinder<UFont> UI(TEXT("/Game/Main/UI/Fonts/F_TLM_UI"));
-	static ConstructorHelpers::FObjectFinder<UFont> Title(TEXT("/Game/Main/UI/Fonts/F_TLM_Title"));
-	MapFont = UI.Object;
-	MapTitleFont = Title.Object;
-}
 
 bool UAreaMapWidget::OpenMap(UAreaMapComponent* Source, const UInputAction* Action)
 {
 	APlayerController* PC = GetOwningPlayer();
 	if (!PC || !PC->GetPawn() || !Source || UGameplayStatics::IsGamePaused(this)) return false;
+	const auto* Assets = GetDefault<UFactoryUIAssetSettings>();
+	MapFont = Assets->BodyFont.LoadSynchronous();
+	MapTitleFont = Assets->TitleFont.LoadSynchronous();
 	MapSource = Source; TravelStatus=FText::GetEmpty();
 	Source->LoadExploration(); Source->RefreshLayout(); Source->ExploreAt(PC->GetPawn()->GetActorLocation());
 	Source->RevealFromView(PC->GetPawn()->GetActorLocation());

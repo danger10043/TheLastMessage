@@ -10,14 +10,13 @@
 #include "Engine/World.h"
 #include "GAS/CombatAttributeSet.h"
 #include "GAS/WeaponGameplayTags.h"
-#include "UObject/ConstructorHelpers.h"
+#include "DataAsset/GameplayAssetSettings.h"
 #include "UObject/StrongObjectPtr.h"
 
 UGA_CoreAssistStrikeArm::UGA_CoreAssistStrikeArm()
 {
-	static ConstructorHelpers::FClassFinder<ACoreAssistAfterimage> AfterimagePreset(
-		TEXT("/Game/Main/Blueprints/Core/Effects/BP_CoreAssistAfterimage"));
-	AfterimageClass = AfterimagePreset.Class ? AfterimagePreset.Class.Get() : ACoreAssistAfterimage::StaticClass();
+	UClass* AfterimagePreset = GetDefault<UGameplayAssetSettings>()->CoreAssistAfterimage.LoadSynchronous();
+	AfterimageClass = AfterimagePreset ? AfterimagePreset : ACoreAssistAfterimage::StaticClass();
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
 	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::ServerOnly;
 	NetSecurityPolicy = EGameplayAbilityNetSecurityPolicy::ServerOnly;

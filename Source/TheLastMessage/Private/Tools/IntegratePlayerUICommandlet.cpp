@@ -212,7 +212,12 @@ bool SaveFactoryLayout()
 {
 	for (const FactoryUI::EPlate State : {FactoryUI::EPlate::Normal, FactoryUI::EPlate::Selected, FactoryUI::EPlate::Screen})
 	{
-		const FString Path = FactoryUI::PlatePath(State);
+		const FString Path = FactoryUI::GetPlateTexture(State).ToSoftObjectPath().GetLongPackageName();
+		if (!FPackageName::IsValidLongPackageName(Path))
+		{
+			UE_LOG(LogTemp, Error, TEXT("Configure the plate texture in Factory UI Assets before generating the UI layout."));
+			return false;
+		}
 		TArray<FColor> Pixels;
 		FactoryUI::MakePlatePixels(State, Pixels);
 		if (!SaveUITexture(Path, 64, Pixels, true)) return false;

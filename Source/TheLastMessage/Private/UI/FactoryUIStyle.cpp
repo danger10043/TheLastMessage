@@ -6,14 +6,14 @@ namespace FactoryUI
 {
 constexpr int32 PlateSize = 64;
 
-UTexture2D* LoadPlateTexture(EPlate State)
+const TSoftObjectPtr<UTexture2D>& GetPlateTexture(EPlate State)
 {
 	const auto* Assets = GetDefault<UFactoryUIAssetSettings>();
 	switch (State)
 	{
-	case EPlate::Selected: return Assets->SelectedPlate.LoadSynchronous();
-	case EPlate::Screen: return Assets->ScreenPlate.LoadSynchronous();
-	default: return Assets->Plate.LoadSynchronous();
+	case EPlate::Selected: return Assets->SelectedPlate;
+	case EPlate::Screen: return Assets->ScreenPlate;
+	default: return Assets->Plate;
 	}
 }
 
@@ -51,7 +51,7 @@ FSlateBrush Chamfer(EPlate State)
 	constexpr int32 Size = PlateSize;
 	static TWeakObjectPtr<UTexture2D> Textures[static_cast<int32>(EPlate::Count)];
 	auto& Cached = Textures[static_cast<int32>(State)];
-	if (!Cached.IsValid()) Cached = LoadPlateTexture(State);
+	if (!Cached.IsValid()) Cached = GetPlateTexture(State).LoadSynchronous();
 	if (!Cached.IsValid())
 	{
 		TArray<FColor> Pixels;

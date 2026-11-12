@@ -80,6 +80,10 @@ struct FPlayerMovementAudio
 	UPROPERTY(EditAnywhere, Category="Footsteps")
 	TObjectPtr<USoundBase> LandingSound;
 
+	/** Shared by the ground jump and the double jump. */
+	UPROPERTY(EditAnywhere, Category="Footsteps")
+	TObjectPtr<USoundBase> JumpSound;
+
 	UPROPERTY(EditAnywhere, Category="Grapple")
 	TArray<TObjectPtr<USoundBase>> GrappleLaunchSounds;
 

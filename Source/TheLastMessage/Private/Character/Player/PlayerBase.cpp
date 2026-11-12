@@ -91,6 +91,7 @@ APlayerBase::APlayerBase()
 		MovementAudio.FootstepStartTimes = Defaults->FootstepStartTimes;
 		MovementAudio.FootstepDuration = Defaults->FootstepDuration;
 		MovementAudio.LandingSound = Defaults->LandingSound.LoadSynchronous();
+		MovementAudio.JumpSound = Defaults->JumpSound.LoadSynchronous();
 		for (const auto& Sound : Defaults->GrappleLaunchSounds)
 		{
 			if (USoundBase* Loaded = Sound.LoadSynchronous())
@@ -477,6 +478,10 @@ void APlayerBase::OnJumped_Implementation()
 		bHasDoubleJumped = true;
 	}
 	Super::OnJumped_Implementation();
+	if (IsLocallyControlled() && MovementAudio.JumpSound)
+	{
+		UGameplayStatics::PlaySound2D(this, MovementAudio.JumpSound);
+	}
 }
 
 void APlayerBase::UpdateFootstepAudio(float DeltaSeconds)

@@ -38,6 +38,9 @@ public:
 	TSoftObjectPtr<USoundBase> LandingSound;
 
 	UPROPERTY(Config)
+	TSoftObjectPtr<USoundBase> JumpSound;
+
+	UPROPERTY(Config)
 	TArray<TSoftObjectPtr<USoundBase>> GrappleLaunchSounds;
 
 	UPROPERTY(Config)

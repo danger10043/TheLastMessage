@@ -13,7 +13,6 @@ class THELASTMESSAGE_API UAreaMapWidget : public UUserWidget
 {
 	GENERATED_BODY()
 public:
-	UAreaMapWidget(const FObjectInitializer& ObjectInitializer);
 	bool OpenMap(UAreaMapComponent* Source, const UInputAction* Action);
 	UFUNCTION(BlueprintCallable, Category="Area Map") void CloseMap();
 	void SetMapSource(UAreaMapComponent* Source) { MapSource = Source; }

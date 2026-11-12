@@ -173,6 +173,10 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "Junker|Melee")
 	TObjectPtr<UNiagaraSystem> MeleeHitEffect;
 
+	/** 주먹이 닿았을 때 재생할 소리. 맞은 대상의 위치에서 재생된다. 비워 두면 재생하지 않는다. */
+	UPROPERTY(EditDefaultsOnly, Category = "Junker|Sound")
+	TObjectPtr<USoundBase> MeleeHitSound;
+
 	// ---- 후퇴 ----
 
 	/** 후퇴 사격 중 뒤로 물러나는 최대 거리. 이 거리만큼 물러나면 그 자리에서 사격만 계속한다. */

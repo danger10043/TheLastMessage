@@ -2,6 +2,7 @@
 #include "Character/Player/PlayerBase.h"
 #include "Save/ProgressSaveSubsystem.h"
 #include "Save/ProgressSaveGame.h"
+#include "Map/RoomStreamingSubsystem.h"
 #include "Engine/GameInstance.h"
 #include "Engine/GameViewportClient.h"
 #include "Engine/World.h"
@@ -21,6 +22,7 @@
 #include "Widgets/Text/STextBlock.h"
 #include "Styling/CoreStyle.h"
 #include "UObject/UObjectGlobals.h"
+#include "UObject/Package.h"
 void ULoadingTransitionSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
  Super::Initialize(Collection);
@@ -113,8 +115,14 @@ bool ULoadingTransitionSubsystem::Tick(float Delta)
   if(Elapsed>=DeathDelay+0.4f)
   {
    auto* Saves=GetGameInstance()->GetSubsystem<UProgressSaveSubsystem>(); if(Saves->IsSaving()) return true;
+   // 방 스트리밍이 켜져 있으면 체크포인트가 있던 방이 올라올 때까지 암전 상태로 기다린다(최대 10초). 안 기다리면 빈 공간에 부활한다.
+   URoomStreamingSubsystem* Rooms=GetGameInstance()->GetWorld()?GetGameInstance()->GetWorld()->GetSubsystem<URoomStreamingSubsystem>():nullptr;
+   if(Rooms && Saves->GetWorkingProgress() && Elapsed<DeathDelay+0.4f+10.f
+    && !Rooms->PrepareRegionForRespawn(Saves->GetWorkingProgress()->CheckpointRegionId)) return true;
    bDeath=false; bLoading=true;
-   if(Saves->RestoreCheckpointInPlace(Player))
+   const bool bRestoredInPlace=Saves->RestoreCheckpointInPlace(Player);
+   if(Rooms) Rooms->ReleaseRegionHold();
+   if(bRestoredInPlace)
    {
     if(PC) if(auto* Camera=Cast<ASideScrollingCameraManager>(PC->PlayerCameraManager)) Camera->CurrentZoom=OriginalZoom;
     if(auto* Arm=Player->FindComponentByClass<USpringArmComponent>()) Arm->TargetArmLength=OriginalArm;

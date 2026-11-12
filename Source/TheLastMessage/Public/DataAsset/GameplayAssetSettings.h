@@ -57,4 +57,16 @@ public:
 
 	UPROPERTY(Config)
 	float GrappleReleaseVolume = 1.5f;
+
+	UPROPERTY(Config)
+	TArray<TSoftObjectPtr<USoundBase>> HitSounds;
+
+	UPROPERTY(Config)
+	TSoftObjectPtr<USoundBase> HitLayerSound;
+
+	UPROPERTY(Config)
+	TSoftObjectPtr<USoundBase> DeathSound;
+
+	UPROPERTY(Config)
+	TSoftObjectPtr<USoundBase> DeathImpactSound;
 };

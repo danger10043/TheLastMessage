@@ -145,6 +145,8 @@ void UCombatAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCall
 
 	bool bCheckDeath = false;
 	bool bReceivedDamage = false;
+	// A guarded hit uses the guard sounds, including a guard break that lets some damage through.
+	bool bGuardResponded = false;
 
 	if (Data.EvaluatedData.Attribute == GetIncomingDamageAttribute())
 	{
@@ -168,6 +170,7 @@ void UCombatAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCall
 			// 에너지가 없어 하나도 막지 못해도 가드 중이었다면 알려 가드 브레이크로 처리하게 한다.
 			if (BlockedDamage > 0.0f || ASC->HasMatchingGameplayTag(CoreGameplayTags::State_Guarding))
 			{
+				bGuardResponded = true;
 				FGameplayEventData Payload;
 				Payload.EventTag = CoreGameplayTags::Event_GuardBlocked;
 				Payload.Instigator = Data.EffectSpec.GetContext().GetInstigator();
@@ -202,6 +205,7 @@ void UCombatAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCall
 	}
 	else if (bReceivedDamage && GetHealth() > 0.0f && Player)
 	{
+		if (!bGuardResponded) Player->MulticastDamageSound();
 		Player->HandleHitReaction(Player->GetDamageReactionSection(Data.EffectSpec.GetContext()));
 	}
 }

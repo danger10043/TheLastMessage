@@ -196,9 +196,20 @@ int32 UAreaMapWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geome
 	for (const FAreaMapRoom& Room : Rooms)
 		if (MapSource->IsRoomShown(Room.Id)) DrawFog(Room);
 	const auto Measure = FSlateApplication::Get().GetRenderer()->GetFontMeasureService();
-	for (const FAreaMapRoom& Room : Rooms)
+	// 같은 ID의 region이 여러 조각이어도 이름은 한 번만 표시한다. 가장 큰 조각의 중앙에 둔다.
+	TMap<FName, int32> LabelRoomIndex;
+	for (int32 Index = 0; Index < Rooms.Num(); ++Index)
 	{
+		const FAreaMapRoom& Room = Rooms[Index];
 		if (Room.bAutomatic || Room.Name.IsEmpty() || !MapSource->IsExplored(Room.Id)) continue;
+		int32& Chosen = LabelRoomIndex.FindOrAdd(Room.Id, Index);
+		if (Room.Bounds.GetArea() > Rooms[Chosen].Bounds.GetArea()) Chosen = Index;
+	}
+	for (int32 Index = 0; Index < Rooms.Num(); ++Index)
+	{
+		const FAreaMapRoom& Room = Rooms[Index];
+		const int32* Chosen = LabelRoomIndex.Find(Room.Id);
+		if (!Chosen || *Chosen != Index) continue;
 		const FVector2D Center = ToMap(Room.Bounds.GetCenter(), Size);
 		const double AvailableWidth = Room.Bounds.GetSize().X * GetMapScale(Size) - 8;
 		FSlateFontInfo Font = MapTitleFont ? FSlateFontInfo(MapTitleFont, 15, TEXT("Regular")) : FCoreStyle::GetDefaultFontStyle("Regular", 15);

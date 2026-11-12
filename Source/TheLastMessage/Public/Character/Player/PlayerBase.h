@@ -62,6 +62,47 @@ struct FPlayerDeathPresentationState
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnPlayerDiedSignature, APlayerBase*, Player);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnPlayerWeaponDataChanged);
 
+USTRUCT(BlueprintType)
+struct FPlayerMovementAudio
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category="Footsteps")
+	TObjectPtr<USoundBase> FootstepSound;
+
+	UPROPERTY(EditAnywhere, Category="Footsteps", meta=(ClampMin="0.0"))
+	TArray<float> FootstepStartTimes;
+
+	/** Set to zero to play a standalone footstep sample to completion. */
+	UPROPERTY(EditAnywhere, Category="Footsteps", meta=(ClampMin="0.0"))
+	float FootstepDuration = 0.0f;
+
+	UPROPERTY(EditAnywhere, Category="Footsteps")
+	TObjectPtr<USoundBase> LandingSound;
+
+	/** Shared by the ground jump and the double jump. */
+	UPROPERTY(EditAnywhere, Category="Footsteps")
+	TObjectPtr<USoundBase> JumpSound;
+
+	UPROPERTY(EditAnywhere, Category="Grapple")
+	TArray<TObjectPtr<USoundBase>> GrappleLaunchSounds;
+
+	UPROPERTY(EditAnywhere, Category="Grapple")
+	TObjectPtr<USoundBase> GrappleAttachSound;
+
+	UPROPERTY(EditAnywhere, Category="Grapple")
+	TObjectPtr<USoundBase> GrappleReleaseSound;
+
+	UPROPERTY(EditAnywhere, Category="Grapple", meta=(ClampMin="0.0"))
+	float GrappleLaunchVolume = 0.8f;
+
+	UPROPERTY(EditAnywhere, Category="Grapple", meta=(ClampMin="0.0"))
+	float GrappleAttachVolume = 1.4f;
+
+	UPROPERTY(EditAnywhere, Category="Grapple", meta=(ClampMin="0.0"))
+	float GrappleReleaseVolume = 1.5f;
+};
+
 /** Player GAS foundation. Movement remains in ASideScrollingCharacter. */
 UCLASS()
 class THELASTMESSAGE_API APlayerBase : public ASideScrollingCharacter, public IAbilitySystemInterface
@@ -69,6 +110,8 @@ class THELASTMESSAGE_API APlayerBase : public ASideScrollingCharacter, public IA
 	GENERATED_BODY()
 
 public:
+	const FPlayerMovementAudio& GetMovementAudio() const { return MovementAudio; }
+
 	/** Successful pickup/drop presentation; forced cleanup does not play the drop motion. */
 	UFUNCTION(NetMulticast, Reliable)
 	void PlayCarryTransition(bool bStarting, bool bWideCarry);
@@ -183,6 +226,8 @@ public:
     UFUNCTION(BlueprintPure, Category="Player|Checkpoint") bool IsRespawnProtected() const;
 
 	bool RestoreCheckpointProgress(const UProgressSaveGame* Save);
+	/** 저장된 체크포인트의 리전을 불러올 때 쓴다. */
+	void SetCheckpointRegionId(FName RegionId) { CheckpointRegionId = RegionId; }
 
 	virtual void FellOutOfWorld(const UDamageType& DamageType) override;
 
@@ -399,6 +444,18 @@ protected:
 	FTimerHandle EnergyRechargeTimerHandle;
 
 private:
+	UPROPERTY(EditDefaultsOnly, Category="Player|Audio", meta=(ShowOnlyInnerProperties))
+	FPlayerMovementAudio MovementAudio;
+
+	void UpdateFootstepAudio(float DeltaSeconds);
+	void PlayFootstepAudio();
+	float TimeSinceFootstep = 0.0f;
+	FVector PreviousStepDirection = FVector::ZeroVector;
+	float PreviousFootSeparation = 0.0f;
+	int32 FootSeparationTrend = 0;
+	int32 LastPlantedFoot = 0;
+	int32 LastFootstepSample = INDEX_NONE;
+
 	void ScheduleProgressRestore();
 	UFUNCTION(Server, Reliable)
 	void ServerAssignWeaponChoice(int32 Index, EWeaponSlot Slot);
@@ -415,6 +472,11 @@ private:
 	FTransform CheckpointTransform;
 	FVector CheckpointGravity = FVector(0, 0, -1);
 	bool bHasCheckpoint = false;
+	/** 체크포인트를 잡았을 때 있던 리전. 방 스트리밍이 켜져 있으면 부활 전에 그 방이 올라와 있어야 한다. 비어 있으면 기다리지 않는다. */
+	FName CheckpointRegionId;
+	/** 부활을 방 로드 때문에 미룬 상태인가, 그리고 처음 미룬 시각(10초가 지나면 기다리지 않고 부활). */
+	bool bRespawnWaitingForRooms = false;
+	double RespawnRoomWaitStart = -1.0;
 	bool bCheckpointGravityReversed = false;
 	FTimerHandle RespawnTimer;
 	void TryAutoRespawn();

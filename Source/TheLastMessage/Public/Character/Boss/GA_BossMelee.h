@@ -7,6 +7,7 @@
 
 class UAnimMontage;
 class UAbilityTask_PlayMontageAndWait;
+class USoundBase;
 
 UCLASS()
 class THELASTMESSAGE_API UGA_BossMelee : public UGA_BossAttackBase
@@ -29,6 +30,19 @@ public:
         bool bReplicateEndAbility, bool bWasCancelled) override;
 
 protected:
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|Melee|Audio")
+    TObjectPtr<USoundBase> Phase12AttackSound;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|Melee|Audio")
+    TObjectPtr<USoundBase> Phase3AttackSound;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|Melee|Audio")
+    TObjectPtr<USoundBase> Phase12PlayerHitSound;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|Melee|Knockback",
+        meta = (ClampMin = "0.0", Units = "cm/s"))
+    float KnockbackStrength = 700.f;
+
     UPROPERTY(EditDefaultsOnly, Category = "Boss|Melee")
     TObjectPtr<UAnimMontage> AttackMontage;
 

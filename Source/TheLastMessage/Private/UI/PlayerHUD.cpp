@@ -16,10 +16,13 @@
 #include "Engine/GameInstance.h"
 #include "Engine/GameViewportClient.h"
 #include "Kismet/GameplayStatics.h"
+#include "GameFramework/WorldSettings.h"
 #include "Widgets/SViewport.h"
 #include "Map/AreaMapComponent.h"
 #include "Engine/Font.h"
-#include "UObject/ConstructorHelpers.h"
+#include "Engine/Texture2D.h"
+#include "Engine/Engine.h"
+#include "UI/FactoryUIAssetSettings.h"
 #include "UI/FactoryUIStyle.h"
 #include "Fonts/FontMeasure.h"
 #include "Framework/Application/SlateApplication.h"
@@ -30,13 +33,12 @@ APlayerHUD::APlayerHUD()
 	PrimaryActorTick.bCanEverTick = true;
 	PrimaryActorTick.bStartWithTickEnabled = true;
 	SaveNotificationClass = USaveNotificationWidget::StaticClass();
-	static ConstructorHelpers::FObjectFinder<UFont> TitleFont(TEXT("/Game/Main/UI/Fonts/F_TLM_Title"));
-	RoomTitleFont = TitleFont.Object;
 }
 
 void APlayerHUD::BeginPlay()
 {
 	Super::BeginPlay();
+	RoomTitleFont = GetDefault<UFactoryUIAssetSettings>()->TitleFont.LoadSynchronous();
 	EnsureWidgets();
 	UpdatePlayerUI();
 }
@@ -86,7 +88,6 @@ void APlayerHUD::DrawHUD()
 {
 	Super::DrawHUD();
 	DrawDamageVignette();
-	DrawGrappleIndicator();
 	DrawRoomTitle();
 }
 
@@ -195,94 +196,35 @@ void APlayerHUD::DrawRoomTitle()
 
 bool APlayerHUD::ShouldUseGrappleCursor() const
 {
+	// 지금 클릭하면 훅이 실제로 걸리는 경우에만 청록 커서. 커서 조회는 프레임당 여러 번 올 수 있어 캐시한다.
+	struct FGrappleCursorCache { TWeakObjectPtr<const APlayerHUD> Owner; uint64 Frame = MAX_uint64; double NextTime = 0; bool bReady = false; };
+	static FGrappleCursorCache Cache;
+	if (!ShouldUseGameplayCursor()) return false;
 	const APlayerController* PC = GetOwningPlayerController();
 	const APlayerBase* Player = PC ? Cast<APlayerBase>(PC->GetPawn()) : nullptr;
 	const UGrapplingHookComponent* Grapple = Player ? Player->FindComponentByClass<UGrapplingHookComponent>() : nullptr;
+	if (!Grapple) return false;
+	const UWorld* World = GetWorld();
+	const double Now = World->GetRealTimeSeconds();
+	if (Cache.Owner.Get() == this && (Cache.Frame == GFrameCounter || Now < Cache.NextTime)) return Cache.bReady;
+	// 충돌이 준비된 맵은 매 프레임, 숨은 장식 메시를 임시로 켜야 하는 맵은 비용이 커서 0.1초 간격
+	const bool bAuthoredCollision = World->GetWorldSettings()->ActorHasTag(TEXT("GrappleCollisionAuthored"));
+	Cache.Owner = this; Cache.Frame = GFrameCounter; Cache.NextTime = bAuthoredCollision ? 0.0 : Now + 0.1;
+	Cache.bReady = Grapple->CanGrappleAt(Player->GetAimTargetLocation());
+	return Cache.bReady;
+}
+
+bool APlayerHUD::ShouldUseGameplayCursor() const
+{
+	const APlayerController* PC = GetOwningPlayerController();
+	const APlayerBase* Player = PC ? Cast<APlayerBase>(PC->GetPawn()) : nullptr;
 	UGameViewportClient* Viewport = GetWorld() ? GetWorld()->GetGameViewport() : nullptr;
 	const TSharedPtr<SViewport> ViewportWidget = Viewport ? Viewport->GetGameViewportWidget() : nullptr;
 	// Interactive menus keep the normal cursor; the HUD itself does not intercept mouse hits.
 	return bShowHUD && PC && PC->IsLocalController() && PC->bShowMouseCursor
-		&& Player && !Player->IsDead() && Grapple && Grapple->IsGrappleUnlocked()
+		&& Player && !Player->IsDead()
 		&& !UGameplayStatics::IsGamePaused(this) && Viewport && !Viewport->IgnoreInput()
-		&& ViewportWidget.IsValid() && ViewportWidget->IsDirectlyHovered();
-}
-
-void APlayerHUD::DrawGrappleIndicator()
-{
-	APlayerController* PC = GetOwningPlayerController();
-	const APlayerBase* Player = PC ? Cast<APlayerBase>(PC->GetPawn()) : nullptr;
-	const UGrapplingHookComponent* Grapple = Player ? Player->FindComponentByClass<UGrapplingHookComponent>() : nullptr;
-	if (!Canvas || !ShouldUseGrappleCursor())
-	{
-		bGrappleWasCoolingDown = false;
-		GrappleReadyFlashEnd = 0;
-		return;
-	}
-	FVector2D Aim;
-	if (!PC->GetMousePosition(Aim.X, Aim.Y)) return;
-	if (const ULocalPlayer* LocalPlayer = PC->GetLocalPlayer())
-	{
-		FVector2D ViewportSize;
-		GetWorld()->GetGameViewport()->GetViewportSize(ViewportSize);
-		Aim -= LocalPlayer->Origin * ViewportSize;
-	}
-	const float Scale = FMath::Clamp(Canvas->ClipY / 1080.0f, 0.65f, 2.0f);
-	const float Radius = GrappleIndicatorRadius * Scale;
-	const FVector2D Center = Aim;
-	const bool bCoolingDown = Grapple->GetCooldownRemaining() > 0;
-	const float Now = GetWorld()->GetTimeSeconds();
-	if (bGrappleWasCoolingDown && !bCoolingDown) GrappleReadyFlashEnd = Now + 0.22f;
-	bGrappleWasCoolingDown = bCoolingDown;
-	const bool bActive = Grapple->HasGrappleAnchor();
-	const float Flash = FMath::Clamp((GrappleReadyFlashEnd - Now) / 0.22f, 0.0f, 1.0f);
-	const FLinearColor Ready(0.2f, 0.85f, 1.0f);
-	const FLinearColor Color = Flash > 0 ? FLinearColor::LerpUsingHSV(Ready, FLinearColor::White, Flash)
-		: bActive ? FLinearColor(0.55f, 1.0f, 1.0f) : bCoolingDown ? FLinearColor(0.35f, 0.42f, 0.48f, 0.65f) : Ready;
-	const float Progress = bCoolingDown ? Grapple->GetCooldownProgress() : 1;
-	// 선 조각 대신 면을 이어 그리고 가장자리를 부드럽게 처리
-	auto DrawArc = [&](float Fraction, float Width, const FLinearColor& Tint)
-	{
-		constexpr int32 Segments = 192;
-		const float End = FMath::Clamp(Fraction, 0.0f, 1.0f) * 2 * PI;
-		if (End <= 0) return;
-		const float Feather = FMath::Min(0.75f, Width * 0.25f);
-		const float Radii[] = { Radius - Width * 0.5f - Feather, Radius - Width * 0.5f + Feather,
-			Radius + Width * 0.5f - Feather, Radius + Width * 0.5f + Feather };
-		const float Alpha[] = { 0, 1, 1, 0 };
-		FCanvasTriangleItem Item(FVector2D::ZeroVector, FVector2D::ZeroVector, FVector2D::ZeroVector, GWhiteTexture);
-		Item.TriangleList.Reset();
-		Item.TriangleList.Reserve(Segments * 6);
-		Item.BlendMode = SE_BLEND_Translucent;
-		auto AddTriangle = [&](FVector2D A, FVector2D B, FVector2D C, float AAlpha, float BAlpha, float CAlpha)
-		{
-			FCanvasUVTri Tri;
-			Tri.V0_Pos = A; Tri.V1_Pos = B; Tri.V2_Pos = C;
-			Tri.V0_Color = Tri.V1_Color = Tri.V2_Color = Tint;
-			Tri.V0_Color.A *= AAlpha; Tri.V1_Color.A *= BAlpha; Tri.V2_Color.A *= CAlpha;
-			Item.TriangleList.Add(Tri);
-		};
-		for (int32 Index = 0; Index < Segments; ++Index)
-		{
-			const float Start = 2 * PI * Index / Segments;
-			if (Start >= End) break;
-			const float Next = FMath::Min(2 * PI * (Index + 1) / Segments, End);
-			const FVector2D A(FMath::Cos(Start - HALF_PI), FMath::Sin(Start - HALF_PI));
-			const FVector2D B(FMath::Cos(Next - HALF_PI), FMath::Sin(Next - HALF_PI));
-			for (int32 Band = 0; Band < 3; ++Band)
-			{
-				const FVector2D InnerA = Center + A * Radii[Band], OuterA = Center + A * Radii[Band + 1];
-				const FVector2D InnerB = Center + B * Radii[Band], OuterB = Center + B * Radii[Band + 1];
-				AddTriangle(InnerA, OuterA, OuterB, Alpha[Band], Alpha[Band + 1], Alpha[Band + 1]);
-				AddTriangle(InnerA, OuterB, InnerB, Alpha[Band], Alpha[Band + 1], Alpha[Band]);
-			}
-		}
-		Canvas->DrawItem(Item);
-	};
-	DrawArc(1, 4.5f * Scale, FLinearColor(0.015f, 0.025f, 0.04f, 0.85f));
-	DrawArc(Progress, (2.3f + Flash * 0.7f) * Scale, bCoolingDown ? Ready : Color);
-	// 중앙은 작은 점만 표시해 원 안쪽의 여백 유지
-	Canvas->K2_DrawPolygon(nullptr, Center, FVector2D(3.2f * Scale), 24, FLinearColor(0.015f, 0.025f, 0.04f, 0.85f));
-	Canvas->K2_DrawPolygon(nullptr, Center, FVector2D(1.8f * Scale), 24, Color);
+		&& ViewportWidget.IsValid();
 }
 
 void APlayerHUD::UpdatePlayerUI()
@@ -292,8 +234,6 @@ void APlayerHUD::UpdatePlayerUI()
 	APlayerBase* Player = Cast<APlayerBase>(PC->GetPawn());
 	if (ObservedPlayer.Get() != Player)
 	{
-		bGrappleWasCoolingDown = false;
-		GrappleReadyFlashEnd = 0;
 		ObservedPlayer = Player;
 		if (StatusWidget) StatusWidget->SetObservedPlayer(Player);
 	}

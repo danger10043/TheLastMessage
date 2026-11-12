@@ -6,6 +6,8 @@
 #include "Engine/GameInstance.h"
 #include "Kismet/GameplayStatics.h"
 #include "Misc/PackageName.h"
+#include "UI/FactoryCursor.h"
+#include "Engine/World.h"
 
 AStartMenuHUD::AStartMenuHUD()
 {
@@ -17,6 +19,7 @@ void AStartMenuHUD::BeginPlay()
 	Super::BeginPlay();
 	APlayerController* PC = GetOwningPlayerController();
 	if (!PC || !PC->IsLocalController()) return;
+	FactoryCursor::Install(GetWorld()->GetGameViewport());
 	Menu = CreateWidget<UStartMenuWidget>(PC, MenuClass);
 	if (!Menu) return;
 	Menu->OnExitRequested.AddUniqueDynamic(this, &AStartMenuHUD::ExitGame);

@@ -212,7 +212,12 @@ bool SaveFactoryLayout()
 {
 	for (const FactoryUI::EPlate State : {FactoryUI::EPlate::Normal, FactoryUI::EPlate::Selected, FactoryUI::EPlate::Screen})
 	{
-		const FString Path = FactoryUI::PlatePath(State);
+		const FString Path = FactoryUI::GetPlateTexture(State).ToSoftObjectPath().GetLongPackageName();
+		if (!FPackageName::IsValidLongPackageName(Path))
+		{
+			UE_LOG(LogTemp, Error, TEXT("Configure the plate texture in Factory UI Assets before generating the UI layout."));
+			return false;
+		}
 		TArray<FColor> Pixels;
 		FactoryUI::MakePlatePixels(State, Pixels);
 		if (!SaveUITexture(Path, 64, Pixels, true)) return false;
@@ -345,6 +350,44 @@ bool RefreshPlayerHUD()
 }
 
 static FAutoConsoleCommand RefreshHUDCommand(TEXT("TLM.UI.RefreshHUD"),TEXT("Apply and save the player HUD presentation"),FConsoleCommandDelegate::CreateLambda([](){RefreshPlayerHUD();}));
+
+bool IntegrateGrappleStatus()
+{
+ const TCHAR* Path=TEXT("/Game/Main/UI/HUD/WBP_PlayerUI");
+ UWidgetBlueprint* BP=LoadObject<UWidgetBlueprint>(nullptr,Path);
+ if(!BP || !BP->WidgetTree)return false;
+ UWidgetTree* Tree=BP->WidgetTree;
+ if(Tree->FindWidget(TEXT("GrappleStatusRow")))return true;
+ auto* Health=Tree->FindWidget(TEXT("HealthResource"));
+ UWidget* Parent=Health ? Health->GetParent() : nullptr;
+ while(Parent && !Cast<UVerticalBox>(Parent))Parent=Parent->GetParent();
+ auto* Resources=Cast<UVerticalBox>(Parent);if(!Resources)return false;
+ Backup(Path);
+ auto* Size=Tree->ConstructWidget<USizeBox>(USizeBox::StaticClass(),TEXT("GrappleStatusSize"));
+ Size->SetWidthOverride(340);Size->SetHeightOverride(32);
+ Resources->AddChildToVerticalBox(Size)->SetPadding(FMargin(0,6,0,0));
+ auto* Row=Tree->ConstructWidget<UCanvasPanel>(UCanvasPanel::StaticClass(),TEXT("GrappleStatusRow"));Size->AddChild(Row);
+ auto Place=[&](UWidget* W,FVector2D P,FVector2D S)
+ {W->SetVisibility(ESlateVisibility::HitTestInvisible);auto* Slot=Row->AddChildToCanvas(W);Slot->SetPosition(P);Slot->SetSize(S);};
+ auto* Icon=Tree->ConstructWidget<UImage>(UImage::StaticClass(),TEXT("GrappleStatusIcon"));
+ Icon->SetBrushFromTexture(LoadObject<UTexture2D>(nullptr,TEXT("/Game/Main/UI/Cursors/T_Cursor_Grapple")));
+ auto Brush=Icon->GetBrush();Brush.SetUVRegion(FBox2f(FVector2f(.10626487f,.14995990f),FVector2f(.86677240f,.90216520f)));Icon->SetBrush(Brush);
+ Place(Icon,FVector2D(26,5),FVector2D(22,22));
+ auto MakeText=[&](const TCHAR* Name,const TCHAR* Label,int32 FontSize,FVector2D P,FVector2D S)
+ {
+  auto* Text=Tree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(),Name);
+  Text->SetText(FText::FromString(Label));Text->SetFont(FSlateFontInfo(LoadObject<UFont>(nullptr,TEXT("/Game/Main/UI/Fonts/F_TLM_UI")),FontSize,TEXT("Regular")));
+  Text->SetColorAndOpacity(FactoryUI::Cyan);Place(Text,P,S);return Text;
+ };
+ MakeText(TEXT("GrappleStatusKey"),TEXT("CTRL"),12,FVector2D(56,5),FVector2D(42,24));
+ auto* State=MakeText(TEXT("GrappleStatusText"),TEXT("READY"),14,FVector2D(260,3),FVector2D(54,26));State->SetJustification(ETextJustify::Right);
+ auto* Bar=Tree->ConstructWidget<UProgressBar>(UProgressBar::StaticClass(),TEXT("GrappleStatusProgress"));
+ Bar->SetWidgetStyle(FactoryUI::Meter(Bar->GetWidgetStyle()));Bar->SetPercent(1);Bar->SetFillColorAndOpacity(FactoryUI::Cyan);Bar->SetBorderPadding(FVector2D::ZeroVector);
+ Place(Bar,FVector2D(108,14),FVector2D(140,4));
+ Row->SetVisibility(ESlateVisibility::HitTestInvisible);Size->SetVisibility(ESlateVisibility::HitTestInvisible);
+ const bool Result=CompileSave(BP);UE_LOG(LogTemp,Display,TEXT("TLM_HOOK_INSIDE_HUD_SAVED %d"),Result);return Result;
+}
+static FAutoConsoleCommand IntegrateGrappleHUDCommand(TEXT("TLM.UI.IntegrateGrappleHUD"),TEXT("Add the grapple status inside the existing HUD"),FConsoleCommandDelegate::CreateLambda([](){IntegrateGrappleStatus();}));
 
 bool ApplyMenuArtwork()
 {

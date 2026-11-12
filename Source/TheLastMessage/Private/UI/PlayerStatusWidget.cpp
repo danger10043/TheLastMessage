@@ -8,6 +8,9 @@
 #include "DataAsset/WeaponDataAsset.h"
 #include "Blueprint/WidgetTree.h"
 #include "Framework/Application/SlateApplication.h"
+#include "Character/Player/GrapplingHookComponent.h"
+#include "Components/ProgressBar.h"
+#include "Components/TextBlock.h"
 
 void UPlayerStatusWidget::SetObservedPlayer(APlayerBase* Player)
 {
@@ -77,6 +80,23 @@ void UPlayerStatusWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaT
 	}
 	RefreshLoadout();
 	RefreshEnergyDisplay();
+	if (WidgetTree)
+	{
+		const APlayerBase* Pawn=ObservedPlayer.Get();
+		const auto* Hook=Pawn ? Pawn->FindComponentByClass<UGrapplingHookComponent>() : nullptr;
+		const bool bUnlocked=Hook && Hook->IsGrappleUnlocked();
+		if (UWidget* Row=WidgetTree->FindWidget(TEXT("GrappleStatusRow")))
+			Row->SetVisibility(bUnlocked ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
+		if (bUnlocked)
+		{
+			const float Remaining=Hook->GetCooldownRemaining();
+			const FLinearColor Color=Remaining>0 ? FLinearColor(1,.65f,.22f) : FLinearColor(.35f,.9f,1);
+			if (auto* Bar=Cast<UProgressBar>(WidgetTree->FindWidget(TEXT("GrappleStatusProgress"))))
+			{Bar->SetPercent(Hook->GetCooldownProgress());Bar->SetFillColorAndOpacity(Color);}
+			if (auto* Text=Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("GrappleStatusText"))))
+			{Text->SetText(FText::FromString(Remaining>0 ? FString::Printf(TEXT("%.1fs"),Remaining) : TEXT("READY")));Text->SetColorAndOpacity(Color);}
+		}
+	}
 }
 
 void UPlayerStatusWidget::RefreshLoadout()

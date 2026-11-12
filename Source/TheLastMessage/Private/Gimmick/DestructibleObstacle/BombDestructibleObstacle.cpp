@@ -43,20 +43,49 @@ void ABombDestructibleObstacle::DestroyObstacle()
         return;
     }
 
-    bIsDestroyed = true;
-
-    // 상호작용 강조 및 기믹 기능 정리
+    ApplyDestroyedState(true);
     SetGimmickEnabled(false);
+}
 
-    if (IsValid(ObstacleMesh))
+FProgressActorState ABombDestructibleObstacle::CaptureProgress() const
+{
+    FProgressActorState State = Super::CaptureProgress();
+    State.Payload = {static_cast<uint8>(bIsDestroyed)};
+    return State;
+}
+
+void ABombDestructibleObstacle::RestoreProgress(const FProgressActorState& State)
+{
+    // Earlier saves only recorded the disable performed by DestroyObstacle.
+    const bool bDestroyed = State.Payload.IsEmpty() ? !State.bEnabled : State.Payload[0] != 0;
+    ApplyDestroyedState(bDestroyed);
+    Super::RestoreProgress(State);
+}
+
+void ABombDestructibleObstacle::ApplyDestroyedState(bool bDestroyed)
+{
+    if (bIsDestroyed == bDestroyed)
     {
-        ObstacleMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision
-        );
-
-        ObstacleMesh->SetVisibility(false, true);
+        return;
     }
 
-    // Blueprint에 추가된 컴포넌트까지 외형과 충돌 비활성화
-    SetActorEnableCollision(false);
-    SetActorHiddenInGame(true);
+    if (bDestroyed)
+    {
+        bIntactActorCollision = GetActorEnableCollision();
+        bIntactActorHidden = IsHidden();
+        if (ObstacleMesh)
+        {
+            IntactMeshCollision = ObstacleMesh->GetCollisionEnabled();
+            bIntactMeshVisible = ObstacleMesh->GetVisibleFlag();
+        }
+    }
+
+    bIsDestroyed = bDestroyed;
+    if (ObstacleMesh)
+    {
+        ObstacleMesh->SetCollisionEnabled(bDestroyed ? ECollisionEnabled::NoCollision : IntactMeshCollision);
+        ObstacleMesh->SetVisibility(!bDestroyed && bIntactMeshVisible);
+    }
+    SetActorEnableCollision(!bDestroyed && bIntactActorCollision);
+    SetActorHiddenInGame(bDestroyed || bIntactActorHidden);
 }

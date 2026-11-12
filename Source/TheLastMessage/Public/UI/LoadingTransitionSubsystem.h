@@ -11,6 +11,7 @@ public:
  virtual void Initialize(FSubsystemCollectionBase& Collection) override;
  virtual void Deinitialize() override;
  bool BeginDeath(class APlayerBase* Player, float Delay);
+ void LockSpawnMovement(class APlayerBase* Player);
 private:
  void PreLoad(const FString& Map);
  void OnMapLoaded(UWorld* World);
@@ -20,9 +21,11 @@ private:
  TSharedPtr<class SWidget> Overlay;
  TWeakObjectPtr<class APlayerBase> DyingPlayer;
  TWeakObjectPtr<class APlayerBase> PendingDeathPlayer;
+ TWeakObjectPtr<class APlayerBase> LockedSpawnPlayer;
  float PendingDeathDelay=0;
  friend class FRespawnTransitionReentryTest;
  double Started=0, ReadyAt=0, IndicatorAt=0;
  float DeathDelay=0, OriginalArm=0, OriginalZoom=0;
  bool bLoading=false, bArrived=false, bDeath=false, bFading=false;
+ bool bWaitingForSpawnFloor=false, bLoggedMissingSpawnFloor=false;
 };

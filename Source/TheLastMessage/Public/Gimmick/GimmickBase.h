@@ -44,6 +44,13 @@ public:
 protected:
 	virtual void RefreshRestoredState();
 	UPROPERTY(EditAnywhere, Category="Gimmick|Save") bool bPersistState = true;
+	// Enable for a gimmick whose root transform changes as part of puzzle progress.
+	UPROPERTY(EditAnywhere, Category="Gimmick|Save") bool bRestoreActorTransform = false;
+
+	// Apply saved active/enabled state to Blueprint-controlled meshes and collision.
+	UFUNCTION(BlueprintImplementableEvent, Category="Gimmick|Save")
+	void OnCheckpointStateRestored();
+
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="Gimmick|Save") FGuid PersistentId;
 private:
 	void EnsurePersistentId();

@@ -20,6 +20,7 @@ public:
 	/** Restart the brief edge flash only after actual incoming damage. */
 	void PlayDamageVignette();
 	bool ShouldUseGrappleCursor() const;
+	bool ShouldUseGameplayCursor() const;
 	virtual void ShowHUD() override;
 	/** Explicit visibility control for cinematics; also applies to widgets created later. */
 	UFUNCTION(BlueprintCallable, Category="Player UI")
@@ -42,7 +43,6 @@ protected:
 	float GrappleIndicatorRadius = 18.2f;
 private:
 	UFUNCTION() void CheckpointSaveFinished(bool bSuccess);
-	void DrawGrappleIndicator();
 	void DrawRoomTitle();
 	void DrawDamageVignette();
 	double DamageVignetteStartTime = -1.0;
@@ -51,8 +51,6 @@ private:
 	TWeakObjectPtr<APawn> RoomTitlePawn;
 	FName AnnouncedRoom;
 	double RoomTitleEndTime = 0.0;
-	bool bGrappleWasCoolingDown = false;
-	float GrappleReadyFlashEnd = 0;
 	void EnsureWidgets();
 	void UpdatePlayerUI();
 	TWeakObjectPtr<APlayerBase> ObservedPlayer;

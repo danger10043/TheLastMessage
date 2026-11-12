@@ -1,4 +1,5 @@
 #include "UI/FactoryMenuStyle.h"
+#include "UI/FactoryUIAssetSettings.h"
 #include "UI/FactoryUIStyle.h"
 #include "Widgets/Layout/SBox.h"
 #include "Blueprint/WidgetTree.h"
@@ -37,11 +38,6 @@ public:
 
 const FLinearColor Ivory(0.94f, 0.91f, 0.82f);
 
-UTexture2D* Texture(const TCHAR* Name)
-{
-	return LoadObject<UTexture2D>(nullptr, *FString::Printf(TEXT("/Game/Main/UI/Menu/Textures/%s.%s"), Name, Name));
-}
-
 UCanvasPanelSlot* Place(UCanvasPanel* Canvas, UWidget* Widget, FVector2D Position, FVector2D Size)
 {
 	UCanvasPanelSlot* Slot = Canvas->AddChildToCanvas(Widget);
@@ -49,10 +45,10 @@ UCanvasPanelSlot* Place(UCanvasPanel* Canvas, UWidget* Widget, FVector2D Positio
 	return Slot;
 }
 
-UImage* Image(UWidgetTree* Tree, FName Name, const TCHAR* Asset)
+UImage* Image(UWidgetTree* Tree, FName Name, UTexture2D* Texture)
 {
 	UImage* Item = Tree->ConstructWidget<UImage>(UImage::StaticClass(), Name);
-	Item->SetBrushFromTexture(Texture(Asset));
+	Item->SetBrushFromTexture(Texture);
 	if (Name == TEXT("PausePanelArtwork"))
 	{
 		FSlateBrush Brush = Item->GetBrush();
@@ -127,8 +123,9 @@ UWidgetSwitcher* BuildShell(UWidgetTree* Tree, bool bPause)
 	USizeBox* Design = Tree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("DesignResolution"));
 	Design->SetWidthOverride(1920); Design->SetHeightOverride(1080); Scale->AddChild(Design);
 	UCanvasPanel* Canvas = Tree->ConstructWidget<UCanvasPanel>(); Design->AddChild(Canvas);
-	if (!bPause) Place(Canvas, Image(Tree, TEXT("MenuArtwork"), TEXT("T_Menu_Background")), FVector2D::ZeroVector, FVector2D(1920, 1080));
-	else Place(Canvas, Image(Tree, TEXT("PausePanelArtwork"), TEXT("T_Menu_PausePanel")), FVector2D(616, 80), FVector2D(688, 920));
+	const auto* Assets = GetDefault<UFactoryUIAssetSettings>();
+	if (!bPause) Place(Canvas, Image(Tree, TEXT("MenuArtwork"), Assets->MenuBackground.LoadSynchronous()), FVector2D::ZeroVector, FVector2D(1920, 1080));
+	else Place(Canvas, Image(Tree, TEXT("PausePanelArtwork"), Assets->PausePanel.LoadSynchronous()), FVector2D(616, 80), FVector2D(688, 920));
 	UWidgetSwitcher* Pages = Tree->ConstructWidget<UWidgetSwitcher>(UWidgetSwitcher::StaticClass(), bPause ? TEXT("PausePages") : TEXT("Pages"));
 	Place(Canvas, Pages, bPause ? FVector2D(680, 157) : FVector2D(122, 420), bPause ? FVector2D(560, 755) : FVector2D(690, 560));
 	UTextBlock* Hint = Tree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("NavigationHint"));
@@ -274,8 +271,8 @@ void ApplyLayout(UWidgetTree* Tree, bool bPause)
 		}
 		if (UImage* Glyph = Cast<UImage>(Row->GetChildAt(0)))
 		{
-			const FString Path = FString(TEXT("/Game/Main/UI/Icons/T_UI_Menu")) + Icon->Asset;
-			Glyph->SetBrushFromTexture(LoadObject<UTexture2D>(nullptr, *Path));
+			const auto* Texture = GetDefault<UFactoryUIAssetSettings>()->MenuIcons.Find(FName(Icon->Asset));
+			Glyph->SetBrushFromTexture(Texture ? Texture->LoadSynchronous() : nullptr);
 			const float IconSize = bPause ? 24 : bStartPrimary ? 29 : 21;
 			Glyph->SetDesiredSizeOverride(FVector2D(IconSize));
 			Glyph->SetVisibility(ESlateVisibility::HitTestInvisible);

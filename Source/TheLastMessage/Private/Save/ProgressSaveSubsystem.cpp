@@ -24,6 +24,7 @@
 #include "Components/SceneComponent.h"
 #include "EngineUtils.h"
 #include "Gimmick/GimmickBase.h"
+#include "Gimmick/RespawnPoint/BombRespawnPoint.h"
 #include "TimerManager.h"
 #include "Engine/World.h"
 
@@ -375,6 +376,8 @@ bool UProgressSaveSubsystem::RestoreLoadedCheckpointInPlace(APlayerBase* Player)
  // 무기 픽업도 코어 픽업과 같은 기록을 쓴다.
  for (TActorIterator<AWeaponPickup> It(Player->GetWorld()); It; ++It)
   It->RestoreCheckpointConsumption(WorkingProgress->CorePickupStates.FindRef(It->GetPickupId()));
+ for (TActorIterator<ABombRespawnPoint> It(Player->GetWorld()); It; ++It)
+  It->RespawnBomb();
  UE_LOG(LogTemp, Log, TEXT("In-place checkpoint restore: %.1f ms"), (FPlatformTime::Seconds()-Start)*1000.0);
  return true;
 }

@@ -2,6 +2,9 @@
 
 #include "Brushes/SlateRoundedBoxBrush.h"
 #include "Styling/SlateTypes.h"
+#include "UObject/SoftObjectPtr.h"
+
+class UTexture2D;
 
 namespace FactoryUI
 {
@@ -13,7 +16,7 @@ inline const FLinearColor SelectedPanel(0.13f, 0.063f, 0.015f, 0.98f);
 inline const FLinearColor Text(0.88f, 0.94f, 0.96f);
 
 enum class EPlate : uint8 { Normal, Selected, Screen, Count };
-const TCHAR* PlatePath(EPlate State);
+const TSoftObjectPtr<UTexture2D>& GetPlateTexture(EPlate State);
 void MakePlatePixels(EPlate State, TArray<FColor>& Pixels);
 FSlateBrush Chamfer(EPlate State = EPlate::Normal);
 

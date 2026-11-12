@@ -1,17 +1,19 @@
 #include "UI/FactoryUIStyle.h"
+#include "UI/FactoryUIAssetSettings.h"
 #include "Engine/Texture2D.h"
 
 namespace FactoryUI
 {
 constexpr int32 PlateSize = 64;
 
-const TCHAR* PlatePath(EPlate State)
+const TSoftObjectPtr<UTexture2D>& GetPlateTexture(EPlate State)
 {
+	const auto* Assets = GetDefault<UFactoryUIAssetSettings>();
 	switch (State)
 	{
-	case EPlate::Selected: return TEXT("/Game/Main/UI/Menu/Textures/T_UI_FactoryPlateSelected");
-	case EPlate::Screen: return TEXT("/Game/Main/UI/Menu/Textures/T_UI_FactoryPlateScreen");
-	default: return TEXT("/Game/Main/UI/Menu/Textures/T_UI_FactoryPlate");
+	case EPlate::Selected: return Assets->SelectedPlate;
+	case EPlate::Screen: return Assets->ScreenPlate;
+	default: return Assets->Plate;
 	}
 }
 
@@ -49,7 +51,7 @@ FSlateBrush Chamfer(EPlate State)
 	constexpr int32 Size = PlateSize;
 	static TWeakObjectPtr<UTexture2D> Textures[static_cast<int32>(EPlate::Count)];
 	auto& Cached = Textures[static_cast<int32>(State)];
-	if (!Cached.IsValid()) Cached = LoadObject<UTexture2D>(nullptr, PlatePath(State), nullptr, LOAD_NoWarn);
+	if (!Cached.IsValid()) Cached = GetPlateTexture(State).LoadSynchronous();
 	if (!Cached.IsValid())
 	{
 		TArray<FColor> Pixels;

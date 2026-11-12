@@ -25,6 +25,8 @@
 #include "Character/Boss/BossMonster.h"
 #include "Cinematics/OnceCinematicController.h"
 #include "EngineUtils.h"
+#include "UI/FactoryCursor.h"
+#include "DataAsset/WeaponDataAsset.h"
 
 ASideScrollingPlayerController::ASideScrollingPlayerController()
 {
@@ -34,7 +36,12 @@ ASideScrollingPlayerController::ASideScrollingPlayerController()
 EMouseCursor::Type ASideScrollingPlayerController::GetMouseCursor() const
 {
 	const APlayerHUD* PlayerHUD = Cast<APlayerHUD>(GetHUD());
-	return PlayerHUD && PlayerHUD->ShouldUseGrappleCursor() ? EMouseCursor::None : Super::GetMouseCursor();
+	if (PlayerHUD && PlayerHUD->ShouldUseGameplayCursor())
+	{
+		// 인게임 커서는 하나: 훅을 걸 수 있으면 청록(Crosshairs), 아니면 주황(EyeDropper)
+		return PlayerHUD->ShouldUseGrappleCursor() ? EMouseCursor::Crosshairs : EMouseCursor::EyeDropper;
+	}
+	return Super::GetMouseCursor();
 }
 
 void ASideScrollingPlayerController::ToggleAreaMap()
@@ -82,6 +89,7 @@ void ASideScrollingPlayerController::EndPlay(const EEndPlayReason::Type EndPlayR
 void ASideScrollingPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
+	if (IsLocalController()) FactoryCursor::Install(GetWorld()->GetGameViewport());
 	if (IsLocalPlayerController() && !ShouldUseTouchControls())
 	{
 		bShowMouseCursor = true;
@@ -200,6 +208,8 @@ void ASideScrollingPlayerController::ClosePauseMenu()
 		Input.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
 		SetInputMode(Input); SetShowMouseCursor(bPausePreviousCursor); FlushPressedKeys();
 		if (bPausedByMenu) SetPause(false);
+		// 재개 직후 클릭 없이도 조준 커서로 돌아오도록 포커스를 뷰포트로 즉시 반환
+		if (IsLocalController()) FactoryCursor::FocusGameViewport(GetWorld()->GetGameViewport());
 	}
 	bPausedByMenu = false;
 }

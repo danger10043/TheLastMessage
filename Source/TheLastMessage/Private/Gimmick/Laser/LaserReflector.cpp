@@ -6,6 +6,7 @@
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Character/Player/PlayerBase.h"
+#include "Engine/World.h"
 
 ALaserReflector::ALaserReflector()
 {
@@ -56,21 +57,39 @@ void ALaserReflector::PerformInteraction(ACharacter* Player)
 
 void ALaserReflector::ReceiveAttackDamage(float DamageAmount, AActor* DamageCauser)
 {
-		if (!HasAuthority() || !bIsEnabled || !FMath::IsFinite(DamageAmount) || DamageAmount <= 0.0f)
-		{
-			return;
-		}
+	if (!HasAuthority() || !bIsEnabled || !FMath::IsFinite(DamageAmount) || DamageAmount <= 0.0f)
+	{
+		return;
+	}
 
-		// 플레이어의 공격만 허용
-		const APlayerBase* Player = Cast<APlayerBase>(DamageCauser);
+	// 플레이어의 유효한 공격만 처리
+	const APlayerBase* Player = Cast<APlayerBase>(DamageCauser);
 
-		if (!IsValid(Player) || Player->IsDead())
-		{
-			return;
-		}
+	if (!IsValid(Player) || Player->IsDead())
+	{
+		return;
+	}
 
-		// 기존 상호작용과 같은 각도만큼 회전
-		RotateReflector();
+	const UWorld* World = GetWorld();
+
+	if (!World)
+	{
+		return;
+	}
+
+	const double CurrentTime = World->GetTimeSeconds();
+
+	const bool bIgnoreRotation = LastAttackReceivedTime >= 0.0 && CurrentTime - LastAttackReceivedTime <= static_cast<double>(AttackHitIgnoreWindow);
+
+	// 중요: 회전을 무시할 공격도 기준 시간을 갱신해야 함
+	LastAttackReceivedTime = CurrentTime;
+
+	if (bIgnoreRotation)
+	{
+		return;
+	}
+
+	RotateReflector();
 }
 
 void ALaserReflector::RotateReflector()
@@ -102,6 +121,8 @@ void ALaserReflector::RotateReflector()
 
 void ALaserReflector::ResetReflector()
 {
+	LastAttackReceivedTime = -1.0;
+
 	if (!bHasInitialPivotRotation || !IsValid(ReflectorPivot))
 	{
 		return;
@@ -123,6 +144,7 @@ FVector ALaserReflector::GetReflectedDirection(const FVector& IncomingDirection,
 
 	return FMath::GetReflectionVector(Direction, Normal).GetSafeNormal();
 }
+
 FProgressActorState ALaserReflector::CaptureProgress() const
 {
     FProgressActorState State = Super::CaptureProgress();
@@ -132,6 +154,8 @@ FProgressActorState ALaserReflector::CaptureProgress() const
 
 void ALaserReflector::RestoreProgress(const FProgressActorState& State)
 {
+	LastAttackReceivedTime = -1.0;
+
     ReflectorPivot->SetRelativeTransform(State.ComponentTransform);
     Super::RestoreProgress(State);
 }

@@ -60,9 +60,17 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Laser", meta = (ClampMin = "0.1", ClampMax = "360.0", Units = "deg"))
 	float RotationStepAngle = 45.0f;
 
+	// 마지막 명중 이후 이 시간 안에 들어오는 공격은 회전을 무시
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Laser", meta = (ClampMin = "0.0", Units = "s"))
+	float AttackHitIgnoreWindow = 0.2f;
+
 private:
 	// 초기화할 때 돌아갈 피벗의 상대 회전
 	FQuat InitialPivotRotation = FQuat::Identity;
 
 	bool bHasInitialPivotRotation = false;
+
+	// 무시한 공격까지 포함한 마지막 명중 시간
+	// 음수는 아직 공격을 받지 않았다는 의미
+	double LastAttackReceivedTime = -1.0;
 };

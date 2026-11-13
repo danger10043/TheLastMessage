@@ -46,6 +46,10 @@ public:
     // 조작 중인 플레이어 참조 정리
     UFUNCTION(BlueprintCallable, Category = "Gimmick|PushPull")
     virtual void EndPushPull();
+    // +추가----
+    // 실제 이동 결과를 전달받아 마찰음을 제어한다.
+    void UpdatePushPullMovementSound(float ActualHorizontalSpeed, bool bOnGround);
+    // +--------
 
     UStaticMeshComponent* GetPhysicsMesh() const;
     USceneComponent* GetInteractionAnchor() const;
@@ -72,6 +76,14 @@ public:
 
 protected:
     virtual void BeginPlay() override;
+    // +추가----
+    virtual void RefreshGimmickAudioState() override;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Audio")
+    TObjectPtr<USoundBase> PushPullMoveSound;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Audio", meta = (ClampMin = "0.0", Units = "cm/s"))
+    float MovementSoundMinSpeed = 2.0f;
+    bool bMovingForSound = false;
+    // +--------
 
     // 실제로 움직일 물체의 메시
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Gimmick|Components")

@@ -52,8 +52,10 @@ private:
 	// 오입력 레버의 움직임이 끝나기를 기다림
 	void BeginFailureAnimation(AToggleSwitch* Switch);
 
-	// 모든 레버를 원위치로 복귀
-	void PlayFailureReturn();
+	// +수정----
+	// 맞힌 순서는 유지하고 잘못 조작한 레버만 이전 상태로 복귀
+	void PlayFailureReturn(TWeakObjectPtr<AToggleSwitch> FailedSwitch, bool bReturnActive);
+	// +--------
 
 	// 복귀가 끝나면 입력 잠금 해제
 	void FinishFailureAnimation();

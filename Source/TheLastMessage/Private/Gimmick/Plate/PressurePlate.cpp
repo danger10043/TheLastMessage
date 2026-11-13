@@ -56,6 +56,9 @@ APressurePlate::APressurePlate()
 
 void APressurePlate::ApplyActiveState(bool bNewActive)
 {
+    // +추가----
+    const bool bPreviousActive = bIsActive;
+    // +--------
     // 기존 활성 상태 변경과 연결 장치 알림 유지
     Super::ApplyActiveState(bNewActive);
 
@@ -72,6 +75,9 @@ void APressurePlate::ApplyActiveState(bool bNewActive)
     if (bIsActive)
     {
         ButtonTimeline->Play();
+        // +추가----
+        if (!bPreviousActive) PlayGimmickOneShot(PlatePressSound.Get(), ButtonMesh.Get());
+        // +--------
     }
     else
     {

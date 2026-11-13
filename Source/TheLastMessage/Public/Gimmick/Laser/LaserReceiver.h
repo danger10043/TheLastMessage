@@ -43,6 +43,10 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	// +추가----
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Audio")
+	TObjectPtr<USoundBase> LaserReceiveSound;
+	// +--------
 
 	virtual void Tick(float DeltaTime) override;
 

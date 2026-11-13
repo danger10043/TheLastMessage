@@ -486,6 +486,11 @@ void UPushPullComponent::UpdatePushPull(const FVector& MoveDirection, float Delt
     Movement->SetBaseFromFloor(FloorResult);
 
     Movement->SaveBaseLocation();
+    // +추가----
+    // 입력이나 물리 속도 대신 충돌 처리 후 실제 상자 이동량을 사용한다.
+    Target->UpdatePushPullMovementSound(
+        static_cast<float>((Mesh->GetComponentLocation().X - BoxStart.X) / StepTime), BestPlan.bBoxOnGround);
+    // +--------
 }
 
 void UPushPullComponent::StopPushPull()

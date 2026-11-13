@@ -9,6 +9,9 @@
 #include "Components/SceneComponent.h"
 #include "Gimmick/Component/GravityStateComponent.h"
 #include "NiagaraComponent.h"
+// +추가----
+#include "GameFramework/CharacterMovementComponent.h"
+// +--------
 
 AGravityFlipPlate::AGravityFlipPlate()
 {
@@ -81,7 +84,18 @@ void AGravityFlipPlate::HandlePlateEnter(ACharacter* Player)
 	// 반전으로 이동이 발생하기 전에 진입 상태부터 기록
 	OverlappingPlayers.Add(PlayerReference);
 
+	// +추가----
+	UCharacterMovementComponent* Movement = PlayerCharacter->GetCharacterMovement();
+	const FVector PreviousGravity = IsValid(Movement) ? Movement->GetGravityDirection() : FVector::ZeroVector;
+	// +--------
 	GravityComponent->ToggleGravityState();
+	// +추가----
+	// 효과 적용에 실패한 경우에는 반전음을 재생하지 않는다.
+	if (IsValid(Movement) && !PreviousGravity.Equals(Movement->GetGravityDirection(), KINDA_SMALL_NUMBER))
+	{
+		PlayGimmickOneShot(GravityFlipSound.Get(), PlateTrigger.Get());
+	}
+	// +--------
 }
 
 void AGravityFlipPlate::HandlePlateExit(ACharacter* Player)

@@ -117,6 +117,10 @@ void ALaserReflector::RotateReflector()
 
 	// 메시만 직접 돌리지 않고 회전 중심을 돌림
 	ReflectorPivot->AddLocalRotation(RotationDelta, false, nullptr, ETeleportType::TeleportPhysics);
+	// +추가----
+	// 연발 공격 중 무시된 명중에는 회전음도 재생하지 않는다.
+	PlayGimmickOneShot(ReflectorRotateSound.Get(), ReflectorPivot.Get());
+	// +--------
 }
 
 void ALaserReflector::ResetReflector()

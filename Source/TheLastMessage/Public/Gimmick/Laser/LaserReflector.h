@@ -43,6 +43,10 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	// +추가----
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Audio")
+	TObjectPtr<USoundBase> ReflectorRotateSound;
+	// +--------
 
 	// 반사판의 회전 중심
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Gimmick|Components")

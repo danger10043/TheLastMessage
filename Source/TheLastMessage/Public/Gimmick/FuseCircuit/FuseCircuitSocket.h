@@ -39,6 +39,10 @@ public:
 
 protected:
     virtual void BeginPlay() override;
+    // +추가----
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Audio")
+    TObjectPtr<USoundBase> FuseInsertSound;
+    // +--------
 
     // 회로의 외형
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Gimmick|Components")

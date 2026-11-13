@@ -31,6 +31,11 @@ public:
 	void HandlePlateExit(ACharacter* Player);
 
 protected:
+    // +추가----
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Audio")
+    TObjectPtr<USoundBase> GravityFlipSound;
+    // +--------
+
 	virtual void BeginPlay() override;
 
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;

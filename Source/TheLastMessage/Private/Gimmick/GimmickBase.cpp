@@ -11,6 +11,14 @@
 #include "Save/ProgressSaveSubsystem.h"
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
+// +추가----
+#include "Components/AudioComponent.h"
+#include "CoreGlobals.h"
+#include "Kismet/GameplayStatics.h"
+#include "Sound/SoundAttenuation.h"
+#include "Sound/SoundBase.h"
+#include "TimerManager.h"
+// +--------
 
 // Sets default values
 AGimmickBase::AGimmickBase()
@@ -26,6 +34,12 @@ AGimmickBase::AGimmickBase()
 
 	InteractionEffect->SetupAttachment(SceneRoot);
 	InteractionEffect->SetAutoActivate(false);
+	// +추가----
+	GimmickLoopAudio = CreateDefaultSubobject<UAudioComponent>(TEXT("GimmickLoopAudio"));
+	GimmickLoopAudio->SetupAttachment(SceneRoot);
+	GimmickLoopAudio->SetAutoActivate(false);
+	GimmickLoopAudio->bAutoDestroy = false;
+	// +--------
 }
 
 bool AGimmickBase::CanInteractInternal(ACharacter* Player) const
@@ -160,7 +174,107 @@ void AGimmickBase::BeginPlay()
 
 	// 시작할 때 강조 표시 해제
 	UpdateInteractionHighlight(false);
+	// +추가----
+	// 시작 상태와 체크포인트 초기화가 끝난 다음 지속음을 맞춘다.
+	GimmickAudioInitTimer = GetWorldTimerManager().SetTimerForNextTick(this, &AGimmickBase::InitializeGimmickAudio);
+	// +--------
 }
+
+// +추가----
+bool AGimmickBase::IsGimmickAudioSuppressed() const
+{
+	const UWorld* World = GetWorld();
+	if (!World || !World->IsGameWorld() || World->GetNetMode() == NM_DedicatedServer
+		|| bRestoringGimmickAudio || IsActorBeingDestroyed())
+	{
+		return true;
+	}
+	const UGameInstance* Instance = GetGameInstance();
+	const UProgressSaveSubsystem* Saves = Instance ? Instance->GetSubsystem<UProgressSaveSubsystem>() : nullptr;
+	return Saves && Saves->IsRestoringGimmicks();
+}
+
+bool AGimmickBase::CanPlayGimmickEventSound() const
+{
+	// 같은 프레임의 시작 상태 전달에서는 단발음을 재생하지 않는다.
+	return bGimmickAudioReady && GFrameCounter > GimmickAudioReadyFrame && !IsGimmickAudioSuppressed();
+}
+
+void AGimmickBase::PlayGimmickOneShot(USoundBase* Sound, USceneComponent* Source) const
+{
+	if (!IsValid(Sound) || !CanPlayGimmickEventSound()) return;
+	const FVector Location = IsValid(Source) ? Source->GetComponentLocation() : GetActorLocation();
+	// 액터에서 분리하여 폭탄이 삭제되어도 남은 소리는 끝까지 재생한다.
+	UGameplayStatics::PlaySoundAtLocation(this, Sound, Location, GimmickSoundVolume,
+		GimmickSoundPitch, 0.0f, GimmickSoundAttenuation.Get());
+}
+
+void AGimmickBase::StartGimmickLoop(USoundBase* Sound, USceneComponent* Source)
+{
+	if (!bGimmickAudioReady || IsGimmickAudioSuppressed() || !IsValid(Sound) || !IsValid(GimmickLoopAudio))
+	{
+		StopGimmickLoop(true);
+		return;
+	}
+	USceneComponent* Attachment = IsValid(Source) ? Source : GetRootComponent();
+	if (!IsValid(Attachment)) return;
+	// 같은 요청을 반복해도 처음부터 재생하거나 단발 음원을 임의로 반복하지 않는다.
+	if (bGimmickLoopRequested && GimmickLoopAudio->Sound == Sound
+		&& GimmickLoopAudio->GetAttachParent() == Attachment) return;
+
+	GimmickLoopAudio->Stop();
+	GimmickLoopAudio->AttachToComponent(Attachment, FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+	GimmickLoopAudio->SetSound(Sound);
+	GimmickLoopAudio->AttenuationSettings = GimmickSoundAttenuation;
+	GimmickLoopAudio->SetVolumeMultiplier(GimmickSoundVolume);
+	GimmickLoopAudio->SetPitchMultiplier(GimmickSoundPitch);
+	bGimmickLoopRequested = true;
+	// 실제 반복 여부는 Sound Cue의 Wave Player 설정을 따른다.
+	if (GimmickLoopFadeTime > 0.0f) GimmickLoopAudio->FadeIn(GimmickLoopFadeTime);
+	else GimmickLoopAudio->Play();
+}
+
+void AGimmickBase::StopGimmickLoop(bool bImmediately)
+{
+	const bool bWasRequested = bGimmickLoopRequested;
+	bGimmickLoopRequested = false;
+	if (!IsValid(GimmickLoopAudio)) return;
+	if (bImmediately || GimmickLoopFadeTime <= 0.0f) GimmickLoopAudio->Stop();
+	else if (bWasRequested && GimmickLoopAudio->IsPlaying()) GimmickLoopAudio->FadeOut(GimmickLoopFadeTime, 0.0f);
+}
+
+void AGimmickBase::InitializeGimmickAudio()
+{
+	bGimmickAudioReady = true;
+	GimmickAudioReadyFrame = GFrameCounter;
+	RefreshGimmickAudioState();
+}
+
+void AGimmickBase::QueueGimmickAudioRefresh()
+{
+	if (GetWorld() && HasActorBegunPlay())
+	{
+		GetWorldTimerManager().ClearTimer(GimmickAudioRefreshTimer);
+		GimmickAudioRefreshTimer = GetWorldTimerManager().SetTimerForNextTick(this, &AGimmickBase::RefreshGimmickAudioState);
+	}
+}
+
+void AGimmickBase::RefreshGimmickAudioState()
+{
+}
+
+void AGimmickBase::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	bGimmickAudioReady = false;
+	if (GetWorld())
+	{
+		GetWorldTimerManager().ClearTimer(GimmickAudioInitTimer);
+		GetWorldTimerManager().ClearTimer(GimmickAudioRefreshTimer);
+	}
+	StopGimmickLoop(true);
+	Super::EndPlay(EndPlayReason);
+}
+// +--------
 
 // Called every frame
 void AGimmickBase::Tick(float DeltaTime)
@@ -229,6 +343,10 @@ FProgressActorState AGimmickBase::CaptureProgress() const
 
 void AGimmickBase::RestoreProgress(const FProgressActorState& State)
 {
+    // +추가----
+    TGuardValue<bool> AudioRestoreGuard(bRestoringGimmickAudio, true);
+    StopGimmickLoop(true);
+    // +--------
     if (bRestoreActorTransform)
     {
         SetActorTransform(State.Transform, false, nullptr, ETeleportType::TeleportPhysics);
@@ -237,6 +355,9 @@ void AGimmickBase::RestoreProgress(const FProgressActorState& State)
     bIsActive = State.bActive;
     RefreshRestoredState();
     OnCheckpointStateRestored();
+    // +추가----
+    QueueGimmickAudioRefresh();
+    // +--------
 }
 
 void AGimmickBase::RefreshRestoredState()
@@ -248,9 +369,16 @@ void AGimmickBase::RefreshRestoredState()
 
 void AGimmickBase::RestoreLinkedActiveState(bool bActive)
 {
+    // +추가----
+    TGuardValue<bool> AudioRestoreGuard(bRestoringGimmickAudio, true);
+    StopGimmickLoop(true);
+    // +--------
     bIsActive = bActive && bIsEnabled;
     RefreshRestoredState();
     OnCheckpointStateRestored();
+    // +추가----
+    QueueGimmickAudioRefresh();
+    // +--------
 }
 
 void AGimmickBase::FinishRestoreProgress(const FProgressActorState& State)

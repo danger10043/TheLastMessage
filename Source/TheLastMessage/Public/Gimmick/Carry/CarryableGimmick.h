@@ -76,6 +76,16 @@ public:
     }
 
 protected:
+    // +추가----
+    // 실제 집기에 성공했을 때 한 번 재생할 소리
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Audio")
+    TObjectPtr<USoundBase> PickupSound;
+
+    // 들고 있던 물체를 내려놓았을 때 한 번 재생할 소리
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Audio")
+    TObjectPtr<USoundBase> DropSound;
+    // +--------
+
     virtual void BeginPlay() override;
 
     virtual void Tick(float DeltaSeconds) override;

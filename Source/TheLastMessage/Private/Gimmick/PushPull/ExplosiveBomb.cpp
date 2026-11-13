@@ -110,6 +110,9 @@ void AExplosiveBomb::Explode()
     bHasExploded = true;
 
     const FVector ExplosionLocation = GetActorLocation();
+    // +추가----
+    PlayGimmickOneShot(ExplosionSound.Get(), PhysicsMesh.Get());
+    // +--------
 
     // 조작 중이었다면 물리 핸들과 플레이어 상태부터 정리
     if (ACharacter* Player = GetControllingPlayer())

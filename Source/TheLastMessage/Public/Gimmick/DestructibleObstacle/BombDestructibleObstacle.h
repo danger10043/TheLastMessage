@@ -34,6 +34,12 @@ public:
     virtual void RestoreProgress(const FProgressActorState& State) override;
 
 protected:
+    // +추가----
+    // 실제 파괴 시 한 번 재생하며 체크포인트 복구에는 재생하지 않는다.
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Audio")
+    TObjectPtr<USoundBase> DestructionSound;
+    // +--------
+
     // 통로를 막는 장애물 메시
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Gimmick|Components")
     TObjectPtr<UStaticMeshComponent> ObstacleMesh;

@@ -138,6 +138,10 @@ void APushPullGimmick::BeginPushPull(ACharacter* Player)
 
 void APushPullGimmick::EndPushPull()
 {
+    // +추가----
+    bMovingForSound = false;
+    StopGimmickLoop();
+    // +--------
     ControllingPlayer.Reset();
 
     SetPushPullMovementEnabled(false);
@@ -148,6 +152,22 @@ void APushPullGimmick::EndPushPull()
         LastPlacedWorldTransform = PhysicsMesh->GetComponentTransform();
     }
 }
+
+// +추가----
+void APushPullGimmick::UpdatePushPullMovementSound(float ActualHorizontalSpeed, bool bOnGround)
+{
+    bMovingForSound = bOnGround && FMath::IsFinite(ActualHorizontalSpeed)
+        && FMath::Abs(ActualHorizontalSpeed) > FMath::Max(MovementSoundMinSpeed, 0.0f);
+    RefreshGimmickAudioState();
+}
+
+void APushPullGimmick::RefreshGimmickAudioState()
+{
+    if (bMovingForSound && bIsEnabled && ControllingPlayer.IsValid() && IsValid(PhysicsMesh))
+        StartGimmickLoop(PushPullMoveSound.Get(), PhysicsMesh.Get());
+    else StopGimmickLoop();
+}
+// +--------
 
 UStaticMeshComponent* APushPullGimmick::GetPhysicsMesh() const
 {
@@ -251,6 +271,9 @@ FProgressActorState APushPullGimmick::CaptureProgress() const
 
 void APushPullGimmick::RestoreProgress(const FProgressActorState& State)
 {
+    // +추가----
+    bMovingForSound = false;
+    // +--------
     ControllingPlayer.Reset();
     if (IsValid(PhysicsMesh))
     {

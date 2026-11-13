@@ -52,6 +52,10 @@ void ABombDestructibleObstacle::DestroyObstacle()
 
     const FRotator EffectRotation = bHasMesh ? ObstacleMesh->GetComponentRotation() : GetActorRotation();
 
+    // +추가----
+    PlayGimmickOneShot(DestructionSound.Get(), ObstacleMesh.Get());
+    // +--------
+
     // 기존 파괴 상태 처리
     ApplyDestroyedState(true);
     SetGimmickEnabled(false);

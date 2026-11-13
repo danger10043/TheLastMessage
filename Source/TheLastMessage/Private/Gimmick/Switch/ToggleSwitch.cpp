@@ -109,6 +109,11 @@ bool AToggleSwitch::LoadToggleSwitchConfig()
 		UpdateDelegate.BindUFunction(this, GET_FUNCTION_NAME_CHECKED(AToggleSwitch, UpdateLeverRotation));
 
 		LeverTimeline->AddInterpFloat(Curve, UpdateDelegate, NAME_None, TrackName);
+		// +추가----
+		FOnTimelineEvent FinishedDelegate;
+		FinishedDelegate.BindUFunction(this, GET_FUNCTION_NAME_CHECKED(AToggleSwitch, HandleLeverMotionFinished));
+		LeverTimeline->SetTimelineFinishedFunc(FinishedDelegate);
+		// +--------
 
 		bTimelineConfigured = true;
 	}
@@ -141,6 +146,9 @@ void AToggleSwitch::PerformInteraction(ACharacter * Player)
 
 void AToggleSwitch::ApplyActiveState(bool bNewActive)
 {
+	// +추가----
+	const bool bPreviousActive = bIsActive;
+	// +--------
 	Super::ApplyActiveState(bNewActive);
 
 	UpdateSwitchIndicator();
@@ -160,7 +168,27 @@ void AToggleSwitch::ApplyActiveState(bool bNewActive)
 	{
 		LeverTimeline->Reverse();
 	}
+	// +추가----
+	if (bPreviousActive != bIsActive) StopGimmickLoop(true);
+	RefreshGimmickAudioState();
+	// +--------
 }
+
+// +추가----
+void AToggleSwitch::RefreshGimmickAudioState()
+{
+	const bool bMoving = bTimelineConfigured && IsValid(LeverTimeline) && IsValid(LeverPivotComponent)
+		&& LeverTimeline->IsPlaying() && GetRemainingLeverAnimationTime() > KINDA_SMALL_NUMBER
+		&& !FMath::IsNearlyEqual(ToggleSwitchConfig.LeverOnPitch, ToggleSwitchConfig.LeverOffPitch);
+	if (bMoving) StartGimmickLoop(LeverMoveSound.Get(), LeverPivotComponent.Get());
+	else StopGimmickLoop();
+}
+
+void AToggleSwitch::HandleLeverMotionFinished()
+{
+	StopGimmickLoop();
+}
+// +--------
 
 bool AToggleSwitch::CanInteractInternal(ACharacter* Player) const
 {

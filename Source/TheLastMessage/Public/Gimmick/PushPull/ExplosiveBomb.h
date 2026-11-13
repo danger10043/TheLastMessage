@@ -52,6 +52,10 @@ public:
 
 protected:
     virtual void BeginPlay() override;
+    // +추가----
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Audio")
+    TObjectPtr<USoundBase> ExplosionSound;
+    // +--------
 
     // 폭발 범위에서 찾은 액터에 피해 또는 장애물 파괴 적용
     void ApplyExplosionToActor(AActor* Target);

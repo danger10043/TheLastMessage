@@ -1,4 +1,6 @@
 #include "Character/Player/PlayerBase.h"
+#include "UI/GameVisualSettingsSubsystem.h"
+#include "Engine/GameInstance.h"
 #include "Weapon/MeleeReachRibbon.h"
 #include "UI/LoadingTransitionSubsystem.h"
 #include "Engine/GameInstance.h"
@@ -610,6 +612,8 @@ bool APlayerBase::IsGrappling() const
 void APlayerBase::BeginPlay()
 {
 	Super::BeginPlay();
+	if (auto* Visual = UGameInstance::GetSubsystem<UGameVisualSettingsSubsystem>(GetGameInstance()))
+		Visual->ApplyOutline(this);
 	// Authority must evaluate hand bones even without a rendered viewport to resolve muzzle sockets.
 	if (HasAuthority()) GetMesh()->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
 	if (UClass* AimClass = RangedAimPostProcessClass.Get())

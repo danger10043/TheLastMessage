@@ -138,6 +138,10 @@ void UGA_WeaponAttackBase::ActivateAbility(const FGameplayAbilitySpecHandle Hand
 	RecordedMeleeDamage = 0.0f;
 	RemainingBurstShots = 0;
 	bAttackMontageFinished = false;
+	bMoveCancelByTime = false;
+	bMoveCancelByNotify = false;
+	bMeleeStrikeFinished = false;
+	bMoveCancelEnding = false;
 	APlayerBase* Player = ActorInfo ? Cast<APlayerBase>(ActorInfo->AvatarActor.Get()) : nullptr;
 	SourceWeapon = Player ? Player->GetWeaponInSlot(WeaponSlot) : nullptr;
 	DamageEffectClass = Player ? Player->GetWeaponDamageEffectClass() : nullptr;
@@ -155,7 +159,8 @@ void UGA_WeaponAttackBase::ActivateAbility(const FGameplayAbilitySpecHandle Hand
 		return;
 	}
 	Player->ShowWeaponInSlot(WeaponSlot);
-	Player->StopMovementForAttack();
+	Player->SetAttackCancelWindowOpen(false);
+	Player->StopMovementForAttack(Data->AttackStartSpeedRetain);
 	if (Data->bSupportsChargeAttack && FMath::IsFinite(Data->MaxChargeTime) && Data->MaxChargeTime > 0.0f)
 	{
 		// 차지 시작 시 배율을 적용하고, 차지 비율 계산과 UI 게이지에 같은 시간을 사용한다.
@@ -381,6 +386,8 @@ void UGA_WeaponAttackBase::FireNextBurstShot()
 	{
 		GetWorld()->GetTimerManager().ClearTimer(BurstShotTimer);
 		FinishAttackIfReady();
+		// 마지막 탄환까지 나갔으므로 후딜 취소 구간이 열릴 수 있다.
+		if (IsActive() && !bFinishingAttack) UpdateMoveCancelWindow();
 	}
 }
 
@@ -390,6 +397,61 @@ void UGA_WeaponAttackBase::FinishAttackIfReady()
 	{
 		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
 	}
+}
+
+bool UGA_WeaponAttackBase::CanCancelIntoMovement() const
+{
+	// 공격이 실제로 실행되기 전이거나 연발이 남았다면 끊지 않는다.
+	if (!IsActive() || bFinishingAttack || !bAttackExecuted || RemainingBurstShots > 0) return false;
+	if (!bMoveCancelByTime && !bMoveCancelByNotify) return false;
+	const UWeaponDataAsset* Data = SourceWeapon ? SourceWeapon->WeaponData.Get() : nullptr;
+	if (!Data) return false;
+	// 근접은 마지막 타격 프레임이 처리된 뒤에만 끊어서 피해 판정을 건너뛰지 않게 한다.
+	const bool bMelee = Data->WeaponType == EWeaponType::LightMelee || Data->WeaponType == EWeaponType::HeavyMelee;
+	return !bMelee || bMeleeStrikeFinished;
+}
+
+void UGA_WeaponAttackBase::UpdateMoveCancelWindow()
+{
+	if (APlayerBase* Player = Cast<APlayerBase>(GetAvatarActorFromActorInfo()))
+	{
+		Player->SetAttackCancelWindowOpen(CanCancelIntoMovement());
+	}
+}
+
+void UGA_WeaponAttackBase::HandleMoveCancelTimer()
+{
+	if (!IsActive() || bFinishingAttack) return;
+	bMoveCancelByTime = true;
+	UpdateMoveCancelWindow();
+}
+
+void UGA_WeaponAttackBase::SetMoveCancelRequested(bool bRequested)
+{
+	if (!IsActive() || bFinishingAttack) return;
+	bMoveCancelByNotify = bRequested;
+	UpdateMoveCancelWindow();
+}
+
+bool UGA_WeaponAttackBase::TryMoveCancel()
+{
+	APlayerBase* Player = Cast<APlayerBase>(GetAvatarActorFromActorInfo());
+	const UWeaponDataAsset* Data = SourceWeapon ? SourceWeapon->WeaponData.Get() : nullptr;
+	if (!Player || !Data || !Player->HasAuthority() || Player->IsDead() || !CanCancelIntoMovement()) return false;
+
+	// 이동하려는 의도가 미리 눌러 둔 다음 공격보다 우선한다.
+	Player->ClearPendingAttack();
+	// 몽타주 중단 알림이 공격 취소로 처리되지 않도록 먼저 표시하고, 정상 종료로 끝낸다.
+	bMoveCancelEnding = true;
+	bAttackMontageFinished = true;
+	UAbilitySystemComponent* ASC = GetAbilitySystemComponentFromActorInfo();
+	if (ASC && Data->AttackMontage && ASC->GetCurrentMontage() == Data->AttackMontage)
+	{
+		// 음수면 몽타주 자체의 Blend Out을 사용한다.
+		ASC->CurrentMontageStop(Data->MoveCancelBlendOutTime >= 0.0f ? Data->MoveCancelBlendOutTime : -1.0f);
+	}
+	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
+	return true;
 }
 
 void UGA_WeaponAttackBase::HandleWeaponDataChanged()
@@ -556,6 +618,14 @@ void UGA_WeaponAttackBase::ExecuteAttack()
 		}
 	}
 
+	// 시간 방식 후딜 취소: 지정한 시간이 지나면 이동·점프·아래 입력이 공격을 끊을 수 있다.
+	if (Data->MoveCancelTime >= 0.0f && IsActive() && !bFinishingAttack)
+	{
+		if (Data->MoveCancelTime <= KINDA_SMALL_NUMBER) HandleMoveCancelTimer();
+		else GetWorld()->GetTimerManager().SetTimer(MoveCancelTimer, this,
+			&UGA_WeaponAttackBase::HandleMoveCancelTimer, Data->MoveCancelTime, false);
+	}
+
 	if (!bRanged)
 	{
 		Player->MulticastMeleeAttackFeedback(WeaponSlot, SourceWeapon->WeaponData);
@@ -570,6 +640,24 @@ void UGA_WeaponAttackBase::HandleMeleeHit(FGameplayEventData Payload)
 	if (!IsActive() || bFinishingAttack || !bAttackExecuted || !Player || !Player->HasAuthority() || Player->IsDead()
 		|| !Data || !DamageEffectClass || Payload.Instigator != Player || Payload.OptionalObject != Data->AttackMontage) return;
 	if (Data->WeaponType != EWeaponType::LightMelee && Data->WeaponType != EWeaponType::HeavyMelee) return;
+
+	// 마지막 타격 프레임이 도착했는지 기록한다. 이후에야 후딜 취소가 열릴 수 있다.
+	{
+		const int32 EventPhase = FMath::RoundToInt(Payload.EventMagnitude);
+		bool bStrikeEnds = EventPhase == 3;
+		if (EventPhase == 0)
+		{
+			// 구간(Trail) 노티파이가 있는 몽타주는 단발 이벤트를 무시하므로 구간 종료(3)를 기다린다.
+			bStrikeEnds = true;
+			for (const FAnimNotifyEvent& Event : Data->AttackMontage->Notifies)
+				if (Event.NotifyStateClass && Event.NotifyStateClass->IsA<UAnimNotifyState_MeleeTrail>()) { bStrikeEnds = false; break; }
+		}
+		if (bStrikeEnds)
+		{
+			bMeleeStrikeFinished = true;
+			UpdateMoveCancelWindow();
+		}
+	}
 
 	const FVector Direction = FVector::VectorPlaneProject(Player->GetActorForwardVector(), FVector::YAxisVector).GetSafeNormal();
 	if (Direction.IsNearlyZero()) return;
@@ -680,6 +768,8 @@ void UGA_WeaponAttackBase::HandleMontageCompleted()
 
 void UGA_WeaponAttackBase::HandleMontageCancelled()
 {
+	// 이동 입력으로 후딜을 끊는 중이면 TryMoveCancel이 정상 종료를 처리한다.
+	if (bMoveCancelEnding) return;
 	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
 }
 
@@ -705,6 +795,7 @@ void UGA_WeaponAttackBase::EndAbility(const FGameplayAbilitySpecHandle Handle,
 	{
 		World->GetTimerManager().ClearTimer(ChargeStartTimer);
 		World->GetTimerManager().ClearTimer(BurstShotTimer);
+		World->GetTimerManager().ClearTimer(MoveCancelTimer);
 	}
 	if (bWasCancelled)
 	{
@@ -714,6 +805,8 @@ void UGA_WeaponAttackBase::EndAbility(const FGameplayAbilitySpecHandle Handle,
 	{
 		Player->OnWeaponDataChanged.RemoveDynamic(this, &UGA_WeaponAttackBase::HandleWeaponDataChanged);
 		Player->ClearWeaponCharge(WeaponSlot);
+		// 공격이 끝나면 후딜 취소 구간도 반드시 닫는다.
+		Player->SetAttackCancelWindowOpen(false);
 		if (bAttackExecuted && SourceWeapon && SourceWeapon->WeaponData
 			&& (SourceWeapon->WeaponData->WeaponType == EWeaponType::LightMelee || SourceWeapon->WeaponData->WeaponType == EWeaponType::HeavyMelee))
 			Player->MulticastStopMeleeAttackFeedback(WeaponSlot);
@@ -735,7 +828,11 @@ void UGA_WeaponAttackBase::EndAbility(const FGameplayAbilitySpecHandle Handle,
 	RecordedMeleeDamage = 0.0f;
 	RemainingBurstShots = 0;
 	bAttackMontageFinished = false;
+	bMoveCancelByTime = false;
+	bMoveCancelByNotify = false;
+	bMeleeStrikeFinished = false;
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
+	bMoveCancelEnding = false;
 	// 본체의 공격 상태를 해제한 뒤 후속 능력에 알리므로 본체 후딜을 늘리지 않는다.
 	if (CompletedAttack.IsValid() && IsValid(CompletedPlayer) && CompletedPlayer->HasAuthority()
 		&& !CompletedPlayer->IsDead() && IsValid(CompletedASC) && CompletedASC->GetAvatarActor() == CompletedPlayer)

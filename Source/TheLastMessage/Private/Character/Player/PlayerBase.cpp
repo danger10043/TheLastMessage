@@ -189,6 +189,7 @@ void APlayerBase::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifet
 	DOREPLIFETIME_CONDITION(APlayerBase, AimDirection, COND_SkipOwner);
 	DOREPLIFETIME_CONDITION(APlayerBase, AimTargetLocation, COND_SkipOwner);
 	DOREPLIFETIME_CONDITION(APlayerBase, bHasAimTarget, COND_SkipOwner);
+	DOREPLIFETIME_CONDITION(APlayerBase, bAttackCancelWindowOpen, COND_OwnerOnly);
 }
 
 FVector APlayerBase::GetAimPlaneNormal() const
@@ -1889,7 +1890,10 @@ void APlayerBase::UpdateMoveSpeed()
 void APlayerBase::DoMove(float Forward)
 {
 	if (IsCarryTransitionActive()) return;
-	if (IsDead() || IsHitReacting() || IsGrappling() || AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking)
+	// 공격 중에는 이동 입력을 막되, 후딜 취소 구간이 열려 있으면 입력이 공격을 끊고 그대로 적용된다.
+	const bool bAttackBlocksMove = IsAttacking()
+		&& !(FMath::Abs(Forward) > KINDA_SMALL_NUMBER && TryCancelAttackWithInput());
+	if (IsDead() || IsHitReacting() || IsGrappling() || bAttackBlocksMove
 		|| AbilitySystemComponent->HasMatchingGameplayTag(CoreGameplayTags::State_Guarding))
 	{
 		ActionValueY = 0.0f;
@@ -1912,7 +1916,9 @@ void APlayerBase::DoMove(float Forward)
 void APlayerBase::DoDrop(float Value)
 {
 	if (IsCarryTransitionActive()) return;
-	if (IsDead() || IsHitReacting() || IsGrappling() || AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking)
+	const bool bAttackBlocksDrop = IsAttacking()
+		&& !(FMath::Abs(Value) > KINDA_SMALL_NUMBER && TryCancelAttackWithInput());
+	if (IsDead() || IsHitReacting() || IsGrappling() || bAttackBlocksDrop
 		|| AbilitySystemComponent->HasMatchingGameplayTag(CoreGameplayTags::State_Guarding))
 	{
 		DropValue = 0.0f;
@@ -1924,8 +1930,10 @@ void APlayerBase::DoDrop(float Value)
 void APlayerBase::DoJumpStart()
 {
 	if (IsCarryTransitionActive()) return;
-	if (IsDead() || IsHitReacting() || AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking)) return;
+	if (IsDead() || IsHitReacting()) return;
 	if (AbilitySystemComponent->HasMatchingGameplayTag(CoreGameplayTags::State_Guarding)) return;
+	// 공격 중에는 점프를 막되, 후딜 취소 구간이 열려 있으면 점프가 공격을 끊고 그대로 적용된다.
+	if (IsAttacking() && !TryCancelAttackWithInput()) return;
 	if (IsGrappling()) GrapplingHookComponent->CancelGrapple();
 
 	// +추가----
@@ -1949,7 +1957,7 @@ void APlayerBase::DoJumpStart()
 	}
 }
 
-void APlayerBase::StopMovementForAttack()
+void APlayerBase::StopMovementForAttack(float RetainSpeedRatio)
 {
 	ActionValueY = 0.0f;
 	DropValue = 0.0f;
@@ -1957,9 +1965,71 @@ void APlayerBase::StopMovementForAttack()
 	UCharacterMovementComponent* Movement = GetCharacterMovement();
 	if (Movement->IsMovingOnGround())
 	{
-		Movement->StopMovementImmediately();
+		const float Retain = FMath::IsFinite(RetainSpeedRatio) ? FMath::Clamp(RetainSpeedRatio, 0.0f, 1.0f) : 0.0f;
+		if (Retain > KINDA_SMALL_NUMBER)
+		{
+			// 입력이 없으므로 남긴 속도는 캐릭터 이동의 기존 제동(마찰·감속)으로 자연스럽게 줄어든다.
+			Movement->Velocity *= Retain;
+		}
+		else
+		{
+			Movement->StopMovementImmediately();
+		}
 	}
 	// 공중에서는 기존 속도를 유지한다. 공격 중 새 이동 입력은 DoMove에서 차단한다.
+}
+
+UGA_WeaponAttackBase* APlayerBase::FindActiveAttackAbility() const
+{
+	if (!AbilitySystemComponent) return nullptr;
+	UGA_WeaponAttackBase* Found = nullptr;
+	{
+		FScopedAbilityListLock Lock(*AbilitySystemComponent);
+		for (const FGameplayAbilitySpec& Spec : AbilitySystemComponent->GetActivatableAbilities())
+		{
+			if (!Spec.IsActive() || !Spec.Ability || !Spec.Ability->IsA<UGA_WeaponAttackBase>()) continue;
+			// 공격 능력은 액터당 하나의 인스턴스를 재사용한다.
+			Found = Cast<UGA_WeaponAttackBase>(Spec.GetPrimaryInstance());
+			if (Found) break;
+		}
+	}
+	return Found;
+}
+
+void APlayerBase::SetAttackCancelWindowOpen(bool bOpen)
+{
+	// 상태는 서버가 정하고 오너 클라이언트로 복제한다.
+	if (!HasAuthority()) return;
+	bAttackCancelWindowOpen = bOpen;
+}
+
+void APlayerBase::SetAttackCancelWindowRequested(bool bRequested)
+{
+	if (!HasAuthority()) return;
+	if (UGA_WeaponAttackBase* Attack = FindActiveAttackAbility()) Attack->SetMoveCancelRequested(bRequested);
+}
+
+bool APlayerBase::TryCancelAttackWithInput()
+{
+	if (!bAttackCancelWindowOpen) return false;
+	if (HasAuthority())
+	{
+		UGA_WeaponAttackBase* Attack = FindActiveAttackAbility();
+		return Attack && Attack->TryMoveCancel();
+	}
+	// 클라이언트: 서버가 공격을 끊도록 요청하고, 그동안 입력이 막히지 않게 허용한다.
+	const double Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
+	if (LastAttackCancelRequestTime < 0.0 || Now - LastAttackCancelRequestTime >= 0.1)
+	{
+		LastAttackCancelRequestTime = Now;
+		ServerRequestAttackCancel();
+	}
+	return true;
+}
+
+void APlayerBase::ServerRequestAttackCancel_Implementation()
+{
+	if (UGA_WeaponAttackBase* Attack = FindActiveAttackAbility()) Attack->TryMoveCancel();
 }
 
 void APlayerBase::DoInteract()

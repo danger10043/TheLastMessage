@@ -17,6 +17,7 @@ class UCarryComponent;
 class UPushPullComponent;
 class UCoreComponent;
 class UGameplayAbility;
+class UGA_WeaponAttackBase;
 class UGameplayEffect;
 class UWeaponBase;
 class UWeaponDataAsset;
@@ -289,8 +290,22 @@ public:
 	virtual void DoInteract() override;
 
 	// 공격 시작 시 남은 입력을 지운다. 지상에서는 정지하고 공중에서는 기존 속도를 유지한다.
-	void StopMovementForAttack();
+	// RetainSpeedRatio가 0보다 크면 지상에서도 그 비율만큼 속도를 남겨 기존 제동으로 서서히 멈춘다.
+	void StopMovementForAttack(float RetainSpeedRatio = 0.0f);
 	UStaticMeshComponent* GetWeaponVisualMesh(EWeaponSlot Slot) const;
+
+	/** 공격 후딜을 이동·점프·아래 입력으로 끊을 수 있는 구간이 열려 있으면 true. 서버가 정하고 오너에게 복제한다. */
+	UFUNCTION(BlueprintPure, Category="Player|Combat")
+	bool IsAttackCancelWindowOpen() const { return bAttackCancelWindowOpen; }
+	/** 서버 전용. 공격 능력이 취소 구간 상태를 갱신한다. */
+	void SetAttackCancelWindowOpen(bool bOpen);
+	/** 서버 전용. 애님 노티파이가 현재 공격 능력에 취소 구간을 요청하거나 해제한다. */
+	void SetAttackCancelWindowRequested(bool bRequested);
+	/**
+	 * 이동·점프·아래 입력이 공격을 끊으려 할 때 호출한다.
+	 * 취소 구간이 열려 있으면 서버에 취소를 요청하고 true를 반환해 입력을 그대로 적용하게 한다.
+	 */
+	bool TryCancelAttackWithInput();
 
 	UCoreComponent* GetCoreComponent() const;
 
@@ -534,6 +549,16 @@ private:
 	// ServerOnly 공격 능력은 눌림/해제를 동일한 서버 경로로 전달한다.
 	UFUNCTION(Server, Reliable)
 	void ServerAbilityInput(FGameplayTag InputTag, uint8 InputState, FVector_NetQuantize AimPoint);
+	// 후딜 취소 구간이 열려 있을 때 클라이언트의 이동·점프·아래 입력이 서버의 공격 능력을 끊도록 요청한다.
+	UFUNCTION(Server, Reliable)
+	void ServerRequestAttackCancel();
+	/** 현재 실행 중인 공격 능력. 없으면 nullptr. */
+	UGA_WeaponAttackBase* FindActiveAttackAbility() const;
+	// 서버가 계산한 후딜 취소 구간 상태. 오너 클라이언트가 입력 차단을 풀지 판단하는 데 쓴다.
+	UPROPERTY(Replicated)
+	bool bAttackCancelWindowOpen = false;
+	// 클라이언트가 취소 요청을 매 프레임 보내지 않도록 마지막 요청 시각을 기억한다.
+	double LastAttackCancelRequestTime = -1.0;
 	void UpdateMouseAim();
 	bool SetAimTarget(FVector WorldPoint);
 	FVector GetAimPlaneNormal() const;

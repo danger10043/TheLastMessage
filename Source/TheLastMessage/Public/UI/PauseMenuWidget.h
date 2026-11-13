@@ -7,6 +7,7 @@ class UWidgetTree;
 class UWidgetSwitcher;
 class UTextBlock;
 class UInputAction;
+class UAudioSettingsWidget;
 
 UENUM(BlueprintType)
 enum class EPauseMenuAction : uint8 { Resume, ReloadCheckpoint, MainMenu, QuitGame };
@@ -40,6 +41,8 @@ private:
 	UFUNCTION() void Quit();
 	UFUNCTION() void Confirm();
 	UFUNCTION() void Back();
+	UFUNCTION() void OnSettingsClosed();
+	UPROPERTY(Transient) TObjectPtr<UAudioSettingsWidget> SettingsScreen;
 	void Ask(EPauseMenuAction Action, const FText& Message);
 	UPROPERTY(Transient) TObjectPtr<UWidgetSwitcher> Pages;
 	UPROPERTY(Transient) TObjectPtr<UInputAction> PauseInputAction;

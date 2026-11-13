@@ -50,6 +50,9 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category="Fonts")
 	TSoftObjectPtr<UFont> TitleFont;
 
+	UPROPERTY(Config, EditAnywhere, Category="Fonts", meta=(ClampMin="12", ClampMax="48"))
+	int32 SettingsButtonFontSize = 38;
+
 	/** Mouse-over and keyboard focus moves on menu buttons. */
 	UPROPERTY(Config, EditAnywhere, Category="Sounds")
 	TSoftObjectPtr<USoundBase> HoverSound;

@@ -1,4 +1,5 @@
 #include "Tools/IntegratePlayerUICommandlet.h"
+#include "UI/AudioSettingsWidget.h"
 
 #if WITH_EDITOR
 #include "UI/FactoryUIStyle.h"
@@ -1010,6 +1011,22 @@ UIntegratePlayerUICommandlet::UIntegratePlayerUICommandlet()
 
 int32 UIntegratePlayerUICommandlet::Main(const FString& Params)
 {
+#if WITH_EDITOR
+	if (FParse::Param(*Params, TEXT("AudioSettings")))
+	{
+		const TCHAR* Path = TEXT("/Game/Main/UI/Menu/WBP_AudioSettings");
+		if (UWidgetBlueprint* Existing = LoadObject<UWidgetBlueprint>(nullptr, Path))
+		{
+			if (!FParse::Param(*Params, TEXT("RestorePanel"))) return 0;
+			FactoryMenuStyle::ApplyLayout(Existing->WidgetTree, true);
+			return PlayerUIBuild::CompileSave(Existing) ? 0 : 1;
+		}
+		UWidgetBlueprint* Blueprint = PlayerUIBuild::Blueprint(Path, UAudioSettingsWidget::StaticClass());
+		UAudioSettingsWidget::BuildDefaultLayout(Blueprint->WidgetTree);
+		FactoryMenuStyle::ApplyLayout(Blueprint->WidgetTree, true);
+		return PlayerUIBuild::CompileSave(Blueprint) ? 0 : 1;
+	}
+#endif
 #if WITH_EDITOR
 	if (FParse::Param(*Params, TEXT("ApplyFactoryLayout"))) return PlayerUIBuild::ApplyFactoryLayout() ? 0 : 1;
 	if (FParse::Param(*Params, TEXT("ApplyFactoryMenus"))) return PlayerUIBuild::ApplyFactoryLayout(true) ? 0 : 1;

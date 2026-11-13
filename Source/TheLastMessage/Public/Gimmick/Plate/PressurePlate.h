@@ -51,6 +51,10 @@ public:
 
 protected:
     virtual void BeginPlay() override;
+    // +추가----
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Audio")
+    TObjectPtr<USoundBase> PlatePressSound;
+    // +--------
 
     virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 

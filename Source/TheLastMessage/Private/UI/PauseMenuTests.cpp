@@ -4,9 +4,15 @@
 #include "Editor.h"
 #include "Framework/SideScrollingPlayerController.h"
 #include "UI/PauseMenuWidget.h"
+#include "UI/AudioSettingsWidget.h"
+#include "Blueprint/WidgetBlueprintLibrary.h"
+#include "UI/GameAudioSettingsSubsystem.h"
+#include "VolumeSlider.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/Button.h"
+#include "Components/Slider.h"
 #include "Components/WidgetSwitcher.h"
+#include "Engine/GameInstance.h"
 #include "Engine/World.h"
 #include "GameFramework/WorldSettings.h"
 #include "GameFramework/GameModeBase.h"
@@ -54,9 +60,43 @@ public:
 		auto Click = [&](const TCHAR* Name) { CastChecked<UButton>(Screen->WidgetTree->FindWidget(Name))->OnClicked.Broadcast(); };
 		const FKeyEvent Tab(EKeys::Tab, FModifierKeysState(), 0, false, 0, 0);
 		Test->TestFalse(TEXT("No checkpoint disables reload"), Screen->WidgetTree->FindWidget(TEXT("ReloadButton"))->GetIsEnabled());
-		Click(TEXT("SettingsButton")); Test->TestEqual(TEXT("Settings page opens"), Pages->GetActiveWidgetIndex(), 2);
-		Screen->TakeWidget()->OnPreviewKeyDown(FGeometry(), Tab);
-		Test->TestTrue(TEXT("Tab leaves settings while keeping pause"), Pages->GetActiveWidgetIndex() == 0 && UGameplayStatics::IsGamePaused(World));
+		Click(TEXT("SettingsButton"));
+		TArray<UUserWidget*> SettingsWidgets;
+		UWidgetBlueprintLibrary::GetAllWidgetsOfClass(World, SettingsWidgets, UAudioSettingsWidget::StaticClass(), true);
+		if (!Test->TestEqual(TEXT("Independent settings screen opens"), SettingsWidgets.Num(), 1)) return true;
+		UUserWidget* SettingsScreen = SettingsWidgets[0];
+		auto* AudioSection = Cast<UUserWidget>(SettingsScreen->WidgetTree->FindWidget(TEXT("AudioSettingsSection")));
+		if (!Test->TestNotNull(TEXT("Settings contains the audio Blueprint"), AudioSection)) return true;
+		Test->TestNotNull(TEXT("Settings contains the brightness slider"), SettingsScreen->WidgetTree->FindWidget(TEXT("BrightnessSetting")));
+		auto* Audio = World->GetGameInstance()->GetSubsystem<UGameAudioSettingsSubsystem>();
+		const TPair<const TCHAR*, EGameVolume> VolumeControls[] = {
+			{TEXT("MasterVolumeSlider"), EGameVolume::Master},
+			{TEXT("EffectsVolumeSlider"), EGameVolume::Effects},
+			{TEXT("InterfaceVolumeSlider"), EGameVolume::Interface},
+			{TEXT("MusicVolumeSlider"), EGameVolume::Music},
+			{TEXT("AmbienceVolumeSlider"), EGameVolume::Ambience},
+		};
+		if (Test->TestNotNull(TEXT("Audio settings are available"), Audio))
+		{
+			for (const auto& Control : VolumeControls)
+			{
+				auto* Slider = Cast<UVolumeSlider>(AudioSection->WidgetTree->FindWidget(Control.Key));
+				if (!Test->TestNotNull(Control.Key, Slider)) continue;
+				const float Previous = Audio->GetVolume(Control.Value);
+				Test->TestEqual(TEXT("Slider shows the saved level"), Slider->GetValue(), Previous);
+				const float Changed = Previous > 0.5f ? 0.25f : 0.75f;
+				Slider->OnValueChanged.Broadcast(Changed);
+				Test->TestEqual(TEXT("Slider changes its audio level"), Audio->GetVolume(Control.Value), Changed);
+				Test->TestEqual(TEXT("Slider displays the new level"), Slider->GetValue(), Changed);
+				Slider->OnToggleMute.ExecuteIfBound();
+				Test->TestEqual(TEXT("Mute zeros the slider"), Slider->GetValue(), 0.0f);
+				Slider->OnToggleMute.ExecuteIfBound();
+				Test->TestEqual(TEXT("Unmute restores the previous level"), Slider->GetValue(), Changed);
+				Slider->OnValueChanged.Broadcast(Previous);
+			}
+		}
+		SettingsScreen->TakeWidget()->OnPreviewKeyDown(FGeometry(), Tab);
+		Test->TestTrue(TEXT("Tab leaves settings while keeping pause"), !SettingsScreen->IsInViewport() && UGameplayStatics::IsGamePaused(World));
 		Click(TEXT("MenuButton")); Test->TestEqual(TEXT("Menu exit requires confirmation"), Pages->GetActiveWidgetIndex(), 1);
 		Click(TEXT("CancelButton")); Test->TestEqual(TEXT("Cancel returns to paused menu"), Pages->GetActiveWidgetIndex(), 0);
 		Click(TEXT("QuitButton")); Test->TestEqual(TEXT("Desktop exit requires confirmation"), Pages->GetActiveWidgetIndex(), 1);

@@ -82,6 +82,9 @@ void ASwitchGroupBase::CompleteGroup()
 
 	// 이벤트가 발생하기 전에 완료 상태부터 기록
 	bIsCompleted = true;
+	// +추가----
+	PlayGimmickOneShot(GroupSuccessSound.Get(), GroupMesh.Get());
+	// +--------
 
 	// 조건을 달성한 그룹의 모든 레버 입력 잠금
 	for (AToggleSwitch* Switch : GroupSwitches)
@@ -115,6 +118,13 @@ void ASwitchGroupBase::BeginPlay()
 	UpdateGroupIndicator();
 
 }
+
+// +추가----
+void ASwitchGroupBase::PlayGroupFailureSound()
+{
+	PlayGimmickOneShot(GroupFailureSound.Get(), GroupMesh.Get());
+}
+// +--------
 
 void ASwitchGroupBase::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {

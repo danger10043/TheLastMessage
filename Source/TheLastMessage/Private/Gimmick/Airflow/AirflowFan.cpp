@@ -309,6 +309,9 @@ void AAirflowFan::EndPlay(const EEndPlayReason::Type EndPlayReason)
 void AAirflowFan::RefreshAirflowState()
 {
 	const bool bShouldRun = bIsEnabled && bIsActive && bAirflowConfigLoaded && IsValid(AirflowArea);
+	// +추가----
+	RefreshGimmickAudioState();
+	// +--------
 
 	// 기류와 같은 작동 조건으로 로터와 표시등 제어
 	UpdateFanVisuals(bShouldRun);
@@ -361,6 +364,15 @@ void AAirflowFan::RefreshAirflowState()
 	// 활성화된 기류 안에 플레이어가 있을 때만 Tick 사용
 	SetActorTickEnabled(bShouldRun && HasAuthority() && !AffectedPlayers.IsEmpty());
 }
+
+// +추가----
+void AAirflowFan::RefreshGimmickAudioState()
+{
+	if (bIsEnabled && bIsActive && bAirflowConfigLoaded && IsValid(AirflowArea))
+		StartGimmickLoop(FanLoopSound.Get(), FanMesh.Get());
+	else StopGimmickLoop();
+}
+// +--------
 
 void AAirflowFan::OnAirflowBeginOverlap(UPrimitiveComponent * OverlappedComponent, AActor * OtherActor, UPrimitiveComponent * OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult & SweepResult)
 {

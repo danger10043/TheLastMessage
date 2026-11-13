@@ -13,6 +13,11 @@ class USceneComponent;
 class UMaterialInstanceDynamic;
 class UNiagaraComponent;
 class AGimmickBase;
+// +추가----
+class UAudioComponent;
+class USoundBase;
+class USoundAttenuation;
+// +--------
 
 // 종합 명세서의 이벤트 타입과 매개변수
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
@@ -97,6 +102,31 @@ protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
 
+	// +추가----
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	// 재생 조건과 사용할 소리는 자식 기믹이 결정한다.
+	void PlayGimmickOneShot(USoundBase* Sound, USceneComponent* Source = nullptr) const;
+	void StartGimmickLoop(USoundBase* Sound, USceneComponent* Source = nullptr);
+	void StopGimmickLoop(bool bImmediately = false);
+	bool CanPlayGimmickEventSound() const;
+	virtual void RefreshGimmickAudioState();
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Gimmick|Audio")
+	TObjectPtr<UAudioComponent> GimmickLoopAudio;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Audio", meta = (ClampMin = "0.0"))
+	float GimmickSoundVolume = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Audio", meta = (ClampMin = "0.01"))
+	float GimmickSoundPitch = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Audio")
+	TObjectPtr<USoundAttenuation> GimmickSoundAttenuation;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Audio", meta = (ClampMin = "0.0", Units = "s"))
+	float GimmickLoopFadeTime = 0.1f;
+	// +--------
+
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
 
@@ -152,5 +182,18 @@ protected:
 	// 현재 강조 상태를 확인하기 위한 보조 변수
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Gimmick|Highlight")
 	bool bIsHighlighted = false;
+
+// +추가----
+private:
+	void InitializeGimmickAudio();
+	void QueueGimmickAudioRefresh();
+	bool IsGimmickAudioSuppressed() const;
+	bool bGimmickAudioReady = false;
+	bool bRestoringGimmickAudio = false;
+	bool bGimmickLoopRequested = false;
+	uint64 GimmickAudioReadyFrame = 0;
+	FTimerHandle GimmickAudioInitTimer;
+	FTimerHandle GimmickAudioRefreshTimer;
+// +--------
 
 };

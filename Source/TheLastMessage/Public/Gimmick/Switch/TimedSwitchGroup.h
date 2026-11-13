@@ -40,6 +40,10 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	// +추가----
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Audio")
+	TObjectPtr<USoundBase> TimerTickSound;
+	// +--------
 
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
@@ -74,6 +78,9 @@ protected:
 private:
 	// 유효한 설정을 읽은 뒤에만 도전 시작
 	bool bConfigLoaded = false;
+	// +추가----
+	bool bPreviousTimerGlowOn = false;
+	// +--------
 
 	// 남은 시간으로 모든 스위치의 발광 상태 계산
 	void UpdateSwitchGlow();

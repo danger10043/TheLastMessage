@@ -27,11 +27,39 @@
 #include "EngineUtils.h"
 #include "UI/FactoryCursor.h"
 #include "DataAsset/WeaponDataAsset.h"
+// +추가----
+#include "Components/SceneComponent.h"
+// +--------
 
 ASideScrollingPlayerController::ASideScrollingPlayerController()
 {
 	MapWidgetClass = UAreaMapWidget::StaticClass();
 }
+
+// +추가----
+void ASideScrollingPlayerController::SetPawn(APawn* InPawn)
+{
+	Super::SetPawn(InPawn);
+	UpdateAudioAttenuationListener();
+}
+
+void ASideScrollingPlayerController::UpdateAudioAttenuationListener()
+{
+	if (!IsLocalController()) return;
+
+	APawn* PlayerPawn = GetPawn();
+	USceneComponent* PlayerRoot = IsValid(PlayerPawn) ? PlayerPawn->GetRootComponent() : nullptr;
+	if (IsValid(PlayerRoot))
+	{
+		// 컴포넌트에 부착하므로 이동과 리스폰에 별도의 매 프레임 갱신이 필요 없다.
+		SetAudioListenerAttenuationOverride(PlayerRoot, FVector::ZeroVector);
+	}
+	else
+	{
+		ClearAudioListenerAttenuationOverride();
+	}
+}
+// +--------
 
 EMouseCursor::Type ASideScrollingPlayerController::GetMouseCursor() const
 {
@@ -78,6 +106,9 @@ void ASideScrollingPlayerController::ServerSkipCinematic_Implementation()
 
 void ASideScrollingPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	// +추가----
+	ClearAudioListenerAttenuationOverride();
+	// +--------
 	bWaitingForPauseSave = false;
 	ClosePauseMenu();
 	if (GetGameInstance()) GetGameInstance()->GetSubsystem<UProgressSaveSubsystem>()->OnSaveFinished.RemoveDynamic(this, &ASideScrollingPlayerController::PauseSaveFinished);
@@ -89,6 +120,10 @@ void ASideScrollingPlayerController::EndPlay(const EEndPlayReason::Type EndPlayR
 void ASideScrollingPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
+	// +추가----
+	// 로컬 플레이어가 준비되기 전에 SetPawn이 호출된 경우도 처리한다.
+	UpdateAudioAttenuationListener();
+	// +--------
 	if (IsLocalController()) FactoryCursor::Install(GetWorld()->GetGameViewport());
 	if (IsLocalPlayerController() && !ShouldUseTouchControls())
 	{

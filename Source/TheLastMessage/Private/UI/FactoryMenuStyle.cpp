@@ -147,7 +147,8 @@ void UpdateFocus(UWidgetTree* Tree)
 			const bool bFocused = Button->HasAnyUserFocus();
 			FButtonStyle Style = Button->GetStyle();
 			FSlateBrush Target = bFocused ? Style.Hovered : Style.Disabled;
-			if (!bFocused) Target.TintColor = FLinearColor::White;
+			// 이미지 버튼은 Disabled 텍스처를 흰색 틴트로 평소 모습에 쓴다. RoundedBox는 틴트가 곧 채우기 색이라 그대로 둔다.
+			if (!bFocused && Target.DrawAs != ESlateBrushDrawType::RoundedBox) Target.TintColor = FLinearColor::White;
 			if (Style.Normal.GetResourceObject() != Target.GetResourceObject() || Style.Normal.TintColor != Target.TintColor)
 			{
 				Style.Normal = Target;

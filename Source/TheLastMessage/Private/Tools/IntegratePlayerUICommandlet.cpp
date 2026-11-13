@@ -1,4 +1,5 @@
 #include "Tools/IntegratePlayerUICommandlet.h"
+#include "UI/AudioSettingsWidget.h"
 
 #if WITH_EDITOR
 #include "UI/FactoryUIStyle.h"
@@ -24,6 +25,7 @@
 #include "Kismet2/KismetEditorUtilities.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "AssetToolsModule.h"
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
 #include "Components/VerticalBox.h"
@@ -1010,6 +1012,82 @@ UIntegratePlayerUICommandlet::UIntegratePlayerUICommandlet()
 
 int32 UIntegratePlayerUICommandlet::Main(const FString& Params)
 {
+#if WITH_EDITOR
+	if (FParse::Param(*Params, TEXT("SplitSettings")))
+	{
+		const TCHAR* AudioPath = TEXT("/Game/Main/UI/Menu/WBP_AudioSettings");
+		const TCHAR* SettingsPath = TEXT("/Game/Main/UI/Menu/WBP_Settings");
+		auto* Audio = LoadObject<UWidgetBlueprint>(nullptr, AudioPath);
+		if (!Audio) return 1;
+		auto* Settings = LoadObject<UWidgetBlueprint>(nullptr, SettingsPath);
+		if (!Settings)
+		{
+			Settings = Cast<UWidgetBlueprint>(FAssetToolsModule::GetModule().Get().DuplicateAsset(
+				TEXT("WBP_Settings"), TEXT("/Game/Main/UI/Menu"), Audio));
+		}
+		if (!Settings) return 1;
+		auto SyncWidgetGuids = [](UWidgetBlueprint* Blueprint)
+		{
+			TSet<FName> Names;
+			Blueprint->WidgetTree->ForEachWidget([&](UWidget* Widget)
+			{
+				const FName Name = Widget->GetFName();
+				Names.Add(Name);
+				if (!Blueprint->WidgetVariableNameToGuidMap.Contains(Name))
+					Blueprint->WidgetVariableNameToGuidMap.Add(Name, FGuid::NewGuid());
+			});
+			for (auto It = Blueprint->WidgetVariableNameToGuidMap.CreateIterator(); It; ++It)
+				if (!Names.Contains(It.Key())) It.RemoveCurrent();
+		};
+
+		auto* Left = Cast<UVerticalBox>(Settings->WidgetTree->FindWidget(TEXT("VisualSettingsColumn")));
+		auto* Columns = Cast<UHorizontalBox>(Settings->WidgetTree->FindWidget(TEXT("SettingsColumns")));
+		if (!Left || !Columns) return 1;
+		UAudioSettingsWidget::BuildVisualLayout(Settings->WidgetTree, Left);
+
+		auto* VolumeColumn = Cast<UVerticalBox>(Audio->WidgetTree->FindWidget(TEXT("VerticalBox_0")));
+		if (!VolumeColumn) return 1;
+		if (Audio->WidgetTree->RootWidget != VolumeColumn)
+		{
+			VolumeColumn->RemoveFromParent();
+			Audio->WidgetTree->RootWidget = VolumeColumn;
+		}
+		SyncWidgetGuids(Audio);
+		if (!PlayerUIBuild::CompileSave(Audio)) return 1;
+
+		if (!Settings->WidgetTree->FindWidget(TEXT("AudioSettingsSection")))
+		{
+			auto* Previous = Columns->GetChildAt(1);
+			auto* PreviousSlot = Previous ? Cast<UHorizontalBoxSlot>(Previous->Slot) : nullptr;
+			if (!PreviousSlot) return 1;
+			const FMargin Padding = PreviousSlot->GetPadding();
+			const FSlateChildSize Size = PreviousSlot->GetSize();
+			Previous->RemoveFromParent();
+			auto* Section = Settings->WidgetTree->ConstructWidget<UUserWidget>(
+				Audio->GeneratedClass.Get(), TEXT("AudioSettingsSection"));
+			if (!Section) return 1;
+			auto* Slot = Columns->AddChildToHorizontalBox(Section);
+			Slot->SetPadding(Padding);
+			Slot->SetSize(Size);
+		}
+		SyncWidgetGuids(Settings);
+		return PlayerUIBuild::CompileSave(Settings) ? 0 : 1;
+	}
+	if (FParse::Param(*Params, TEXT("AudioSettings")))
+	{
+		const TCHAR* Path = TEXT("/Game/Main/UI/Menu/WBP_AudioSettings");
+		if (UWidgetBlueprint* Existing = LoadObject<UWidgetBlueprint>(nullptr, Path))
+		{
+			if (!FParse::Param(*Params, TEXT("RestorePanel"))) return 0;
+			FactoryMenuStyle::ApplyLayout(Existing->WidgetTree, true);
+			return PlayerUIBuild::CompileSave(Existing) ? 0 : 1;
+		}
+		UWidgetBlueprint* Blueprint = PlayerUIBuild::Blueprint(Path, UAudioSettingsWidget::StaticClass());
+		UAudioSettingsWidget::BuildDefaultLayout(Blueprint->WidgetTree);
+		FactoryMenuStyle::ApplyLayout(Blueprint->WidgetTree, true);
+		return PlayerUIBuild::CompileSave(Blueprint) ? 0 : 1;
+	}
+#endif
 #if WITH_EDITOR
 	if (FParse::Param(*Params, TEXT("ApplyFactoryLayout"))) return PlayerUIBuild::ApplyFactoryLayout() ? 0 : 1;
 	if (FParse::Param(*Params, TEXT("ApplyFactoryMenus"))) return PlayerUIBuild::ApplyFactoryLayout(true) ? 0 : 1;

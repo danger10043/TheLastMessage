@@ -23,6 +23,9 @@ class ASideScrollingPlayerController : public APlayerController
 	GENERATED_BODY()
 public:
 	ASideScrollingPlayerController();
+	// +추가----
+	virtual void SetPawn(APawn* InPawn) override;
+	// +--------
 	virtual EMouseCursor::Type GetMouseCursor() const override;
 	UFUNCTION(BlueprintCallable, Category="Area Map") void ToggleAreaMap();
 	UFUNCTION(BlueprintCallable, Category="Pause Menu") void TogglePauseMenu();
@@ -83,6 +86,10 @@ protected:
 	bool ShouldUseTouchControls() const;
 
 private:
+	// +추가----
+	// 거리 감쇠의 기준만 플레이어로 옮기고 소리 방향의 기준은 카메라로 유지한다.
+	void UpdateAudioAttenuationListener();
+	// +--------
 	void SkipCinematic();
 	UFUNCTION(Server, Reliable) void ServerSkipCinematic();
 	void ClosePauseMenu();

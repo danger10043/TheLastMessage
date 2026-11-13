@@ -15,6 +15,8 @@ inline const FLinearColor Cyan(0.30f, 0.83f, 0.94f);
 inline const FLinearColor Amber(1.0f, 0.57f, 0.16f);
 inline const FLinearColor SelectedPanel(0.13f, 0.063f, 0.015f, 0.98f);
 inline const FLinearColor Text(0.88f, 0.94f, 0.96f);
+/** Secondary glyphs such as dropdown arrows: quieter than Text (sRGB ≈ #A9B6BE). */
+inline const FLinearColor TextMuted(0.40f, 0.47f, 0.52f);
 
 enum class EPlate : uint8 { Normal, Selected, Screen, Count };
 const TSoftObjectPtr<UTexture2D>& GetPlateTexture(EPlate State);

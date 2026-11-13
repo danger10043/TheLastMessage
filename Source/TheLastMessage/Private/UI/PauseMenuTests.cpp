@@ -65,6 +65,9 @@ public:
 		UWidgetBlueprintLibrary::GetAllWidgetsOfClass(World, SettingsWidgets, UAudioSettingsWidget::StaticClass(), true);
 		if (!Test->TestEqual(TEXT("Independent settings screen opens"), SettingsWidgets.Num(), 1)) return true;
 		UUserWidget* SettingsScreen = SettingsWidgets[0];
+		auto* AudioSection = Cast<UUserWidget>(SettingsScreen->WidgetTree->FindWidget(TEXT("AudioSettingsSection")));
+		if (!Test->TestNotNull(TEXT("Settings contains the audio Blueprint"), AudioSection)) return true;
+		Test->TestNotNull(TEXT("Settings contains the brightness slider"), SettingsScreen->WidgetTree->FindWidget(TEXT("BrightnessSetting")));
 		auto* Audio = World->GetGameInstance()->GetSubsystem<UGameAudioSettingsSubsystem>();
 		const TPair<const TCHAR*, EGameVolume> VolumeControls[] = {
 			{TEXT("MasterVolumeSlider"), EGameVolume::Master},
@@ -77,7 +80,7 @@ public:
 		{
 			for (const auto& Control : VolumeControls)
 			{
-				auto* Slider = Cast<UVolumeSlider>(SettingsScreen->WidgetTree->FindWidget(Control.Key));
+				auto* Slider = Cast<UVolumeSlider>(AudioSection->WidgetTree->FindWidget(Control.Key));
 				if (!Test->TestNotNull(Control.Key, Slider)) continue;
 				const float Previous = Audio->GetVolume(Control.Value);
 				Test->TestEqual(TEXT("Slider shows the saved level"), Slider->GetValue(), Previous);

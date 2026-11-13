@@ -5,6 +5,8 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Camera/CameraShakeBase.h"
+#include "Engine/GameInstance.h"
+#include "UI/GameVisualSettingsSubsystem.h"
 #include "Components/CapsuleComponent.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
@@ -77,7 +79,10 @@ bool UGA_BossLandingAttackBase::PrepareLanding(
         {
             if (APlayerController* PC = Cast<APlayerController>(Player->GetController()))
             {
-                PC->ClientStartCameraShake(LandingCameraShakeClass, LandingCameraShakeScale);
+                const auto* Visual = PC->IsLocalController()
+                    ? UGameInstance::GetSubsystem<UGameVisualSettingsSubsystem>(GetWorld()->GetGameInstance()) : nullptr;
+                const float Scale = LandingCameraShakeScale * (Visual ? Visual->ShakeScale : 1.f);
+                if (Scale > 0.f) PC->ClientStartCameraShake(LandingCameraShakeClass, Scale);
             }
         }
 

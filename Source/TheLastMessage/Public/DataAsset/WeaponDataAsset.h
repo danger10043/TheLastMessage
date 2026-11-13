@@ -131,6 +131,18 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Animation", meta=(ToolTip="공격 몽타주의 섹션 중 하나를 균등 추첨하고 선택한 섹션만 재생한다"))
 	bool bRandomizeAttackSection = false;
 
+	// 공격 시작(차지는 놓은 시점) 후 이 시간(초)이 지나면 이동·점프·아래 입력으로 후딜을 끊을 수 있다, 음수면 시간 방식을 쓰지 않고 몽타주의 Attack Cancel 노티파이만 사용한다
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Animation|Cancel", meta=(ToolTip="공격 시작(차지는 놓은 시점) 후 이 시간(초)이 지나면 이동·점프·아래 입력으로 후딜을 끊을 수 있다, 음수면 시간 방식을 쓰지 않고 몽타주의 Attack Cancel 노티파이만 사용한다", ClampMin="-1"))
+	float MoveCancelTime = -1.0f;
+
+	// 후딜을 끊을 때 공격 몽타주가 사라지는 블렌드 아웃 시간(초), 음수면 몽타주 자체의 Blend Out 설정을 사용한다
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Animation|Cancel", meta=(ToolTip="후딜을 끊을 때 공격 몽타주가 사라지는 블렌드 아웃 시간(초), 음수면 몽타주 자체의 Blend Out 설정을 사용한다", ClampMin="-1"))
+	float MoveCancelBlendOutTime = 0.15f;
+
+	// 지상에서 공격을 시작할 때 유지할 이동 속도 비율, 0이면 즉시 멈추고 1이면 속도를 그대로 유지한 채 기존 제동으로 서서히 멈춘다
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Animation|Cancel", meta=(ToolTip="지상에서 공격을 시작할 때 유지할 이동 속도 비율, 0이면 즉시 멈추고 1이면 속도를 그대로 유지한 채 기존 제동으로 서서히 멈춘다", ClampMin="0", ClampMax="1"))
+	float AttackStartSpeedRetain = 0.0f;
+
 	// 플레이어가 장착할 무기의 스태틱 메시
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Weapon|Mesh", meta=(ToolTip="플레이어가 장착할 무기의 스태틱 메시"))
 	TObjectPtr<UStaticMesh> WeaponMesh;

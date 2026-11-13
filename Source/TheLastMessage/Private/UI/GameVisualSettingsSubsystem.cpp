@@ -9,7 +9,7 @@
 
 namespace
 {
-constexpr TCHAR Section[] = TEXT("TheLastMessage.Visual");
+constexpr TCHAR VisualSettingsSection[] = TEXT("TheLastMessage.Visual");
 const FLinearColor OutlineColors[] = {FLinearColor::White, FLinearColor(0.10f, 0.85f, 1.0f),
 	FLinearColor(1.0f, 0.56f, 0.08f), FLinearColor(1.0f, 0.28f, 0.63f), FLinearColor(0.30f, 1.0f, 0.35f)};
 }
@@ -18,15 +18,15 @@ void UGameVisualSettingsSubsystem::Initialize(FSubsystemCollectionBase& Collecti
 {
 	Super::Initialize(Collection);
 	if (IsRunningDedicatedServer()) return;
-	GConfig->GetFloat(Section, TEXT("Brightness"), Brightness, GGameUserSettingsIni);
-	GConfig->GetFloat(Section, TEXT("OutlineScale"), OutlineScale, GGameUserSettingsIni);
-	GConfig->GetFloat(Section, TEXT("ShakeScale"), ShakeScale, GGameUserSettingsIni);
-	GConfig->GetInt(Section, TEXT("OutlineColor"), OutlineColor, GGameUserSettingsIni);
+	GConfig->GetFloat(VisualSettingsSection, TEXT("Brightness"), Brightness, GGameUserSettingsIni);
+	GConfig->GetFloat(VisualSettingsSection, TEXT("OutlineScale"), OutlineScale, GGameUserSettingsIni);
+	GConfig->GetFloat(VisualSettingsSection, TEXT("ShakeScale"), ShakeScale, GGameUserSettingsIni);
+	GConfig->GetInt(VisualSettingsSection, TEXT("OutlineColor"), OutlineColor, GGameUserSettingsIni);
 	FString CustomHex;
-	if (GConfig->GetString(Section, TEXT("CustomOutlineColor"), CustomHex, GGameUserSettingsIni) && CustomHex.Len() == 8)
+	if (GConfig->GetString(VisualSettingsSection, TEXT("CustomOutlineColor"), CustomHex, GGameUserSettingsIni) && CustomHex.Len() == 8)
 		CustomOutlineColor = FLinearColor::FromSRGBColor(FColor::FromHex(CustomHex));
-	GConfig->GetBool(Section, TEXT("MotionBlur"), bMotionBlur, GGameUserSettingsIni);
-	GConfig->GetBool(Section, TEXT("Bloom"), bBloom, GGameUserSettingsIni);
+	GConfig->GetBool(VisualSettingsSection, TEXT("MotionBlur"), bMotionBlur, GGameUserSettingsIni);
+	GConfig->GetBool(VisualSettingsSection, TEXT("Bloom"), bBloom, GGameUserSettingsIni);
 	Brightness = FMath::IsFinite(Brightness) ? FMath::Clamp(Brightness, 0.f, 1.f) : 0.5f;
 	OutlineScale = FMath::IsFinite(OutlineScale) ? FMath::Clamp(OutlineScale, 0.f, 2.f) : 1.f;
 	ShakeScale = FMath::IsFinite(ShakeScale) ? FMath::Clamp(ShakeScale, 0.f, 1.f) : 1.f;
@@ -79,12 +79,12 @@ void UGameVisualSettingsSubsystem::ApplyOutline(APlayerBase* Player) const
 
 void UGameVisualSettingsSubsystem::Save() const
 {
-	GConfig->SetFloat(Section, TEXT("Brightness"), Brightness, GGameUserSettingsIni);
-	GConfig->SetFloat(Section, TEXT("OutlineScale"), OutlineScale, GGameUserSettingsIni);
-	GConfig->SetFloat(Section, TEXT("ShakeScale"), ShakeScale, GGameUserSettingsIni);
-	GConfig->SetInt(Section, TEXT("OutlineColor"), OutlineColor, GGameUserSettingsIni);
-	GConfig->SetString(Section, TEXT("CustomOutlineColor"), *CustomOutlineColor.ToFColorSRGB().ToHex(), GGameUserSettingsIni);
-	GConfig->SetBool(Section, TEXT("MotionBlur"), bMotionBlur, GGameUserSettingsIni);
-	GConfig->SetBool(Section, TEXT("Bloom"), bBloom, GGameUserSettingsIni);
+	GConfig->SetFloat(VisualSettingsSection, TEXT("Brightness"), Brightness, GGameUserSettingsIni);
+	GConfig->SetFloat(VisualSettingsSection, TEXT("OutlineScale"), OutlineScale, GGameUserSettingsIni);
+	GConfig->SetFloat(VisualSettingsSection, TEXT("ShakeScale"), ShakeScale, GGameUserSettingsIni);
+	GConfig->SetInt(VisualSettingsSection, TEXT("OutlineColor"), OutlineColor, GGameUserSettingsIni);
+	GConfig->SetString(VisualSettingsSection, TEXT("CustomOutlineColor"), *CustomOutlineColor.ToFColorSRGB().ToHex(), GGameUserSettingsIni);
+	GConfig->SetBool(VisualSettingsSection, TEXT("MotionBlur"), bMotionBlur, GGameUserSettingsIni);
+	GConfig->SetBool(VisualSettingsSection, TEXT("Bloom"), bBloom, GGameUserSettingsIni);
 	GConfig->Flush(false, GGameUserSettingsIni);
 }

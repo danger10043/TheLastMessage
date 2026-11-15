@@ -57,12 +57,12 @@ protected:
 	TSet<TWeakObjectPtr<UPrimitiveComponent>> IgnoredSoftPlatforms;
 	TWeakObjectPtr<UPrimitiveComponent> DropThroughPlatform;
 
-	/** Last recorded time when this character started falling */
-	float LastFallTime = 0.0f;
+	/** Start of a fall eligible for coyote time, or unset. */
+	TOptional<float> CoyoteFallStartTime;
 
 	/** Max amount of time that can pass since we started falling when we allow a regular jump */
 	UPROPERTY(EditAnywhere, Category="Side Scrolling|Coyote Time", meta = (ClampMin = 0, ClampMax = 5, Units = "s"))
-	float MaxCoyoteTime = 0.16f;
+	float MaxCoyoteTime = 0.1f;
 
 	/** Last captured horizontal movement input value */
 	float ActionValueY = 0.0f;
@@ -96,6 +96,8 @@ protected:
 
 	/** Handle movement mode changes to keep track of coyote time jumps */
 	virtual void OnMovementModeChanged(EMovementMode PrevMovementMode, uint8 PreviousCustomMode = 0) override;
+	virtual bool CanJumpWhileFalling() const override;
+	virtual void OnJumped_Implementation() override;
 
 protected:
 

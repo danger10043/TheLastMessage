@@ -56,8 +56,8 @@ ASideScrollingCharacter::ASideScrollingCharacter()
 	GetCharacterMovement()->SetPlaneConstraintNormal(FVector(0.0f, 1.0f, 0.0f));
 	GetCharacterMovement()->bConstrainToPlane = true;
 
-	// enable double jump and coyote time
-	JumpMaxCount = 3;
+	// Allow one ground jump and one air jump by default.
+	JumpMaxCount = 2;
 }
 
 void ASideScrollingCharacter::BeginPlay()
@@ -135,14 +135,28 @@ void ASideScrollingCharacter::Landed(const FHitResult& Hit)
 
 void ASideScrollingCharacter::OnMovementModeChanged(EMovementMode PrevMovementMode, uint8 PreviousCustomMode /*= 0*/)
 {
-	Super::OnMovementModeChanged(PrevMovementMode, PreviousCustomMode);
-
-	// are we falling?
-	if (GetCharacterMovement()->MovementMode == EMovementMode::MOVE_Falling)
+	CoyoteFallStartTime.Reset();
+	const UCharacterMovementComponent* Movement = GetCharacterMovement();
+	if ((PrevMovementMode == MOVE_Walking || PrevMovementMode == MOVE_NavWalking)
+		&& Movement->IsFalling() && !bPressedJump && !DropThroughPlatform.IsValid()
+		&& FVector::DotProduct(Movement->Velocity, Movement->GetGravityDirection()) >= 0.0)
 	{
-		// save the game time when we started falling, so we can check it later for coyote time jumps
-		LastFallTime = GetWorld()->GetTimeSeconds();
+		CoyoteFallStartTime = GetWorld()->GetTimeSeconds();
 	}
+	Super::OnMovementModeChanged(PrevMovementMode, PreviousCustomMode);
+}
+
+bool ASideScrollingCharacter::CanJumpWhileFalling() const
+{
+	return CoyoteFallStartTime.IsSet()
+		&& GetWorld()->GetTimeSeconds() - CoyoteFallStartTime.GetValue() < MaxCoyoteTime;
+}
+
+void ASideScrollingCharacter::OnJumped_Implementation()
+{
+	CoyoteFallStartTime.Reset();
+	bHasDoubleJumped |= JumpCurrentCount > 1;
+	Super::OnJumped_Implementation();
 }
 
 void ASideScrollingCharacter::Move(const FInputActionValue& Value)
@@ -227,26 +241,7 @@ void ASideScrollingCharacter::MultiJump()
 		return;
 	}
 
-	// reset the drop value
-	DropValue = 0.0f;
-
-	// if we're grounded, disregard advanced jump logic
-	if (!GetCharacterMovement()->IsFalling())
-	{
-		Jump();
-		return;
-	}
-
-	if (GetWorld()->GetTimeSeconds() - LastFallTime < MaxCoyoteTime)
-	{
-		Jump();
-	}
-	else if (!bHasDoubleJumped)
-	{
-		// CharacterMovement handles the jump count; keep the animation flag in sync.
-		bHasDoubleJumped = true;
-		Jump();
-	}
+	Jump();
 }
 
 void ASideScrollingCharacter::CheckForSoftCollision()
@@ -258,7 +253,10 @@ void ASideScrollingCharacter::CheckForSoftCollision()
 	{
 		if (ADirectionalStairs* Stairs = Cast<ADirectionalStairs>(Floor->GetOwner()))
 		{
-			Stairs->RequestDropThrough(this);
+			if (Stairs->RequestDropThrough(this))
+			{
+				CoyoteFallStartTime.Reset();
+			}
 			return;
 		}
 	}

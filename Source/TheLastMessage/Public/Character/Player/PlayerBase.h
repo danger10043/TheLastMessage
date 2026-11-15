@@ -247,6 +247,7 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="Player|Death")
 	bool IsDead() const;
+	void SetAppearanceTint(class UMaterialInterface* TintMaterial, const FLinearColor& Color);
 
 	UPROPERTY(BlueprintAssignable, Category="Player|Events")
 	FOnPlayerDiedSignature OnPlayerDied;
@@ -485,6 +486,8 @@ protected:
 	FTimerHandle EnergyRechargeTimerHandle;
 
 private:
+	UPROPERTY(Transient) TObjectPtr<class UMaterialInterface> UntintedPlayerMaterial;
+	UPROPERTY(Transient) TObjectPtr<class UMaterialInstanceDynamic> PlayerTintInstance;
 	UPROPERTY(EditDefaultsOnly, Category="Player|Audio", meta=(ShowOnlyInnerProperties))
 	FPlayerMovementAudio MovementAudio;
 

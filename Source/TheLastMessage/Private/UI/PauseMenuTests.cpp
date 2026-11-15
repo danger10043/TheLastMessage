@@ -5,18 +5,27 @@
 #include "Framework/SideScrollingPlayerController.h"
 #include "UI/PauseMenuWidget.h"
 #include "UI/AudioSettingsWidget.h"
+#include "Animation/SkeletalMeshActor.h"
 #include "Blueprint/WidgetBlueprintLibrary.h"
 #include "UI/GameAudioSettingsSubsystem.h"
+#include "UI/GameVisualSettingsSubsystem.h"
 #include "VolumeSlider.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/Button.h"
+#include "Components/ComboBoxString.h"
+#include "Components/SizeBox.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Components/Slider.h"
+#include "Components/TextBlock.h"
+#include "Components/Viewport.h"
 #include "Components/WidgetSwitcher.h"
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
 #include "GameFramework/WorldSettings.h"
 #include "GameFramework/GameModeBase.h"
 #include "Kismet/GameplayStatics.h"
+#include "Materials/MaterialInterface.h"
+#include "Misc/App.h"
 #include "InputCoreTypes.h"
 #include "Widgets/SWidget.h"
 #include "Engine/LocalPlayer.h"
@@ -155,6 +164,114 @@ bool FPauseMenuUITest::RunTest(const FString& Parameters)
 	World->GetWorldSettings()->DefaultGameMode = Mode;
 	ADD_LATENT_AUTOMATION_COMMAND(FStartPIECommand(false));
 	ADD_LATENT_AUTOMATION_COMMAND(FPauseMenuInputCommand(this));
+	ADD_LATENT_AUTOMATION_COMMAND(FEndPlayMapCommand());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPlayerAppearanceSettingsTabTest, "TheLastMessage.UI.PlayerAppearanceSettings",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FPlayerAppearanceSettingsTabTest::RunTest(const FString& Parameters)
+{
+	UWorld* World = FAutomationEditorCommonUtils::CreateNewMap();
+	World->GetWorldSettings()->DefaultGameMode = AGameModeBase::StaticClass();
+	ADD_LATENT_AUTOMATION_COMMAND(FStartPIECommand(false));
+	ADD_LATENT_AUTOMATION_COMMAND(FDelayedFunctionLatentCommand([this]
+	{
+		UWorld* PlayWorld = GEditor->PlayWorld;
+		APlayerController* Controller = PlayWorld ? UGameplayStatics::GetPlayerController(PlayWorld, 0) : nullptr;
+		auto* Widget = UAudioSettingsWidget::CreateFor(Controller);
+		if (!TestNotNull(TEXT("Settings widget"), Widget)) return;
+		const TSharedRef<SWidget> SettingsSlate = Widget->TakeWidget();
+		UWidgetTree* Tree = Widget->WidgetTree;
+		auto* Pages = Cast<UWidgetSwitcher>(Tree->FindWidget(TEXT("SettingsTabPages")));
+		auto* Appearance = Cast<UButton>(Tree->FindWidget(TEXT("AppearanceSettingsTab")));
+		auto* General = Cast<UButton>(Tree->FindWidget(TEXT("GeneralSettingsTab")));
+		if (!TestNotNull(TEXT("Settings pages"), Pages) || !TestNotNull(TEXT("Appearance tab"), Appearance)
+			|| !TestNotNull(TEXT("General tab"), General)) return;
+		TestEqual(TEXT("General tab opens first"), Pages->GetActiveWidgetIndex(), 0);
+		for (const TCHAR* Name : {TEXT("GeneralSettingsTabText"), TEXT("AppearanceSettingsTabText")})
+		{
+			auto* Caption = Cast<UTextBlock>(Tree->FindWidget(Name));
+			TestTrue(Name, Caption && FMath::IsNearlyZero(Caption->GetRenderTransform().Translation.Y));
+		}
+		Appearance->OnClicked.Broadcast();
+		TestEqual(TEXT("Appearance tab opens"), Pages->GetActiveWidgetIndex(), 1);
+		for (const TCHAR* Name : {TEXT("OutlineColorSetting"), TEXT("OutlineWidthSetting"), TEXT("OutlineBrightnessSetting"), TEXT("PlayerColorSetting")})
+		{
+			UWidget* Control = Tree->FindWidget(Name);
+			while (Control && Control->GetParent() != Pages) Control = Control->GetParent();
+			TestTrue(Name, Control && Control == Pages->GetActiveWidget());
+		}
+		auto* Visual = PlayWorld->GetGameInstance()->GetSubsystem<UGameVisualSettingsSubsystem>();
+		auto* Brightness = Cast<USlider>(Tree->FindWidget(TEXT("OutlineBrightnessSetting")));
+		auto* Width = Cast<USlider>(Tree->FindWidget(TEXT("OutlineWidthSetting")));
+		auto* Color = Cast<UComboBoxString>(Tree->FindWidget(TEXT("PlayerColorSetting")));
+		auto* Outline = Cast<UComboBoxString>(Tree->FindWidget(TEXT("OutlineColorSetting")));
+		auto* Reset = Cast<UButton>(Tree->FindWidget(TEXT("ResetAppearanceButton")));
+		TestTrue(TEXT("Color dropdowns share the authored style"), Color && Outline
+			&& Color->GetWidgetStyle().ComboButtonStyle.ButtonStyle.Normal == Outline->GetWidgetStyle().ComboButtonStyle.ButtonStyle.Normal
+			&& Color->GetItemStyle().TextColor == Outline->GetItemStyle().TextColor
+			&& Color->GetForegroundColor() == Outline->GetForegroundColor()
+			&& Color->GetFont() == Outline->GetFont());
+		USkeletalMeshComponent* PreviewMesh = nullptr;
+		if (FApp::CanEverRender())
+		{
+			auto* Box = Cast<USizeBox>(Tree->FindWidget(TEXT("AppearancePreviewBox")));
+			auto* Viewport = Box ? Cast<UViewport>(Box->GetContent()) : nullptr;
+			UWorld* PreviewWorld = Viewport ? Viewport->GetViewportWorld() : nullptr;
+			auto* Preview = PreviewWorld
+				? Cast<ASkeletalMeshActor>(UGameplayStatics::GetActorOfClass(PreviewWorld, ASkeletalMeshActor::StaticClass())) : nullptr;
+			if (TestNotNull(TEXT("Appearance tab spawns an isolated preview model"), Preview))
+				PreviewMesh = Preview->GetSkeletalMeshComponent();
+		}
+		if (TestNotNull(TEXT("Visual settings"), Visual) && Brightness && Width && Color && Outline
+			&& TestNotNull(TEXT("Appearance defaults button"), Reset))
+		{
+			const float PreviousBrightness = Visual->OutlineBrightness;
+			const float PreviousWidth = Visual->OutlineScale;
+			const int32 PreviousColor = Visual->PlayerColor;
+			const int32 PreviousOutline = Visual->OutlineColor;
+			const FLinearColor PreviousCustomOutline = Visual->CustomOutlineColor;
+			const FLinearColor PreviousCustomPlayer = Visual->CustomPlayerColor;
+			Width->SetValue(0.70f);
+			auto* WidthLabel = Cast<UTextBlock>(Tree->FindWidget(TEXT("OutlineWidthValue")));
+			FNumberFormattingOptions TwoDigits;
+			TwoDigits.MinimumFractionalDigits = TwoDigits.MaximumFractionalDigits = 2;
+			TestTrue(TEXT("Outline width keeps its trailing zero and a fixed label width"), WidthLabel
+				&& WidthLabel->GetText().ToString().StartsWith(FText::AsNumber(0.70f, &TwoDigits).ToString())
+				&& Cast<USizeBox>(WidthLabel->GetParent()));
+			Brightness->OnValueChanged.Broadcast(1.5f);
+			Color->OnSelectionChanged.Broadcast(Color->GetOptionAtIndex(3), ESelectInfo::OnMouseClick);
+			TestEqual(TEXT("Outline brightness is independent"), Visual->OutlineBrightness, 1.5f);
+			TestEqual(TEXT("Orange player color is selected"), Visual->PlayerColor, 3);
+			if (PreviewMesh)
+			{
+				FLinearColor Tint;
+				TestTrue(TEXT("Selected tint appears on the preview mesh"), PreviewMesh->GetMaterial(0)
+					&& PreviewMesh->GetMaterial(0)->GetVectorParameterValue(FMaterialParameterInfo(TEXT("Color_1")), Tint)
+					&& Tint.Equals(Visual->GetPlayerColor()));
+				FLinearColor Emission;
+				const FLinearColor OutlineColor = Visual->GetOutlineColor(nullptr);
+				TestTrue(TEXT("Outline brightness updates the preview"), PreviewMesh->GetOverlayMaterial()
+					&& PreviewMesh->GetOverlayMaterial()->GetVectorParameterValue(FMaterialParameterInfo(TEXT("Outline Color")), Emission)
+					&& FMath::IsNearlyEqual(Emission.B, OutlineColor.B * Visual->OutlineBrightness));
+			}
+			Outline->OnSelectionChanged.Broadcast(Outline->GetOptionAtIndex(2), ESelectInfo::OnMouseClick);
+			Reset->OnClicked.Broadcast();
+			TestEqual(TEXT("Reset restores outline width"), Width->GetValue(), 1.f);
+			TestEqual(TEXT("Reset restores outline brightness"), Brightness->GetValue(), 1.f);
+			TestEqual(TEXT("Reset restores outline color"), Outline->GetSelectedIndex(), 0);
+			TestEqual(TEXT("Reset restores player color"), Color->GetSelectedIndex(), 0);
+			Visual->OutlineBrightness = PreviousBrightness;
+			Visual->OutlineScale = PreviousWidth;
+			Visual->PlayerColor = PreviousColor;
+			Visual->OutlineColor = PreviousOutline;
+			Visual->CustomOutlineColor = PreviousCustomOutline;
+			Visual->CustomPlayerColor = PreviousCustomPlayer;
+		}
+		General->OnClicked.Broadcast();
+		TestEqual(TEXT("Returns to general settings"), Pages->GetActiveWidgetIndex(), 0);
+	}, 0.2f));
 	ADD_LATENT_AUTOMATION_COMMAND(FEndPlayMapCommand());
 	return true;
 }

@@ -44,6 +44,7 @@
 #include "GameFramework/Controller.h"
 #include "GameFramework/PlayerController.h"
 #include "Camera/PlayerCameraManager.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "DrawDebugHelpers.h"
 #include "HAL/IConsoleManager.h"
 #include "Engine/DamageEvents.h"
@@ -610,11 +611,41 @@ bool APlayerBase::IsGrappling() const
 	return GrapplingHookComponent && GrapplingHookComponent->IsPulling();
 }
 
+void APlayerBase::SetAppearanceTint(UMaterialInterface* TintMaterial, const FLinearColor& Color)
+{
+	USkeletalMeshComponent* PlayerMesh = GetMesh();
+	UMaterialInterface* CurrentMaterial = PlayerMesh->GetMaterial(0);
+	if (CurrentMaterial != PlayerTintInstance)
+	{
+		PlayerTintInstance = nullptr;
+		UntintedPlayerMaterial = nullptr;
+	}
+	if (!TintMaterial)
+	{
+		if (PlayerTintInstance) PlayerMesh->SetMaterial(0, UntintedPlayerMaterial);
+		PlayerTintInstance = nullptr;
+		UntintedPlayerMaterial = nullptr;
+		return;
+	}
+	if (!PlayerTintInstance)
+	{
+		const auto* TintTemplate = Cast<UMaterialInstance>(TintMaterial);
+		if (!TintTemplate || !CurrentMaterial || CurrentMaterial != TintTemplate->Parent) return;
+	}
+	UMaterialInstanceDynamic* Tint = UGameVisualSettingsSubsystem::CreateOrUpdateBodyTint(PlayerMesh, TintMaterial, Color);
+	if (Tint && Tint != PlayerTintInstance)
+	{
+		UntintedPlayerMaterial = CurrentMaterial;
+		PlayerTintInstance = Tint;
+		PlayerMesh->SetMaterial(0, PlayerTintInstance);
+	}
+}
+
 void APlayerBase::BeginPlay()
 {
 	Super::BeginPlay();
 	if (auto* Visual = UGameInstance::GetSubsystem<UGameVisualSettingsSubsystem>(GetGameInstance()))
-		Visual->ApplyOutline(this);
+		Visual->ApplyAppearance(this);
 	// Authority must evaluate hand bones even without a rendered viewport to resolve muzzle sockets.
 	if (HasAuthority()) GetMesh()->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
 	if (UClass* AimClass = RangedAimPostProcessClass.Get())

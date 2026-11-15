@@ -35,6 +35,15 @@ public:
 
 protected:
     virtual void BeginPlay() override;
+    // +추가----
+    virtual void RefreshGimmickAudioState() override;
+    UFUNCTION()
+    void HandleDoorMotionFinished();
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Audio")
+    TObjectPtr<USoundBase> DoorOpenSound;
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Audio")
+    TObjectPtr<USoundBase> DoorCloseSound;
+    // +--------
 
     // Timeline이 전달하는 진행률로 문 위치 갱신
     UFUNCTION()

@@ -55,6 +55,13 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	// +추가----
+	virtual void RefreshGimmickAudioState() override;
+	UFUNCTION()
+	void HandleLeverMotionFinished();
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Audio")
+	TObjectPtr<USoundBase> LeverMoveSound;
+	// +--------
 
 	// +추가----
 	// 게임 시작 시 스위치를 켜진 상태로 배치할지 여부

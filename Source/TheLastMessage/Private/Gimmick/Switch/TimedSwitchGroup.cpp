@@ -217,6 +217,9 @@ void ATimedSwitchGroup::HandleTimeExpired()
 		return;
 	}
 
+	// +추가----
+	PlayGroupFailureSound();
+	// +--------
 	ResetGroup();
 }
 
@@ -240,6 +243,14 @@ void ATimedSwitchGroup::UpdateSwitchGlow()
 	const float Phase = FMath::Fmod(ElapsedTime, BlinkPeriod);
 
 	const bool bGlowOn = Phase < BlinkPeriod * 0.5f;
+	// +추가----
+	// 그룹당 한 번만 재생하고, 같은 켜짐 구간의 반복 갱신은 무시한다.
+	if (bGlowOn && !bPreviousTimerGlowOn)
+	{
+		PlayGimmickOneShot(TimerTickSound.Get(), GroupMesh.Get());
+	}
+	bPreviousTimerGlowOn = bGlowOn;
+	// +--------
 
 	const float GlowAlpha = bGlowOn ? 1.0f : 0.0f;
 
@@ -255,6 +266,9 @@ void ATimedSwitchGroup::UpdateSwitchGlow()
 
 void ATimedSwitchGroup::StopSwitchGlow()
 {
+	// +추가----
+	bPreviousTimerGlowOn = false;
+	// +--------
 	if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(GlowUpdateTimerHandle);

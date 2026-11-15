@@ -35,6 +35,11 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	// +추가----
+	virtual void RefreshGimmickAudioState() override;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Audio")
+	TObjectPtr<USoundBase> FanLoopSound;
+	// +--------
 
 	virtual void Tick(float DeltaTime) override;
 

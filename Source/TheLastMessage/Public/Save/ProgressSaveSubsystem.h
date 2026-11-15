@@ -51,6 +51,8 @@ public:
 	UFUNCTION(BlueprintPure, Category="Save") FString GetSaveDirectory() const;
 	UPROPERTY(BlueprintAssignable, Category="Save") FProgressSaveFinished OnSaveFinished;
 	UPROPERTY(BlueprintAssignable, Category="Save") FProgressSaveFinished OnCheckpointSaveFinished;
+	/** 로드된 기믹들의 체크포인트 복원이 끝난 직후. 월드 플래그 받는 쪽이 이 시점에 플래그에 맞춰 다시 상태를 맞춘다. */
+	FSimpleMulticastDelegate OnGimmickRestoreFinished;
 	// Mutable working state only. Disk writes take an independent serialized snapshot.
 	UProgressSaveGame* GetWorkingProgress() const { return WorkingProgress; }
 private:

@@ -1,11 +1,14 @@
 #include "Character/Boss/GA_BossMelee.h"
 #include "Character/Boss/BossMonster.h"
+#include "Character/Boss/BossAttackTrailComponent.h"
 #include "Character/Player/PlayerBase.h"
 #include "AIController.h"
 #include "AbilitySystemComponent.h"
 #include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "Animation/AnimMontage.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "GAS/CombatAttributeSet.h"
+#include "Sound/SoundBase.h"
 
 UGA_BossMelee::UGA_BossMelee()
 {
@@ -110,9 +113,40 @@ void UGA_BossMelee::HandleHitNotify(
 {
     ABossMonster* Boss = GetBossOwner();
     if (!IsActive() || bEnding || !IsValid(Boss) || !Boss->HasAuthority()
-        || NotifyName != HitNotifyName || MontageInstanceID == INDEX_NONE
+        || MontageInstanceID == INDEX_NONE
         || Payload.MontageInstanceID != MontageInstanceID
         || Payload.SkelMeshComponent != Boss->GetMesh())
+    {
+        return;
+    }
+
+    if (NotifyName == TEXT("TrailStart"))
+    {
+        UAnimInstance* Anim = BoundAnimInstance.Get();
+        const FName Section = Anim
+            ? Anim->Montage_GetCurrentSection(AttackMontage)
+            : NAME_None;
+
+        if (Section == TEXT("Phase12"))
+        {
+            UBossAttackTrailComponent::StartForBoss(
+                Boss, EBossTrailType::MeleePhase12);
+        }
+        else if (Section == TEXT("Phase3"))
+        {
+            UBossAttackTrailComponent::StartForBoss(
+                Boss, EBossTrailType::MeleePhase3);
+        }
+        return;
+    }
+
+    if (NotifyName == TEXT("TrailEnd"))
+    {
+        UBossAttackTrailComponent::StopForBoss(Boss);
+        return;
+    }
+
+    if (NotifyName != HitNotifyName)
     {
         return;
     }
@@ -130,10 +164,38 @@ void UGA_BossMelee::PerformHit()
     bHitProcessed = true;
 
     ABossMonster* Boss = GetBossOwner();
-    APlayerBase* Target = Cast<APlayerBase>(LockedTarget.Get());
     if (!IsValid(Boss) || !Boss->HasAuthority()
-        || Boss->GetBossState() != EBossState::Attacking
-        || !IsValid(Target) || !Target->IsPlayerControlled() || Target->IsDead()
+        || Boss->GetBossState() != EBossState::Attacking)
+    {
+        EndAbility(GetCurrentAbilitySpecHandle(), GetCurrentActorInfo(),
+            GetCurrentActivationInfo(), true, true);
+        return;
+    }
+
+    UAnimInstance* Anim = BoundAnimInstance.Get();
+    const FName Section = Anim
+        ? Anim->Montage_GetCurrentSection(AttackMontage)
+        : NAME_None;
+    const bool bPhase12Attack = Section == TEXT("Phase12");
+
+    USoundBase* AttackSound = nullptr;
+    if (bPhase12Attack)
+    {
+        AttackSound = Phase12AttackSound.Get();
+    }
+    else if (Section == TEXT("Phase3"))
+    {
+        AttackSound = Phase3AttackSound.Get();
+    }
+
+    // 공격음은 명중 여부와 관계없이 타격 노티파이 시점에 재생합니다.
+    if (IsValid(AttackSound))
+    {
+        Boss->MulticastGunBurstSound(AttackSound, Boss->GetActorLocation());
+    }
+
+    APlayerBase* Target = Cast<APlayerBase>(LockedTarget.Get());
+    if (!IsValid(Target) || !Target->IsPlayerControlled() || Target->IsDead()
         || Boss->GetCurrentTarget() != Target)
     {
         EndAbility(GetCurrentAbilitySpecHandle(), GetCurrentActorInfo(),
@@ -155,8 +217,49 @@ void UGA_BossMelee::PerformHit()
         return;
     }
 
+    UAbilitySystemComponent* TargetASC = Target->GetAbilitySystemComponent();
+    const FGameplayAttribute HealthAttribute =
+        UCombatAttributeSet::GetHealthAttribute();
+
+    if (!IsValid(TargetASC)
+        || !TargetASC->HasAttributeSetForAttribute(HealthAttribute))
+    {
+        return;
+    }
+
+    const float PreviousHealth = TargetASC->GetNumericAttribute(HealthAttribute);
+    const FVector HitLocation = Target->GetActorLocation();
+    USoundBase* PlayerHitSound =
+        bPhase12Attack ? Phase12PlayerHitSound.Get() : nullptr;
+    const float Strength = FMath::IsFinite(KnockbackStrength)
+        ? FMath::Max(0.f, KnockbackStrength) : 0.f;
+
     UE_LOG(LogTemp, Log, TEXT("BossMelee: Hit -> %s"), *GetNameSafe(Target));
     ApplyAttackDamage(Target);
+
+    if (!IsValid(Target) || !IsValid(TargetASC))
+    {
+        return;
+    }
+
+    const float CurrentHealth = TargetASC->GetNumericAttribute(HealthAttribute);
+    if (!FMath::IsFinite(PreviousHealth) || !FMath::IsFinite(CurrentHealth)
+        || CurrentHealth >= PreviousHealth)
+    {
+        return;
+    }
+
+    // 치명타격으로 사망한 경우에도 Phase1·2 피격음은 재생합니다.
+    if (IsValid(Boss) && IsValid(PlayerHitSound))
+    {
+        Boss->MulticastGunBurstSound(PlayerHitSound, HitLocation);
+    }
+
+    // 피해 적용 과정의 피격 반응이 이동을 멈춘 뒤 넉백을 적용합니다.
+    if (!Target->IsDead() && Strength > 0.f && !Direction.IsNearlyZero())
+    {
+        Target->LaunchCharacter(Direction * Strength, true, true);
+    }
 }
 
 void UGA_BossMelee::HandleMontageCompleted()
@@ -187,6 +290,7 @@ void UGA_BossMelee::EndAbility(
         return;
     }
     TGuardValue<bool> EndingGuard(bEnding, true);
+    UBossAttackTrailComponent::StopForBoss(GetBossOwner());
 
     if (UAnimInstance* AnimInstance = BoundAnimInstance.Get())
     {

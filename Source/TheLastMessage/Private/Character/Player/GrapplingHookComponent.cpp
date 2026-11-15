@@ -12,6 +12,8 @@
 #include "Components/CapsuleComponent.h"
 #include "GAS/WeaponGameplayTags.h"
 #include "Core/CoreGameplayTags.h"
+#include "Kismet/GameplayStatics.h"
+#include "Sound/SoundBase.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -286,6 +288,7 @@ void UGrapplingHookComponent::ClearAnchor()
 {
 	if (GetOwner() && GetOwner()->HasAuthority())
 	{
+		if (HasGrappleAnchor()) MulticastGrappleSound(EGrappleSound::Release, GetOwner()->GetActorLocation());
 		if (HasGrappleAnchor() || bMovementOverrideActive) StartCooldown(CooldownDuration);
 		EndPull();
 		MulticastFinishPresentation(bCompletedPull);
@@ -345,6 +348,7 @@ void UGrapplingHookComponent::ProbeForAnchor(FVector WorldAimPoint)
 	ClearAnchor();
 	FVector Start, End;
 	if (!GetProbeSegment(WorldAimPoint, Start, End)) return;
+	MulticastGrappleSound(EGrappleSound::Launch, Start);
 	FHitResult Hit;
 	const bool bHit = TraceGrappleSurface(Start, End, Hit);
 	ProbeState.TraceStart = Start;
@@ -433,7 +437,11 @@ void UGrapplingHookComponent::BeginPull()
 		Player->GetAbilitySystemComponent()->AddLooseGameplayTag(WeaponGameplayTags::State_Grappling, 1, EGameplayTagReplicationState::TagAndCountToAll);
 		bAddedGrapplingTag = true;
 	}
-	if (Player->HasAuthority()) MulticastStartPresentation();
+	if (Player->HasAuthority())
+	{
+		MulticastStartPresentation();
+		if (ThrowDelayRemaining <= 0.0f) MulticastGrappleSound(EGrappleSound::Attach, ProbeState.AnchorPoint);
+	}
 }
 
 void UGrapplingHookComponent::EndPull()
@@ -478,6 +486,7 @@ void UGrapplingHookComponent::UpdatePull(float DeltaTime)
 		ThrowDelayRemaining = FMath::Max(0.0f, ThrowDelayRemaining - DeltaTime);
 		Movement->StopMovementImmediately();
 		if (ThrowDelayRemaining > 0.0f) return;
+		if (Player->HasAuthority()) MulticastGrappleSound(EGrappleSound::Attach, ProbeState.AnchorPoint);
 	}
 	PullElapsedTime += DeltaTime;
 	StalledTime = Distance >= LastDistanceToTarget - 0.5f ? StalledTime + DeltaTime : 0.0f;
@@ -621,6 +630,36 @@ void UGrapplingHookComponent::MulticastStartPresentation_Implementation()
 	PresentationThrowRemaining = GetThrowDuration();
 	AnimationPhase = PresentationThrowRemaining > 0.0f ? EGrappleAnimationPhase::Throw : EGrappleAnimationPhase::Pull;
 	PlayGrappleMontage(AnimationPhase == EGrappleAnimationPhase::Throw ? ThrowMontage : PullMontage);
+}
+
+void UGrapplingHookComponent::MulticastGrappleSound_Implementation(EGrappleSound Event, FVector_NetQuantize Location)
+{
+	const APlayerBase* Player = Cast<APlayerBase>(GetOwner());
+	if (!Player || GetNetMode() == NM_DedicatedServer) return;
+	const FPlayerMovementAudio& Audio = Player->GetMovementAudio();
+	USoundBase* Sound = nullptr;
+	float Volume = 1.0f;
+	switch (Event)
+	{
+	case EGrappleSound::Launch:
+		if (!Audio.GrappleLaunchSounds.IsEmpty())
+		{
+			Sound = Audio.GrappleLaunchSounds[FMath::RandHelper(Audio.GrappleLaunchSounds.Num())];
+		}
+		Volume = Audio.GrappleLaunchVolume;
+		break;
+	case EGrappleSound::Attach:
+		Sound = Audio.GrappleAttachSound;
+		Volume = Audio.GrappleAttachVolume;
+		break;
+	case EGrappleSound::Release:
+		Sound = Audio.GrappleReleaseSound;
+		Volume = Audio.GrappleReleaseVolume;
+		break;
+	}
+	if (!Sound) return;
+	if (Player->IsLocallyControlled()) UGameplayStatics::PlaySound2D(this, Sound, Volume);
+	else UGameplayStatics::PlaySoundAtLocation(this, Sound, Location, Volume);
 }
 
 void UGrapplingHookComponent::MulticastFinishPresentation_Implementation(bool bCompleted)

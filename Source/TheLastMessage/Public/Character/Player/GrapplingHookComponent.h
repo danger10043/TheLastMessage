@@ -30,6 +30,14 @@ enum class EGrapplingProbeResult : uint8
 	Miss
 };
 
+UENUM()
+enum class EGrappleSound : uint8
+{
+	Launch,
+	Attach,
+	Release
+};
+
 USTRUCT(BlueprintType)
 struct FGrapplingProbeState
 {
@@ -171,6 +179,8 @@ private:
 	void MulticastStartPresentation();
 	UFUNCTION(NetMulticast, Reliable)
 	void MulticastFinishPresentation(bool bCompleted);
+	UFUNCTION(NetMulticast, Unreliable)
+	void MulticastGrappleSound(EGrappleSound Event, FVector_NetQuantize Location);
 	void StopPresentation();
 	void UpdatePresentation(float DeltaTime);
 	bool PlayGrappleMontage(UAnimMontage* Montage);

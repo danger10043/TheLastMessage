@@ -116,7 +116,20 @@ void ADamagePlate::ApplyActiveState(bool bNewActive)
     Super::ApplyActiveState(bNewActive && bIsEnabled);
 
     UpdateDamagePlateEffect();
+    // +추가----
+    RefreshGimmickAudioState();
+    // +--------
 }
+
+// +추가----
+void ADamagePlate::RefreshGimmickAudioState()
+{
+    // 나이아가라 에셋 유무와 무관하게 실제 피해 작동 조건을 따른다.
+    if (bDamageConfigLoaded && bIsEnabled && bIsActive)
+        StartGimmickLoop(DamagePlateLoopSound.Get(), PlateMesh.Get());
+    else StopGimmickLoop();
+}
+// +--------
 
 void ADamagePlate::BeginPlay()
 {

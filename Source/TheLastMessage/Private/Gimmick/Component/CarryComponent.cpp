@@ -90,31 +90,161 @@ void UCarryComponent::CompletePendingPickup()
 bool UCarryComponent::FindGroundDropTransform(ACarryableGimmick* Target, FTransform& OutTransform) const
 {
     APlayerBase* Player = OwnerPlayer.Get();
-    UStaticMeshComponent* Mesh = Target ? Target->GetObjectMesh() : nullptr;
-    if (!Player || !Mesh || !Mesh->GetStaticMesh() || !GetWorld()) return false;
-    const FVector Up = Player->GetActorUpVector();
-    const FVector Probe = Target->ConstrainDropLocation(Player->GetActorLocation()
-        + Player->GetActorForwardVector() * Target->GetCarryConfig().DropDistance);
-    FCollisionQueryParams Params(SCENE_QUERY_STAT(CarryGroundPlacement), false, Player);
-    Params.AddIgnoredActor(Target);
-    FHitResult Floor;
-    if (!GetWorld()->LineTraceSingleByChannel(Floor, Probe + Up * 100.0f, Probe - Up * 400.0f, ECC_Visibility, Params)
-        || FVector::DotProduct(Floor.ImpactNormal, Up) < 0.5f) return false;
+    UWorld* World = GetWorld();
+
+    if (!IsValid(Player) || !IsValid(Target) || !World)
+    {
+        return false;
+    }
+
+    UStaticMeshComponent* Mesh = Target->GetObjectMesh();
+
+    if (!IsValid(Mesh) || !Mesh->GetStaticMesh())
+    {
+        return false;
+    }
+
+    const FVector Up = Player->GetActorUpVector().GetSafeNormal();
+    const FVector Forward = FVector::VectorPlaneProject(Player->GetActorForwardVector(), Up).GetSafeNormal();
+    const FVector Right =FVector::CrossProduct(Up, Forward).GetSafeNormal();
+
+    if (Up.IsNearlyZero() || Forward.IsNearlyZero() || Right.IsNearlyZero())
+    {
+        return false;
+    }
+
     const FBoxSphereBounds Bounds = Mesh->GetStaticMesh()->GetBounds();
     const FTransform MeshTransform = Mesh->GetComponentTransform();
     const FVector Extent = Bounds.BoxExtent * MeshTransform.GetScale3D().GetAbs();
-    const float Support = FMath::Abs(FVector::DotProduct(MeshTransform.GetUnitAxis(EAxis::X), Up)) * Extent.X
-        + FMath::Abs(FVector::DotProduct(MeshTransform.GetUnitAxis(EAxis::Y), Up)) * Extent.Y
-        + FMath::Abs(FVector::DotProduct(MeshTransform.GetUnitAxis(EAxis::Z), Up)) * Extent.Z;
-    const float Bottom = FVector::DotProduct(MeshTransform.TransformVector(Bounds.Origin), Up) - Support;
+    const FVector AxisX = MeshTransform.GetUnitAxis(EAxis::X);
+    const FVector AxisY = MeshTransform.GetUnitAxis(EAxis::Y);
+    const FVector AxisZ = MeshTransform.GetUnitAxis(EAxis::Z);
+
+    // 물체의 회전을 반영하여 각 방향의 반쪽 크기를 계산
+    const auto GetProjectedExtent = [&](const FVector& Direction) -> double
+        {
+            return FMath::Abs(FVector::DotProduct(AxisX, Direction)) * Extent.X
+                + FMath::Abs(FVector::DotProduct(AxisY, Direction)) * Extent.Y
+                + FMath::Abs(FVector::DotProduct(AxisZ, Direction)) * Extent.Z;
+        };
+
+    const double Support = GetProjectedExtent(Up);
+
+    // 경계선 바로 위를 검사하지 않도록 밑면 범위의 90% 사용
+    const double HalfWidth = GetProjectedExtent(Forward) * 0.9;
+    const double HalfDepth = GetProjectedExtent(Right) * 0.9;
+
+    const FVector CenterOffset =MeshTransform.TransformVector(Bounds.Origin);
+
+    // 액터 원점에서 물체 밑면까지의 높이
+    const double Bottom = FVector::DotProduct(CenterOffset, Up) - Support;
+
+    // 기존 내려놓기 거리와 최초 Y좌표 고정 규칙 유지
+    const FVector Probe = Target->ConstrainDropLocation(
+        Player->GetActorLocation()
+        + Player->GetActorForwardVector()
+        * Target->GetCarryConfig().DropDistance);
+
+    // 메시 중심이 원점에서 벗어나 있어도 검사 위치가 맞도록 보정
+    const FVector FootprintCenter = Probe + FVector::VectorPlaneProject(CenterOffset, Up);
+
+    FCollisionQueryParams Params(SCENE_QUERY_STAT(CarryGroundPlacement), false, Player);
+
+    Params.AddIgnoredActor(Target);
+
+    bool bFoundFloor = false;
+    double HighestFloorHeight = 0.0;
+
+    constexpr double SampleFactors[] = { -1.0, 0.0, 1.0 };
+
+    // 중앙, 네 모서리, 각 변의 중간을 포함한 총 9곳 검사
+    for (const double ForwardFactor : SampleFactors)
+    {
+        for (const double RightFactor : SampleFactors)
+        {
+            const FVector SampleLocation =
+                FootprintCenter
+                + Forward * (HalfWidth * ForwardFactor)
+                + Right * (HalfDepth * RightFactor);
+
+            FHitResult FloorHit;
+
+            if (!World->LineTraceSingleByChannel(
+                FloorHit,
+                SampleLocation + Up * 100.0,
+                SampleLocation - Up * 400.0,
+                ECC_Visibility,
+                Params))
+            {
+                continue;
+            }
+
+            // 기존과 같은 기준으로 받쳐 줄 수 있는 바닥만 사용
+            if (FVector::DotProduct(FloorHit.ImpactNormal, Up) < 0.5)
+            {
+                continue;
+            }
+
+            // 중력 반전 상태에서도 플레이어의 위쪽 방향을 기준으로 비교
+            const double FloorHeight =
+                FVector::DotProduct(FloorHit.ImpactPoint, Up);
+
+            if (!bFoundFloor || FloorHeight > HighestFloorHeight)
+            {
+                HighestFloorHeight = FloorHeight;
+                bFoundFloor = true;
+            }
+        }
+    }
+
+    // 모든 검사 지점에서 바닥을 찾지 못하면 취소
+    if (!bFoundFloor)
+    {
+        return false;
+    }
+
+    constexpr double GroundClearance = 1.0;
+
+    const double HeightAdjustment =
+        HighestFloorHeight
+        + GroundClearance
+        - Bottom
+        - FVector::DotProduct(Probe, Up);
+
     OutTransform = Target->GetActorTransform();
-    OutTransform.SetLocation(Floor.ImpactPoint + Up * (1.0f - Bottom));
-    // Refuse a placement through a wall; keep the held object and let the player try elsewhere.
-    const FVector CenterOffset = MeshTransform.TransformVector(Bounds.Origin);
+
+    // 선택된 검사 지점으로 옆 이동하지 않고, 높이만 조정
+    OutTransform.SetLocation(Probe + Up * HeightAdjustment);
+
+    const FCollisionShape PlacementShape = FCollisionShape::MakeBox(Extent * 0.95f);
+    const FVector DestinationCenter = OutTransform.GetLocation() + CenterOffset;
+
+    // 검사 지점 사이의 돌출부 등으로 최종 위치가 막히면 취소
+    if (World->OverlapBlockingTestByChannel(
+        DestinationCenter,
+        MeshTransform.GetRotation(),
+        ECC_Visibility,
+        PlacementShape,
+        Params))
+    {
+        return false;
+    }
+
+    // 들고 있는 위치에서 내려놓을 위치까지 벽 등에 막히는지 검사
     FHitResult Obstacle;
-    if (GetWorld()->SweepSingleByChannel(Obstacle, Target->GetActorLocation() + CenterOffset,
-        OutTransform.GetLocation() + CenterOffset, MeshTransform.GetRotation(), ECC_Visibility,
-        FCollisionShape::MakeBox(Extent * 0.95f), Params)) return false;
+
+    if (World->SweepSingleByChannel(
+        Obstacle,
+        Target->GetActorLocation() + CenterOffset,
+        DestinationCenter,
+        MeshTransform.GetRotation(),
+        ECC_Visibility,
+        PlacementShape,
+        Params))
+    {
+        return false;
+    }
+
     return true;
 }
 

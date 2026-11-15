@@ -34,14 +34,16 @@ void ASequentialSwitchGroup::ProcessSwitchInput(AToggleSwitch* Switch, bool bAct
 		return;
 	}
 
-	// 켜진 스위치를 다시 끄면 기존처럼 진행 초기화
+	// +수정----
+	// 이미 맞힌 스위치를 꺼도 진행은 유지하고 해당 레버만 복귀
 	if (!bActive)
 	{
-		ResetSequenceProgress();
+		BeginFailureAnimation(Switch);
 		return;
 	}
 
-	// 순서를 틀렸다면 레버가 넘어간 뒤 초기화
+	// 순서를 틀렸다면 잘못 누른 레버가 넘어간 뒤 원위치로 복귀
+	// +--------
 	if (!IsExpectedSwitch(Switch))
 	{
 		BeginFailureAnimation(Switch);
@@ -116,6 +118,9 @@ void ASequentialSwitchGroup::BeginFailureAnimation(AToggleSwitch* Switch)
 	}
 
 	bIsFailureAnimating = true;
+	// +추가----
+	PlayGroupFailureSound();
+	// +--------
 
 	// 실패 연출 중 다른 레버를 누르지 못하도록 잠금
 	SetGroupLeverInputLocked(true);
@@ -123,34 +128,47 @@ void ASequentialSwitchGroup::BeginFailureAnimation(AToggleSwitch* Switch)
 	// 잘못 누른 레버가 끝까지 넘어간 뒤 잠깐 유지
 	const float Delay = FMath::Max(Switch->GetRemainingLeverAnimationTime() + FailureHoldTime, 0.01f);
 
-	GetWorldTimerManager().SetTimer(FailureReturnTimerHandle, this, &ASequentialSwitchGroup::PlayFailureReturn, Delay, false);
+	// +수정----
+	// 이미 맞힌 구간의 레버는 켜진 상태로, 나머지 레버는 꺼진 상태로 되돌린다.
+	const int32 SwitchIndex = GroupSwitches.IndexOfByKey(Switch);
+	const bool bReturnActive = SwitchIndex != INDEX_NONE && SwitchIndex < NextSwitchIndex;
+	GetWorldTimerManager().SetTimer(
+		FailureReturnTimerHandle,
+		FTimerDelegate::CreateUObject(this, &ASequentialSwitchGroup::PlayFailureReturn,
+			TWeakObjectPtr<AToggleSwitch>(Switch), bReturnActive),
+		Delay,
+		false);
+	// +--------
 }
 
-void ASequentialSwitchGroup::PlayFailureReturn()
+// +수정----
+void ASequentialSwitchGroup::PlayFailureReturn(TWeakObjectPtr<AToggleSwitch> FailedSwitch, bool bReturnActive)
 {
 	if (!bIsFailureAnimating)
 	{
 		return;
 	}
 
-	NextSwitchIndex = 0;
-
-	// 입력 잠금을 유지하면서 기존 초기화로 복귀 재생
-	Super::ResetGroup();
+	// 연출 도중 외부에서 그룹이 완료됐다면 완료 상태와 입력 잠금 유지
+	if (bIsCompleted)
+	{
+		FinishFailureAnimation();
+		return;
+	}
 
 	float ReturnTime = 0.0f;
 
-	for (AToggleSwitch* Switch : GroupSwitches)
+	// 진행 인덱스와 다른 레버를 건드리지 않고 오입력 레버 하나만 복귀시킨다.
+	AToggleSwitch* Switch = FailedSwitch.Get();
+	if (IsValid(Switch) && GroupSwitches.Contains(Switch))
 	{
-		if (!IsValid(Switch))
-		{
-			continue;
-		}
-
-		ReturnTime = FMath::Max(ReturnTime, Switch->GetRemainingLeverAnimationTime());
+		Switch->ApplyActiveState(bReturnActive);
+		ReturnTime = Switch->GetRemainingLeverAnimationTime();
 	}
 
-	// 모든 레버가 돌아올 시간을 확보한 뒤 입력 재개
+	UpdateGroupIndicator();
+
+	// 오입력 레버가 돌아온 뒤 다음 정답 입력을 받는다.
 	GetWorldTimerManager().SetTimer(
 		FailureUnlockTimerHandle, 
 		this, 
@@ -158,12 +176,15 @@ void ASequentialSwitchGroup::PlayFailureReturn()
 		FMath::Max(ReturnTime + 0.02f, 0.01f),
 		false);
 }
+// +--------
 
 void ASequentialSwitchGroup::FinishFailureAnimation()
 {
 	bIsFailureAnimating = false;
 
-	SetGroupLeverInputLocked(false);
+	// +수정----
+	SetGroupLeverInputLocked(bIsCompleted);
+	// +--------
 }
 
 void ASequentialSwitchGroup::SetGroupLeverInputLocked(bool bLocked)

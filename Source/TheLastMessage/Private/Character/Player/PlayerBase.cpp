@@ -1,9 +1,13 @@
 #include "Character/Player/PlayerBase.h"
+#include "UI/GameVisualSettingsSubsystem.h"
+#include "Engine/GameInstance.h"
 #include "Weapon/MeleeReachRibbon.h"
 #include "UI/LoadingTransitionSubsystem.h"
 #include "Engine/GameInstance.h"
 #include "Character/Player/GrapplingHookComponent.h"
 #include "Map/AreaMapComponent.h"
+#include "Map/RoomStreamingSubsystem.h"
+#include "Engine/StaticMesh.h"
 #include "Character/Player/CombatFeedbackComponent.h"
 #include "AbilitySystemComponent.h"
 #include "Abilities/GameplayAbility.h"
@@ -50,6 +54,7 @@
 #include "Components/AudioComponent.h"
 #include "Sound/SoundBase.h"
 #include "Kismet/GameplayStatics.h"
+#include "DataAsset/GameplayAssetSettings.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraComponent.h"
 #include "Weapon/EnergyMuzzleFlash.h"
@@ -81,6 +86,46 @@ static TAutoConsoleVariable<int32> CVarDebugAim(
 
 APlayerBase::APlayerBase()
 {
+	if (HasAnyFlags(RF_ClassDefaultObject) && GetClass() == StaticClass())
+	{
+		const auto* Defaults = GetDefault<UGameplayAssetSettings>();
+		MovementAudio.FootstepSound = Defaults->FootstepSound.LoadSynchronous();
+		MovementAudio.FootstepStartTimes = Defaults->FootstepStartTimes;
+		MovementAudio.FootstepDuration = Defaults->FootstepDuration;
+		MovementAudio.LandingSound = Defaults->LandingSound.LoadSynchronous();
+		MovementAudio.JumpSound = Defaults->JumpSound.LoadSynchronous();
+		for (const auto& Sound : Defaults->GrappleLaunchSounds)
+		{
+			if (USoundBase* Loaded = Sound.LoadSynchronous())
+			{
+				MovementAudio.GrappleLaunchSounds.Add(Loaded);
+			}
+		}
+		MovementAudio.GrappleAttachSound = Defaults->GrappleAttachSound.LoadSynchronous();
+		MovementAudio.GrappleReleaseSound = Defaults->GrappleReleaseSound.LoadSynchronous();
+		MovementAudio.GrappleLaunchVolume = Defaults->GrappleLaunchVolume;
+		MovementAudio.GrappleAttachVolume = Defaults->GrappleAttachVolume;
+		for (const auto& Sound : Defaults->HitSounds)
+		{
+			if (USoundBase* Loaded = Sound.LoadSynchronous()) HitSounds.Add(Loaded);
+		}
+		HitLayerSound = Defaults->HitLayerSound.LoadSynchronous();
+		DeathSound = Defaults->DeathSound.LoadSynchronous();
+		DeathImpactSound = Defaults->DeathImpactSound.LoadSynchronous();
+		MovementAudio.GrappleReleaseVolume = Defaults->GrappleReleaseVolume;
+	}
+	else
+	{
+		// Blueprint spawning copies only properties that differ from native defaults.
+		// Initialize the native defaults here before Blueprint overrides are applied.
+		const APlayerBase* NativeDefaults = GetDefault<APlayerBase>();
+		MovementAudio = NativeDefaults->MovementAudio;
+		HitSounds = NativeDefaults->HitSounds;
+		HitLayerSound = NativeDefaults->HitLayerSound;
+		DeathSound = NativeDefaults->DeathSound;
+		DeathImpactSound = NativeDefaults->DeathImpactSound;
+	}
+
 	WeaponChoices.SetNum(4);
 	OwnedWeaponChoices.SetNumZeroed(4);
 	WeaponSelectionActions.SetNum(4);
@@ -144,6 +189,7 @@ void APlayerBase::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifet
 	DOREPLIFETIME_CONDITION(APlayerBase, AimDirection, COND_SkipOwner);
 	DOREPLIFETIME_CONDITION(APlayerBase, AimTargetLocation, COND_SkipOwner);
 	DOREPLIFETIME_CONDITION(APlayerBase, bHasAimTarget, COND_SkipOwner);
+	DOREPLIFETIME_CONDITION(APlayerBase, bAttackCancelWindowOpen, COND_OwnerOnly);
 }
 
 FVector APlayerBase::GetAimPlaneNormal() const
@@ -331,6 +377,7 @@ void APlayerBase::UpdateGimmickAnimation()
 void APlayerBase::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	UpdateFootstepAudio(DeltaSeconds);
 	if (HasAuthority() && PendingAttackInput.IsValid()
 		&& !AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking))
 	{
@@ -446,12 +493,116 @@ void APlayerBase::OnJumped_Implementation()
 		bHasDoubleJumped = true;
 	}
 	Super::OnJumped_Implementation();
+	if (IsLocallyControlled() && MovementAudio.JumpSound)
+	{
+		UGameplayStatics::PlaySound2D(this, MovementAudio.JumpSound);
+	}
+}
+
+void APlayerBase::UpdateFootstepAudio(float DeltaSeconds)
+{
+	if (!IsLocallyControlled() || !MovementAudio.FootstepSound) return;
+
+	const UCharacterMovementComponent* Movement = GetCharacterMovement();
+	const FVector GroundVelocity = FVector::VectorPlaneProject(Movement->Velocity, Movement->GetGravityDirection());
+	if (IsDead() || !Movement->IsMovingOnGround() || GroundVelocity.SizeSquared() < FMath::Square(25.0f))
+	{
+		PreviousStepDirection = FVector::ZeroVector;
+		TimeSinceFootstep = 0.0f;
+		FootSeparationTrend = 0;
+		LastPlantedFoot = 0;
+		return;
+	}
+
+	// Some locomotion blends and upper-body montages don't produce a clear foot swing.
+	// Keep a slower fallback, with a shared minimum interval for both triggers.
+	constexpr float MinStepInterval = 0.30f;
+	constexpr float MissingPoseStepInterval = 0.55f;
+	TimeSinceFootstep += DeltaSeconds;
+	const auto PlayStep = [this]()
+	{
+		TimeSinceFootstep = 0.0f;
+		PlayFootstepAudio();
+	};
+
+	static const FName LeftFootBone(TEXT("foot_l"));
+	static const FName RightFootBone(TEXT("foot_r"));
+	const USkeletalMeshComponent* Body = GetMesh();
+	if (!Body || !Body->DoesSocketExist(LeftFootBone) || !Body->DoesSocketExist(RightFootBone))
+	{
+		if (TimeSinceFootstep >= MissingPoseStepInterval) PlayStep();
+		return;
+	}
+
+	const FVector LeftFoot = Body->GetSocketLocation(LeftFootBone);
+	const FVector RightFoot = Body->GetSocketLocation(RightFootBone);
+	const FVector Direction = GroundVelocity.GetSafeNormal();
+	const float Separation = FVector::DotProduct(LeftFoot - RightFoot, Direction);
+	if (FVector::DotProduct(Direction, PreviousStepDirection) < 0.5f)
+	{
+		PreviousStepDirection = Direction;
+		PreviousFootSeparation = Separation;
+		FootSeparationTrend = 0;
+		LastPlantedFoot = 0;
+		return;
+	}
+
+	const float Delta = Separation - PreviousFootSeparation;
+	const float LastSeparation = PreviousFootSeparation;
+	PreviousFootSeparation = Separation;
+	if (FMath::Abs(Delta) >= 0.05f)
+	{
+		// The leading foot plants as its forward swing turns into the stance phase.
+		const int32 Trend = Delta > 0.0f ? 1 : -1;
+		const int32 PlantedFoot = FootSeparationTrend == -Trend && LastSeparation * FootSeparationTrend > 12.0f
+			? FootSeparationTrend : 0;
+		FootSeparationTrend = Trend;
+		if (PlantedFoot != 0 && PlantedFoot != LastPlantedFoot && TimeSinceFootstep >= MinStepInterval)
+		{
+			LastPlantedFoot = PlantedFoot;
+			PlayStep();
+			return;
+		}
+	}
+	if (TimeSinceFootstep >= MissingPoseStepInterval) PlayStep();
+}
+
+void APlayerBase::PlayFootstepAudio()
+{
+	const int32 Count = MovementAudio.FootstepStartTimes.Num();
+	int32 Sample = FMath::RandHelper(Count);
+	if (Count > 1 && Sample == LastFootstepSample)
+	{
+		Sample = (Sample + 1 + FMath::RandHelper(Count - 1)) % Count;
+	}
+	LastFootstepSample = Sample;
+	const float StartTime = Count > 0 ? MovementAudio.FootstepStartTimes[Sample] : 0.0f;
+	if (UAudioComponent* Step = UGameplayStatics::SpawnSound2D(
+		this, MovementAudio.FootstepSound, 0.85f, 1.0f, StartTime))
+	{
+		if (MovementAudio.FootstepDuration > 0.0f)
+		{
+			Step->StopDelayed(MovementAudio.FootstepDuration);
+		}
+	}
 }
 
 void APlayerBase::Landed(const FHitResult& Hit)
 {
 	bGrappleCancelJumpAvailable = false;
 	Super::Landed(Hit);
+	PreviousStepDirection = FVector::ZeroVector;
+	TimeSinceFootstep = 0.0f;
+	if (IsLocallyControlled() && !IsDead() && MovementAudio.LandingSound)
+	{
+		UGameplayStatics::PlaySound2D(this, MovementAudio.LandingSound);
+	}
+	// An airborne death collapses in the air, so its impact waits for this landing.
+	if (bDeathImpactPending && bDeathPresentationStarted && DeathImpactSound)
+	{
+		bDeathImpactPending = false;
+		UGameplayStatics::PlaySound2D(this, DeathImpactSound);
+	}
 }
 
 bool APlayerBase::IsGrappling() const
@@ -462,6 +613,8 @@ bool APlayerBase::IsGrappling() const
 void APlayerBase::BeginPlay()
 {
 	Super::BeginPlay();
+	if (auto* Visual = UGameInstance::GetSubsystem<UGameVisualSettingsSubsystem>(GetGameInstance()))
+		Visual->ApplyOutline(this);
 	// Authority must evaluate hand bones even without a rendered viewport to resolve muzzle sockets.
 	if (HasAuthority()) GetMesh()->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
 	if (UClass* AimClass = RangedAimPostProcessClass.Get())
@@ -1444,6 +1597,19 @@ void APlayerBase::MulticastHitReaction_Implementation(FName ReactionSection)
 	}
 }
 
+void APlayerBase::MulticastDamageSound_Implementation()
+{
+	if (IsDead() || bDeathPresentationStarted || !IsLocallyControlled()) return;
+	// Hits that land in the same instant play one sound.
+	const double Now = GetWorld()->GetTimeSeconds();
+	if (Now - LastDamageSoundTime < 0.08) return;
+	LastDamageSoundTime = Now;
+	TArray<USoundBase*, TInlineAllocator<8>> Choices;
+	for (USoundBase* Sound : HitSounds) if (Sound) Choices.Add(Sound);
+	if (!Choices.IsEmpty()) UGameplayStatics::PlaySound2D(this, Choices[FMath::RandRange(0, Choices.Num() - 1)]);
+	if (HitLayerSound && HitLayerVolume > 0.0f) UGameplayStatics::PlaySound2D(this, HitLayerSound, HitLayerVolume);
+}
+
 void APlayerBase::HandleHitMontageEnded(UAnimMontage* Montage, bool bInterrupted)
 {
 	if (Montage == HitReactMontage) FinishHitReaction();
@@ -1474,6 +1640,16 @@ void APlayerBase::PlayDeathPresentation(FName ReactionSection)
 {
 	if (bDeathPresentationStarted) return;
 	bDeathPresentationStarted = true;
+	if (IsLocallyControlled())
+	{
+		if (DeathSound) DeathSoundComponent = UGameplayStatics::SpawnSound2D(this, DeathSound);
+		bDeathImpactPending = false;
+		if (DeathImpactSound)
+		{
+			const float Delay = DeathImpactDelay / FMath::Max(0.01f, DeathPlayRate);
+			GetWorldTimerManager().SetTimer(DeathImpactTimer, this, &APlayerBase::PlayDeathImpactSound, FMath::Max(0.01f, Delay), false);
+		}
+	}
 	StopJumping();
 	GetCharacterMovement()->StopMovementImmediately();
 	// Keep gravity active so an airborne death can settle on the ground.
@@ -1492,6 +1668,18 @@ void APlayerBase::PlayDeathPresentation(FName ReactionSection)
 			Instance->bEnableAutoBlendOut = false;
 		}
 	}
+}
+
+void APlayerBase::PlayDeathImpactSound()
+{
+	if (!bDeathPresentationStarted || !DeathImpactSound) return;
+	// Still in the air: Landed plays it when the body reaches the floor.
+	if (!GetCharacterMovement()->IsMovingOnGround())
+	{
+		bDeathImpactPending = true;
+		return;
+	}
+	UGameplayStatics::PlaySound2D(this, DeathImpactSound);
 }
 
 void APlayerBase::HandleDeath(FName ReactionSection)
@@ -1518,21 +1706,49 @@ bool APlayerBase::SetCheckpoint(const FTransform& Transform)
 	bCheckpointGravityReversed = AbilitySystemComponent->HasMatchingGameplayTag(
 		FGameplayTag::RequestGameplayTag(TEXT("State.Gravity.Reversed")));
 	bHasCheckpoint = true;
+	// 방 스트리밍: 지금 있는 리전을 기억해 둔다. 아직 리전을 못 찾은 시작 지점이면 비어 있다.
+	CheckpointRegionId = NAME_None;
+	if (const URoomStreamingSubsystem* Rooms = GetWorld() ? GetWorld()->GetSubsystem<URoomStreamingSubsystem>() : nullptr)
+		CheckpointRegionId = Rooms->GetCurrentRegionId();
 	return true;
 }
 
 void APlayerBase::TryAutoRespawn()
 {
-	// A temporarily obstructed checkpoint is retried instead of reviving inside geometry.
-	if (IsDead() && !RespawnAtCheckpoint())
+	if (!IsDead()) return;
+	ULoadingTransitionSubsystem* Loading = GetGameInstance() ? GetGameInstance()->GetSubsystem<ULoadingTransitionSubsystem>() : nullptr;
+	if (RespawnAtCheckpoint())
 	{
-		GetWorldTimerManager().SetTimer(RespawnTimer, this, &APlayerBase::TryAutoRespawn, 0.5f, false);
+		if (URoomStreamingSubsystem* Rooms = GetWorld() ? GetWorld()->GetSubsystem<URoomStreamingSubsystem>() : nullptr)
+			Rooms->ReleaseRegionHold();
+		if (Loading) Loading->FinishRespawnWait(this);
+		return;
 	}
+	// 체크포인트 방이 올라오는 중이면 로딩 화면을 띄우고 짧은 간격으로 다시 시도한다.
+	// 막혀서 못 부활하는 경우(체크포인트가 다른 것에 가려짐)는 지금처럼 0.5초마다 다시 시도한다.
+	if (bRespawnWaitingForRooms && Loading) Loading->ShowRespawnWait();
+	GetWorldTimerManager().SetTimer(RespawnTimer, this, &APlayerBase::TryAutoRespawn, bRespawnWaitingForRooms ? 0.1f : 0.5f, false);
 }
 
 bool APlayerBase::RespawnAtCheckpoint()
 {
 	if (!HasAuthority() || !DeathState.bDead || !bHasCheckpoint || CombatAttributes->GetMaxHealth() <= 0.0f) return false;
+	// 방 스트리밍: 체크포인트가 있는 방과 바닥이 준비되기 전에는 부활하지 않는다(10초가 지나면 기다리지 않는다).
+	bRespawnWaitingForRooms = false;
+	if (!CheckpointRegionId.IsNone())
+	{
+		if (URoomStreamingSubsystem* Rooms = GetWorld()->GetSubsystem<URoomStreamingSubsystem>())
+		{
+			const double Now = GetWorld()->GetTimeSeconds();
+			if (RespawnRoomWaitStart < 0.0) RespawnRoomWaitStart = Now;
+			if (Now - RespawnRoomWaitStart < 10.0
+				&& !Rooms->PrepareRegionForRespawn(CheckpointRegionId, CheckpointTransform.GetLocation(), CheckpointGravity))
+			{
+				bRespawnWaitingForRooms = true;
+				return false;
+			}
+		}
+	}
 	const UCapsuleComponent* Capsule = GetCapsuleComponent();
 	FCollisionQueryParams Query(SCENE_QUERY_STAT(CheckpointRespawn), false, this);
 	const FCollisionShape SpawnShape = FCollisionShape::MakeCapsule(
@@ -1552,6 +1768,7 @@ bool APlayerBase::RespawnAtCheckpoint()
 		}
 	}
 	if (!bPlaced) return false;
+	RespawnRoomWaitStart = -1.0;
 	GetWorldTimerManager().ClearTimer(RespawnTimer);
 	// Keep equipment, core grants and permanent effects on the existing ASC.
 	const bool bGravityReversed = AbilitySystemComponent->HasMatchingGameplayTag(
@@ -1587,6 +1804,10 @@ void APlayerBase::ResetRespawnPresentation()
 	CancelCarryTransition();
 	HeldWeaponChoices.Reset();
 	bDeathPresentationStarted = false;
+	GetWorldTimerManager().ClearTimer(DeathImpactTimer);
+	bDeathImpactPending = false;
+	if (UAudioComponent* Sound = DeathSoundComponent.Get()) Sound->FadeOut(0.3f, 0.0f);
+	DeathSoundComponent.Reset();
 	if (UAnimInstance* Anim = GetMesh()->GetAnimInstance()) Anim->StopAllMontages(0.0f);
 	ActionValueY = DropValue = 0.0f;
 	bHasDoubleJumped = bMovingHorizontally = false;
@@ -1669,7 +1890,10 @@ void APlayerBase::UpdateMoveSpeed()
 void APlayerBase::DoMove(float Forward)
 {
 	if (IsCarryTransitionActive()) return;
-	if (IsDead() || IsHitReacting() || IsGrappling() || AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking)
+	// 공격 중에는 이동 입력을 막되, 후딜 취소 구간이 열려 있으면 입력이 공격을 끊고 그대로 적용된다.
+	const bool bAttackBlocksMove = IsAttacking()
+		&& !(FMath::Abs(Forward) > KINDA_SMALL_NUMBER && TryCancelAttackWithInput());
+	if (IsDead() || IsHitReacting() || IsGrappling() || bAttackBlocksMove
 		|| AbilitySystemComponent->HasMatchingGameplayTag(CoreGameplayTags::State_Guarding))
 	{
 		ActionValueY = 0.0f;
@@ -1692,7 +1916,9 @@ void APlayerBase::DoMove(float Forward)
 void APlayerBase::DoDrop(float Value)
 {
 	if (IsCarryTransitionActive()) return;
-	if (IsDead() || IsHitReacting() || IsGrappling() || AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking)
+	const bool bAttackBlocksDrop = IsAttacking()
+		&& !(FMath::Abs(Value) > KINDA_SMALL_NUMBER && TryCancelAttackWithInput());
+	if (IsDead() || IsHitReacting() || IsGrappling() || bAttackBlocksDrop
 		|| AbilitySystemComponent->HasMatchingGameplayTag(CoreGameplayTags::State_Guarding))
 	{
 		DropValue = 0.0f;
@@ -1704,8 +1930,10 @@ void APlayerBase::DoDrop(float Value)
 void APlayerBase::DoJumpStart()
 {
 	if (IsCarryTransitionActive()) return;
-	if (IsDead() || IsHitReacting() || AbilitySystemComponent->HasMatchingGameplayTag(WeaponGameplayTags::State_Attacking)) return;
+	if (IsDead() || IsHitReacting()) return;
 	if (AbilitySystemComponent->HasMatchingGameplayTag(CoreGameplayTags::State_Guarding)) return;
+	// 공격 중에는 점프를 막되, 후딜 취소 구간이 열려 있으면 점프가 공격을 끊고 그대로 적용된다.
+	if (IsAttacking() && !TryCancelAttackWithInput()) return;
 	if (IsGrappling()) GrapplingHookComponent->CancelGrapple();
 
 	// +추가----
@@ -1729,7 +1957,7 @@ void APlayerBase::DoJumpStart()
 	}
 }
 
-void APlayerBase::StopMovementForAttack()
+void APlayerBase::StopMovementForAttack(float RetainSpeedRatio)
 {
 	ActionValueY = 0.0f;
 	DropValue = 0.0f;
@@ -1737,9 +1965,71 @@ void APlayerBase::StopMovementForAttack()
 	UCharacterMovementComponent* Movement = GetCharacterMovement();
 	if (Movement->IsMovingOnGround())
 	{
-		Movement->StopMovementImmediately();
+		const float Retain = FMath::IsFinite(RetainSpeedRatio) ? FMath::Clamp(RetainSpeedRatio, 0.0f, 1.0f) : 0.0f;
+		if (Retain > KINDA_SMALL_NUMBER)
+		{
+			// 입력이 없으므로 남긴 속도는 캐릭터 이동의 기존 제동(마찰·감속)으로 자연스럽게 줄어든다.
+			Movement->Velocity *= Retain;
+		}
+		else
+		{
+			Movement->StopMovementImmediately();
+		}
 	}
 	// 공중에서는 기존 속도를 유지한다. 공격 중 새 이동 입력은 DoMove에서 차단한다.
+}
+
+UGA_WeaponAttackBase* APlayerBase::FindActiveAttackAbility() const
+{
+	if (!AbilitySystemComponent) return nullptr;
+	UGA_WeaponAttackBase* Found = nullptr;
+	{
+		FScopedAbilityListLock Lock(*AbilitySystemComponent);
+		for (const FGameplayAbilitySpec& Spec : AbilitySystemComponent->GetActivatableAbilities())
+		{
+			if (!Spec.IsActive() || !Spec.Ability || !Spec.Ability->IsA<UGA_WeaponAttackBase>()) continue;
+			// 공격 능력은 액터당 하나의 인스턴스를 재사용한다.
+			Found = Cast<UGA_WeaponAttackBase>(Spec.GetPrimaryInstance());
+			if (Found) break;
+		}
+	}
+	return Found;
+}
+
+void APlayerBase::SetAttackCancelWindowOpen(bool bOpen)
+{
+	// 상태는 서버가 정하고 오너 클라이언트로 복제한다.
+	if (!HasAuthority()) return;
+	bAttackCancelWindowOpen = bOpen;
+}
+
+void APlayerBase::SetAttackCancelWindowRequested(bool bRequested)
+{
+	if (!HasAuthority()) return;
+	if (UGA_WeaponAttackBase* Attack = FindActiveAttackAbility()) Attack->SetMoveCancelRequested(bRequested);
+}
+
+bool APlayerBase::TryCancelAttackWithInput()
+{
+	if (!bAttackCancelWindowOpen) return false;
+	if (HasAuthority())
+	{
+		UGA_WeaponAttackBase* Attack = FindActiveAttackAbility();
+		return Attack && Attack->TryMoveCancel();
+	}
+	// 클라이언트: 서버가 공격을 끊도록 요청하고, 그동안 입력이 막히지 않게 허용한다.
+	const double Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
+	if (LastAttackCancelRequestTime < 0.0 || Now - LastAttackCancelRequestTime >= 0.1)
+	{
+		LastAttackCancelRequestTime = Now;
+		ServerRequestAttackCancel();
+	}
+	return true;
+}
+
+void APlayerBase::ServerRequestAttackCancel_Implementation()
+{
+	if (UGA_WeaponAttackBase* Attack = FindActiveAttackAbility()) Attack->TryMoveCancel();
 }
 
 void APlayerBase::DoInteract()

@@ -40,6 +40,13 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	// +추가----
+	void PlayGroupFailureSound();
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Audio")
+	TObjectPtr<USoundBase> GroupSuccessSound;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Audio")
+	TObjectPtr<USoundBase> GroupFailureSound;
+	// +--------
 
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 

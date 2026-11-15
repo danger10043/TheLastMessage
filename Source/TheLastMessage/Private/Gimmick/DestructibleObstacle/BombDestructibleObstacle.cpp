@@ -6,6 +6,8 @@
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Gimmick/PushPull/ExplosiveBomb.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
 
 ABombDestructibleObstacle::ABombDestructibleObstacle()
 {
@@ -42,21 +44,75 @@ void ABombDestructibleObstacle::DestroyObstacle()
     {
         return;
     }
+    
+    // 장애물을 숨기기 전에 메시 중심 위치와 회전을 구한다.
+    const bool bHasMesh = IsValid(ObstacleMesh.Get());
 
-    bIsDestroyed = true;
+    const FVector EffectLocation = bHasMesh ? ObstacleMesh->Bounds.Origin : GetActorLocation();
 
-    // 상호작용 강조 및 기믹 기능 정리
+    const FRotator EffectRotation = bHasMesh ? ObstacleMesh->GetComponentRotation() : GetActorRotation();
+
+    // +추가----
+    PlayGimmickOneShot(DestructionSound.Get(), ObstacleMesh.Get());
+    // +--------
+
+    // 기존 파괴 상태 처리
+    ApplyDestroyedState(true);
     SetGimmickEnabled(false);
 
-    if (IsValid(ObstacleMesh))
+    // 장애물 액터와 독립적으로 생성해서 끝까지 재생한다.
+    if (GetWorld() && IsValid(DestructionEffect.Get()))
     {
-        ObstacleMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision
+        UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+            this,
+            DestructionEffect.Get(),
+            EffectLocation,
+            EffectRotation,
+            DestructionEffectScale,
+            true // 재생이 끝나면 Niagara 컴포넌트 자동 제거
         );
+    }
+}
 
-        ObstacleMesh->SetVisibility(false, true);
+FProgressActorState ABombDestructibleObstacle::CaptureProgress() const
+{
+    FProgressActorState State = Super::CaptureProgress();
+    State.Payload = {static_cast<uint8>(bIsDestroyed)};
+    return State;
+}
+
+void ABombDestructibleObstacle::RestoreProgress(const FProgressActorState& State)
+{
+    // Earlier saves only recorded the disable performed by DestroyObstacle.
+    const bool bDestroyed = State.Payload.IsEmpty() ? !State.bEnabled : State.Payload[0] != 0;
+    ApplyDestroyedState(bDestroyed);
+    Super::RestoreProgress(State);
+}
+
+void ABombDestructibleObstacle::ApplyDestroyedState(bool bDestroyed)
+{
+    if (bIsDestroyed == bDestroyed)
+    {
+        return;
     }
 
-    // Blueprint에 추가된 컴포넌트까지 외형과 충돌 비활성화
-    SetActorEnableCollision(false);
-    SetActorHiddenInGame(true);
+    if (bDestroyed)
+    {
+        bIntactActorCollision = GetActorEnableCollision();
+        bIntactActorHidden = IsHidden();
+        if (ObstacleMesh)
+        {
+            IntactMeshCollision = ObstacleMesh->GetCollisionEnabled();
+            bIntactMeshVisible = ObstacleMesh->GetVisibleFlag();
+        }
+    }
+
+    bIsDestroyed = bDestroyed;
+    if (ObstacleMesh)
+    {
+        ObstacleMesh->SetCollisionEnabled(bDestroyed ? ECollisionEnabled::NoCollision : IntactMeshCollision);
+        ObstacleMesh->SetVisibility(!bDestroyed && bIntactMeshVisible);
+    }
+    SetActorEnableCollision(!bDestroyed && bIntactActorCollision);
+    SetActorHiddenInGame(bDestroyed || bIntactActorHidden);
 }

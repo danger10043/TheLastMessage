@@ -1,17 +1,22 @@
 #include "UI/FactoryUIStyle.h"
+#include "UI/FactoryUIAssetSettings.h"
 #include "Engine/Texture2D.h"
+#include "Components/Button.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Sound/SoundBase.h"
 
 namespace FactoryUI
 {
 constexpr int32 PlateSize = 64;
 
-const TCHAR* PlatePath(EPlate State)
+const TSoftObjectPtr<UTexture2D>& GetPlateTexture(EPlate State)
 {
+	const auto* Assets = GetDefault<UFactoryUIAssetSettings>();
 	switch (State)
 	{
-	case EPlate::Selected: return TEXT("/Game/Main/UI/Menu/Textures/T_UI_FactoryPlateSelected");
-	case EPlate::Screen: return TEXT("/Game/Main/UI/Menu/Textures/T_UI_FactoryPlateScreen");
-	default: return TEXT("/Game/Main/UI/Menu/Textures/T_UI_FactoryPlate");
+	case EPlate::Selected: return Assets->SelectedPlate;
+	case EPlate::Screen: return Assets->ScreenPlate;
+	default: return Assets->Plate;
 	}
 }
 
@@ -49,7 +54,7 @@ FSlateBrush Chamfer(EPlate State)
 	constexpr int32 Size = PlateSize;
 	static TWeakObjectPtr<UTexture2D> Textures[static_cast<int32>(EPlate::Count)];
 	auto& Cached = Textures[static_cast<int32>(State)];
-	if (!Cached.IsValid()) Cached = LoadObject<UTexture2D>(nullptr, PlatePath(State), nullptr, LOAD_NoWarn);
+	if (!Cached.IsValid()) Cached = GetPlateTexture(State).LoadSynchronous();
 	if (!Cached.IsValid())
 	{
 		TArray<FColor> Pixels;
@@ -69,5 +74,33 @@ FSlateBrush Chamfer(EPlate State)
 	Brush.Margin = FMargin(0.2f);
 	Brush.ImageSize = FVector2D(Size);
 	return Brush;
+}
+
+namespace
+{
+FSlateSound MakeSound(ESound Sound)
+{
+	const auto* Assets = GetDefault<UFactoryUIAssetSettings>();
+	const TSoftObjectPtr<USoundBase>& Source = Sound == ESound::Hover ? Assets->HoverSound
+		: Sound == ESound::Confirm ? Assets->ConfirmSound
+		: Sound == ESound::Cancel ? Assets->CancelSound : Assets->ClickSound;
+	FSlateSound Result;
+	if (USoundBase* Loaded = Source.LoadSynchronous()) Result.SetResourceObject(Loaded);
+	return Result;
+}
+}
+
+void PlayUISound(ESound Sound)
+{
+	if (FSlateApplication::IsInitialized()) FSlateApplication::Get().PlaySound(MakeSound(Sound));
+}
+
+void ApplyButtonSounds(UButton* Button, TOptional<ESound> Press)
+{
+	if (!Button) return;
+	FButtonStyle Style = Button->GetStyle();
+	Style.SetHoveredSound(MakeSound(ESound::Hover));
+	Style.SetPressedSound(Press.IsSet() ? MakeSound(Press.GetValue()) : FSlateSound());
+	Button->SetStyle(Style);
 }
 }

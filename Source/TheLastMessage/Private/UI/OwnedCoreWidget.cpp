@@ -50,6 +50,7 @@ void UOwnedCoreWidget::NativeOnInitialized()
 		}
 	}
 	CloseButton->SetStyle(FactoryUI::Button());
+	FactoryUI::ApplyButtonSounds(CloseButton, FactoryUI::ESound::Cancel);
 	CoreName->SetColorAndOpacity(FactoryUI::Text);
 	CoreLevel->SetColorAndOpacity(FactoryUI::Cyan);
 	CurrentEffect->SetColorAndOpacity(FactoryUI::Text);
@@ -121,6 +122,9 @@ void UOwnedCoreWidget::SetActiveCategory(ECoreCategory Category)
 	CategoryPages->SetActiveWidgetIndex(bAbility ? 0 : 1);
 	AbilityTab->SetStyle(FactoryUI::Button(bAbility));
 	StatTab->SetStyle(FactoryUI::Button(!bAbility));
+	// SetStyle above drops sounds, so add them back. Core item buttons stay silent.
+	FactoryUI::ApplyButtonSounds(AbilityTab, FactoryUI::ESound::Click);
+	FactoryUI::ApplyButtonSounds(StatTab, FactoryUI::ESound::Click);
 	AbilityTabIndicator->SetVisibility(bAbility ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Hidden);
 	StatTabIndicator->SetVisibility(bAbility ? ESlateVisibility::Hidden : ESlateVisibility::HitTestInvisible);
 	const FName PreviousId = SelectedByCategory.FindRef(Category);
@@ -219,7 +223,11 @@ FReply UOwnedCoreWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, const
 	const FKey Key = Event.GetKey();
 	if (Key == EKeys::Escape || Key == ToggleKey)
 	{
-		if (!Event.IsRepeat()) Close();
+		if (!Event.IsRepeat())
+		{
+			FactoryUI::PlayUISound(FactoryUI::ESound::Cancel);
+			Close();
+		}
 		return FReply::Handled();
 	}
 	if (Key == EKeys::SpaceBar || Key == EKeys::Enter || Key == EKeys::Tab

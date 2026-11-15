@@ -158,10 +158,17 @@ void ACarryableGimmick::OnPickedUp(ACharacter* Player)
 
     // 집은 물체의 상호작용 강조 해제
     UpdateInteractionHighlight(false);
+    // +추가----
+    PlayGimmickOneShot(PickupSound.Get(), ObjectMesh.Get());
+    // +--------
 }
 
 void ACarryableGimmick::OnDropped()
 {
+    // +추가----
+    // 같은 내려놓기 처리가 반복돼도 소리가 중복되지 않도록 운반 상태 확인
+    const bool bWasCarried = Carrier.IsValid();
+    // +--------
     // 운반자 참조를 지우기 전에 낙하 검사에서 제외할 플레이어 기록
     DropIgnoredPlayer = Carrier;
 
@@ -188,6 +195,12 @@ void ACarryableGimmick::OnDropped()
     }
 
     UpdateInteractionHighlight(false);
+    // +추가----
+    if (bWasCarried)
+    {
+        PlayGimmickOneShot(DropSound.Get(), ObjectMesh.Get());
+    }
+    // +--------
 }
 
 void ACarryableGimmick::OnTransferred()

@@ -1,5 +1,7 @@
 #include "UI/PauseMenuWidget.h"
+#include "UI/AudioSettingsWidget.h"
 #include "UI/FactoryMenuStyle.h"
+#include "UI/FactoryUIStyle.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/Border.h"
 #include "Components/Button.h"
@@ -35,9 +37,6 @@ void UPauseMenuWidget::BuildDefaultLayout(UWidgetTree* Tree)
 	Text(Confirmation, TEXT("ConfirmText"), FText::GetEmpty(), 22);
 	Button(Confirmation, TEXT("ConfirmButton"), NSLOCTEXT("Pause", "Confirm", "확인"));
 	Button(Confirmation, TEXT("CancelButton"), NSLOCTEXT("Pause", "Cancel", "취소"));
-	UVerticalBox* Settings = Tree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("SettingsPage")); Switcher->AddChild(Settings);
-	Text(Settings, TEXT("SettingsHeading"), NSLOCTEXT("Pause", "Settings", "설정"), 32);
-	Button(Settings, TEXT("SettingsBackButton"), NSLOCTEXT("Pause", "Back", "뒤로"));
 }
 
 TSharedRef<SWidget> UPauseMenuWidget::RebuildWidget()
@@ -53,8 +52,15 @@ void UPauseMenuWidget::NativeConstruct()
 #define BIND_PAUSE(Name, Method) if (UButton* Button = Cast<UButton>(WidgetTree->FindWidget(TEXT(Name)))) Button->OnClicked.AddUniqueDynamic(this, &UPauseMenuWidget::Method)
 	BIND_PAUSE("ResumeButton", Resume); BIND_PAUSE("ReloadButton", Reload); BIND_PAUSE("SettingsButton", OpenSettings);
 	BIND_PAUSE("MenuButton", MainMenu); BIND_PAUSE("QuitButton", Quit); BIND_PAUSE("ConfirmButton", Confirm);
-	BIND_PAUSE("CancelButton", Back); BIND_PAUSE("SettingsBackButton", Back);
+	BIND_PAUSE("CancelButton", Back);
 #undef BIND_PAUSE
+	using FactoryUI::ESound;
+	const TPair<const TCHAR*, ESound> ButtonSounds[] = {
+		{TEXT("ResumeButton"), ESound::Cancel}, {TEXT("ReloadButton"), ESound::Click}, {TEXT("SettingsButton"), ESound::Click},
+		{TEXT("MenuButton"), ESound::Click}, {TEXT("QuitButton"), ESound::Click}, {TEXT("ConfirmButton"), ESound::Confirm},
+		{TEXT("CancelButton"), ESound::Cancel}};
+	for (const auto& Entry : ButtonSounds)
+		FactoryUI::ApplyButtonSounds(Cast<UButton>(WidgetTree->FindWidget(Entry.Key)), Entry.Value);
 	if (Pages) Pages->SetActiveWidgetIndex(0);
 	SetBusy(false);
 }
@@ -67,6 +73,11 @@ void UPauseMenuWidget::SetCheckpointAvailable(bool bAvailable)
 
 void UPauseMenuWidget::NativeDestruct()
 {
+	if (SettingsScreen)
+	{
+		SettingsScreen->RemoveFromParent();
+		SettingsScreen = nullptr;
+	}
 	OnMenuRemoved.Broadcast();
 	Super::NativeDestruct();
 }
@@ -98,10 +109,18 @@ void UPauseMenuWidget::MainMenu() { Ask(EPauseMenuAction::MainMenu, NSLOCTEXT("P
 void UPauseMenuWidget::Quit() { Ask(EPauseMenuAction::QuitGame, NSLOCTEXT("Pause", "QuitConfirm", "마지막 저장 이후의 진행 내용이 사라집니다.\n게임을 종료할까요?")); }
 void UPauseMenuWidget::OpenSettings()
 {
-	if (bWorking || !Pages) return;
-	Pages->SetActiveWidgetIndex(2);
-	if (UWidget* Button = WidgetTree->FindWidget(TEXT("SettingsBackButton"))) Button->SetKeyboardFocus();
+	if (bWorking || !Pages || SettingsScreen) return;
+	SettingsScreen = UAudioSettingsWidget::CreateFor(GetOwningPlayer());
+	if (!SettingsScreen) return;
+	SettingsScreen->OnClosed.AddUniqueDynamic(this, &ThisClass::OnSettingsClosed);
+	SettingsScreen->SetPauseInputAction(PauseInputAction);
+	SetVisibility(ESlateVisibility::Hidden);
+	SettingsScreen->AddToViewport(100);
+	SettingsScreen->FocusFirstControl();
 }
+
+void UPauseMenuWidget::OnSettingsClosed() { Back(); }
+
 void UPauseMenuWidget::Ask(EPauseMenuAction Action, const FText& Message)
 {
 	if (bWorking) return;
@@ -120,6 +139,14 @@ void UPauseMenuWidget::Back()
 	if (bWorking) return;
 	PendingAction = EPauseMenuAction::Resume;
 	if (Pages) Pages->SetActiveWidgetIndex(0);
+	if (SettingsScreen)
+	{
+		SettingsScreen->RemoveFromParent();
+		SettingsScreen = nullptr;
+		SetVisibility(ESlateVisibility::Visible);
+		if (auto* Button = WidgetTree->FindWidget(TEXT("SettingsButton"))) Button->SetKeyboardFocus();
+		return;
+	}
 	if (UWidget* Button = WidgetTree->FindWidget(TEXT("ResumeButton"))) Button->SetKeyboardFocus();
 }
 FReply UPauseMenuWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, const FKeyEvent& Event)
@@ -131,13 +158,36 @@ FReply UPauseMenuWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, const
 	const UEnhancedInputLocalPlayerSubsystem* Inputs = Local ? Local->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>() : nullptr;
 	if (Inputs && PauseInputAction && Inputs->QueryKeysMappedToAction(PauseInputAction).Contains(Event.GetKey()))
 	{
-		if (!Event.IsRepeat() && !bWorking) { if (Pages && Pages->GetActiveWidgetIndex() != 0) Back(); else Resume(); }
+		if (!Event.IsRepeat() && !bWorking)
+		{
+			FactoryUI::PlayUISound(FactoryUI::ESound::Cancel);
+			if (Pages && Pages->GetActiveWidgetIndex() != 0) Back(); else Resume();
+		}
 		return FReply::Handled();
 	}
+	const FKey Key = Event.GetKey();
+	if (Key == EKeys::Escape && Pages && Pages->GetActiveWidgetIndex() == 2)
+	{
+		FactoryUI::PlayUISound(FactoryUI::ESound::Cancel);
+		Back();
+		return FReply::Handled();
+	}
+	if (Key == EKeys::Up || Key == EKeys::Down || Key == EKeys::Left || Key == EKeys::Right || Key == EKeys::Tab)
+		bNavigationKeyPending = true;
 	return Super::NativeOnPreviewKeyDown(Geometry, Event);
 }
 
-void UPauseMenuWidget::NativeTick(const FGeometry& Geometry, float DeltaTime) { Super::NativeTick(Geometry, DeltaTime); FactoryMenuStyle::UpdateFocus(WidgetTree); }
+void UPauseMenuWidget::NativeTick(const FGeometry& Geometry, float DeltaTime)
+{
+	Super::NativeTick(Geometry, DeltaTime);
+	FactoryMenuStyle::UpdateFocus(WidgetTree);
+	// Arrow keys move focus through Slate navigation, so compare the focused button after the key.
+	UWidget* Focused = nullptr;
+	WidgetTree->ForEachWidget([&Focused](UWidget* Widget) { if (!Focused && Widget->IsA<UButton>() && Widget->HasAnyUserFocus()) Focused = Widget; });
+	if (bNavigationKeyPending && Focused && Focused != FocusedButton.Get()) FactoryUI::PlayUISound(FactoryUI::ESound::Hover);
+	bNavigationKeyPending = false;
+	FocusedButton = Focused;
+}
 
 FReply UPauseMenuWidget::NativeOnFocusReceived(const FGeometry& Geometry, const FFocusEvent& Event)
 {

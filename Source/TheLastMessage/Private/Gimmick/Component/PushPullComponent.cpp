@@ -486,6 +486,11 @@ void UPushPullComponent::UpdatePushPull(const FVector& MoveDirection, float Delt
     Movement->SetBaseFromFloor(FloorResult);
 
     Movement->SaveBaseLocation();
+    // +추가----
+    // 입력이나 물리 속도 대신 충돌 처리 후 실제 상자 이동량을 사용한다.
+    Target->UpdatePushPullMovementSound(
+        static_cast<float>((Mesh->GetComponentLocation().X - BoxStart.X) / StepTime), BestPlan.bBoxOnGround);
+    // +--------
 }
 
 void UPushPullComponent::StopPushPull()
@@ -927,10 +932,12 @@ bool UPushPullComponent::FindSharedMoveLocation(UPrimitiveComponent* Component, 
 
             const FVector FloorNormal = GetSurfaceNormal(FloorHit);
 
-            // 너무 가파른 면은 받쳐 주는 바닥으로 인정하지 않음
+            // 받쳐 줄 수 없는 면이면 바닥이 없는 것으로 처리.
+    // 수평 경로가 통과 가능한 경우 이동 후 중력으로 낙하하도록 허용.
             if (FloorNormal.Z + KINDA_SMALL_NUMBER < MinFloorNormalZ)
             {
-                return false;
+                return true;
+         
             }
 
             // 깊이 겹친 상태를 강제 위치 이동으로 해결하지 않음

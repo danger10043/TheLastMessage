@@ -6,6 +6,8 @@
 #include "Camera/PlayerCameraManager.h"
 #include "Engine/World.h"
 #include "UI/PlayerHUD.h"
+#include "UI/GameVisualSettingsSubsystem.h"
+#include "Engine/GameInstance.h"
 
 UCombatFeedbackComponent::UCombatFeedbackComponent()
 {
@@ -62,7 +64,10 @@ void UCombatFeedbackComponent::ClientPlayFeedback_Implementation(bool bReceived,
 		CameraManager = Manager;
 		CameraModifier = Cast<UCombatCameraModifier>(Manager->AddNewCameraModifier(UCombatCameraModifier::StaticClass()));
 	}
-	if (CameraModifier.IsValid()) CameraModifier->PlayImpulse(bReceived ? ReceivedHit : DealtHit, Strength);
+	const auto* Visual = UGameInstance::GetSubsystem<UGameVisualSettingsSubsystem>(GetWorld()->GetGameInstance());
+	const float Scale = Visual ? Visual->ShakeScale : 1.0f;
+	if (CameraModifier.IsValid() && Scale > 0.0f)
+		CameraModifier->PlayImpulse(bReceived ? ReceivedHit : DealtHit, Strength * Scale);
 }
 
 void UCombatFeedbackComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)

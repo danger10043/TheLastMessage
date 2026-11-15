@@ -145,7 +145,7 @@ void AEnemySpawnPoint::BuildSlots()
 	const float SlotWidth = TotalWidth / Total;
 	const float Margin = FMath::Min(MinSpacing * 0.5f, SlotWidth * 0.5f);
 
-	if (SlotWidth < MinSpacing)
+	if (Total > 1 && SlotWidth < MinSpacing)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[EnemySpawnPoint] %s: 범위(%.0f)가 좁아 최소 간격(%.0f)을 지킬 수 없습니다. 몬스터 %d마리."),
 			*GetName(), TotalWidth, MinSpacing, Total);

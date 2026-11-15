@@ -43,6 +43,9 @@ ALaserEmitter::ALaserEmitter()
 
 void ALaserEmitter::ApplyActiveState(bool bNewActive)
 {
+	// +추가----
+	const bool bPreviousActive = bIsActive;
+	// +--------
 	Super::ApplyActiveState(bNewActive && bIsEnabled);
 	SetActorTickEnabled(bIsEnabled && bIsActive);
 
@@ -55,6 +58,12 @@ void ALaserEmitter::ApplyActiveState(bool bNewActive)
 	}
 
 	UpdateEmitterIndicator();
+	// +추가----
+	if (!bPreviousActive && bIsActive && bHasValidLaserConfig)
+	{
+		PlayGimmickOneShot(LaserStartSound.Get(), LaserOrigin.Get());
+	}
+	// +--------
 }
 
 bool ALaserEmitter::LoadLaserConfig()

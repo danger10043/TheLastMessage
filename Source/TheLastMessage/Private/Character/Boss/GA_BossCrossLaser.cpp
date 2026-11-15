@@ -1,5 +1,6 @@
 #include "Character/Boss/GA_BossCrossLaser.h"
 #include "Character/Boss/BossMonster.h"
+#include "Character/Boss/BossAttackTrailComponent.h"
 #include "Character/Boss/BossCircularMissile.h"
 #include "Character/Player/PlayerBase.h"
 #include "Framework/ActorPoolSubsystem.h"
@@ -1083,6 +1084,7 @@ void UGA_BossCrossLaser::UpdateFollowUp(double Now)
             Flame = nullptr;
             Stage = EStage::Dropping;
             StageStart = Now;
+            UBossAttackTrailComponent::StartForBoss(Boss, EBossTrailType::CrossLaserDrop);
             if (!PlayFollowMontage(DropMontage)) Finish(true);
         }
         break;
@@ -1103,6 +1105,7 @@ void UGA_BossCrossLaser::UpdateFollowUp(double Now)
         if (T >= 1.f)
         {
             bDropLanded = true;
+            UBossAttackTrailComponent::StopForBoss(Boss);
             if (LandingSound)
             {
                 Boss->MulticastGunBurstSound(LandingSound.Get(), DropGroundPoint);
@@ -1166,6 +1169,7 @@ void UGA_BossCrossLaser::EndAbility(const FGameplayAbilitySpecHandle Handle,
 {
     if (bEnding || !IsEndAbilityValid(Handle, ActorInfo)) return;
     TGuardValue<bool> Guard(bEnding, true);
+    UBossAttackTrailComponent::StopForBoss(GetBossOwner());
     if (bFiringLoopStarted)
     {
         bFiringLoopStarted = false;

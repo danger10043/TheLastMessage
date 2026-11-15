@@ -71,10 +71,14 @@ public:
 	UPROPERTY(SaveGame) FDateTime SavedAt;
 	UPROPERTY(SaveGame) FString MapPackage;
 	UPROPERTY(SaveGame) FGuid CheckpointId;
+	/** 체크포인트를 저장할 때 플레이어가 있던 리전 ID. 부활 전에 그 방을 먼저 올리는 데 쓴다(방 스트리밍이 꺼져 있으면 비어 있음). */
+	UPROPERTY(SaveGame) FName CheckpointRegionId;
 	UPROPERTY(SaveGame) FTransform RespawnTransform;
 	UPROPERTY(SaveGame) FVector RespawnGravity = FVector(0, 0, -1);
 	UPROPERTY(SaveGame) FProgressPlayerState Player;
 	/** Placed pickup IDs captured with the checkpoint, independently of owned core types/levels. */
 	UPROPERTY(SaveGame) TMap<FGuid, bool> CorePickupStates;
+	/** 켜져 있는 월드 플래그(게임플레이 태그 이름). 맵과 상관없이 전체에서 공유한다. 체크포인트 시점의 값. */
+	UPROPERTY(SaveGame) TSet<FName> WorldFlags;
 	UPROPERTY(SaveGame) TMap<FName, FProgressMapState> Maps;
 };

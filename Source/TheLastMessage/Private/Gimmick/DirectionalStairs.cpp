@@ -4,6 +4,7 @@
 #include "Character/Player/GrapplingHookComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "DataAsset/GameplayAssetSettings.h"
 #include "Engine/StaticMesh.h"
 #include "EngineUtils.h"
 #include "GameFramework/Character.h"
@@ -18,8 +19,10 @@ ADirectionalStairs::ADirectionalStairs()
 	SetRootComponent(StairMesh);
 	StairMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	StairMesh->SetGenerateOverlapEvents(false);
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> StairsAsset(TEXT("/Game/Main/WorldAssets/Meshes/SM_Stairs.SM_Stairs"));
-	if (StairsAsset.Succeeded()) StairMesh->SetStaticMesh(StairsAsset.Object);
+	if (UStaticMesh* StairsAsset = GetDefault<UGameplayAssetSettings>()->DirectionalStairsMesh.LoadSynchronous())
+	{
+		StairMesh->SetStaticMesh(StairsAsset);
+	}
 
 	SolidRamp = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("SolidRamp"));
 	SolidRamp->SetupAttachment(StairMesh);

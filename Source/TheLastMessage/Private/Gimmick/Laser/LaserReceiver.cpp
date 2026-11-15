@@ -59,6 +59,9 @@ void ALaserReceiver::ApplyActiveState(bool bNewActive)
 	if (bPreviousActive != bIsActive)
 	{
 		UpdateReceiverIndicator();
+		// +추가----
+		if (bIsActive) PlayGimmickOneShot(LaserReceiveSound.Get(), ReceiverInputArea.Get());
+		// +--------
 	}
 }
 

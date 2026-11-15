@@ -47,6 +47,18 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Weapon|Charge")
 	float GetChargeRatio() const;
 	bool IsWaitingForAttackRelease() const { return bWaitingForRelease && IsActive() && !bFinishingAttack; }
+
+	/**
+	 * 서버 전용. 몽타주의 Attack Cancel 노티파이가 호출한다.
+	 * 후딜 취소를 요청하거나 해제하며, 실제로 열릴지는 공격 진행 상태가 판단한다.
+	 */
+	void SetMoveCancelRequested(bool bRequested);
+	/**
+	 * 서버 전용. 이동·점프·아래 입력이 후딜을 끊을 때 호출한다.
+	 * 취소가 가능하면 공격을 정상 종료(취소 아님)로 끝내고 true를 반환한다.
+	 */
+	bool TryMoveCancel();
+
 	virtual bool CanActivateAbility(const FGameplayAbilitySpecHandle Handle,
 		const FGameplayAbilityActorInfo* ActorInfo, const FGameplayTagContainer* SourceTags = nullptr,
 		const FGameplayTagContainer* TargetTags = nullptr, FGameplayTagContainer* OptionalRelevantTags = nullptr) const override;
@@ -116,8 +128,21 @@ private:
 	void FireNextBurstShot();
 	void FinishAttackIfReady();
 	void StartWeaponCharge();
+	/** 후딜 취소가 지금 가능한지 판단한다. 공격 실행 전·연발 중·근접 타격 전에는 false다. */
+	bool CanCancelIntoMovement() const;
+	/** CanCancelIntoMovement 결과를 플레이어의 복제 상태에 반영한다. */
+	void UpdateMoveCancelWindow();
+	void HandleMoveCancelTimer();
 	FTimerHandle ChargeStartTimer;
 	FTimerHandle BurstShotTimer;
+	FTimerHandle MoveCancelTimer;
+	// 시간 방식 또는 노티파이 방식 중 하나라도 요청하면 취소 구간 후보가 된다.
+	bool bMoveCancelByTime = false;
+	bool bMoveCancelByNotify = false;
+	// 근접의 마지막 타격 프레임이 처리됐는지. 취소로 피해 판정을 건너뛰지 않게 한다.
+	bool bMeleeStrikeFinished = false;
+	// 이동 취소로 종료하는 중에는 몽타주 중단 알림을 공격 취소로 처리하지 않는다.
+	bool bMoveCancelEnding = false;
 	int32 RemainingBurstShots = 0;
 	bool bAttackMontageFinished = false;
 	bool bChargeStarted = false;

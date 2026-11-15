@@ -104,6 +104,9 @@ bool AFuseCircuitSocket::TryInsertFuse(ACharacter * Player)
     }
 
     InstalledFuse = Fuse;
+    // +추가----
+    PlayGimmickOneShot(FuseInsertSound.Get(), FuseMountPoint.Get());
+    // +--------
 
     // 삽입이 끝난 회로는 상호작용 강조 해제
     UpdateInteractionHighlight(false);

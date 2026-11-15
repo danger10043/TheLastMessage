@@ -500,6 +500,11 @@ void AJunkerEnemy::DoMeleeHit()
 		}
 
 		SpawnEffectAtLocation(MeleeHitEffect, HitLocation);
+
+		if (MeleeHitSound)
+		{
+			UGameplayStatics::PlaySoundAtLocation(this, MeleeHitSound, HitLocation);
+		}
 	}
 }
 

@@ -79,6 +79,11 @@ bool AElectricDoor::LoadDoorConfig()
         UpdateDelegate.BindUFunction(this, GET_FUNCTION_NAME_CHECKED(AElectricDoor, UpdateDoorTransform));
 
         DoorTimeline->AddInterpFloat(Curve, UpdateDelegate, NAME_None, TrackName);
+        // +추가----
+        FOnTimelineEvent FinishedDelegate;
+        FinishedDelegate.BindUFunction(this, GET_FUNCTION_NAME_CHECKED(AElectricDoor, HandleDoorMotionFinished));
+        DoorTimeline->SetTimelineFinishedFunc(FinishedDelegate);
+        // +--------
 
         bTimelineConfigured = true;
     }
@@ -139,7 +144,33 @@ void AElectricDoor::ApplyActiveState(bool bNewActive)
     {
         DoorTimeline->Reverse();
     }
+    // +추가----
+    StopGimmickLoop(true);
+    RefreshGimmickAudioState();
+    // +--------
 }
+
+// +추가----
+void AElectricDoor::RefreshGimmickAudioState()
+{
+    if (!bTimelineConfigured || !IsValid(DoorTimeline) || !DoorTimeline->IsPlaying()
+        || ClosedTransform.Equals(OpenTransform))
+    {
+        StopGimmickLoop();
+        return;
+    }
+    const float Position = DoorTimeline->GetPlaybackPosition();
+    const float Remaining = bIsActive ? DoorTimeline->GetTimelineLength() - Position : Position;
+    if (Remaining > KINDA_SMALL_NUMBER)
+        StartGimmickLoop(bIsActive ? DoorOpenSound.Get() : DoorCloseSound.Get(), DoorMesh.Get());
+    else StopGimmickLoop();
+}
+
+void AElectricDoor::HandleDoorMotionFinished()
+{
+    StopGimmickLoop();
+}
+// +--------
 
 void AElectricDoor::BeginPlay()
 {

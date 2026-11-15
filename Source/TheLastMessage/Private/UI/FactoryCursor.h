@@ -10,6 +10,7 @@
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
 #include "UI/PlayerHUD.h"
+#include "UI/FactoryUIAssetSettings.h"
 
 namespace FactoryCursor
 {
@@ -33,13 +34,16 @@ public:
  void Construct(const FArguments& Args)
  {
   Kind=Args._Kind;bReady=Args._Ready;SetVisibility(EVisibility::HitTestInvisible);ForceVolatile(true);
+  const auto* Assets = GetDefault<UFactoryUIAssetSettings>();
   if(Kind==EKind::Menu)
   {
-   LoadBrush(TEXT("Menu"),Normal,Brush);
-   LoadBrush(TEXT("MenuHover"),Hover,HoverBrush);
+   LoadBrush(Assets->MenuCursor,Normal,Brush);
+   LoadBrush(Assets->HoverCursor,Hover,HoverBrush);
+   Brush.SetUVRegion(FBox2f(FVector2f(0.31036882f,0.19269406f),FVector2f(0.64300626f,0.80273973f)));
+   HoverBrush.SetUVRegion(FBox2f(FVector2f(0.20188679f,0.26886792f),FVector2f(0.71792453f,0.74663073f)));
   }
-  LoadBrush(TEXT("Aim_Base"),AimBase,AimBaseBrush);
-  LoadBrush(TEXT("Aim_Fill"),AimFill,AimFillBrush);
+  LoadBrush(Assets->AimBase,AimBase,AimBaseBrush);
+  LoadBrush(Assets->AimFill,AimFill,AimFillBrush);
  }
  virtual FVector2D ComputeDesiredSize(float) const override
  {return Kind==EKind::Menu ? FVector2D(64,80) : FVector2D(44,44);}
@@ -75,12 +79,10 @@ public:
   return Layer+1;
  }
 private:
- static void LoadBrush(const TCHAR* Name,TStrongObjectPtr<UTexture2D>& Hold,FSlateBrush& Image)
+ static void LoadBrush(const TSoftObjectPtr<UTexture2D>& Texture,TStrongObjectPtr<UTexture2D>& Hold,FSlateBrush& Image)
  {
-  Hold.Reset(LoadObject<UTexture2D>(nullptr,*FString::Printf(TEXT("/Game/Main/UI/Cursors/T_Cursor_%s.T_Cursor_%s"),Name,Name)));
+  Hold.Reset(Texture.LoadSynchronous());
   Image.SetResourceObject(Hold.Get());Image.DrawAs=ESlateBrushDrawType::Image;Image.ImageSize=FVector2D(44,44);
-  if(FCString::Strcmp(Name,TEXT("Menu"))==0) Image.SetUVRegion(FBox2f(FVector2f(0.31036882f,0.19269406f),FVector2f(0.64300626f,0.80273973f)));
-  if(FCString::Strcmp(Name,TEXT("MenuHover"))==0) Image.SetUVRegion(FBox2f(FVector2f(0.20188679f,0.26886792f),FVector2f(0.71792453f,0.74663073f)));
  }
  EKind Kind=EKind::Menu;
  bool bReady=true;

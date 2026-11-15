@@ -7,41 +7,13 @@
 #include "Rendering/DrawElements.h"
 #include "Engine/Texture2D.h"
 
-namespace
-{
-// HUD silhouettes authored for the slot's icon area (75 x 62, texture 256 x 212).
-// Source PNGs: SourceArt/UI/HUD/WeaponIcons
-UTexture2D* HudWeaponIcon(EWeaponType Type)
-{
-	static TWeakObjectPtr<UTexture2D> Cache[4];
-	const TCHAR* Paths[4] = {
-		TEXT("/Game/Main/UI/HUD/Textures/WeaponIcons/T_UI_WeaponIcon_Pipe"),
-		TEXT("/Game/Main/UI/HUD/Textures/WeaponIcons/T_UI_WeaponIcon_Hammer"),
-		TEXT("/Game/Main/UI/HUD/Textures/WeaponIcons/T_UI_WeaponIcon_Pistol"),
-		TEXT("/Game/Main/UI/HUD/Textures/WeaponIcons/T_UI_WeaponIcon_Railgun") };
-	int32 Index = INDEX_NONE;
-	switch (Type)
-	{
-	case EWeaponType::LightMelee: Index = 0; break;
-	case EWeaponType::HeavyMelee: Index = 1; break;
-	case EWeaponType::LightRanged: Index = 2; break;
-	case EWeaponType::HeavyRanged: Index = 3; break;
-	default: return nullptr;
-	}
-	if (!Cache[Index].IsValid()) Cache[Index] = LoadObject<UTexture2D>(nullptr, Paths[Index], nullptr, LOAD_NoWarn);
-	return Cache[Index].Get();
-}
-}
-
 void UPlayerWeaponSlotWidget::SetWeaponPresentation(UWeaponDataAsset* Data, int32 Number, bool bOwned, EWeaponSlot Assignment, bool bSelected)
 {
 	PresentedType = bOwned && Data ? TOptional<EWeaponType>(Data->WeaponType) : TOptional<EWeaponType>();
 	if (KeyLabel) KeyLabel->SetText(FText::AsNumber(Number));
 	if (WeaponIcon)
 	{
-		// Texture icon first (HUD set, then the data asset's icon); vector silhouette in NativePaint is the fallback.
-		UTexture2D* Icon = PresentedType.IsSet() ? HudWeaponIcon(PresentedType.GetValue()) : nullptr;
-		if (!Icon && PresentedType.IsSet()) Icon = Data->WeaponIcon;
+		UTexture2D* Icon = PresentedType.IsSet() ? Data->WeaponIcon.Get() : nullptr;
 		if (WeaponIcon->GetBrush().GetResourceObject() != Icon)
 		{
 			if (Icon) WeaponIcon->SetBrushFromTexture(Icon, false);

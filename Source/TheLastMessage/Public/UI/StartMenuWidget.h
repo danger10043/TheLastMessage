@@ -8,6 +8,7 @@ class UButton;
 class UTextBlock;
 class UWidgetSwitcher;
 class UWidgetTree;
+class UAudioSettingsWidget;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FMenuSlotSelected, int32, SlotId, bool, bNewGame);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FMenuExitRequested);
@@ -62,6 +63,10 @@ private:
 	UFUNCTION() void SelectSlot3();
 	UFUNCTION() void RequestExit();
 	UFUNCTION() void ShowCredits();
+	UFUNCTION() void OpenSettings();
+	UFUNCTION() void OnSettingsClosed();
+	UPROPERTY(Transient) TObjectPtr<UButton> SettingsButton;
+	UPROPERTY(Transient) TObjectPtr<UAudioSettingsWidget> SettingsScreen;
 	UFUNCTION() void ConfirmOverwrite();
 	UFUNCTION() void CancelOverwrite();
 	bool bNewGame = true;

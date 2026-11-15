@@ -17,6 +17,7 @@ class UCarryComponent;
 class UPushPullComponent;
 class UCoreComponent;
 class UGameplayAbility;
+class UGA_WeaponAttackBase;
 class UGameplayEffect;
 class UWeaponBase;
 class UWeaponDataAsset;
@@ -62,6 +63,47 @@ struct FPlayerDeathPresentationState
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnPlayerDiedSignature, APlayerBase*, Player);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnPlayerWeaponDataChanged);
 
+USTRUCT(BlueprintType)
+struct FPlayerMovementAudio
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category="Footsteps")
+	TObjectPtr<USoundBase> FootstepSound;
+
+	UPROPERTY(EditAnywhere, Category="Footsteps", meta=(ClampMin="0.0"))
+	TArray<float> FootstepStartTimes;
+
+	/** Set to zero to play a standalone footstep sample to completion. */
+	UPROPERTY(EditAnywhere, Category="Footsteps", meta=(ClampMin="0.0"))
+	float FootstepDuration = 0.0f;
+
+	UPROPERTY(EditAnywhere, Category="Footsteps")
+	TObjectPtr<USoundBase> LandingSound;
+
+	/** Shared by the ground jump and the double jump. */
+	UPROPERTY(EditAnywhere, Category="Footsteps")
+	TObjectPtr<USoundBase> JumpSound;
+
+	UPROPERTY(EditAnywhere, Category="Grapple")
+	TArray<TObjectPtr<USoundBase>> GrappleLaunchSounds;
+
+	UPROPERTY(EditAnywhere, Category="Grapple")
+	TObjectPtr<USoundBase> GrappleAttachSound;
+
+	UPROPERTY(EditAnywhere, Category="Grapple")
+	TObjectPtr<USoundBase> GrappleReleaseSound;
+
+	UPROPERTY(EditAnywhere, Category="Grapple", meta=(ClampMin="0.0"))
+	float GrappleLaunchVolume = 0.8f;
+
+	UPROPERTY(EditAnywhere, Category="Grapple", meta=(ClampMin="0.0"))
+	float GrappleAttachVolume = 1.4f;
+
+	UPROPERTY(EditAnywhere, Category="Grapple", meta=(ClampMin="0.0"))
+	float GrappleReleaseVolume = 1.5f;
+};
+
 /** Player GAS foundation. Movement remains in ASideScrollingCharacter. */
 UCLASS()
 class THELASTMESSAGE_API APlayerBase : public ASideScrollingCharacter, public IAbilitySystemInterface
@@ -69,6 +111,8 @@ class THELASTMESSAGE_API APlayerBase : public ASideScrollingCharacter, public IA
 	GENERATED_BODY()
 
 public:
+	const FPlayerMovementAudio& GetMovementAudio() const { return MovementAudio; }
+
 	/** Successful pickup/drop presentation; forced cleanup does not play the drop motion. */
 	UFUNCTION(NetMulticast, Reliable)
 	void PlayCarryTransition(bool bStarting, bool bWideCarry);
@@ -183,6 +227,8 @@ public:
     UFUNCTION(BlueprintPure, Category="Player|Checkpoint") bool IsRespawnProtected() const;
 
 	bool RestoreCheckpointProgress(const UProgressSaveGame* Save);
+	/** 저장된 체크포인트의 리전을 불러올 때 쓴다. */
+	void SetCheckpointRegionId(FName RegionId) { CheckpointRegionId = RegionId; }
 
 	virtual void FellOutOfWorld(const UDamageType& DamageType) override;
 
@@ -191,6 +237,9 @@ public:
 
 	// 체력이 실제로 감소했고 아직 살아 있을 때 AttributeSet에서 호출한다.
 	void HandleHitReaction(FName ReactionSection = NAME_None);
+	/** Called by the AttributeSet when health drops and no guard handled the hit (guards have their own sounds). */
+	UFUNCTION(NetMulticast, Unreliable)
+	void MulticastDamageSound();
 	FName GetDamageReactionSection(const FGameplayEffectContextHandle& Context) const;
 
 	UFUNCTION(BlueprintPure, Category = "Player|Combat")
@@ -241,8 +290,22 @@ public:
 	virtual void DoInteract() override;
 
 	// 공격 시작 시 남은 입력을 지운다. 지상에서는 정지하고 공중에서는 기존 속도를 유지한다.
-	void StopMovementForAttack();
+	// RetainSpeedRatio가 0보다 크면 지상에서도 그 비율만큼 속도를 남겨 기존 제동으로 서서히 멈춘다.
+	void StopMovementForAttack(float RetainSpeedRatio = 0.0f);
 	UStaticMeshComponent* GetWeaponVisualMesh(EWeaponSlot Slot) const;
+
+	/** 공격 후딜을 이동·점프·아래 입력으로 끊을 수 있는 구간이 열려 있으면 true. 서버가 정하고 오너에게 복제한다. */
+	UFUNCTION(BlueprintPure, Category="Player|Combat")
+	bool IsAttackCancelWindowOpen() const { return bAttackCancelWindowOpen; }
+	/** 서버 전용. 공격 능력이 취소 구간 상태를 갱신한다. */
+	void SetAttackCancelWindowOpen(bool bOpen);
+	/** 서버 전용. 애님 노티파이가 현재 공격 능력에 취소 구간을 요청하거나 해제한다. */
+	void SetAttackCancelWindowRequested(bool bRequested);
+	/**
+	 * 이동·점프·아래 입력이 공격을 끊으려 할 때 호출한다.
+	 * 취소 구간이 열려 있으면 서버에 취소를 요청하고 true를 반환해 입력을 그대로 적용하게 한다.
+	 */
+	bool TryCancelAttackWithInput();
 
 	UCoreComponent* GetCoreComponent() const;
 
@@ -313,6 +376,29 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Animation", meta = (ClampMin = "0.01"))
 	float DeathPlayRate = 1.0f;
+
+	/** One is picked at random for each hit that lowers health. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Audio")
+	TArray<TObjectPtr<USoundBase>> HitSounds;
+
+	/** Electric layer played together with HitSounds. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Audio")
+	TObjectPtr<USoundBase> HitLayerSound;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Audio", meta = (ClampMin = "0.0"))
+	float HitLayerVolume = 0.4f;
+
+	/** Played when the death presentation starts. Fades out on respawn. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Audio")
+	TObjectPtr<USoundBase> DeathSound;
+
+	/** Played when the collapsing body reaches the floor. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Audio")
+	TObjectPtr<USoundBase> DeathImpactSound;
+
+	/** Time into the death montage, at play rate 1, when the body reaches the floor. An airborne death also waits for landing. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player|Audio", meta = (ClampMin = "0.0", Units = "s"))
+	float DeathImpactDelay = 1.0f;
 
 	// 시작할 때 각 슬롯에 장착할 무기의 설정 데이터.
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, ReplicatedUsing=OnRep_VisibleWeaponSlot, Category = "Player|Weapon")
@@ -399,6 +485,18 @@ protected:
 	FTimerHandle EnergyRechargeTimerHandle;
 
 private:
+	UPROPERTY(EditDefaultsOnly, Category="Player|Audio", meta=(ShowOnlyInnerProperties))
+	FPlayerMovementAudio MovementAudio;
+
+	void UpdateFootstepAudio(float DeltaSeconds);
+	void PlayFootstepAudio();
+	float TimeSinceFootstep = 0.0f;
+	FVector PreviousStepDirection = FVector::ZeroVector;
+	float PreviousFootSeparation = 0.0f;
+	int32 FootSeparationTrend = 0;
+	int32 LastPlantedFoot = 0;
+	int32 LastFootstepSample = INDEX_NONE;
+
 	void ScheduleProgressRestore();
 	UFUNCTION(Server, Reliable)
 	void ServerAssignWeaponChoice(int32 Index, EWeaponSlot Slot);
@@ -415,6 +513,11 @@ private:
 	FTransform CheckpointTransform;
 	FVector CheckpointGravity = FVector(0, 0, -1);
 	bool bHasCheckpoint = false;
+	/** 체크포인트를 잡았을 때 있던 리전. 방 스트리밍이 켜져 있으면 부활 전에 그 방이 올라와 있어야 한다. 비어 있으면 기다리지 않는다. */
+	FName CheckpointRegionId;
+	/** 부활을 방 로드 때문에 미룬 상태인가, 그리고 처음 미룬 시각(10초가 지나면 기다리지 않고 부활). */
+	bool bRespawnWaitingForRooms = false;
+	double RespawnRoomWaitStart = -1.0;
 	bool bCheckpointGravityReversed = false;
 	FTimerHandle RespawnTimer;
 	void TryAutoRespawn();
@@ -438,9 +541,24 @@ private:
 	FTimerHandle HitReactionTimer;
 	double HitReactionImmunityEndTime = 0.0;
 	bool bDeathPresentationStarted = false;
+	void PlayDeathImpactSound();
+	FTimerHandle DeathImpactTimer;
+	bool bDeathImpactPending = false;
+	TWeakObjectPtr<UAudioComponent> DeathSoundComponent;
+	double LastDamageSoundTime = -1.0;
 	// ServerOnly 공격 능력은 눌림/해제를 동일한 서버 경로로 전달한다.
 	UFUNCTION(Server, Reliable)
 	void ServerAbilityInput(FGameplayTag InputTag, uint8 InputState, FVector_NetQuantize AimPoint);
+	// 후딜 취소 구간이 열려 있을 때 클라이언트의 이동·점프·아래 입력이 서버의 공격 능력을 끊도록 요청한다.
+	UFUNCTION(Server, Reliable)
+	void ServerRequestAttackCancel();
+	/** 현재 실행 중인 공격 능력. 없으면 nullptr. */
+	UGA_WeaponAttackBase* FindActiveAttackAbility() const;
+	// 서버가 계산한 후딜 취소 구간 상태. 오너 클라이언트가 입력 차단을 풀지 판단하는 데 쓴다.
+	UPROPERTY(Replicated)
+	bool bAttackCancelWindowOpen = false;
+	// 클라이언트가 취소 요청을 매 프레임 보내지 않도록 마지막 요청 시각을 기억한다.
+	double LastAttackCancelRequestTime = -1.0;
 	void UpdateMouseAim();
 	bool SetAimTarget(FVector WorldPoint);
 	FVector GetAimPlaneNormal() const;

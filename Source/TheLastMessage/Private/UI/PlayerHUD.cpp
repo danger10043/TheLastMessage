@@ -22,7 +22,7 @@
 #include "Engine/Font.h"
 #include "Engine/Texture2D.h"
 #include "Engine/Engine.h"
-#include "UObject/ConstructorHelpers.h"
+#include "UI/FactoryUIAssetSettings.h"
 #include "UI/FactoryUIStyle.h"
 #include "Fonts/FontMeasure.h"
 #include "Framework/Application/SlateApplication.h"
@@ -33,13 +33,12 @@ APlayerHUD::APlayerHUD()
 	PrimaryActorTick.bCanEverTick = true;
 	PrimaryActorTick.bStartWithTickEnabled = true;
 	SaveNotificationClass = USaveNotificationWidget::StaticClass();
-	static ConstructorHelpers::FObjectFinder<UFont> TitleFont(TEXT("/Game/Main/UI/Fonts/F_TLM_Title"));
-	RoomTitleFont = TitleFont.Object;
 }
 
 void APlayerHUD::BeginPlay()
 {
 	Super::BeginPlay();
+	RoomTitleFont = GetDefault<UFactoryUIAssetSettings>()->TitleFont.LoadSynchronous();
 	EnsureWidgets();
 	UpdatePlayerUI();
 }

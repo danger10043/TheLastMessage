@@ -2,6 +2,10 @@
 #include "Blueprint/WidgetTree.h"
 #include "Components/Border.h"
 #include "Components/Button.h"
+#include "Components/ButtonSlot.h"
+#include "Components/HorizontalBox.h"
+#include "Components/HorizontalBoxSlot.h"
+#include "Components/Image.h"
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
 #include "Components/SizeBox.h"
@@ -12,11 +16,62 @@
 #include "InputCoreTypes.h"
 
 #include "UI/FactoryMenuStyle.h"
+#include "UI/FactoryUIStyle.h"
+#include "UI/FactoryUIAssetSettings.h"
+#include "UI/AudioSettingsWidget.h"
+#include "Engine/Texture2D.h"
+#include "GameFramework/PlayerController.h"
 namespace {
 UTextBlock* AddText(UWidgetTree* Tree, UVerticalBox* Box, FName Name, const FText& Label, int32 FontSize) { return FactoryMenuStyle::AddText(Tree, Box, Name, Label, FontSize); }
 void AddButton(UWidgetTree* Tree, UVerticalBox* Box, FName Name, FName TextName, const FText& Label) {
  const bool bCompact = Name != TEXT("NewGameButton") && Name != TEXT("LoadGameButton") && Name != TEXT("ExitButton");
  FactoryMenuStyle::AddButton(Tree, Box, Name, TextName, Label, bCompact);
+}
+
+void AddSettingsButton(UWidgetTree* Tree)
+{
+	auto* Main = Cast<UVerticalBox>(Tree->FindWidget(TEXT("MainPage")));
+	auto* Load = Cast<UButton>(Tree->FindWidget(TEXT("LoadGameButton")));
+	auto* Exit = Cast<UButton>(Tree->FindWidget(TEXT("ExitButton")));
+	if (!Main || !Load || !Exit || Tree->FindWidget(TEXT("StartSettingsButton"))) return;
+
+	auto* LoadSize = Cast<USizeBox>(Load->GetParent());
+	UWidget* ExitRow = Exit->GetParent() == Main ? Exit : Exit->GetParent();
+	auto* Size = Tree->ConstructWidget<USizeBox>();
+	Size->SetHeightOverride(LoadSize ? LoadSize->GetHeightOverride() : 94);
+	auto* Slot = Main->AddChildToVerticalBox(Size);
+	if (const auto* LoadSlot = LoadSize ? Cast<UVerticalBoxSlot>(LoadSize->Slot) : nullptr)
+		Slot->SetPadding(LoadSlot->GetPadding());
+	Main->ShiftChild(Main->GetChildIndex(ExitRow), Size);
+
+	auto* Button = Tree->ConstructWidget<UButton>(UButton::StaticClass(), TEXT("StartSettingsButton"));
+	Button->SetStyle(Load->GetStyle());
+	Button->SetBackgroundColor(Load->GetBackgroundColor());
+	Size->AddChild(Button);
+	auto* Row = Tree->ConstructWidget<UHorizontalBox>();
+	auto* Content = CastChecked<UButtonSlot>(Button->AddChild(Row));
+	Content->SetHorizontalAlignment(HAlign_Fill);
+	Content->SetVerticalAlignment(VAlign_Center);
+	Content->SetPadding(FMargin(11, 0));
+	auto* Icon = Tree->ConstructWidget<UImage>();
+	const auto* Assets = GetDefault<UFactoryUIAssetSettings>();
+	const auto* Texture = Assets->MenuIcons.Find(TEXT("Settings"));
+	Icon->SetBrushFromTexture(Texture ? Texture->LoadSynchronous() : nullptr);
+	Icon->SetDesiredSizeOverride(FVector2D(29));
+	Icon->SetVisibility(ESlateVisibility::HitTestInvisible);
+	auto* IconSlot = Row->AddChildToHorizontalBox(Icon);
+	IconSlot->SetVerticalAlignment(VAlign_Center);
+	IconSlot->SetPadding(FMargin(0, 0, 10, 0));
+	auto* Label = Tree->ConstructWidget<UTextBlock>();
+	Label->SetText(NSLOCTEXT("StartMenu", "Settings", "설정"));
+	auto Font = Label->GetFont();
+	if (const auto* LoadLabel = Cast<UTextBlock>(Tree->FindWidget(TEXT("LoadGameText"))))
+		Font = LoadLabel->GetFont();
+	Font.Size = Assets->SettingsButtonFontSize;
+	Label->SetFont(Font);
+	Label->SetColorAndOpacity(FactoryUI::Text);
+	Label->SetVisibility(ESlateVisibility::HitTestInvisible);
+	Row->AddChildToHorizontalBox(Label)->SetVerticalAlignment(VAlign_Center);
 }
 }
 void UStartMenuWidget::BuildDefaultLayout(UWidgetTree* Tree)
@@ -94,6 +149,7 @@ bool UStartMenuWidget::AddConfirmationLayout(UWidgetTree* Tree)
 TSharedRef<SWidget> UStartMenuWidget::RebuildWidget()
 {
 	if (WidgetTree && !WidgetTree->RootWidget) BuildDefaultLayout(WidgetTree);
+	if (WidgetTree) AddSettingsButton(WidgetTree);
 	return FactoryMenuStyle::WithMenuFocusStyle(Super::RebuildWidget());
 }
 
@@ -110,6 +166,8 @@ void UStartMenuWidget::NativeConstruct()
 	MENU_CONTROL(SelectionText, UTextBlock);
 	MENU_CONTROL(ConfirmText, UTextBlock); MENU_CONTROL(ConfirmButton, UButton); MENU_CONTROL(CancelButton, UButton);
 #undef MENU_CONTROL
+	SettingsButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("StartSettingsButton")));
+	if (SettingsButton) SettingsButton->OnClicked.AddUniqueDynamic(this, &ThisClass::OpenSettings);
 	if (NewGameButton) NewGameButton->OnClicked.AddUniqueDynamic(this, &UStartMenuWidget::ShowNewGameSlots);
 	if (LoadGameButton) LoadGameButton->OnClicked.AddUniqueDynamic(this, &UStartMenuWidget::ShowLoadGameSlots);
 	if (ExitButton) ExitButton->OnClicked.AddUniqueDynamic(this, &UStartMenuWidget::RequestExit);
@@ -121,8 +179,36 @@ void UStartMenuWidget::NativeConstruct()
 	if (BackButton) BackButton->OnClicked.AddUniqueDynamic(this, &UStartMenuWidget::ShowMainMenu);
 	if (ConfirmButton) ConfirmButton->OnClicked.AddUniqueDynamic(this, &UStartMenuWidget::ConfirmOverwrite);
 	if (CancelButton) CancelButton->OnClicked.AddUniqueDynamic(this, &UStartMenuWidget::CancelOverwrite);
+	using FactoryUI::ESound;
+	UButton* ClickButtons[] = {NewGameButton, LoadGameButton, SettingsButton, ExitButton, CreditsButton};
+	for (UButton* Button : ClickButtons) FactoryUI::ApplyButtonSounds(Button, ESound::Click);
+	UButton* CancelButtons[] = {BackButton, CreditsBackButton, CancelButton};
+	for (UButton* Button : CancelButtons) FactoryUI::ApplyButtonSounds(Button, ESound::Cancel);
+	FactoryUI::ApplyButtonSounds(ConfirmButton, ESound::Confirm);
+	// Slot presses pick their sound in SelectSlot: an overwrite prompt is a click, starting the game is a confirm.
+	UButton* SlotButtons[] = {Slot1Button, Slot2Button, Slot3Button};
+	for (UButton* Button : SlotButtons) FactoryUI::ApplyButtonSounds(Button, NullOpt);
 	SetIsFocusable(true);
 	ShowMainMenu();
+}
+
+void UStartMenuWidget::OpenSettings()
+{
+	if (bWorking || SettingsScreen || !GetOwningPlayer()) return;
+	SettingsScreen = UAudioSettingsWidget::CreateFor(GetOwningPlayer());
+	if (!SettingsScreen) return;
+	SettingsScreen->OnClosed.AddUniqueDynamic(this, &ThisClass::OnSettingsClosed);
+	SetVisibility(ESlateVisibility::HitTestInvisible);
+	SettingsScreen->AddToViewport(100);
+	SettingsScreen->FocusFirstControl();
+}
+
+void UStartMenuWidget::OnSettingsClosed()
+{
+	if (SettingsScreen) SettingsScreen->RemoveFromParent();
+	SettingsScreen = nullptr;
+	SetVisibility(ESlateVisibility::Visible);
+	if (SettingsButton) SettingsButton->SetKeyboardFocus();
 }
 
 void UStartMenuWidget::ShowMainMenu()
@@ -191,6 +277,7 @@ void UStartMenuWidget::SelectSlot(int32 SlotId)
 	if (bNewGame && Occupied[SlotId - 1])
 	{
 		PendingSlot = SlotId;
+		FactoryUI::PlayUISound(FactoryUI::ESound::Click);
 		if (ConfirmText) ConfirmText->SetText(FText::Format(NSLOCTEXT("StartMenu", "OverwriteSlot", "슬롯 {0}의 기존 진행을 덮어쓰고 새 게임을 시작할까요?"), FText::AsNumber(SlotId)));
 		if (Pages) Pages->SetActiveWidgetIndex(2);
 		ForceLayoutPrepass();
@@ -198,6 +285,7 @@ void UStartMenuWidget::SelectSlot(int32 SlotId)
 		return;
 	}
 	if (SelectionText) SelectionText->SetText(FText::Format(NSLOCTEXT("StartMenu", "Selected", "선택한 슬롯: {0}"), FText::AsNumber(SlotId)));
+	FactoryUI::PlayUISound(FactoryUI::ESound::Confirm);
 	OnSlotSelected.Broadcast(SlotId, bNewGame);
 }
 
@@ -226,7 +314,7 @@ void UStartMenuWidget::CancelOverwrite()
 void UStartMenuWidget::SetBusy(bool bBusy)
 {
 	bWorking = bBusy;
-	UButton* Buttons[] = {NewGameButton, LoadGameButton, ExitButton, BackButton, ConfirmButton, CancelButton, CreditsButton, CreditsBackButton};
+	UButton* Buttons[] = {NewGameButton, LoadGameButton, SettingsButton, ExitButton, BackButton, ConfirmButton, CancelButton, CreditsButton, CreditsBackButton};
 	for (UButton* Button : Buttons) if (Button) Button->SetIsEnabled(!bBusy);
 	RefreshSlots();
 	if (bBusy && SelectionText) SelectionText->SetText(NSLOCTEXT("StartMenu", "Starting", "준비 중…"));
@@ -248,7 +336,7 @@ FReply UStartMenuWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, const
 		TArray<UButton*> Buttons;
 		switch (Pages->GetActiveWidgetIndex())
 		{
-		case 0: Buttons = { NewGameButton, LoadGameButton, ExitButton, CreditsButton }; break;
+		case 0: Buttons = { NewGameButton, LoadGameButton, SettingsButton, ExitButton, CreditsButton }; break;
 		case 1: Buttons = { Slot1Button, Slot2Button, Slot3Button, BackButton }; break;
 		case 2: Buttons = { ConfirmButton, CancelButton }; break;
 		case 3: Buttons = { CreditsBackButton }; break;
@@ -264,6 +352,7 @@ FReply UStartMenuWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, const
 			UButton* Button = Buttons[(Current + Direction * Step + Buttons.Num()) % Buttons.Num()];
 			if (Button && Button->GetIsEnabled() && Button->IsVisible())
 			{
+				if (!Button->HasAnyUserFocus()) FactoryUI::PlayUISound(FactoryUI::ESound::Hover);
 				Button->SetKeyboardFocus();
 				break;
 			}
@@ -278,9 +367,9 @@ FReply UStartMenuWidget::NativeOnKeyDown(const FGeometry& Geometry, const FKeyEv
 	if (Event.GetKey() == EKeys::Escape && Pages)
 	{
 		if (bWorking) return FReply::Handled();
-		if (Pages->GetActiveWidgetIndex() == 2) { CancelOverwrite(); return FReply::Handled(); }
-		if (Pages->GetActiveWidgetIndex() == 1) { ShowMainMenu(); return FReply::Handled(); }
-		if (Pages->GetActiveWidget() == WidgetTree->FindWidget(TEXT("CreditsPage"))) { ShowMainMenu(); return FReply::Handled(); }
+		if (Pages->GetActiveWidgetIndex() == 2) { FactoryUI::PlayUISound(FactoryUI::ESound::Cancel); CancelOverwrite(); return FReply::Handled(); }
+		if (Pages->GetActiveWidgetIndex() == 1) { FactoryUI::PlayUISound(FactoryUI::ESound::Cancel); ShowMainMenu(); return FReply::Handled(); }
+		if (Pages->GetActiveWidget() == WidgetTree->FindWidget(TEXT("CreditsPage"))) { FactoryUI::PlayUISound(FactoryUI::ESound::Cancel); ShowMainMenu(); return FReply::Handled(); }
 	}
 	return Super::NativeOnKeyDown(Geometry, Event);
 }

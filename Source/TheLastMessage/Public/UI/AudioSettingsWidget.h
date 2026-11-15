@@ -15,7 +15,7 @@ class THELASTMESSAGE_API UAudioSettingsWidget : public UUserWidget
 	GENERATED_BODY()
 
 public:
-	static void BuildDefaultLayout(UWidgetTree* Tree);
+	static void BuildDefaultLayout(UWidgetTree* Tree, bool bIncludeDisplay = false);
 	static void BuildVisualLayout(UWidgetTree* Tree, class UVerticalBox* Column);
 	static UAudioSettingsWidget* CreateFor(APlayerController* Player);
 	void FocusFirstControl();
@@ -66,7 +66,14 @@ private:
 	UFUNCTION() void SetAmbienceVolume(float Value);
 	void ChangeVolume(EGameVolume Channel, float Value);
 	void RefreshVolumeValues();
+	void BuildAppearanceTabs();
 	void BuildVisualControls();
+	void ShowSettingsTab(int32 Index);
+	void RefreshAppearancePreview();
+	bool bSynchronizingAppearanceControls = false;
+	void SetAppearanceColor(const FString& Value, ESelectInfo::Type Selection, bool bOutline);
+	TWeakObjectPtr<class USkeletalMeshComponent> AppearancePreviewMesh;
+	UPROPERTY(Transient) TObjectPtr<class UMaterialInterface> AppearancePreviewBody;
 	UFUNCTION() UWidget* MakeDropdownOption(FString Option);
 	void UpdateVisuals();
 	void RefreshVisualReadouts();
@@ -74,10 +81,15 @@ private:
 	UFUNCTION() void OnResolutionChanged(FString Value, ESelectInfo::Type Selection);
 	UFUNCTION() void SetBrightness(float Value);
 	UFUNCTION() void SetOutlineWidth(float Value);
+	UFUNCTION() void SetOutlineBrightness(float Value);
 	UFUNCTION() void SetShake(float Value);
 	UFUNCTION() void SetWindowMode(FString Value, ESelectInfo::Type Selection);
 	UFUNCTION() void SetFrameLimit(FString Value, ESelectInfo::Type Selection);
 	UFUNCTION() void SetOutlineColor(FString Value, ESelectInfo::Type Selection);
+	UFUNCTION() void SetPlayerColor(FString Value, ESelectInfo::Type Selection);
+	UFUNCTION() void ShowGeneralSettings();
+	UFUNCTION() void ShowAppearanceSettings();
+	UFUNCTION() void ResetAppearanceSettings();
 	UFUNCTION() void SetVSync(bool bValue);
 	UFUNCTION() void SetMotionBlur(bool bValue);
 	UFUNCTION() void SetBloom(bool bValue);

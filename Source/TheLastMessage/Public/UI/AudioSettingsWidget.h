@@ -3,6 +3,7 @@
 #include "Blueprint/UserWidget.h"
 #include "Types/SlateEnums.h"
 #include "Containers/Ticker.h"
+#include "Framework/Commands/InputChord.h"
 #include "AudioSettingsWidget.generated.h"
 
 enum class EGameVolume : uint8;
@@ -17,6 +18,9 @@ class THELASTMESSAGE_API UAudioSettingsWidget : public UUserWidget
 public:
 	static void BuildDefaultLayout(UWidgetTree* Tree, bool bIncludeDisplay = false);
 	static void BuildVisualLayout(UWidgetTree* Tree, class UVerticalBox* Column);
+#if WITH_EDITOR
+	static bool AuthorSettingsLayout(UWidgetTree* WidgetTree);
+#endif
 	static UAudioSettingsWidget* CreateFor(APlayerController* Player);
 	void FocusFirstControl();
 	void SetPauseInputAction(class UInputAction* Action) { PauseInputAction = Action; }
@@ -66,7 +70,12 @@ private:
 	UFUNCTION() void SetAmbienceVolume(float Value);
 	void ChangeVolume(EGameVolume Channel, float Value);
 	void RefreshVolumeValues();
-	void BuildAppearanceTabs();
+#if WITH_EDITOR
+	static void AuthorKeySettingsPage(UWidgetTree* WidgetTree, class UWidgetSwitcher* Pages);
+#endif
+	void BindKeySelectors();
+	void RefreshKeySelectors();
+	void UpdateSettingsTabs(int32 ActiveIndex);
 	void BuildVisualControls();
 	void ShowSettingsTab(int32 Index);
 	void RefreshAppearancePreview();
@@ -90,6 +99,14 @@ private:
 	UFUNCTION() void SetPlayerColor(FString Value, ESelectInfo::Type Selection);
 	UFUNCTION() void ShowGeneralSettings();
 	UFUNCTION() void ShowAppearanceSettings();
+	UFUNCTION() void ShowKeySettings();
+	UFUNCTION() void OnKeySelectionModeChanged();
+	UFUNCTION() void OnGameplayKeySelected(FInputChord Chord);
+	UFUNCTION() void ResetGameplayKeys();
+	TMap<class UInputKeySelector*, int32> KeySelectors;
+	TWeakObjectPtr<class UInputKeySelector> FirstKeySelector;
+	TWeakObjectPtr<class UInputKeySelector> CapturingKey;
+	bool bRefreshingKeys = false;
 	UFUNCTION() void ResetAppearanceSettings();
 	UFUNCTION() void SetVSync(bool bValue);
 	UFUNCTION() void SetBloom(bool bValue);

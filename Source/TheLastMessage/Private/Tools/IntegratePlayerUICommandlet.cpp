@@ -20,6 +20,7 @@
 #include "GAS/CombatAttributeSet.h"
 #include "GAS/WeaponSlotAttributeSet.h"
 #include "WidgetBlueprint.h"
+#include "Animation/WidgetAnimation.h"
 #include "Blueprint/WidgetBlueprintGeneratedClass.h"
 #include "Blueprint/WidgetTree.h"
 #include "Kismet2/KismetEditorUtilities.h"
@@ -1013,6 +1014,40 @@ UIntegratePlayerUICommandlet::UIntegratePlayerUICommandlet()
 int32 UIntegratePlayerUICommandlet::Main(const FString& Params)
 {
 #if WITH_EDITOR
+	if (FParse::Param(*Params, TEXT("AuthorSettings")))
+	{
+		auto* Settings = LoadObject<UWidgetBlueprint>(nullptr, TEXT("/Game/Main/UI/Menu/WBP_Settings"));
+		if (!Settings || !UAudioSettingsWidget::AuthorSettingsLayout(Settings->WidgetTree)) return 1;
+		TSet<UWidget*> AttachedWidgets;
+		Settings->WidgetTree->ForEachWidget([&](UWidget* Widget) { AttachedWidgets.Add(Widget); });
+		TArray<UWidget*> DetachedWidgets;
+		Settings->ForEachSourceWidget([&](UWidget* Widget)
+		{
+			if (!AttachedWidgets.Contains(Widget)) DetachedWidgets.Add(Widget);
+		});
+		for (auto* Widget : DetachedWidgets)
+			Widget->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors | REN_DoNotDirty);
+
+		TSet<FName> Names;
+		Settings->ForEachSourceWidget([&](UWidget* Widget)
+		{
+			const FName Name = Widget->GetFName();
+			Names.Add(Name);
+			if (!Settings->WidgetVariableNameToGuidMap.Contains(Name))
+				Settings->WidgetVariableNameToGuidMap.Add(Name, FGuid::NewGuid());
+		});
+		for (const UWidgetAnimation* Animation : Settings->Animations)
+		{
+			if (!Animation) continue;
+			const FName Name = Animation->GetFName();
+			Names.Add(Name);
+			if (!Settings->WidgetVariableNameToGuidMap.Contains(Name))
+				Settings->WidgetVariableNameToGuidMap.Add(Name, FGuid::NewGuid());
+		}
+		for (auto It = Settings->WidgetVariableNameToGuidMap.CreateIterator(); It; ++It)
+			if (!Names.Contains(It.Key())) It.RemoveCurrent();
+		return PlayerUIBuild::CompileSave(Settings) ? 0 : 1;
+	}
 	if (FParse::Param(*Params, TEXT("SplitSettings")))
 	{
 		const TCHAR* AudioPath = TEXT("/Game/Main/UI/Menu/WBP_AudioSettings");

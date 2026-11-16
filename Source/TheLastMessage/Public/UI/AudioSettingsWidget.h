@@ -3,6 +3,7 @@
 #include "Blueprint/UserWidget.h"
 #include "Types/SlateEnums.h"
 #include "Containers/Ticker.h"
+#include "Framework/Commands/InputChord.h"
 #include "AudioSettingsWidget.generated.h"
 
 enum class EGameVolume : uint8;
@@ -17,6 +18,9 @@ class THELASTMESSAGE_API UAudioSettingsWidget : public UUserWidget
 public:
 	static void BuildDefaultLayout(UWidgetTree* Tree, bool bIncludeDisplay = false);
 	static void BuildVisualLayout(UWidgetTree* Tree, class UVerticalBox* Column);
+#if WITH_EDITOR
+	static bool AuthorSettingsLayout(UWidgetTree* WidgetTree);
+#endif
 	static UAudioSettingsWidget* CreateFor(APlayerController* Player);
 	void FocusFirstControl();
 	void SetPauseInputAction(class UInputAction* Action) { PauseInputAction = Action; }
@@ -29,6 +33,10 @@ protected:
 
 	/** 드롭다운 글자 위치 보정. F_TLM_UI 글자가 줄 높이보다 아래로 그려져서 라벨처럼 위로 올린다. */
 	UPROPERTY(EditAnywhere, Category = "Settings Style|Dropdown") FVector2D DropdownTextOffset = FVector2D(0, -5);
+
+	/** 카메라와 플레이어 사이의 거리에 대한 가로 구도 보정 비율. 양수는 화면에서 플레이어를 왼쪽으로 이동시킨다. */
+	UPROPERTY(EditAnywhere, Category = "Settings Style|Appearance Preview", meta = (ClampMin = "-0.5", ClampMax = "0.5"))
+	float AppearancePreviewHorizontalOffset = 0.14f;
 
 	/** 밝기·흔들림·외곽선 굵기 슬라이더의 한 칸 */
 	UPROPERTY(EditAnywhere, Category = "Settings Style|Slider", meta = (ClampMin = 0.001)) float VisualSliderStep = 0.05f;
@@ -66,12 +74,28 @@ private:
 	UFUNCTION() void SetAmbienceVolume(float Value);
 	void ChangeVolume(EGameVolume Channel, float Value);
 	void RefreshVolumeValues();
-	void BuildAppearanceTabs();
+#if WITH_EDITOR
+	static void AuthorKeySettingsPage(UWidgetTree* WidgetTree, class UWidgetSwitcher* Pages);
+#endif
+	void BindKeySelectors();
+	void BindSettingsHelp();
+	void RefreshSettingsHelp();
+	struct FSettingsHelpEntry
+	{
+		TWeakObjectPtr<UWidget> Row;
+		FText Text;
+		int32 PageIndex;
+	};
+	TArray<FSettingsHelpEntry> SettingsHelpEntries;
+	TWeakObjectPtr<class UTextBlock> SettingsHelpText;
+	void RefreshKeySelectors();
+	void UpdateSettingsTabs(int32 ActiveIndex);
 	void BuildVisualControls();
 	void ShowSettingsTab(int32 Index);
 	void RefreshAppearancePreview();
 	bool bSynchronizingAppearanceControls = false;
 	void SetAppearanceColor(const FString& Value, ESelectInfo::Type Selection, bool bOutline);
+	void OpenAppearancePalette(bool bOutline);
 	TWeakObjectPtr<class USkeletalMeshComponent> AppearancePreviewMesh;
 	UPROPERTY(Transient) TObjectPtr<class UMaterialInterface> AppearancePreviewBody;
 	UFUNCTION() UWidget* MakeDropdownOption(FString Option);
@@ -89,10 +113,18 @@ private:
 	UFUNCTION() void SetPlayerColor(FString Value, ESelectInfo::Type Selection);
 	UFUNCTION() void ShowGeneralSettings();
 	UFUNCTION() void ShowAppearanceSettings();
+	UFUNCTION() void ShowKeySettings();
+	UFUNCTION() void OnKeySelectionModeChanged();
+	UFUNCTION() void OnGameplayKeySelected(FInputChord Chord);
+	UFUNCTION() void ResetGameplayKeys();
+	TMap<class UInputKeySelector*, int32> KeySelectors;
+	TWeakObjectPtr<class UInputKeySelector> FirstKeySelector;
+	TWeakObjectPtr<class UInputKeySelector> CapturingKey;
+	bool bRefreshingKeys = false;
 	UFUNCTION() void ResetAppearanceSettings();
 	UFUNCTION() void SetVSync(bool bValue);
-	UFUNCTION() void SetMotionBlur(bool bValue);
 	UFUNCTION() void SetBloom(bool bValue);
+	UFUNCTION() void SetReduceFlashes(bool bValue);
 	UFUNCTION() void ApplyScreenMode();
 	bool RevertScreenMode(float DeltaTime);
 	FTSTicker::FDelegateHandle ScreenConfirmation;

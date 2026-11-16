@@ -78,6 +78,16 @@ private:
 	static void AuthorKeySettingsPage(UWidgetTree* WidgetTree, class UWidgetSwitcher* Pages);
 #endif
 	void BindKeySelectors();
+	void BindSettingsHelp();
+	void RefreshSettingsHelp();
+	struct FSettingsHelpEntry
+	{
+		TWeakObjectPtr<UWidget> Row;
+		FText Text;
+		int32 PageIndex;
+	};
+	TArray<FSettingsHelpEntry> SettingsHelpEntries;
+	TWeakObjectPtr<class UTextBlock> SettingsHelpText;
 	void RefreshKeySelectors();
 	void UpdateSettingsTabs(int32 ActiveIndex);
 	void BuildVisualControls();
@@ -114,6 +124,7 @@ private:
 	UFUNCTION() void ResetAppearanceSettings();
 	UFUNCTION() void SetVSync(bool bValue);
 	UFUNCTION() void SetBloom(bool bValue);
+	UFUNCTION() void SetReduceFlashes(bool bValue);
 	UFUNCTION() void ApplyScreenMode();
 	bool RevertScreenMode(float DeltaTime);
 	FTSTicker::FDelegateHandle ScreenConfirmation;

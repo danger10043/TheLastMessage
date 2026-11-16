@@ -20,6 +20,7 @@ public:
 	static UMaterialInstanceDynamic* CreateOrUpdateBodyTint(USkeletalMeshComponent* Mesh, UMaterialInterface* TintMaterial, const FLinearColor& Color);
 	void ApplyDisplay() const;
 	void Save() const;
+	static float GetFlashIntensity(const UWorld* World);
 	void ResetAppearance();
 	FLinearColor GetOutlineColor(const APlayerBase* Player) const;
 	FLinearColor GetPlayerColor() const;
@@ -36,6 +37,7 @@ public:
 	int32 PlayerColor = 0;
 	bool bMotionBlur = true;
 	bool bBloom = true;
+	bool bReduceFlashes = false;
 
 private:
 	void ApplyOutline(USkeletalMeshComponent* Mesh) const;

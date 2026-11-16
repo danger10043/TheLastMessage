@@ -4,6 +4,7 @@
 #include "Components/PointLightComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Engine/StaticMesh.h"
+#include "UI/GameVisualSettingsSubsystem.h"
 
 AEnergyMuzzleFlash::AEnergyMuzzleFlash()
 {
@@ -62,8 +63,9 @@ void AEnergyMuzzleFlash::Tick(float DeltaSeconds)
 	// Start the luminous core at the socket and extend outward instead of hiding half inside the barrel.
 	Core->SetRelativeLocation(FVector(50.0f * Scale * (bHeavyPulse ? 2.0f : 0.9f), 0.0f, 0.0f));
 	Halo->SetRelativeScale3D(FVector(0.1f, 0.85f, 0.85f) * Scale);
-	if (CoreMaterial) CoreMaterial->SetScalarParameterValue(TEXT("EmissiveStrength"), Brightness * Fade);
-	if (HaloMaterial) HaloMaterial->SetScalarParameterValue(TEXT("EmissiveStrength"), Brightness * 0.5f * Fade);
-	Light->SetIntensity(800.0f * Fade);
+	const float Flash = Fade * UGameVisualSettingsSubsystem::GetFlashIntensity(GetWorld());
+	if (CoreMaterial) CoreMaterial->SetScalarParameterValue(TEXT("EmissiveStrength"), Brightness * Flash);
+	if (HaloMaterial) HaloMaterial->SetScalarParameterValue(TEXT("EmissiveStrength"), Brightness * 0.5f * Flash);
+	Light->SetIntensity(800.0f * Flash);
 	if (Fade < 0.05f) Destroy();
 }

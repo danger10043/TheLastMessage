@@ -19,6 +19,8 @@
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
 #include "Components/SizeBox.h"
+#include "Components/SizeBoxSlot.h"
+#include "Components/ScaleBoxSlot.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
@@ -42,6 +44,11 @@
 #include "InputAction.h"
 #include "Character/Player/PlayerBase.h"
 #include "UI/GameVisualSettingsSubsystem.h"
+#include "UI/GameLanguageSettingsSubsystem.h"
+#include "Components/ScaleBox.h"
+#include "Components/UniformGridPanel.h"
+#include "Components/UniformGridSlot.h"
+#include "Engine/Texture2D.h"
 #include "Components/CheckBox.h"
 #include "Components/ComboBoxString.h"
 #include "Containers/Ticker.h"
@@ -49,18 +56,108 @@
 #include "GameFramework/GameUserSettings.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Misc/App.h"
+#include "Internationalization/Internationalization.h"
+#include "Internationalization/TextLocalizationManager.h"
 #include "Styling/CoreStyle.h"
 #include "Widgets/Colors/SColorPicker.h"
 
 
 namespace
 {
-const FName SettingsTabNames[] = {TEXT("GeneralSettingsTab"), TEXT("AppearanceSettingsTab"), TEXT("KeySettingsTab")};
-const FName SettingsTabTextNames[] = {TEXT("GeneralSettingsTabText"), TEXT("AppearanceSettingsTabText"), TEXT("KeySettingsTabText")};
+// SettingsTabPages의 페이지 순서. 탭 버튼도 같은 순서로 놓인다.
+enum ESettingsPage : int32
+{
+	GraphicsPage = 0,
+	AudioPage = 1,
+	AppearancePage = 2,
+	KeysPage = 3,
+	LanguagePage = 4
+};
+
+struct FSettingsTab
+{
+	const TCHAR* Button;
+	const TCHAR* Text;
+	int32 Page;
+};
+
+// 그래픽 탭은 예전 "화면 및 소리" 탭의 위젯 이름(GeneralSettingsTab)을 그대로 쓴다.
+const FSettingsTab SettingsTabs[] = {
+	{TEXT("GeneralSettingsTab"), TEXT("GeneralSettingsTabText"), GraphicsPage},
+	{TEXT("AudioSettingsTab"), TEXT("AudioSettingsTabText"), AudioPage},
+	{TEXT("AppearanceSettingsTab"), TEXT("AppearanceSettingsTabText"), AppearancePage},
+	{TEXT("KeySettingsTab"), TEXT("KeySettingsTabText"), KeysPage},
+	{TEXT("LanguageSettingsTab"), TEXT("LanguageSettingsTabText"), LanguagePage},
+};
+
+FText GetLanguageHelpText() { return NSLOCTEXT("SettingsHelp", "Language", "게임에 표시되는 언어를 바꿉니다."); }
+
+// 드롭다운 항목은 번역되도록 모두 FText(NSLOCTEXT)로 둔다. 전역 static FText는 언어 데이터가 준비되기 전에 만들어질 수 있어서
+// 쓸 때마다 함수로 만든다. UComboBoxString은 문자열만 받으므로 채울 때 현재 언어 문자열로 바꾸고,
+// 언어가 바뀌면 BuildVisualControls로 다시 채운다. 고른 값은 항목 순서(인덱스)로 판단한다.
+
+// 그래픽 품질 드롭다운 항목. 순서가 Scalability 단계(0 낮음 ~ 3 최상)와 같다.
+constexpr int32 QualityPresetCount = 4;
+TArray<FText> GetQualityPresetOptions()
+{
+	return {NSLOCTEXT("SettingsOptions", "QualityLow", "낮음"), NSLOCTEXT("SettingsOptions", "QualityMedium", "중간"),
+		NSLOCTEXT("SettingsOptions", "QualityHigh", "높음"), NSLOCTEXT("SettingsOptions", "QualityEpic", "최상")};
+}
+FText GetCustomQualityOption() { return NSLOCTEXT("SettingsOptions", "QualityCustom", "사용자 지정"); }
+
+// 색각 보정 드롭다운 항목. 순서가 UGameVisualSettingsSubsystem::ColorVision 값과 같다.
+TArray<FText> GetColorVisionOptions()
+{
+	return {NSLOCTEXT("SettingsOptions", "ColorVisionOff", "끄기"), NSLOCTEXT("SettingsOptions", "Protanopia", "적색약 (1형)"),
+		NSLOCTEXT("SettingsOptions", "Deuteranopia", "녹색약 (2형)"), NSLOCTEXT("SettingsOptions", "Tritanopia", "청색약 (3형)")};
+}
+
+// 화면 모드 드롭다운 항목. 순서가 EWindowMode(0 전체 화면, 1 테두리 없는 창, 2 창 모드)와 같다.
+TArray<FText> GetWindowModeOptions()
+{
+	return {NSLOCTEXT("SettingsOptions", "Fullscreen", "전체 화면"), NSLOCTEXT("SettingsOptions", "WindowedFullscreen", "테두리 없는 창"),
+		NSLOCTEXT("SettingsOptions", "Windowed", "창 모드")};
+}
+
+// 최대 프레임 드롭다운. 첫 항목(0)은 제한 없음.
+constexpr int32 FrameLimitValues[] = {0, 30, 60, 120};
+TArray<FText> GetFrameLimitOptions()
+{
+	TArray<FText> Options = {NSLOCTEXT("SettingsOptions", "FrameLimitNone", "제한 없음")};
+	for (int32 Index = 1; Index < UE_ARRAY_COUNT(FrameLimitValues); ++Index) Options.Add(FText::AsNumber(FrameLimitValues[Index]));
+	return Options;
+}
+
+// 외형 색상 드롭다운 항목. 순서가 UGameVisualSettingsSubsystem의 색상 인덱스와 같고 마지막이 사용자 지정이다.
+TArray<FText> GetAppearanceColorOptions()
+{
+	return {NSLOCTEXT("SettingsOptions", "ColorDefault", "기본"), NSLOCTEXT("SettingsOptions", "ColorWhite", "흰색"),
+		NSLOCTEXT("SettingsOptions", "ColorCyan", "청록"), NSLOCTEXT("SettingsOptions", "ColorOrange", "주황"),
+		NSLOCTEXT("SettingsOptions", "ColorPink", "분홍"), NSLOCTEXT("SettingsOptions", "ColorLime", "연두"),
+		NSLOCTEXT("SettingsOptions", "ColorCustom", "사용자 지정")};
+}
+
+TArray<FString> ToOptionStrings(const TArray<FText>& Options)
+{
+	TArray<FString> Result;
+	for (const FText& Option : Options) Result.Add(Option.ToString());
+	return Result;
+}
+
 const FName DisplayHelpControls[] = {
 	TEXT("BrightnessSetting"), TEXT("WindowModeSetting"), TEXT("ResolutionSetting"), TEXT("VSyncSetting"),
-	TEXT("FrameLimitSetting"), TEXT("ShakeSetting"), TEXT("BloomSetting"), TEXT("ReduceFlashesSetting"), TEXT("ApplyScreenButton")
+	TEXT("FrameLimitSetting"), TEXT("ShakeSetting"), TEXT("BloomSetting"), TEXT("ReduceFlashesSetting"), TEXT("ApplyScreenButton"),
+	TEXT("QualityPresetSetting"), TEXT("RenderScaleSetting"), TEXT("ColorVisionSetting"), TEXT("ColorVisionStrengthSetting")
 };
+
+/** 현재 렌더링 해상도 비율(%). 엔진이 값을 정하지 않은 상태(0 이하)면 100%로 본다. */
+float GetRenderScalePercent(const UGameUserSettings& Screen)
+{
+	float Normalized = 1.f, Percent = 100.f, MinPercent = 0.f, MaxPercent = 100.f;
+	// 읽기 전용 함수지만 엔진 버전에 따라 const가 아니어서 const_cast로 부른다.
+	const_cast<UGameUserSettings&>(Screen).GetResolutionScaleInformationEx(Normalized, Percent, MinPercent, MaxPercent);
+	return Percent > 0.f ? FMath::Min(Percent, 100.f) : 100.f;
+}
 const FName AppearanceHelpControls[] = {
 	TEXT("OutlineColorSetting"), TEXT("OutlineWidthSetting"), TEXT("OutlineBrightnessSetting"),
 	TEXT("PlayerColorSetting"), TEXT("ResetAppearanceButton"), TEXT("AppearancePreviewBox")
@@ -266,6 +363,35 @@ void UAudioSettingsWidget::BuildDefaultLayout(UWidgetTree* Tree, bool bIncludeDi
 		Hint->SetText(NSLOCTEXT("Pause", "VolumeNavigation", "↑↓ 선택    ←→ 볼륨 조절"));
 }
 
+bool UAudioSettingsWidget::IsNestedSettingsPage() const
+{
+	// 다른 설정 화면 안에 들어간 페이지(WBP_AudioSettings 등)는 화면만 제공하고, 동작은 바깥 설정 화면이 맡는다.
+	return GetTypedOuter<UAudioSettingsWidget>() != nullptr;
+}
+
+void UAudioSettingsWidget::ForEachSettingsTree(TFunctionRef<void(UWidgetTree*)> Visit) const
+{
+	if (!WidgetTree) return;
+	Visit(WidgetTree);
+	// 하위 탭은 각각 별도 WBP(WBP_GraphicsSettings 등)라서 위젯이 그 위젯 트리 안에 있다. 한 단계 아래까지 함께 찾는다.
+	TArray<UWidgetTree*> PageTrees;
+	WidgetTree->ForEachWidget([&PageTrees](UWidget* Widget)
+	{
+		if (const auto* Page = Cast<UUserWidget>(Widget); Page && Page->WidgetTree) PageTrees.Add(Page->WidgetTree);
+	});
+	for (UWidgetTree* Tree : PageTrees) Visit(Tree);
+}
+
+UWidget* UAudioSettingsWidget::FindSettingsWidget(FName Name) const
+{
+	UWidget* Found = nullptr;
+	ForEachSettingsTree([&Found, Name](UWidgetTree* Tree)
+	{
+		if (!Found) Found = Tree->FindWidget(Name);
+	});
+	return Found;
+}
+
 TSharedRef<SWidget> UAudioSettingsWidget::RebuildWidget()
 {
 	return FactoryMenuStyle::WithMenuFocusStyle(Super::RebuildWidget());
@@ -281,24 +407,25 @@ UAudioSettingsWidget* UAudioSettingsWidget::CreateFor(APlayerController* Player)
 void UAudioSettingsWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
-	if (auto* Button = Cast<UButton>(WidgetTree->FindWidget(TEXT("SettingsBackButton"))))
+	if (IsNestedSettingsPage()) return;
+	if (auto* Button = Cast<UButton>(FindSettingsWidget(TEXT("SettingsBackButton"))))
 	{
 		Button->OnClicked.AddUniqueDynamic(this, &ThisClass::Close);
 		FactoryUI::ApplyButtonSounds(Button, FactoryUI::ESound::Cancel);
 	}
-	if (auto* Slider = Cast<USlider>(WidgetTree->FindWidget(VolumeRows[0].Slider)))
+	if (auto* Slider = Cast<USlider>(FindSettingsWidget(VolumeRows[0].Slider)))
 		Slider->OnValueChanged.AddUniqueDynamic(this, &ThisClass::SetMasterVolume);
-	if (auto* Slider = Cast<USlider>(WidgetTree->FindWidget(VolumeRows[1].Slider)))
+	if (auto* Slider = Cast<USlider>(FindSettingsWidget(VolumeRows[1].Slider)))
 		Slider->OnValueChanged.AddUniqueDynamic(this, &ThisClass::SetMusicVolume);
-	if (auto* Slider = Cast<USlider>(WidgetTree->FindWidget(VolumeRows[2].Slider)))
+	if (auto* Slider = Cast<USlider>(FindSettingsWidget(VolumeRows[2].Slider)))
 		Slider->OnValueChanged.AddUniqueDynamic(this, &ThisClass::SetEffectsVolume);
-	if (auto* Slider = Cast<USlider>(WidgetTree->FindWidget(VolumeRows[3].Slider)))
+	if (auto* Slider = Cast<USlider>(FindSettingsWidget(VolumeRows[3].Slider)))
 		Slider->OnValueChanged.AddUniqueDynamic(this, &ThisClass::SetAmbienceVolume);
-	if (auto* Slider = Cast<USlider>(WidgetTree->FindWidget(VolumeRows[4].Slider)))
+	if (auto* Slider = Cast<USlider>(FindSettingsWidget(VolumeRows[4].Slider)))
 		Slider->OnValueChanged.AddUniqueDynamic(this, &ThisClass::SetInterfaceVolume);
 	for (const FVolumeRow& Entry : VolumeRows)
 	{
-		auto* Slider = Cast<USlider>(WidgetTree->FindWidget(Entry.Slider));
+		auto* Slider = Cast<USlider>(FindSettingsWidget(Entry.Slider));
 		if (!Slider) continue;
 		StyleSettingsSlider(Slider);
 		if (auto* VolumeSlider = Cast<UVolumeSlider>(Slider))
@@ -313,19 +440,29 @@ void UAudioSettingsWidget::NativeConstruct()
 	}
 
 	RefreshVolumeValues();
+	FitSettingsLabels();
 	BuildVisualControls();
+	if (!CultureChangedHandle.IsValid())
+		// 컬처가 바뀌면 엔진은 번역 데이터를 비동기로 읽는다. 컬처 변경 알림 시점에 다시 채우면 이전 언어 문자열이 들어가므로
+		// 번역 데이터가 바뀐 뒤 오는 문구 갱신 알림(에디터의 게임 언어 미리보기 포함)에서 다시 채운다.
+		CultureChangedHandle = FTextLocalizationManager::Get().OnTextRevisionChangedEvent.AddUObject(this, &ThisClass::HandleCultureChanged);
 	BindKeySelectors();
 	BindSettingsHelp();
-	if (auto* Button = Cast<UButton>(WidgetTree->FindWidget(TEXT("GeneralSettingsTab"))))
+	if (auto* Button = Cast<UButton>(FindSettingsWidget(TEXT("GeneralSettingsTab"))))
 		Button->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowGeneralSettings);
-	if (auto* Button = Cast<UButton>(WidgetTree->FindWidget(TEXT("AppearanceSettingsTab"))))
+	if (auto* Button = Cast<UButton>(FindSettingsWidget(TEXT("AudioSettingsTab"))))
+		Button->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowAudioSettings);
+	if (auto* Button = Cast<UButton>(FindSettingsWidget(TEXT("AppearanceSettingsTab"))))
 		Button->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowAppearanceSettings);
-	if (auto* Button = Cast<UButton>(WidgetTree->FindWidget(TEXT("KeySettingsTab"))))
+	if (auto* Button = Cast<UButton>(FindSettingsWidget(TEXT("KeySettingsTab"))))
 		Button->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowKeySettings);
-	for (const FName Name : SettingsTabNames)
-		if (auto* Button = Cast<UButton>(WidgetTree->FindWidget(Name)))
+	if (auto* Button = Cast<UButton>(FindSettingsWidget(TEXT("LanguageSettingsTab"))))
+		Button->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowLanguageSettings);
+	BindLanguageButtons();
+	for (const FSettingsTab& Tab : SettingsTabs)
+		if (auto* Button = Cast<UButton>(FindSettingsWidget(Tab.Button)))
 			FactoryUI::ApplyButtonSounds(Button, FactoryUI::ESound::Confirm);
-	if (auto* Button = Cast<UButton>(WidgetTree->FindWidget(TEXT("ResetAppearanceButton"))))
+	if (auto* Button = Cast<UButton>(FindSettingsWidget(TEXT("ResetAppearanceButton"))))
 	{
 		Button->OnClicked.AddUniqueDynamic(this, &ThisClass::ResetAppearanceSettings);
 		FactoryUI::ApplyButtonSounds(Button, FactoryUI::ESound::Confirm);
@@ -335,19 +472,23 @@ void UAudioSettingsWidget::NativeConstruct()
 void UAudioSettingsWidget::FocusFirstControl()
 {
 	ForceLayoutPrepass();
-	auto* Pages = Cast<UWidgetSwitcher>(WidgetTree->FindWidget(TEXT("SettingsTabPages")));
-	if (Pages && Pages->GetActiveWidgetIndex() == 1)
+	auto* Pages = Cast<UWidgetSwitcher>(FindSettingsWidget(TEXT("SettingsTabPages")));
+	const int32 Page = Pages ? Pages->GetActiveWidgetIndex() : INDEX_NONE;
+	UWidget* Target = nullptr;
+	if (Page == AppearancePage) Target = FindSettingsWidget(TEXT("OutlineColorSetting"));
+	else if (Page == KeysPage) Target = FirstKeySelector.Get();
+	else if (Page == AudioPage) Target = FindSettingsWidget(VolumeRows[0].Slider);
+	else if (Page == LanguagePage)
 	{
-		if (auto* Control = WidgetTree->FindWidget(TEXT("OutlineColorSetting"))) Control->SetKeyboardFocus();
+		// 현재 언어 버튼에서 시작한다. 방향키로 버튼 사이를 옮기고 Enter로 고른다.
+		const FString Current = UGameLanguageSettingsSubsystem::GetCurrentLanguage();
+		for (const FLanguageButton& Entry : LanguageButtons)
+			if (Entry.Button.IsValid() && (!Target || Entry.Culture == Current))
+				Target = Entry.Button.Get();
 	}
-	else if (Pages && Pages->GetActiveWidgetIndex() == 2)
-	{
-		if (auto* Control = FirstKeySelector.Get()) Control->SetKeyboardFocus();
-	}
-	else if (auto* Slider = WidgetTree->FindWidget(TEXT("BrightnessSetting"))) Slider->SetKeyboardFocus();
-	else if (auto* Audio = Cast<UAudioSettingsWidget>(WidgetTree->FindWidget(TEXT("AudioSettingsSection"))))
-		Audio->FocusFirstControl();
-	else if (auto* Volume = WidgetTree->FindWidget(VolumeRows[0].Slider)) Volume->SetKeyboardFocus();
+	else Target = FindSettingsWidget(TEXT("BrightnessSetting"));
+	if (!Target) Target = FindSettingsWidget(VolumeRows[0].Slider);
+	if (Target) Target->SetKeyboardFocus();
 }
 
 void UAudioSettingsWidget::Close()
@@ -358,11 +499,25 @@ void UAudioSettingsWidget::Close()
 
 void UAudioSettingsWidget::NativeDestruct()
 {
+	if (IsNestedSettingsPage())
+	{
+		Super::NativeDestruct();
+		return;
+	}
+	if (CultureChangedHandle.IsValid())
+	{
+		FTextLocalizationManager::Get().OnTextRevisionChangedEvent.Remove(CultureChangedHandle);
+		CultureChangedHandle.Reset();
+	}
 	if (ScreenConfirmation.IsValid())
 	{
 		FTSTicker::GetCoreTicker().RemoveTicker(ScreenConfirmation);
 		RevertScreenMode(0.f);
 	}
+	// 렌더링 해상도 슬라이더는 움직이는 동안 저장하지 않으므로 닫을 때 한 번 저장한다.
+	// (화면 모드 확인 중이었다면 위에서 되돌리면서 이미 저장했다.)
+	else if (auto* Screen = GEngine ? GEngine->GetGameUserSettings() : nullptr; Screen && WidgetTree && FindSettingsWidget(TEXT("RenderScaleSetting")))
+		Screen->SaveSettings();
 	if (auto* Audio = UGameInstance::GetSubsystem<UGameAudioSettingsSubsystem>(GetGameInstance())) Audio->SaveVolumes();
 	if (auto* Visual = UGameInstance::GetSubsystem<UGameVisualSettingsSubsystem>(GetGameInstance())) Visual->Save();
 	Super::NativeDestruct();
@@ -370,6 +525,7 @@ void UAudioSettingsWidget::NativeDestruct()
 
 FReply UAudioSettingsWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, const FKeyEvent& Event)
 {
+	if (IsNestedSettingsPage()) return Super::NativeOnPreviewKeyDown(Geometry, Event);
 	if (const auto* Selector = CapturingKey.Get(); Selector && Selector->GetIsSelectingKey())
 		return Super::NativeOnPreviewKeyDown(Geometry, Event);
 	const auto* Inputs = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetOwningLocalPlayer());
@@ -387,6 +543,8 @@ FReply UAudioSettingsWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, c
 void UAudioSettingsWidget::NativeTick(const FGeometry& Geometry, float DeltaTime)
 {
 	Super::NativeTick(Geometry, DeltaTime);
+	if (IsNestedSettingsPage()) return;
+	const auto UpdateFocus = [this] { ForEachSettingsTree([](UWidgetTree* Tree) { FactoryMenuStyle::UpdateFocus(Tree); }); };
 	RefreshSettingsHelp();
 	if (ScreenConfirmation.IsValid())
 	{
@@ -396,18 +554,18 @@ void UAudioSettingsWidget::NativeTick(const FGeometry& Geometry, float DeltaTime
 		{
 			FTSTicker::GetCoreTicker().RemoveTicker(ScreenConfirmation);
 			RevertScreenMode(0.f);
-			FactoryMenuStyle::UpdateFocus(WidgetTree);
+			UpdateFocus();
 			return;
 		}
 		const int32 Seconds = FMath::Max(1, FMath::CeilToInt(Remaining));
 		if (DisplayedSeconds != Seconds)
 		{
 			DisplayedSeconds = Seconds;
-			if (auto* Text = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("ApplyScreenText"))))
+			if (auto* Text = Cast<UTextBlock>(FindSettingsWidget(TEXT("ApplyScreenText"))))
 				Text->SetText(FText::Format(ConfirmCountdownLabel, Seconds));
 		}
 	}
-	FactoryMenuStyle::UpdateFocus(WidgetTree);
+	UpdateFocus();
 }
 
 void UAudioSettingsWidget::RefreshVolumeValues()
@@ -416,8 +574,8 @@ void UAudioSettingsWidget::RefreshVolumeValues()
 	for (const FVolumeRow& Entry : VolumeRows)
 	{
 		const float Value = Audio ? Audio->GetVolume(Entry.Channel) : 1.0f;
-		if (auto* Slider = Cast<USlider>(WidgetTree->FindWidget(Entry.Slider))) Slider->SetValue(Value);
-		if (auto* Label = Cast<UTextBlock>(WidgetTree->FindWidget(Entry.Percent))) Label->SetText(FText::AsPercent(Value));
+		if (auto* Slider = Cast<USlider>(FindSettingsWidget(Entry.Slider))) Slider->SetValue(Value);
+		if (auto* Label = Cast<UTextBlock>(FindSettingsWidget(Entry.Percent))) Label->SetText(FText::AsPercent(Value));
 	}
 }
 
@@ -611,23 +769,27 @@ bool AuthorSettingsHelp(UWidgetTree* Tree)
 	const FText DisplayHelp[] = {
 		NSLOCTEXT("SettingsHelp", "Brightness", "어두운 곳에서 발판 윤곽이 희미하게 보이도록 조절합니다."),
 		NSLOCTEXT("SettingsHelp", "WindowMode", "전체 화면, 테두리 없는 창, 창 모드 중에서 선택합니다."),
-		NSLOCTEXT("SettingsHelp", "Resolution", "화면 해상도를 선택합니다. 테두리 없는 창은 바탕 화면 해상도를 사용합니다."),
+		NSLOCTEXT("SettingsHelp", "Resolution", "화면 해상도를 고릅니다. 테두리 없는 창은 바탕 화면 해상도입니다."),
 		NSLOCTEXT("SettingsHelp", "VSync", "화면 갱신에 맞춰 프레임을 표시해 화면 찢어짐을 줄입니다."),
 		NSLOCTEXT("SettingsHelp", "FrameLimit", "초당 표시하는 프레임 수의 상한을 정합니다."),
 		NSLOCTEXT("SettingsHelp", "Shake", "전투나 충격으로 화면이 흔들리는 강도를 조절합니다."),
 		NSLOCTEXT("SettingsHelp", "Bloom", "밝은 물체 주변에 빛이 번지는 효과를 켜거나 끕니다."),
 		NSLOCTEXT("SettingsHelp", "ReduceFlashes", "피격과 에너지 무기 발사 시 번쩍임을 줄입니다."),
-		NSLOCTEXT("SettingsHelp", "ApplyScreen", "선택한 화면 모드와 해상도를 적용합니다.")
+		NSLOCTEXT("SettingsHelp", "ApplyScreen", "선택한 화면 모드와 해상도를 적용합니다."),
+		NSLOCTEXT("SettingsHelp", "QualityPreset", "전체 그래픽 품질을 정합니다. 낮을수록 프레임이 올라갑니다."),
+		NSLOCTEXT("SettingsHelp", "RenderScale", "3D 화면을 그리는 해상도입니다. 낮추면 빨라지지만 흐려집니다."),
+		NSLOCTEXT("SettingsHelp", "ColorVision", "색약 유형에 맞춰 화면 전체의 색을 보정합니다."),
+		NSLOCTEXT("SettingsHelp", "ColorVisionStrength", "색 보정의 세기를 조절합니다.")
 	};
 	static_assert(UE_ARRAY_COUNT(DisplayHelp) == UE_ARRAY_COUNT(DisplayHelpControls));
 	for (int32 Index = 0; Index < UE_ARRAY_COUNT(DisplayHelpControls); ++Index)
 		if (auto* Control = Tree->FindWidget(DisplayHelpControls[Index]); Control && Control->GetToolTipText().IsEmpty())
 			Control->SetToolTipText(DisplayHelp[Index]);
 	const FText AppearanceHelp[] = {
-		NSLOCTEXT("SettingsHelp", "OutlineColor", "플레이어 외곽선 색상을 선택합니다. 사용자 지정으로 팔레트를 열 수 있습니다."),
+		NSLOCTEXT("SettingsHelp", "OutlineColor", "외곽선 색상을 고릅니다. 사용자 지정으로 팔레트를 엽니다."),
 		NSLOCTEXT("SettingsHelp", "OutlineWidth", "플레이어 외곽선의 굵기를 조절합니다."),
 		NSLOCTEXT("SettingsHelp", "OutlineBrightness", "플레이어 외곽선이 얼마나 밝게 빛나는지 조절합니다."),
-		NSLOCTEXT("SettingsHelp", "PlayerColor", "플레이어 본체 색상을 선택합니다. 사용자 지정으로 팔레트를 열 수 있습니다."),
+		NSLOCTEXT("SettingsHelp", "PlayerColor", "본체 색상을 고릅니다. 사용자 지정으로 팔레트를 엽니다."),
 		NSLOCTEXT("SettingsHelp", "ResetAppearance", "플레이어 색상과 외곽선 설정을 기본값으로 되돌립니다."),
 		NSLOCTEXT("SettingsHelp", "AppearancePreview", "현재 적용한 플레이어 색상과 외곽선을 확인합니다.")
 	};
@@ -636,7 +798,7 @@ bool AuthorSettingsHelp(UWidgetTree* Tree)
 		if (auto* Control = Tree->FindWidget(AppearanceHelpControls[Index]); Control && Control->GetToolTipText().IsEmpty())
 			Control->SetToolTipText(AppearanceHelp[Index]);
 	if (auto* Audio = Tree->FindWidget(TEXT("AudioSettingsSection")))
-		Audio->SetToolTipText(NSLOCTEXT("SettingsHelp", "Volume", "슬라이더로 음량을 조절합니다. 손잡이를 클릭하면 음소거하거나 이전 음량으로 복원합니다."));
+		Audio->SetToolTipText(NSLOCTEXT("SettingsHelp", "Volume", "음량을 조절합니다. 손잡이를 클릭하면 음소거하거나 되돌립니다."));
 	if (auto* Reset = Tree->FindWidget(TEXT("ResetGameplayKeys")))
 		Reset->SetToolTipText(NSLOCTEXT("SettingsHelp", "ResetKeys", "변경한 모든 키를 기본값으로 되돌립니다."));
 	for (const auto& Binding : UGameKeySettingsSubsystem::GetDefaultBindings())
@@ -644,7 +806,7 @@ bool AuthorSettingsHelp(UWidgetTree* Tree)
 		auto* Selector = Tree->FindWidget(Binding.WidgetName);
 		if (!Selector) continue;
 		if (Binding.WidgetName.ToString().StartsWith(TEXT("IA_Drop_")))
-			Selector->SetToolTipText(NSLOCTEXT("SettingsHelp", "Drop", "아래 키를 누른 상태에서 점프키를 누르면 하향 점프합니다. 클릭하면 아래 키를 바꿉니다."));
+			Selector->SetToolTipText(NSLOCTEXT("SettingsHelp", "Drop", "아래 키 + 점프키로 하향 점프합니다. 클릭하면 아래 키를 바꿉니다."));
 		else if (Selector->GetToolTipText().IsEmpty())
 			Selector->SetToolTipText(NSLOCTEXT("SettingsHelp", "CaptureKey", "클릭한 뒤 새 키를 누릅니다. Esc를 누르면 취소됩니다."));
 	}
@@ -668,6 +830,238 @@ bool AuthorSettingsHelp(UWidgetTree* Tree)
 	Space->SetHeightOverride(62.f);
 	Space->SetContent(Frame);
 	return PlaceSettingsHelpInCanvas(Tree, Space);
+}
+
+void CopyNamedProperties(UObject* Target, const UObject* Source, std::initializer_list<const TCHAR*> Names)
+{
+	// 디자이너에서 꾸민 스타일을 그대로 옮긴다. 일부 프로퍼티는 setter가 없거나 위젯 생성 전에만 바꿀 수 있어서 리플렉션으로 복사한다.
+	if (!Target || !Source || !Target->IsA(Source->GetClass())) return;
+	for (const TCHAR* Name : Names)
+		if (const FProperty* Property = Source->GetClass()->FindPropertyByName(Name))
+			Property->CopyCompleteValue_InContainer(Target, Source);
+}
+
+void CopyTextLook(UTextBlock* Target, const UTextBlock* Source)
+{
+	if (!Target || !Source) return;
+	Target->SetFont(Source->GetFont());
+	Target->SetColorAndOpacity(Source->GetColorAndOpacity());
+	// UTextBlock에는 정렬 getter가 없어서 리플렉션으로 복사한다.
+	CopyNamedProperties(Target, Source, {TEXT("Justification")});
+	Target->SetRenderTransform(Source->GetRenderTransform());
+	Target->SetVisibility(Source->GetVisibility());
+}
+
+/** Column의 끝에 밝기 줄과 같은 크기, 라벨 폭, 글꼴, 여백으로 설정 줄을 하나 추가한다. */
+bool AddRowLikeBrightness(UWidgetTree* Tree, UVerticalBox* Column, const FText& Caption, UWidget* Control)
+{
+	auto* TemplateControl = Tree->FindWidget(TEXT("BrightnessSetting"));
+	auto* TemplateLine = TemplateControl ? Cast<UHorizontalBox>(TemplateControl->GetParent()) : nullptr;
+	auto* TemplateRow = TemplateLine ? Cast<USizeBox>(TemplateLine->GetParent()) : nullptr;
+	auto* TemplateLabelBox = TemplateLine ? Cast<USizeBox>(TemplateLine->GetChildAt(0)) : nullptr;
+	auto* TemplateLabel = TemplateLabelBox ? Cast<UTextBlock>(TemplateLabelBox->GetContent()) : nullptr;
+	const auto* TemplateRowSlot = TemplateRow ? Cast<UVerticalBoxSlot>(TemplateRow->Slot) : nullptr;
+	const auto* TemplateControlSlot = Cast<UHorizontalBoxSlot>(TemplateControl ? TemplateControl->Slot : nullptr);
+	if (!Column || !Control || !TemplateLabel || !TemplateRowSlot || !TemplateControlSlot) return false;
+
+	auto* Row = Tree->ConstructWidget<USizeBox>();
+	Row->SetHeightOverride(TemplateRow->GetHeightOverride());
+	auto* Line = Tree->ConstructWidget<UHorizontalBox>();
+	Row->SetContent(Line);
+	auto* LabelBox = Tree->ConstructWidget<USizeBox>();
+	LabelBox->SetWidthOverride(TemplateLabelBox->GetWidthOverride());
+	auto* Label = Tree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), *(Control->GetName() + TEXT("Label")));
+	CopyTextLook(Label, TemplateLabel);
+	Label->SetText(Caption);
+	LabelBox->SetContent(Label);
+	auto* LabelSlot = Line->AddChildToHorizontalBox(LabelBox);
+	if (const auto* TemplateLabelSlot = Cast<UHorizontalBoxSlot>(TemplateLabelBox->Slot))
+	{
+		LabelSlot->SetPadding(TemplateLabelSlot->GetPadding());
+		LabelSlot->SetVerticalAlignment(TemplateLabelSlot->GetVerticalAlignment());
+	}
+	auto* ControlSlot = Line->AddChildToHorizontalBox(Control);
+	ControlSlot->SetSize(TemplateControlSlot->GetSize());
+	ControlSlot->SetPadding(TemplateControlSlot->GetPadding());
+	ControlSlot->SetHorizontalAlignment(TemplateControlSlot->GetHorizontalAlignment());
+	ControlSlot->SetVerticalAlignment(TemplateControlSlot->GetVerticalAlignment());
+	Column->AddChildToVerticalBox(Row)->SetPadding(TemplateRowSlot->GetPadding());
+	return true;
+}
+
+/** 화면 모드 드롭다운의 디자이너 스타일을 가진 새 드롭다운 */
+UComboBoxString* MakeComboLikeWindowMode(UWidgetTree* Tree, FName Name)
+{
+	auto* Combo = Tree->ConstructWidget<UComboBoxString>(UComboBoxString::StaticClass(), Name);
+	CopyNamedProperties(Combo, Tree->FindWidget(TEXT("WindowModeSetting")), {TEXT("WidgetStyle"), TEXT("ItemStyle"),
+		TEXT("ScrollBarStyle"), TEXT("ContentPadding"), TEXT("MaxListHeight"), TEXT("HasDownArrow"),
+		TEXT("EnableGamepadNavigationMode"), TEXT("Font"), TEXT("ForegroundColor"), TEXT("bIsFocusable")});
+	return Combo;
+}
+
+/** 밝기 슬라이더의 디자이너 스타일을 가진 새 슬라이더 */
+USlider* MakeSliderLikeBrightness(UWidgetTree* Tree, FName Name)
+{
+	auto* Slider = Tree->ConstructWidget<USlider>(USlider::StaticClass(), Name);
+	CopyNamedProperties(Slider, Tree->FindWidget(TEXT("BrightnessSetting")), {TEXT("WidgetStyle"), TEXT("SliderBarColor"),
+		TEXT("SliderHandleColor"), TEXT("IndentHandle"), TEXT("MouseUsesStep"), TEXT("RequiresControllerLock"),
+		TEXT("IsFocusable"), TEXT("Orientation")});
+	return Slider;
+}
+
+/** 그래픽 탭과 소리 탭을 나누고 그래픽 품질, 렌더링 해상도, 색각 보정 줄을 넣는다. 여러 번 실행해도 결과가 같다. */
+bool AuthorGraphicsAndAudioPages(UWidgetTree* Tree)
+{
+	auto* Pages = Cast<UWidgetSwitcher>(Tree->FindWidget(TEXT("SettingsTabPages")));
+	auto* Columns = Cast<UHorizontalBox>(Tree->FindWidget(TEXT("SettingsColumns")));
+	auto* Display = Cast<UVerticalBox>(Tree->FindWidget(TEXT("VisualSettingsColumn")));
+	auto* GeneralTab = Cast<UButton>(Tree->FindWidget(TEXT("GeneralSettingsTab")));
+	auto* GeneralCaption = Cast<UTextBlock>(Tree->FindWidget(TEXT("GeneralSettingsTabText")));
+	auto* GeneralTabBox = GeneralTab ? Cast<USizeBox>(GeneralTab->GetParent()) : nullptr;
+	auto* Tabs = GeneralTabBox ? Cast<UHorizontalBox>(GeneralTabBox->GetParent()) : nullptr;
+	if (!Pages || !Columns || !Display || !GeneralTab || !GeneralCaption || !Tabs)
+	{
+		UE_LOG(LogTemp, Error, TEXT("Settings layout: graphics/audio split needs SettingsTabPages, SettingsColumns, VisualSettingsColumn and GeneralSettingsTab."));
+		return false;
+	}
+
+	// 1. 탭: "화면 및 소리" -> "그래픽", 바로 뒤에 "소리"
+	GeneralCaption->SetText(NSLOCTEXT("Settings", "GraphicsTab", "그래픽"));
+	if (!Tree->FindWidget(TEXT("AudioSettingsTab")))
+	{
+		auto* Size = Tree->ConstructWidget<USizeBox>();
+		Size->SetWidthOverride(GeneralTabBox->GetWidthOverride());
+		Size->SetHeightOverride(GeneralTabBox->GetHeightOverride());
+		auto* Button = Tree->ConstructWidget<UButton>(UButton::StaticClass(), TEXT("AudioSettingsTab"));
+		Button->SetStyle(GeneralTab->GetStyle());
+		Button->SetColorAndOpacity(GeneralTab->GetColorAndOpacity());
+		Button->SetBackgroundColor(GeneralTab->GetBackgroundColor());
+		Size->SetContent(Button);
+		auto* Caption = Tree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("AudioSettingsTabText"));
+		CopyTextLook(Caption, GeneralCaption);
+		Caption->SetText(NSLOCTEXT("Settings", "AudioTab", "소리"));
+		auto* CaptionSlot = CastChecked<UButtonSlot>(Button->AddChild(Caption));
+		if (const auto* GeneralCaptionSlot = Cast<UButtonSlot>(GeneralCaption->Slot))
+		{
+			CaptionSlot->SetPadding(GeneralCaptionSlot->GetPadding());
+			CaptionSlot->SetHorizontalAlignment(GeneralCaptionSlot->GetHorizontalAlignment());
+			CaptionSlot->SetVerticalAlignment(GeneralCaptionSlot->GetVerticalAlignment());
+		}
+		auto* TabSlot = Cast<UHorizontalBoxSlot>(Tabs->InsertChildAt(Tabs->GetChildIndex(GeneralTabBox) + 1, Size));
+		if (const auto* GeneralSlot = Cast<UHorizontalBoxSlot>(GeneralTabBox->Slot); TabSlot && GeneralSlot)
+		{
+			TabSlot->SetPadding(GeneralSlot->GetPadding());
+			TabSlot->SetSize(GeneralSlot->GetSize());
+			TabSlot->SetHorizontalAlignment(GeneralSlot->GetHorizontalAlignment());
+			TabSlot->SetVerticalAlignment(GeneralSlot->GetVerticalAlignment());
+		}
+	}
+
+	// 2. 소리 페이지: 그래픽 페이지 오른쪽에 있던 볼륨 섹션을 독립 페이지(1번)로 옮긴다.
+	if (!Tree->FindWidget(TEXT("AudioSettingsPage")))
+	{
+		UWidget* Audio = Tree->FindWidget(TEXT("AudioSettingsSection"));
+		if (!Audio)
+		{
+			UE_LOG(LogTemp, Error, TEXT("Settings layout: AudioSettingsSection not found."));
+			return false;
+		}
+		FMargin Padding;
+		if (const auto* OldSlot = Cast<UHorizontalBoxSlot>(Audio->Slot)) Padding = OldSlot->GetPadding();
+		Audio->RemoveFromParent();
+		auto* Page = Tree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("AudioSettingsPage"));
+		auto* Width = Tree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("AudioSettingsWidth"));
+		// 페이지 전체 폭으로 늘리면 슬라이더가 지나치게 길어져서 폭을 고정하고 왼쪽(다른 탭과 같은 시작선)에 둔다.
+		// 최대 폭(MaxDesiredWidth)만 주면 슬라이더의 원하는 크기가 작아서 줄어들므로 고정 폭을 쓴다. 디자이너에서 바꿔도 된다.
+		Width->SetWidthOverride(760.f);
+		Width->SetContent(Audio);
+		auto* WidthSlot = Page->AddChildToHorizontalBox(Width);
+		WidthSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+		WidthSlot->SetHorizontalAlignment(HAlign_Left);
+		WidthSlot->SetVerticalAlignment(VAlign_Top);
+		WidthSlot->SetPadding(Padding);
+		Pages->InsertChildAt(AudioPage, Page);
+	}
+
+	// 3. 그래픽 페이지 오른쪽 열: 품질 및 효과
+	if (!Tree->FindWidget(TEXT("QualitySettingsColumn")))
+	{
+		const auto FindRow = [&](FName ControlName, UPanelWidget* Column) -> UWidget*
+		{
+			UWidget* Row = Tree->FindWidget(ControlName);
+			while (Row && Row->GetParent() && Row->GetParent() != Column) Row = Row->GetParent();
+			return Row && Row->GetParent() == Column ? Row : nullptr;
+		};
+		// 새 줄은 밝기 줄의 크기, 라벨 폭, 글꼴, 여백을 그대로 따른다.
+		auto* TemplateControl = Cast<USlider>(Tree->FindWidget(TEXT("BrightnessSetting")));
+		auto* TemplateRow = Cast<USizeBox>(FindRow(TEXT("BrightnessSetting"), Display));
+		auto* TemplateLine = TemplateControl ? Cast<UHorizontalBox>(TemplateControl->GetParent()) : nullptr;
+		auto* TemplateLabelBox = TemplateLine ? Cast<USizeBox>(TemplateLine->GetChildAt(0)) : nullptr;
+		auto* TemplateLabel = TemplateLabelBox ? Cast<UTextBlock>(TemplateLabelBox->GetContent()) : nullptr;
+		auto* TemplateCombo = Cast<UComboBoxString>(Tree->FindWidget(TEXT("WindowModeSetting")));
+		auto* DisplayHeading = Cast<UTextBlock>(Display->GetChildAt(0));
+		if (!TemplateControl || !TemplateRow || !TemplateLabelBox || !TemplateLabel || !TemplateCombo || !DisplayHeading)
+		{
+			UE_LOG(LogTemp, Error, TEXT("Settings layout: brightness row, window mode dropdown or display heading not found."));
+			return false;
+		}
+
+		auto* Quality = Tree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("QualitySettingsColumn"));
+		auto* QualitySlot = Columns->AddChildToHorizontalBox(Quality);
+		if (const auto* DisplaySlot = Cast<UHorizontalBoxSlot>(Display->Slot))
+		{
+			const FMargin Padding = DisplaySlot->GetPadding();
+			QualitySlot->SetPadding(FMargin(Padding.Right, Padding.Top, Padding.Left, Padding.Bottom));
+			QualitySlot->SetSize(DisplaySlot->GetSize());
+			QualitySlot->SetHorizontalAlignment(DisplaySlot->GetHorizontalAlignment());
+			QualitySlot->SetVerticalAlignment(DisplaySlot->GetVerticalAlignment());
+		}
+
+		auto* Heading = Tree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("QualityHeading"));
+		CopyTextLook(Heading, DisplayHeading);
+		Heading->SetText(NSLOCTEXT("Settings", "QualityHeading", "품질 및 효과"));
+		auto* HeadingSlot = Quality->AddChildToVerticalBox(Heading);
+		if (const auto* DisplayHeadingSlot = Cast<UVerticalBoxSlot>(DisplayHeading->Slot))
+		{
+			HeadingSlot->SetPadding(DisplayHeadingSlot->GetPadding());
+			HeadingSlot->SetHorizontalAlignment(DisplayHeadingSlot->GetHorizontalAlignment());
+		}
+
+		const auto AddRow = [&](const FText& Caption, UWidget* Control)
+		{
+			AddRowLikeBrightness(Tree, Quality, Caption, Control);
+		};
+
+		AddRow(NSLOCTEXT("Settings", "QualityPreset", "그래픽 품질"), MakeComboLikeWindowMode(Tree, TEXT("QualityPresetSetting")));
+		AddRow(NSLOCTEXT("Settings", "RenderScale", "렌더링 해상도"), MakeSliderLikeBrightness(Tree, TEXT("RenderScaleSetting")));
+
+		// 화면 열에 있던 효과 줄을 품질 열로 옮긴다. 화면 열에는 화면 모드 적용 버튼까지만 남는다.
+		for (const TCHAR* Name : {TEXT("BloomSetting"), TEXT("ShakeSetting"), TEXT("ReduceFlashesSetting")})
+		{
+			if (UWidget* Row = FindRow(Name, Display))
+			{
+				const FMargin Padding = CastChecked<UVerticalBoxSlot>(Row->Slot)->GetPadding();
+				Row->RemoveFromParent();
+				Quality->AddChildToVerticalBox(Row)->SetPadding(Padding);
+			}
+		}
+	}
+	// 4. 색각 보정: 품질 및 효과 열 끝에 드롭다운과 세기 슬라이더
+	if (!Tree->FindWidget(TEXT("ColorVisionSetting")))
+	{
+		auto* Quality = Cast<UVerticalBox>(Tree->FindWidget(TEXT("QualitySettingsColumn")));
+		if (!Quality
+			|| !AddRowLikeBrightness(Tree, Quality, NSLOCTEXT("Settings", "ColorVision", "색각 보정"),
+				MakeComboLikeWindowMode(Tree, TEXT("ColorVisionSetting")))
+			|| !AddRowLikeBrightness(Tree, Quality, NSLOCTEXT("Settings", "ColorVisionStrength", "보정 강도"),
+				MakeSliderLikeBrightness(Tree, TEXT("ColorVisionStrengthSetting"))))
+		{
+			UE_LOG(LogTemp, Error, TEXT("Settings layout: could not add the color vision rows."));
+			return false;
+		}
+	}
+	UE_LOG(LogTemp, Display, TEXT("Settings layout: graphics and audio pages are separate (%d pages)."), Pages->GetChildrenCount());
+	return true;
 }
 
 bool AuthorKeySettingsGroups(UWidgetTree* Tree)
@@ -752,11 +1146,18 @@ bool AuthorKeySettingsTypography(UWidgetTree* Tree)
 
 bool UAudioSettingsWidget::AuthorSettingsLayout(UWidgetTree* WidgetTree)
 {
+	// 하위 탭을 별도 WBP로 나눈 뒤에는 각 페이지 WBP를 디자이너에서 직접 고친다. 이 자동 구성은 나누기 전 구조에만 쓴다.
+	if (WidgetTree->FindWidget(TEXT("GraphicsSettingsSection")))
+	{
+		UE_LOG(LogTemp, Display, TEXT("Settings layout: tab pages are separate Widget Blueprints. Edit WBP_GraphicsSettings, WBP_AudioSettings, WBP_AppearanceSettings and WBP_KeySettings directly."));
+		return true;
+	}
 	auto* Display = Cast<UVerticalBox>(WidgetTree->FindWidget(TEXT("VisualSettingsColumn")));
 	if (!Display) return false;
 	BuildVisualLayout(WidgetTree, Display);
 	if (WidgetTree->FindWidget(TEXT("SettingsTabPages")))
-		return AuthorKeySettingsGroups(WidgetTree) && AuthorKeySettingsTypography(WidgetTree) && AuthorSettingsHelp(WidgetTree);
+		return AuthorGraphicsAndAudioPages(WidgetTree) && AuthorKeySettingsGroups(WidgetTree)
+			&& AuthorKeySettingsTypography(WidgetTree) && AuthorSettingsHelp(WidgetTree);
 	auto* Columns = Cast<UHorizontalBox>(WidgetTree->FindWidget(TEXT("SettingsColumns")));
 	UPanelWidget* Parent = Columns ? Columns->GetParent() : nullptr;
 	if (!Parent) return false;
@@ -775,7 +1176,7 @@ bool UAudioSettingsWidget::AuthorSettingsLayout(UWidgetTree* WidgetTree)
 		Size->SetHeightOverride(40.f);
 		Size->SetWidthOverride(174.f);
 		Tabs->AddChildToHorizontalBox(Size)->SetPadding(FMargin(0.f, 0.f, 3.f, 0.f));
-		auto* Button = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), SettingsTabNames[Index]);
+		auto* Button = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), SettingsTabs[Index].Button);
 		Size->SetContent(Button);
 		FButtonStyle Style;
 		const FVector4 Corners(9.f, 9.f, 0.f, 0.f);
@@ -785,7 +1186,7 @@ bool UAudioSettingsWidget::AuthorSettingsLayout(UWidgetTree* WidgetTree)
 		Style.Disabled = Style.Normal;
 		Button->SetStyle(Style);
 		auto* Text = MakeSettingsLabel(WidgetTree, Caption, 18);
-		Text->Rename(*SettingsTabTextNames[Index].ToString(), WidgetTree);
+		Text->Rename(SettingsTabs[Index].Text, WidgetTree);
 		Text->SetJustification(ETextJustify::Center);
 		Text->SetRenderTranslation(FVector2D(0.f, -4.f));
 		Text->SetVisibility(ESlateVisibility::HitTestInvisible);
@@ -793,9 +1194,10 @@ bool UAudioSettingsWidget::AuthorSettingsLayout(UWidgetTree* WidgetTree)
 		LabelSlot->SetHorizontalAlignment(HAlign_Fill);
 		LabelSlot->SetVerticalAlignment(VAlign_Center);
 	};
-	AddTab(0, NSLOCTEXT("Settings", "GeneralTab", "화면 및 소리"));
-	AddTab(1, NSLOCTEXT("Settings", "AppearanceTab", "플레이어 외형"));
-	AddTab(2, NSLOCTEXT("Settings", "KeysTab", "키 설정"));
+	// 소리 탭(1)은 AuthorGraphicsAndAudioPages가 그래픽 탭 바로 뒤에 넣는다.
+	AddTab(0, NSLOCTEXT("Settings", "GraphicsTab", "그래픽"));
+	AddTab(2, NSLOCTEXT("Settings", "AppearanceTab", "플레이어 외형"));
+	AddTab(3, NSLOCTEXT("Settings", "KeysTab", "키 설정"));
 	auto* TabLine = WidgetTree->ConstructWidget<UImage>();
 	auto TabLineBrush = FactoryUI::Plate(FactoryUI::Edge, FactoryUI::Edge, 0.f);
 	TabLineBrush.ImageSize = FVector2f(1.f, 1.f);
@@ -895,38 +1297,297 @@ bool UAudioSettingsWidget::AuthorSettingsLayout(UWidgetTree* WidgetTree)
 		PreviewSlot->SetPadding(FMargin(8.f, 6.f));
 	}
 	AuthorKeySettingsPage(WidgetTree, Pages);
-	return AuthorKeySettingsGroups(WidgetTree) && AuthorKeySettingsTypography(WidgetTree) && AuthorSettingsHelp(WidgetTree);
+	return AuthorGraphicsAndAudioPages(WidgetTree) && AuthorKeySettingsGroups(WidgetTree)
+		&& AuthorKeySettingsTypography(WidgetTree) && AuthorSettingsHelp(WidgetTree);
+}
+
+bool UAudioSettingsWidget::AuthorLanguageTab(UWidgetTree* Tree)
+{
+	if (Tree->FindWidget(TEXT("LanguageSettingsTab"))) return true;
+	auto* KeyTab = Cast<UButton>(Tree->FindWidget(TEXT("KeySettingsTab")));
+	auto* KeyCaption = Cast<UTextBlock>(Tree->FindWidget(TEXT("KeySettingsTabText")));
+	auto* KeyBox = KeyTab ? Cast<USizeBox>(KeyTab->GetParent()) : nullptr;
+	auto* Tabs = KeyBox ? Cast<UHorizontalBox>(KeyBox->GetParent()) : nullptr;
+	const auto* KeyCaptionSlot = KeyCaption ? Cast<UButtonSlot>(KeyCaption->Slot) : nullptr;
+	const auto* KeyBoxSlot = KeyBox ? Cast<UHorizontalBoxSlot>(KeyBox->Slot) : nullptr;
+	if (!Tabs || !KeyCaptionSlot || !KeyBoxSlot)
+	{
+		UE_LOG(LogTemp, Error, TEXT("Settings layout: the language tab needs KeySettingsTab inside a SizeBox in the tab row, with KeySettingsTabText as its label."));
+		return false;
+	}
+
+	// 지금 탭 줄이 차지하는 폭(탭 폭 + 여백)을 다섯 칸으로 다시 나눈다.
+	const auto TabSpace = [](const UWidget* Tab)
+	{
+		const auto* Box = Cast<USizeBox>(Tab);
+		const auto* BoxSlot = Cast<UHorizontalBoxSlot>(Tab->Slot);
+		const FMargin Padding = BoxSlot ? BoxSlot->GetPadding() : FMargin();
+		return TPair<float, float>(Box ? Box->GetWidthOverride() : 0.f, Padding.Left + Padding.Right);
+	};
+	float RowWidth = 0.f;
+	for (int32 Index = 0; Index < Tabs->GetChildrenCount(); ++Index)
+	{
+		const auto Space = TabSpace(Tabs->GetChildAt(Index));
+		RowWidth += Space.Key + Space.Value;
+	}
+
+	// 키 설정 탭과 같은 모양의 "언어" 탭을 맨 끝에 붙인다.
+	auto* Size = Tree->ConstructWidget<USizeBox>();
+	Size->SetHeightOverride(KeyBox->GetHeightOverride());
+	auto* Button = Tree->ConstructWidget<UButton>(UButton::StaticClass(), TEXT("LanguageSettingsTab"));
+	Button->SetStyle(KeyTab->GetStyle());
+	Button->SetColorAndOpacity(KeyTab->GetColorAndOpacity());
+	Button->SetBackgroundColor(KeyTab->GetBackgroundColor());
+	Size->SetContent(Button);
+	auto* Caption = Tree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("LanguageSettingsTabText"));
+	CopyTextLook(Caption, KeyCaption);
+	Caption->SetText(NSLOCTEXT("Settings", "LanguageTab", "언어"));
+	auto* CaptionSlot = CastChecked<UButtonSlot>(Button->AddChild(Caption));
+	CaptionSlot->SetPadding(KeyCaptionSlot->GetPadding());
+	CaptionSlot->SetHorizontalAlignment(KeyCaptionSlot->GetHorizontalAlignment());
+	CaptionSlot->SetVerticalAlignment(KeyCaptionSlot->GetVerticalAlignment());
+	auto* TabSlot = Tabs->AddChildToHorizontalBox(Size);
+	TabSlot->SetPadding(KeyBoxSlot->GetPadding());
+	TabSlot->SetSize(KeyBoxSlot->GetSize());
+	TabSlot->SetHorizontalAlignment(KeyBoxSlot->GetHorizontalAlignment());
+	TabSlot->SetVerticalAlignment(KeyBoxSlot->GetVerticalAlignment());
+
+	const float PerTab = RowWidth / Tabs->GetChildrenCount();
+	for (int32 Index = 0; Index < Tabs->GetChildrenCount(); ++Index)
+		if (auto* Box = Cast<USizeBox>(Tabs->GetChildAt(Index)))
+			Box->SetWidthOverride(FMath::FloorToFloat(PerTab - TabSpace(Box).Value));
+
+	// 번역하면 탭 이름이 길어질 수 있다(독일어, 러시아어 등). 탭 폭을 넘으면 글자를 줄이도록 ScaleBox로 감싼다.
+	for (const FSettingsTab& Tab : SettingsTabs)
+	{
+		auto* Text = Cast<UTextBlock>(Tree->FindWidget(Tab.Text));
+		auto* Owner = Text ? Cast<UButton>(Text->GetParent()) : nullptr;
+		const auto* OldSlot = Text ? Cast<UButtonSlot>(Text->Slot) : nullptr;
+		if (!Owner || !OldSlot) continue;
+		const FMargin Padding = OldSlot->GetPadding();
+		const EHorizontalAlignment HAlign = OldSlot->GetHorizontalAlignment();
+		const EVerticalAlignment VAlign = OldSlot->GetVerticalAlignment();
+		Owner->RemoveChild(Text);
+		auto* Scale = Tree->ConstructWidget<UScaleBox>(UScaleBox::StaticClass(), *(Text->GetName() + TEXT("Fit")));
+		Scale->SetStretch(EStretch::ScaleToFit);
+		Scale->SetStretchDirection(EStretchDirection::DownOnly);
+		Scale->SetVisibility(ESlateVisibility::HitTestInvisible);
+		Scale->SetContent(Text);
+		auto* ScaleSlot = CastChecked<UButtonSlot>(Owner->AddChild(Scale));
+		ScaleSlot->SetPadding(Padding);
+		ScaleSlot->SetHorizontalAlignment(HAlign);
+		ScaleSlot->SetVerticalAlignment(VAlign);
+	}
+	UE_LOG(LogTemp, Display, TEXT("Settings layout: language tab added, %d tabs at %.0f px."), Tabs->GetChildrenCount(), FMath::FloorToFloat(PerTab - TabSpace(Size).Value));
+	return true;
+}
+
+bool UAudioSettingsWidget::AuthorLanguagePage(UWidgetTree* Tree)
+{
+	if (!Tree || Tree->RootWidget) return false;
+	// 페이지 루트: 다른 페이지와 같은 시작선(왼쪽)에 고정 폭으로 둔다. 디자이너에서 바꿔도 된다.
+	auto* Page = Tree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("LanguageSettingsPage"));
+	Tree->RootWidget = Page;
+	auto* Width = Tree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("LanguageSettingsWidth"));
+	Width->SetWidthOverride(760.f);
+	auto* WidthSlot = Page->AddChildToHorizontalBox(Width);
+	WidthSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+	WidthSlot->SetHorizontalAlignment(HAlign_Left);
+	WidthSlot->SetVerticalAlignment(VAlign_Top);
+	auto* Grid = Tree->ConstructWidget<UUniformGridPanel>(UUniformGridPanel::StaticClass(), TEXT("LanguageGrid"));
+	Grid->SetSlotPadding(FMargin(6.f, 5.f));
+	Width->SetContent(Grid);
+
+	// 버튼 모양은 탭과 같은 둥근 상자. 평소 테두리는 FactoryUI::Edge, 마우스/포커스는 청록. 현재 언어 표시는 코드가 덧입힌다.
+	FButtonStyle Style;
+	Style.Normal = FSlateRoundedBoxBrush(FactoryUI::Panel, 6.f, FactoryUI::Edge, 1.f);
+	Style.Hovered = FSlateRoundedBoxBrush(FLinearColor(0.09f, 0.18f, 0.21f), 6.f, FactoryUI::Cyan, 1.f);
+	Style.Pressed = Style.Hovered;
+	Style.Disabled = Style.Normal;
+	Style.NormalPadding = FMargin(14.f, 4.f);
+	Style.PressedPadding = Style.NormalPadding;
+
+	// 언어 이름은 어느 언어 화면에서든 보여야 한다. 설정 화면 글꼴(F_TLM_UI)의 Fallback에는 한자가 없어서
+	// Fallback이 Noto Sans SC(한자 전체)인 F_TLM_Body로 쓴다. Docs/Fonts.md "다국어" 참고.
+	UFont* NameFont = LoadObject<UFont>(nullptr, TEXT("/Game/Main/UI/Fonts/F_TLM_Body.F_TLM_Body"));
+	if (!NameFont)
+	{
+		UE_LOG(LogTemp, Error, TEXT("Settings layout: F_TLM_Body not found."));
+		return false;
+	}
+	const auto UseNameFont = [NameFont](UTextBlock* Text, int32 Size)
+	{
+		Text->SetFont(FSlateFontInfo(NameFont, Size, TEXT("Medium")));
+	};
+
+	const TConstArrayView<FGameLanguage> Languages = UGameLanguageSettingsSubsystem::GetSupportedLanguages();
+	for (int32 Index = 0; Index < Languages.Num(); ++Index)
+	{
+		const FGameLanguage& Language = Languages[Index];
+		const FString Name = UGameLanguageSettingsSubsystem::GetLanguageWidgetName(Language).ToString();
+		auto* Cell = Tree->ConstructWidget<USizeBox>();
+		Cell->SetHeightOverride(56.f);
+		auto* Button = Tree->ConstructWidget<UButton>(UButton::StaticClass(), *Name);
+		Button->SetStyle(Style);
+		Cell->SetContent(Button);
+		auto* Row = Tree->ConstructWidget<UHorizontalBox>();
+		auto* RowSlot = CastChecked<UButtonSlot>(Button->AddChild(Row));
+		RowSlot->SetHorizontalAlignment(HAlign_Fill);
+		RowSlot->SetVerticalAlignment(VAlign_Center);
+
+		// 국기(4:3) 또는 "繁" 배지
+		auto* FlagBox = Tree->ConstructWidget<USizeBox>();
+		FlagBox->SetWidthOverride(40.f);
+		FlagBox->SetHeightOverride(30.f);
+		if (Language.FlagCode)
+		{
+			auto* Texture = LoadObject<UTexture2D>(nullptr, *UGameLanguageSettingsSubsystem::GetFlagTexturePath(Language));
+			if (!Texture)
+			{
+				UE_LOG(LogTemp, Error, TEXT("Settings layout: flag texture %s not found."), *UGameLanguageSettingsSubsystem::GetFlagTexturePath(Language));
+				return false;
+			}
+			auto* Flag = Tree->ConstructWidget<UImage>(UImage::StaticClass(), *(Name + TEXT("_Flag")));
+			Flag->SetBrushFromTexture(Texture, false);
+			Flag->SetDesiredSizeOverride(FVector2D(40.f, 30.f));
+			FlagBox->SetContent(Flag);
+		}
+		else
+		{
+			// 중국 출시 시 대만 국기 표기가 문제될 수 있어 국기 대신 국기 크기의 판에 "繁" 글자를 얹는다.
+			auto* Badge = Tree->ConstructWidget<UBorder>(UBorder::StaticClass(), *(Name + TEXT("_Badge")));
+			Badge->SetBrush(FactoryUI::Plate(FLinearColor(0.09f, 0.18f, 0.21f), FactoryUI::Cyan, 3.f));
+			Badge->SetPadding(FMargin(0.f));
+			Badge->SetHorizontalAlignment(HAlign_Center);
+			Badge->SetVerticalAlignment(VAlign_Center);
+			auto* Glyph = MakeSettingsLabel(Tree, FText::AsCultureInvariant(TEXT("繁")), 18);
+			Glyph->Rename(*(Name + TEXT("_BadgeText")), Tree);
+			UseNameFont(Glyph, 18);
+			Glyph->SetRenderTranslation(FVector2D(0.f, -1.f));
+			Badge->SetContent(Glyph);
+			FlagBox->SetContent(Badge);
+		}
+		auto* FlagSlot = Row->AddChildToHorizontalBox(FlagBox);
+		FlagSlot->SetVerticalAlignment(VAlign_Center);
+		FlagSlot->SetPadding(FMargin(0.f, 0.f, 14.f, 0.f));
+
+		// 자국어 이름. 번역 대상이 아니므로 문화권 고정 텍스트로 넣는다(Localization 수집에서 빠진다).
+		auto* Label = MakeSettingsLabel(Tree, FText::AsCultureInvariant(Language.NativeName), 20);
+		Label->Rename(*(Name + TEXT("_Name")), Tree);
+		UseNameFont(Label, 20);
+		Label->SetRenderTranslation(FVector2D(0.f, -2.f));
+		Label->SetVisibility(ESlateVisibility::HitTestInvisible);
+		// 긴 이름(Español (Latinoamérica) 등)은 버튼 폭을 넘지 않도록 줄여서 보여 준다.
+		auto* Fit = Tree->ConstructWidget<UScaleBox>(UScaleBox::StaticClass(), *(Name + TEXT("_Fit")));
+		Fit->SetStretch(EStretch::ScaleToFit);
+		Fit->SetStretchDirection(EStretchDirection::DownOnly);
+		Fit->SetVisibility(ESlateVisibility::HitTestInvisible);
+		Fit->SetContent(Label);
+		auto* LabelSlot = Row->AddChildToHorizontalBox(Fit);
+		LabelSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+		LabelSlot->SetHorizontalAlignment(HAlign_Left);
+		LabelSlot->SetVerticalAlignment(VAlign_Center);
+
+		auto* GridSlot = Grid->AddChildToUniformGrid(Cell, Index / 2, Index % 2);
+		GridSlot->SetHorizontalAlignment(HAlign_Fill);
+		GridSlot->SetVerticalAlignment(VAlign_Fill);
+	}
+	UE_LOG(LogTemp, Display, TEXT("Settings layout: language page with %d languages."), Languages.Num());
+	return true;
 }
 #endif
 
 void UAudioSettingsWidget::UpdateSettingsTabs(int32 ActiveIndex)
 {
-	for (int32 Index = 0; Index < UE_ARRAY_COUNT(SettingsTabNames); ++Index)
+	for (const FSettingsTab& Tab : SettingsTabs)
 	{
-		if (auto* Label = Cast<UTextBlock>(WidgetTree->FindWidget(SettingsTabTextNames[Index])))
-			Label->SetColorAndOpacity(Index == ActiveIndex ? FactoryUI::Cyan : FactoryUI::Text);
+		if (auto* Label = Cast<UTextBlock>(FindSettingsWidget(Tab.Text)))
+			Label->SetColorAndOpacity(Tab.Page == ActiveIndex ? FactoryUI::Cyan : FactoryUI::Text);
 	}
 }
 
 void UAudioSettingsWidget::ShowSettingsTab(int32 Index)
 {
-	if (auto* Pages = Cast<UWidgetSwitcher>(WidgetTree->FindWidget(TEXT("SettingsTabPages"))))
+	if (auto* Pages = Cast<UWidgetSwitcher>(FindSettingsWidget(TEXT("SettingsTabPages"))))
 	{
 		Pages->SetActiveWidgetIndex(Index);
 		UpdateSettingsTabs(Index);
-		if (Index == 1) RefreshAppearancePreview();
-		if (Index == 2) RefreshKeySelectors();
+		if (Index == AppearancePage) RefreshAppearancePreview();
+		if (Index == KeysPage) RefreshKeySelectors();
 		FocusFirstControl();
 	}
 }
 
-void UAudioSettingsWidget::ShowGeneralSettings() { ShowSettingsTab(0); }
-void UAudioSettingsWidget::ShowAppearanceSettings() { ShowSettingsTab(1); }
-void UAudioSettingsWidget::ShowKeySettings() { ShowSettingsTab(2); }
+void UAudioSettingsWidget::ShowGeneralSettings() { ShowSettingsTab(GraphicsPage); }
+void UAudioSettingsWidget::ShowAudioSettings() { ShowSettingsTab(AudioPage); }
+void UAudioSettingsWidget::ShowAppearanceSettings() { ShowSettingsTab(AppearancePage); }
+void UAudioSettingsWidget::ShowKeySettings() { ShowSettingsTab(KeysPage); }
+void UAudioSettingsWidget::ShowLanguageSettings() { ShowSettingsTab(LanguagePage); }
+
+void ULanguageButtonHandler::HandleClicked()
+{
+	if (UAudioSettingsWidget* Settings = Owner.Get()) Settings->SelectLanguage(Culture);
+}
+
+void UAudioSettingsWidget::BindLanguageButtons()
+{
+	// 화면을 다시 열어 NativeConstruct가 또 불려도 클릭이 두 번 처리되지 않도록 처음 한 번만 연결한다.
+	if (LanguageButtons.IsEmpty())
+	{
+		for (const FGameLanguage& Language : UGameLanguageSettingsSubsystem::GetSupportedLanguages())
+		{
+			const FName Name = UGameLanguageSettingsSubsystem::GetLanguageWidgetName(Language);
+			auto* Button = Cast<UButton>(FindSettingsWidget(Name));
+			if (!Button) continue;
+			auto* Handler = NewObject<ULanguageButtonHandler>(this);
+			Handler->Culture = Language.Culture;
+			Handler->Owner = this;
+			Button->OnClicked.AddUniqueDynamic(Handler, &ULanguageButtonHandler::HandleClicked);
+			FactoryUI::ApplyButtonSounds(Button, FactoryUI::ESound::Confirm);
+			LanguageHandlers.Add(Handler);
+			LanguageButtons.Add({Button, Name, Language.Culture, Button->GetStyle().Disabled});
+		}
+	}
+	RefreshLanguageButtons();
+}
+
+void UAudioSettingsWidget::RefreshLanguageButtons()
+{
+	// 현재 언어는 탭 선택색과 같은 청록 테두리와 글자로 표시한다.
+	// 메뉴 포커스 처리(FactoryMenuStyle::UpdateFocus)가 포커스가 없을 때 Disabled 브러시를 평소 모습으로 쓰므로 Disabled에 넣는다.
+	const FString Current = UGameLanguageSettingsSubsystem::GetCurrentLanguage();
+	for (const FLanguageButton& Entry : LanguageButtons)
+	{
+		UButton* Button = Entry.Button.Get();
+		if (!Button) continue;
+		const bool bCurrent = Entry.Culture == Current;
+		FSlateBrush Brush = Entry.BaseBrush;
+		if (bCurrent)
+		{
+			Brush.OutlineSettings.Color = FactoryUI::Cyan;
+			Brush.OutlineSettings.Width = FMath::Max(Brush.OutlineSettings.Width, 2.f);
+		}
+		FButtonStyle Style = Button->GetStyle();
+		Style.Disabled = Brush;
+		if (!Button->HasAnyUserFocus()) Style.Normal = Brush;
+		Button->SetStyle(Style);
+		if (auto* Label = Cast<UTextBlock>(FindSettingsWidget(*(Entry.Name.ToString() + TEXT("_Name")))))
+			Label->SetColorAndOpacity(bCurrent ? FactoryUI::Cyan : FactoryUI::Text);
+	}
+}
+
+void UAudioSettingsWidget::SelectLanguage(const FString& Culture)
+{
+	// 고르는 즉시 적용하고 저장한다. FText로 만든 문구는 엔진이 바꾸고, 드롭다운은 번역 데이터를 다 읽은 뒤 HandleCultureChanged가 다시 채운다.
+	if (UGameLanguageSettingsSubsystem::GetCurrentLanguage() == Culture) return;
+	if (!UGameLanguageSettingsSubsystem::SetLanguage(Culture))
+		UE_LOG(LogTemp, Warning, TEXT("Language: could not switch to %s."), *Culture);
+	RefreshLanguageButtons();
+}
 
 void UAudioSettingsWidget::BindSettingsHelp()
 {
-	auto* Text = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("SettingsHelpText")));
+	auto* Text = Cast<UTextBlock>(FindSettingsWidget(TEXT("SettingsHelpText")));
 	if (!Text || SettingsHelpText == Text) return;
 	SettingsHelpText = Text;
 	SettingsHelpEntries.Reset();
@@ -943,29 +1604,29 @@ void UAudioSettingsWidget::BindSettingsHelp()
 		SettingsHelpEntries.Add({Row, MoveTemp(Help), PageIndex});
 	};
 	for (const FName Name : DisplayHelpControls)
-		AddHelp(WidgetTree->FindWidget(Name), 0);
+		AddHelp(FindSettingsWidget(Name), GraphicsPage);
 	for (const FName Name : AppearanceHelpControls)
-		AddHelp(WidgetTree->FindWidget(Name), 1, FText::GetEmpty(), Name != TEXT("AppearancePreviewBox"));
-	auto* Audio = Cast<UAudioSettingsWidget>(WidgetTree->FindWidget(TEXT("AudioSettingsSection")));
-	UWidgetTree* AudioTree = Audio ? Audio->WidgetTree.Get() : WidgetTree.Get();
+		AddHelp(FindSettingsWidget(Name), AppearancePage, FText::GetEmpty(), Name != TEXT("AppearancePreviewBox"));
+	// 볼륨 줄의 도움말은 소리 페이지(AudioSettingsSection)의 툴팁 하나를 함께 쓴다.
+	UWidget* Audio = FindSettingsWidget(TEXT("AudioSettingsSection"));
 	const FText AudioHelp = Audio ? Audio->GetToolTipText() : FText::GetEmpty();
 	if (Audio) Audio->SetToolTipText(FText::GetEmpty());
-	if (AudioTree)
-	{
-		const auto* VolumeLabel = Cast<UTextBlock>(AudioTree->FindWidget(TEXT("MasterVolumeSliderLabel")));
-		if (VolumeLabel) Text->SetFont(VolumeLabel->GetFont());
-		for (const auto& Entry : VolumeRows)
-			AddHelp(AudioTree->FindWidget(Entry.Slider), 0, AudioHelp);
-	}
+	if (const auto* VolumeLabel = Cast<UTextBlock>(FindSettingsWidget(TEXT("MasterVolumeSliderLabel"))))
+		Text->SetFont(VolumeLabel->GetFont());
+	for (const auto& Entry : VolumeRows)
+		AddHelp(FindSettingsWidget(Entry.Slider), AudioPage, AudioHelp);
 	for (const auto& Entry : KeySelectors)
-		AddHelp(Entry.Key, 2);
-	AddHelp(WidgetTree->FindWidget(TEXT("ResetGameplayKeys")), 2);
+		AddHelp(Entry.Key, KeysPage);
+	AddHelp(FindSettingsWidget(TEXT("ResetGameplayKeys")), KeysPage);
+	for (const FGameLanguage& Language : UGameLanguageSettingsSubsystem::GetSupportedLanguages())
+		AddHelp(FindSettingsWidget(UGameLanguageSettingsSubsystem::GetLanguageWidgetName(Language)), LanguagePage,
+			GetLanguageHelpText(), false);
 }
 
 void UAudioSettingsWidget::RefreshSettingsHelp()
 {
 	auto* Text = SettingsHelpText.Get();
-	const auto* Pages = Text ? Cast<UWidgetSwitcher>(WidgetTree->FindWidget(TEXT("SettingsTabPages"))) : nullptr;
+	const auto* Pages = Text ? Cast<UWidgetSwitcher>(FindSettingsWidget(TEXT("SettingsTabPages"))) : nullptr;
 	if (!Pages || !Text->GetParent() || !FSlateApplication::IsInitialized()) return;
 
 	const int32 PageIndex = Pages->GetActiveWidgetIndex();
@@ -978,11 +1639,11 @@ void UAudioSettingsWidget::RefreshSettingsHelp()
 	if (Entry)
 	{
 		FText HelpText = Entry->Text;
-		if (PageIndex == 1)
+		if (PageIndex == AppearancePage)
 		{
 			for (const TCHAR* Name : {TEXT("OutlineColorSwatch"), TEXT("PlayerColorSwatch")})
 			{
-				const auto* Swatch = Cast<UTextBlock>(WidgetTree->FindWidget(Name));
+				const auto* Swatch = Cast<UTextBlock>(FindSettingsWidget(Name));
 				if (!Swatch || !Swatch->GetCachedGeometry().IsUnderLocation(CursorPosition)) continue;
 				const FString Hex = Swatch->GetColorAndOpacity().GetSpecifiedColor().ToFColorSRGB().ToHex().Left(6);
 				HelpText = FText::Format(NSLOCTEXT("SettingsHelp", "CurrentColor", "현재 색상 #{0}"), FText::FromString(Hex));
@@ -1094,7 +1755,7 @@ void UAudioSettingsWidget::BindKeySelectors()
 	{
 		for (const auto& Binding : Settings->GetBindings())
 		{
-			if (auto* Selector = Cast<UInputKeySelector>(WidgetTree->FindWidget(Binding.WidgetName)))
+			if (auto* Selector = Cast<UInputKeySelector>(FindSettingsWidget(Binding.WidgetName)))
 			{
 				KeySelectors.Add(Selector, Binding.MappingIndex);
 				if (Binding.WidgetName.ToString().StartsWith(TEXT("IA_Jump_")) || !FirstKeySelector.IsValid())
@@ -1104,7 +1765,7 @@ void UAudioSettingsWidget::BindKeySelectors()
 			}
 		}
 	}
-	if (auto* Reset = Cast<UButton>(WidgetTree->FindWidget(TEXT("ResetGameplayKeys"))))
+	if (auto* Reset = Cast<UButton>(FindSettingsWidget(TEXT("ResetGameplayKeys"))))
 	{
 		Reset->OnClicked.AddUniqueDynamic(this, &ThisClass::ResetGameplayKeys);
 		FactoryUI::ApplyButtonSounds(Reset, FactoryUI::ESound::Confirm);
@@ -1120,7 +1781,7 @@ void UAudioSettingsWidget::OnKeySelectionModeChanged()
 		if (Entry.Key->GetIsSelectingKey())
 		{
 			CapturingKey = Entry.Key;
-			if (auto* Status = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("KeySettingsStatus"))))
+			if (auto* Status = Cast<UTextBlock>(FindSettingsWidget(TEXT("KeySettingsStatus"))))
 				Status->SetText(FText::GetEmpty());
 			break;
 		}
@@ -1136,7 +1797,7 @@ void UAudioSettingsWidget::OnGameplayKeySelected(FInputChord Chord)
 	if (!Index || !Settings) return;
 	FText Error;
 	Settings->TrySetKey(*Index, Chord.Key, Error);
-	if (auto* Status = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("KeySettingsStatus"))))
+	if (auto* Status = Cast<UTextBlock>(FindSettingsWidget(TEXT("KeySettingsStatus"))))
 		Status->SetText(Error);
 	RefreshKeySelectors();
 }
@@ -1158,7 +1819,7 @@ void UAudioSettingsWidget::ResetGameplayKeys()
 {
 	if (auto* Settings = ULocalPlayer::GetSubsystem<UGameKeySettingsSubsystem>(GetOwningLocalPlayer()))
 		Settings->ResetKeys();
-	if (auto* Status = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("KeySettingsStatus"))))
+	if (auto* Status = Cast<UTextBlock>(FindSettingsWidget(TEXT("KeySettingsStatus"))))
 		Status->SetText(FText::GetEmpty());
 	RefreshKeySelectors();
 }
@@ -1171,16 +1832,16 @@ void UAudioSettingsWidget::ResetAppearanceSettings()
 	{
 		TGuardValue<bool> Guard(bSynchronizingAppearanceControls, true);
 		for (const TCHAR* Name : {TEXT("OutlineColorSetting"), TEXT("PlayerColorSetting")})
-			if (auto* Combo = Cast<UComboBoxString>(WidgetTree->FindWidget(Name))) Combo->SetSelectedIndex(0);
-		if (auto* Slider = Cast<USlider>(WidgetTree->FindWidget(TEXT("OutlineWidthSetting")))) Slider->SetValue(Visual->OutlineScale);
-		if (auto* Slider = Cast<USlider>(WidgetTree->FindWidget(TEXT("OutlineBrightnessSetting")))) Slider->SetValue(Visual->OutlineBrightness);
+			if (auto* Combo = Cast<UComboBoxString>(FindSettingsWidget(Name))) Combo->SetSelectedIndex(0);
+		if (auto* Slider = Cast<USlider>(FindSettingsWidget(TEXT("OutlineWidthSetting")))) Slider->SetValue(Visual->OutlineScale);
+		if (auto* Slider = Cast<USlider>(FindSettingsWidget(TEXT("OutlineBrightnessSetting")))) Slider->SetValue(Visual->OutlineBrightness);
 	}
 	UpdateVisuals();
 }
 
 void UAudioSettingsWidget::RefreshAppearancePreview()
 {
-	auto* Box = Cast<USizeBox>(WidgetTree->FindWidget(TEXT("AppearancePreviewBox")));
+	auto* Box = Cast<USizeBox>(FindSettingsWidget(TEXT("AppearancePreviewBox")));
 	auto* Visual = UGameInstance::GetSubsystem<UGameVisualSettingsSubsystem>(GetGameInstance());
 	if (!Box || !Visual || !FApp::CanEverRender()) return;
 
@@ -1266,7 +1927,7 @@ void UAudioSettingsWidget::RefreshAppearancePreview()
 
 void UAudioSettingsWidget::BuildVisualControls()
 {
-	auto* Column = Cast<UVerticalBox>(WidgetTree->FindWidget(TEXT("VisualSettingsColumn")));
+	auto* Column = Cast<UVerticalBox>(FindSettingsWidget(TEXT("VisualSettingsColumn")));
 	auto* Visual = UGameInstance::GetSubsystem<UGameVisualSettingsSubsystem>(GetGameInstance());
 	auto* Screen = GEngine ? GEngine->GetGameUserSettings() : nullptr;
 	if (!Column || !Visual || !Screen) return;
@@ -1274,7 +1935,7 @@ void UAudioSettingsWidget::BuildVisualControls()
 
 	auto AddSlider = [&](FName Name, float Value, float Maximum)
 	{
-		auto* Slider = Cast<USlider>(WidgetTree->FindWidget(Name));
+		auto* Slider = Cast<USlider>(FindSettingsWidget(Name));
 		if (!Slider) return Slider;
 		StyleSettingsSlider(Slider);
 		Slider->SetMaxValue(Maximum);
@@ -1285,7 +1946,7 @@ void UAudioSettingsWidget::BuildVisualControls()
 	};
 	auto AddCombo = [&](FName Name, const TArray<FString>& Options, int32 Selected)
 	{
-		auto* Combo = Cast<UComboBoxString>(WidgetTree->FindWidget(Name));
+		auto* Combo = Cast<UComboBoxString>(FindSettingsWidget(Name));
 		if (!Combo) return Combo;
 		Combo->OnGenerateWidgetEvent.BindDynamic(this, &ThisClass::MakeDropdownOption);
 		Combo->ClearOptions();
@@ -1295,7 +1956,7 @@ void UAudioSettingsWidget::BuildVisualControls()
 	};
 	auto AddToggle = [&](FName Name, bool bValue)
 	{
-		auto* Check = Cast<UCheckBox>(WidgetTree->FindWidget(Name));
+		auto* Check = Cast<UCheckBox>(FindSettingsWidget(Name));
 		if (Check)
 		{
 			StyleSettingsCheckBox(Check);
@@ -1306,12 +1967,12 @@ void UAudioSettingsWidget::BuildVisualControls()
 	// 디자이너에서 위젯 이름을 바꾸거나 지워도 패키징 빌드에서 멈추지 않도록 모두 null을 확인한다.
 	if (auto* BrightnessSlider = AddSlider(TEXT("BrightnessSetting"), Visual->Brightness, 1.f))
 	{
-		if (!WidgetTree->FindWidget(TEXT("SettingsHelpText")) && BrightnessSlider->GetToolTipText().IsEmpty())
+		if (!FindSettingsWidget(TEXT("SettingsHelpText")) && BrightnessSlider->GetToolTipText().IsEmpty())
 			BrightnessSlider->SetToolTipText(BrightnessHelpText);
 		BrightnessSlider->OnValueChanged.AddUniqueDynamic(this, &ThisClass::SetBrightness);
 	}
 	if (auto* Mode = AddCombo(TEXT("WindowModeSetting"),
-		{TEXT("전체 화면"), TEXT("테두리 없는 창"), TEXT("창 모드")}, static_cast<int32>(Screen->GetFullscreenMode())))
+		ToOptionStrings(GetWindowModeOptions()), static_cast<int32>(Screen->GetFullscreenMode())))
 		Mode->OnSelectionChanged.AddUniqueDynamic(this, &ThisClass::SetWindowMode);
 	UKismetSystemLibrary::GetSupportedFullscreenResolutions(Resolutions);
 	const FIntPoint Current = Screen->GetScreenResolution();
@@ -1327,18 +1988,45 @@ void UAudioSettingsWidget::BuildVisualControls()
 	}
 	if (auto* VSync = AddToggle(TEXT("VSyncSetting"), Screen->IsVSyncEnabled()))
 		VSync->OnCheckStateChanged.AddUniqueDynamic(this, &ThisClass::SetVSync);
-	const float Limit = Screen->GetFrameRateLimit();
-	if (auto* FrameLimit = AddCombo(TEXT("FrameLimitSetting"),
-		{TEXT("제한 없음"), TEXT("30"), TEXT("60"), TEXT("120")}, Limit == 30 ? 1 : Limit == 60 ? 2 : Limit == 120 ? 3 : 0))
+	const int32 Limit = FMath::RoundToInt(Screen->GetFrameRateLimit());
+	int32 LimitIndex = 0;
+	for (int32 Index = 0; Index < UE_ARRAY_COUNT(FrameLimitValues); ++Index)
+		if (FrameLimitValues[Index] == Limit) LimitIndex = Index;
+	if (auto* FrameLimit = AddCombo(TEXT("FrameLimitSetting"), ToOptionStrings(GetFrameLimitOptions()), LimitIndex))
 		FrameLimit->OnSelectionChanged.AddUniqueDynamic(this, &ThisClass::SetFrameLimit);
+	// 엔진 단계 4(시네마틱)나 그룹별로 섞인 값(-1)은 메뉴에 없으므로 "사용자 지정"으로 보여 준다.
+	const int32 QualityLevel = GetQualityPresetLevel(*Screen);
+	TArray<FString> QualityOptions = ToOptionStrings(GetQualityPresetOptions());
+	const bool bPresetLevel = QualityLevel >= 0 && QualityLevel < QualityPresetCount;
+	if (!bPresetLevel) QualityOptions.Add(GetCustomQualityOption().ToString());
+	if (auto* Quality = AddCombo(TEXT("QualityPresetSetting"), QualityOptions, bPresetLevel ? QualityLevel : QualityPresetCount))
+		Quality->OnSelectionChanged.AddUniqueDynamic(this, &ThisClass::SetQualityPreset);
+	if (auto* RenderScale = Cast<USlider>(FindSettingsWidget(TEXT("RenderScaleSetting"))))
+	{
+		StyleSettingsSlider(RenderScale);
+		RenderScale->SetMinValue(FMath::Clamp(MinRenderScalePercent, 10.f, 100.f) / 100.f);
+		RenderScale->SetMaxValue(1.f);
+		RenderScale->SetStepSize(RenderScaleStepPercent / 100.f);
+		RenderScale->SetValue(GetRenderScalePercent(*Screen) / 100.f);
+		RenderScale->MouseUsesStep = true;
+		RenderScale->RequiresControllerLock = false;
+		RenderScale->OnValueChanged.AddUniqueDynamic(this, &ThisClass::SetRenderResolutionScale);
+	}
+	if (auto* ColorVision = AddCombo(TEXT("ColorVisionSetting"), ToOptionStrings(GetColorVisionOptions()), Visual->ColorVision))
+		ColorVision->OnSelectionChanged.AddUniqueDynamic(this, &ThisClass::SetColorVision);
+	if (auto* Strength = AddSlider(TEXT("ColorVisionStrengthSetting"), Visual->ColorVisionStrength, 1.f))
+	{
+		Strength->SetIsEnabled(Visual->ColorVision != 0);
+		Strength->OnValueChanged.AddUniqueDynamic(this, &ThisClass::SetColorVisionStrength);
+	}
 	if (auto* Shake = AddSlider(TEXT("ShakeSetting"), Visual->ShakeScale, 1.f))
 		Shake->OnValueChanged.AddUniqueDynamic(this, &ThisClass::SetShake);
 	if (auto* Bloom = AddToggle(TEXT("BloomSetting"), Visual->bBloom))
 		Bloom->OnCheckStateChanged.AddUniqueDynamic(this, &ThisClass::SetBloom);
 	if (auto* ReduceFlashes = AddToggle(TEXT("ReduceFlashesSetting"), Visual->bReduceFlashes))
 		ReduceFlashes->OnCheckStateChanged.AddUniqueDynamic(this, &ThisClass::SetReduceFlashes);
-	const TArray<FString> AppearanceColors = {TEXT("기본"), TEXT("흰색"), TEXT("청록"), TEXT("주황"),
-		TEXT("분홍"), TEXT("연두"), TEXT("사용자 지정")};
+	const TArray<FString> AppearanceColors = ToOptionStrings(GetAppearanceColorOptions());
+	static_assert(UGameVisualSettingsSubsystem::CustomColorIndex == 6, "외형 색상 항목(GetAppearanceColorOptions)은 사용자 지정까지 7개다.");
 	if (auto* OutlineColor = AddCombo(TEXT("OutlineColorSetting"), AppearanceColors, Visual->OutlineColor))
 		OutlineColor->OnSelectionChanged.AddUniqueDynamic(this, &ThisClass::SetOutlineColor);
 	if (auto* PlayerColor = AddCombo(TEXT("PlayerColorSetting"), AppearanceColors, Visual->PlayerColor))
@@ -1347,9 +2035,94 @@ void UAudioSettingsWidget::BuildVisualControls()
 		OutlineWidth->OnValueChanged.AddUniqueDynamic(this, &ThisClass::SetOutlineWidth);
 	if (auto* OutlineBrightness = AddSlider(TEXT("OutlineBrightnessSetting"), Visual->OutlineBrightness, 2.f))
 		OutlineBrightness->OnValueChanged.AddUniqueDynamic(this, &ThisClass::SetOutlineBrightness);
-	if (auto* Apply = Cast<UButton>(WidgetTree->FindWidget(TEXT("ApplyScreenButton"))))
+	if (auto* Apply = Cast<UButton>(FindSettingsWidget(TEXT("ApplyScreenButton"))))
 		Apply->OnClicked.AddUniqueDynamic(this, &ThisClass::ApplyScreenMode);
 	RefreshVisualReadouts();
+	RefreshApplyButton();
+}
+
+void UAudioSettingsWidget::FitSettingsLabels()
+{
+	// 영어·독일어·러시아어는 한국어보다 30~50% 길어서 라벨 칸(179px 등)을 넘는다(Docs/LanguageSettingsPlan.md 6절).
+	ForEachSettingsTree([](UWidgetTree* Tree)
+	{
+		TArray<UTextBlock*> Labels;
+		Tree->ForEachWidget([&Labels](UWidget* Widget)
+		{
+			auto* Label = Cast<UTextBlock>(Widget);
+			const auto* Box = Label ? Cast<USizeBox>(Label->GetParent()) : nullptr;
+			if (Box && Box->GetWidthOverride() > 0.f && Label->GetName().EndsWith(TEXT("Label"))) Labels.Add(Label);
+		});
+		for (UTextBlock* Label : Labels)
+		{
+			auto* Box = CastChecked<USizeBox>(Label->GetParent());
+			auto* Fit = Tree->ConstructWidget<UScaleBox>(UScaleBox::StaticClass(), *(Label->GetName() + TEXT("Fit")));
+			Fit->SetStretch(EStretch::ScaleToFit);
+			Fit->SetStretchDirection(EStretchDirection::DownOnly);
+			Fit->SetVisibility(Label->GetVisibility() == ESlateVisibility::Visible ? ESlateVisibility::SelfHitTestInvisible : Label->GetVisibility());
+			Box->RemoveChild(Label);
+			Fit->SetContent(Label);
+			// ScaleBox는 내용을 가운데에 두므로 라벨 시작선이 어긋나지 않게 왼쪽에 붙인다.
+			if (auto* LabelSlot = Cast<UScaleBoxSlot>(Label->Slot))
+			{
+				LabelSlot->SetHorizontalAlignment(HAlign_Left);
+				LabelSlot->SetVerticalAlignment(VAlign_Center);
+			}
+			Box->SetContent(Fit);
+			// 글자가 칸보다 짧으면 원래처럼 왼쪽에 붙고, 길면 칸 폭에 맞춰 줄어든다.
+			if (auto* FitSlot = Cast<USizeBoxSlot>(Fit->Slot))
+			{
+				FitSlot->SetHorizontalAlignment(HAlign_Left);
+				FitSlot->SetVerticalAlignment(VAlign_Center);
+			}
+		}
+
+		// 버튼 글자(기본값 복원, 화면 모드 적용 등)도 번역으로 길어지면 버튼 밖으로 나가므로 같은 방식으로 줄인다.
+		TArray<UTextBlock*> Captions;
+		Tree->ForEachWidget([&Captions](UWidget* Widget)
+		{
+			if (auto* Caption = Cast<UTextBlock>(Widget); Caption && Cast<UButton>(Caption->GetParent())) Captions.Add(Caption);
+		});
+		for (UTextBlock* Caption : Captions)
+		{
+			auto* Button = CastChecked<UButton>(Caption->GetParent());
+			const auto* OldSlot = Cast<UButtonSlot>(Caption->Slot);
+			const FMargin Padding = OldSlot ? OldSlot->GetPadding() : FMargin();
+			const EHorizontalAlignment HAlign = OldSlot ? OldSlot->GetHorizontalAlignment() : HAlign_Center;
+			const EVerticalAlignment VAlign = OldSlot ? OldSlot->GetVerticalAlignment() : VAlign_Center;
+			auto* Fit = Tree->ConstructWidget<UScaleBox>(UScaleBox::StaticClass(), *(Caption->GetName() + TEXT("Fit")));
+			Fit->SetStretch(EStretch::ScaleToFit);
+			Fit->SetStretchDirection(EStretchDirection::DownOnly);
+			Fit->SetVisibility(ESlateVisibility::HitTestInvisible);
+			Button->RemoveChild(Caption);
+			Fit->SetContent(Caption);
+			auto* FitSlot = CastChecked<UButtonSlot>(Button->AddChild(Fit));
+			FitSlot->SetPadding(Padding);
+			// 줄어들 수 있게 ScaleBox는 버튼 폭을 다 쓰고, 글자 정렬은 ScaleBox 안에서 원래대로 맞춘다.
+			FitSlot->SetHorizontalAlignment(HAlign_Fill);
+			FitSlot->SetVerticalAlignment(VAlign);
+			if (auto* CaptionSlot = Cast<UScaleBoxSlot>(Caption->Slot))
+			{
+				CaptionSlot->SetHorizontalAlignment(HAlign == HAlign_Fill ? HAlign_Center : HAlign);
+				CaptionSlot->SetVerticalAlignment(VAlign_Center);
+			}
+		}
+	});
+}
+
+void UAudioSettingsWidget::HandleCultureChanged()
+{
+	RefreshLanguageButtons();
+	// 화면 모드 확인 중에는 드롭다운이 잠겨 있고 선택 값이 아직 확정되지 않았으므로 다시 채우지 않는다.
+	if (ScreenConfirmation.IsValid()) return;
+	// 아직 적용하지 않은 화면 모드와 해상도 선택은 그대로 둔다.
+	TMap<FName, int32> PendingSelections;
+	for (const FName Name : {FName(TEXT("WindowModeSetting")), FName(TEXT("ResolutionSetting"))})
+		if (const auto* Combo = Cast<UComboBoxString>(FindSettingsWidget(Name))) PendingSelections.Add(Name, Combo->GetSelectedIndex());
+	BuildVisualControls();
+	for (const auto& Pending : PendingSelections)
+		if (auto* Combo = Cast<UComboBoxString>(FindSettingsWidget(Pending.Key)); Combo && Pending.Value >= 0)
+			Combo->SetSelectedIndex(Pending.Value);
 	RefreshApplyButton();
 }
 
@@ -1359,8 +2132,8 @@ UWidget* UAudioSettingsWidget::MakeDropdownOption(FString Option)
 	// 코드는 F_TLM_UI의 글자가 줄 높이보다 아래로 그려지는 것만 보정한다(라벨의 -5 오프셋과 같은 이유).
 	const UComboBoxString* Source = nullptr;
 	for (const TCHAR* Name : {TEXT("WindowModeSetting"), TEXT("ResolutionSetting"), TEXT("FrameLimitSetting"),
-		TEXT("OutlineColorSetting"), TEXT("PlayerColorSetting")})
-		if (const auto* Combo = Cast<UComboBoxString>(WidgetTree->FindWidget(Name)); Combo && Combo->FindOptionIndex(Option) >= 0)
+		TEXT("QualityPresetSetting"), TEXT("ColorVisionSetting"), TEXT("OutlineColorSetting"), TEXT("PlayerColorSetting")})
+		if (const auto* Combo = Cast<UComboBoxString>(FindSettingsWidget(Name)); Combo && Combo->FindOptionIndex(Option) >= 0)
 		{
 			Source = Combo;
 			break;
@@ -1392,7 +2165,11 @@ void UAudioSettingsWidget::RefreshVisualReadouts()
 	Decimal.MinimumFractionalDigits = 2;
 	Decimal.MaximumFractionalDigits = 2;
 	struct FReadout { const TCHAR* Control; const TCHAR* Name; FText Text; };
+	const auto* Screen = GEngine ? GEngine->GetGameUserSettings() : nullptr;
+	const float RenderScale = Screen ? GetRenderScalePercent(*Screen) / 100.f : 1.f;
 	const FReadout Entries[] = {
+		{TEXT("RenderScaleSetting"), TEXT("RenderScaleValue"), FText::AsPercent(RenderScale)},
+		{TEXT("ColorVisionStrengthSetting"), TEXT("ColorVisionStrengthValue"), FText::AsPercent(Visual->ColorVisionStrength)},
 		{TEXT("BrightnessSetting"), TEXT("BrightnessValue"), FText::AsPercent(Visual->Brightness)},
 		{TEXT("ShakeSetting"), TEXT("ShakeValue"), FText::AsPercent(Visual->ShakeScale)},
 		{TEXT("OutlineWidthSetting"), TEXT("OutlineWidthValue"), FText::Format(
@@ -1403,13 +2180,15 @@ void UAudioSettingsWidget::RefreshVisualReadouts()
 	};
 	for (const FReadout& Entry : Entries)
 	{
-		auto* Label = Cast<UTextBlock>(WidgetTree->FindWidget(Entry.Name));
+		auto* Label = Cast<UTextBlock>(FindSettingsWidget(Entry.Name));
 		if (!Label)
 		{
-			auto* Control = WidgetTree->FindWidget(Entry.Control);
+			auto* Control = FindSettingsWidget(Entry.Control);
 			auto* Row = Control ? Cast<UHorizontalBox>(Control->GetParent()) : nullptr;
-			if (!Row) continue;
-			Label = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), Entry.Name);
+			// 디자이너에 수치 TextBlock이 없으면 만든다. 그 줄이 속한 페이지 WBP의 위젯 트리에 만든다.
+			UWidgetTree* RowTree = Row ? Row->GetTypedOuter<UWidgetTree>() : nullptr;
+			if (!RowTree) continue;
+			Label = RowTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), Entry.Name);
 			auto Font = Label->GetFont();
 			if (auto* Body = GetDefault<UFactoryUIAssetSettings>()->BodyFont.LoadSynchronous()) Font.FontObject = Body;
 			Font.Size = ReadoutFontSize;
@@ -1421,7 +2200,7 @@ void UAudioSettingsWidget::RefreshVisualReadouts()
 			UWidget* Readout = Label;
 			if (FName(Entry.Name) == TEXT("OutlineWidthValue"))
 			{
-				auto* FixedWidth = WidgetTree->ConstructWidget<USizeBox>();
+				auto* FixedWidth = RowTree->ConstructWidget<USizeBox>();
 				FixedWidth->SetWidthOverride(FMath::Max(64.f, ReadoutMinWidth));
 				FixedWidth->SetContent(Label);
 				Readout = FixedWidth;
@@ -1483,7 +2262,7 @@ void UAudioSettingsWidget::SetAppearanceColor(const FString& Value, ESelectInfo:
 {
 	if (bSynchronizingAppearanceControls || Selection == ESelectInfo::Direct) return;
 	const FName ComboName = bOutline ? TEXT("OutlineColorSetting") : TEXT("PlayerColorSetting");
-	auto* Combo = Cast<UComboBoxString>(WidgetTree->FindWidget(ComboName));
+	auto* Combo = Cast<UComboBoxString>(FindSettingsWidget(ComboName));
 	auto* Visual = UGameInstance::GetSubsystem<UGameVisualSettingsSubsystem>(GetGameInstance());
 	if (!Combo || !Visual) return;
 	const int32 Index = Combo->FindOptionIndex(Value);
@@ -1517,7 +2296,7 @@ void UAudioSettingsWidget::OpenAppearancePalette(bool bOutline)
 			(bOutline ? Settings->CustomOutlineColor : Settings->CustomPlayerColor) = Color.GetClamped();
 			(bOutline ? Settings->OutlineColor : Settings->PlayerColor) = UGameVisualSettingsSubsystem::CustomColorIndex;
 			const FName ComboName = bOutline ? TEXT("OutlineColorSetting") : TEXT("PlayerColorSetting");
-			if (auto* Combo = Cast<UComboBoxString>(WidgetTree->FindWidget(ComboName)))
+			if (auto* Combo = Cast<UComboBoxString>(FindSettingsWidget(ComboName)))
 				Combo->SetSelectedIndex(UGameVisualSettingsSubsystem::CustomColorIndex);
 			UpdateVisuals();
 		}));
@@ -1546,8 +2325,8 @@ void UAudioSettingsWidget::SetReduceFlashes(bool bValue)
 
 void UAudioSettingsWidget::SetWindowMode(FString Value, ESelectInfo::Type Selection)
 {
-	auto* Mode = Cast<UComboBoxString>(WidgetTree->FindWidget(TEXT("WindowModeSetting")));
-	auto* Resolution = WidgetTree->FindWidget(TEXT("ResolutionSetting"));
+	auto* Mode = Cast<UComboBoxString>(FindSettingsWidget(TEXT("WindowModeSetting")));
+	auto* Resolution = FindSettingsWidget(TEXT("ResolutionSetting"));
 	if (Mode && Resolution) Resolution->SetIsEnabled(Mode->FindOptionIndex(Value) != static_cast<int32>(EWindowMode::WindowedFullscreen));
 	RefreshApplyButton();
 }
@@ -1556,9 +2335,9 @@ void UAudioSettingsWidget::OnResolutionChanged(FString Value, ESelectInfo::Type 
 
 void UAudioSettingsWidget::RefreshApplyButton()
 {
-	auto* Apply = Cast<UButton>(WidgetTree->FindWidget(TEXT("ApplyScreenButton")));
-	auto* Mode = Cast<UComboBoxString>(WidgetTree->FindWidget(TEXT("WindowModeSetting")));
-	auto* Resolution = Cast<UComboBoxString>(WidgetTree->FindWidget(TEXT("ResolutionSetting")));
+	auto* Apply = Cast<UButton>(FindSettingsWidget(TEXT("ApplyScreenButton")));
+	auto* Mode = Cast<UComboBoxString>(FindSettingsWidget(TEXT("WindowModeSetting")));
+	auto* Resolution = Cast<UComboBoxString>(FindSettingsWidget(TEXT("ResolutionSetting")));
 	const auto* Screen = GEngine ? GEngine->GetGameUserSettings() : nullptr;
 	if (!Apply || !Mode || !Resolution || !Screen) return;
 	const int32 Index = Resolution->GetSelectedIndex();
@@ -1571,9 +2350,13 @@ void UAudioSettingsWidget::RefreshApplyButton()
 
 void UAudioSettingsWidget::SetFrameLimit(FString Value, ESelectInfo::Type Selection)
 {
+	// 표시 문구는 언어마다 달라서 항목 순서로 값을 정한다. 다시 채울 때(Direct)는 값이 바뀌지 않았으므로 무시한다.
+	auto* Combo = Cast<UComboBoxString>(FindSettingsWidget(TEXT("FrameLimitSetting")));
+	const int32 Index = Combo ? Combo->FindOptionIndex(Value) : INDEX_NONE;
+	if (Selection == ESelectInfo::Direct || Index < 0 || Index >= UE_ARRAY_COUNT(FrameLimitValues)) return;
 	if (auto* Screen = GEngine ? GEngine->GetGameUserSettings() : nullptr)
 	{
-		Screen->SetFrameRateLimit(FCString::Atof(*Value));
+		Screen->SetFrameRateLimit(static_cast<float>(FrameLimitValues[Index]));
 		Screen->ApplyNonResolutionSettings();
 		if (!ScreenConfirmation.IsValid()) Screen->SaveSettings();
 	}
@@ -1589,12 +2372,77 @@ void UAudioSettingsWidget::SetVSync(bool bValue)
 	}
 }
 
+int32 UAudioSettingsWidget::GetQualityPresetLevel(const UGameUserSettings& Screen)
+{
+	// 엔진의 GetOverallScalabilityLevel은 렌더링 해상도까지 단계 기본값과 같아야 단계를 돌려준다.
+	// 이 메뉴는 품질을 바꿔도 사용자가 고른 해상도를 유지하므로, 해상도를 빼고 판정한다.
+	const Scalability::FQualityLevels& Q = Screen.ScalabilityQuality;
+	const int32 Level = Q.ViewDistanceQuality;
+	const int32 Groups[] = {Q.AntiAliasingQuality, Q.ShadowQuality, Q.GlobalIlluminationQuality, Q.ReflectionQuality,
+		Q.PostProcessQuality, Q.TextureQuality, Q.EffectsQuality, Q.FoliageQuality, Q.ShadingQuality, Q.LandscapeQuality};
+	for (const int32 Group : Groups)
+		if (Group != Level) return -1;
+	return Level;
+}
+
+void UAudioSettingsWidget::SetQualityPreset(FString Value, ESelectInfo::Type Selection)
+{
+	if (Selection == ESelectInfo::Direct) return;
+	auto* Combo = Cast<UComboBoxString>(FindSettingsWidget(TEXT("QualityPresetSetting")));
+	auto* Screen = GEngine ? GEngine->GetGameUserSettings() : nullptr;
+	if (!Combo || !Screen) return;
+	const int32 Level = Combo->FindOptionIndex(Value);
+	// "사용자 지정"은 현재 상태를 보여 주는 항목일 뿐 고를 수 있는 값이 아니다.
+	if (Level < 0 || Level >= QualityPresetCount) return;
+	// 엔진의 전체 품질 단계에는 렌더링 해상도도 들어 있어서, 품질을 바꿔도 사용자가 고른 비율이 유지되도록 되돌려 놓는다.
+	const float RenderScalePercent = GetRenderScalePercent(*Screen);
+	Screen->SetOverallScalabilityLevel(Level);
+	Screen->SetResolutionScaleValueEx(RenderScalePercent);
+	Screen->ApplyNonResolutionSettings();
+	if (!ScreenConfirmation.IsValid()) Screen->SaveSettings();
+	if (Combo->GetOptionCount() > QualityPresetCount) Combo->RemoveOption(Combo->GetOptionAtIndex(QualityPresetCount));
+	// 빛 번짐 같은 개별 설정이 품질 단계 값에 덮이지 않도록 다시 적용한다.
+	UpdateVisuals();
+}
+
+void UAudioSettingsWidget::SetRenderResolutionScale(float Value)
+{
+	auto* Screen = GEngine ? GEngine->GetGameUserSettings() : nullptr;
+	if (!Screen) return;
+	const float Step = FMath::Max(RenderScaleStepPercent, 1.f);
+	const float Percent = FMath::Clamp(FMath::GridSnap(Value * 100.f, Step), FMath::Clamp(MinRenderScalePercent, 10.f, 100.f), 100.f);
+	if (FMath::IsNearlyEqual(Percent, GetRenderScalePercent(*Screen))) return;
+	Screen->SetResolutionScaleValueEx(Percent);
+	Screen->ApplyNonResolutionSettings();
+	RefreshVisualReadouts();
+}
+
+void UAudioSettingsWidget::SetColorVision(FString Value, ESelectInfo::Type Selection)
+{
+	if (Selection == ESelectInfo::Direct) return;
+	auto* Combo = Cast<UComboBoxString>(FindSettingsWidget(TEXT("ColorVisionSetting")));
+	auto* Visual = UGameInstance::GetSubsystem<UGameVisualSettingsSubsystem>(GetGameInstance());
+	if (!Combo || !Visual) return;
+	const int32 Index = Combo->FindOptionIndex(Value);
+	if (Index < 0 || Index >= UGameVisualSettingsSubsystem::ColorVisionTypeCount || Index == Visual->ColorVision) return;
+	Visual->ColorVision = Index;
+	if (auto* Strength = FindSettingsWidget(TEXT("ColorVisionStrengthSetting"))) Strength->SetIsEnabled(Index != 0);
+	UpdateVisuals();
+}
+
+void UAudioSettingsWidget::SetColorVisionStrength(float Value)
+{
+	if (auto* Visual = UGameInstance::GetSubsystem<UGameVisualSettingsSubsystem>(GetGameInstance()))
+		Visual->ColorVisionStrength = FMath::Clamp(Value, 0.f, 1.f);
+	UpdateVisuals();
+}
+
 void UAudioSettingsWidget::ApplyScreenMode()
 {
 	auto* Screen = GEngine ? GEngine->GetGameUserSettings() : nullptr;
-	auto* Mode = Cast<UComboBoxString>(WidgetTree->FindWidget(TEXT("WindowModeSetting")));
-	auto* Resolution = Cast<UComboBoxString>(WidgetTree->FindWidget(TEXT("ResolutionSetting")));
-	auto* Label = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("ApplyScreenText")));
+	auto* Mode = Cast<UComboBoxString>(FindSettingsWidget(TEXT("WindowModeSetting")));
+	auto* Resolution = Cast<UComboBoxString>(FindSettingsWidget(TEXT("ResolutionSetting")));
+	auto* Label = Cast<UTextBlock>(FindSettingsWidget(TEXT("ApplyScreenText")));
 	if (!Screen || !Mode || !Resolution || !Label) return;
 	if (ScreenConfirmation.IsValid())
 	{
@@ -1637,18 +2485,18 @@ bool UAudioSettingsWidget::RevertScreenMode(float DeltaTime)
 		Screen->ApplyResolutionSettings(false);
 		Screen->ConfirmVideoMode();
 		Screen->SaveSettings();
-		if (auto* Mode = Cast<UComboBoxString>(WidgetTree->FindWidget(TEXT("WindowModeSetting"))))
+		if (auto* Mode = Cast<UComboBoxString>(FindSettingsWidget(TEXT("WindowModeSetting"))))
 		{
 			Mode->SetSelectedIndex(static_cast<int32>(Screen->GetFullscreenMode()));
 			Mode->SetIsEnabled(true);
 		}
-		if (auto* Resolution = Cast<UComboBoxString>(WidgetTree->FindWidget(TEXT("ResolutionSetting"))))
+		if (auto* Resolution = Cast<UComboBoxString>(FindSettingsWidget(TEXT("ResolutionSetting"))))
 		{
 			Resolution->SetSelectedIndex(Resolutions.IndexOfByKey(Screen->GetScreenResolution()));
 			Resolution->SetIsEnabled(Screen->GetFullscreenMode() != EWindowMode::WindowedFullscreen);
 		}
 	}
-	if (auto* Label = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("ApplyScreenText"))))
+	if (auto* Label = Cast<UTextBlock>(FindSettingsWidget(TEXT("ApplyScreenText"))))
 		Label->SetText(ApplyScreenLabel);
 	RefreshApplyButton();
 	return false;

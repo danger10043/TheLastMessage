@@ -17,7 +17,7 @@ public class TheLastMessage : ModuleRules
         PrivateDependencyModuleNames.AddRange(new string[] { "MoviePlayer", "SlateCore", "AppFramework", "CableComponent", "LevelSequence", "MovieScene" });
         if (Target.bBuildEditor)
         {
-            PrivateDependencyModuleNames.AddRange(new string[] { "UnrealEd", "AssetTools", "UMGEditor", "AssetRegistry", "RenderCore", "RHI", "SlateRHIRenderer", "NiagaraEditor", "AnimGraph", "AnimGraphRuntime", "BlueprintGraph" });
+            PrivateDependencyModuleNames.AddRange(new string[] { "UnrealEd", "AssetTools", "UMGEditor", "Localization", "AssetRegistry", "RenderCore", "RHI", "SlateRHIRenderer", "NiagaraEditor", "AnimGraph", "AnimGraphRuntime", "BlueprintGraph" });
         }
 
         // Uncomment if you are using Slate UI

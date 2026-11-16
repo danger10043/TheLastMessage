@@ -10,6 +10,20 @@ enum class EGameVolume : uint8;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FAudioSettingsClosed);
 
+class UAudioSettingsWidget;
+
+/** 언어 버튼 하나의 클릭을 받아 설정 화면에 어느 언어인지 알려 준다. UButton::OnClicked 에는 인자가 없어서 버튼마다 하나씩 둔다. */
+UCLASS(Transient)
+class THELASTMESSAGE_API ULanguageButtonHandler : public UObject
+{
+	GENERATED_BODY()
+
+public:
+	FString Culture;
+	TWeakObjectPtr<UAudioSettingsWidget> Owner;
+	UFUNCTION() void HandleClicked();
+};
+
 UCLASS(Blueprintable)
 class THELASTMESSAGE_API UAudioSettingsWidget : public UUserWidget
 {
@@ -20,6 +34,10 @@ public:
 	static void BuildVisualLayout(UWidgetTree* Tree, class UVerticalBox* Column);
 #if WITH_EDITOR
 	static bool AuthorSettingsLayout(UWidgetTree* WidgetTree);
+	/** WBP_Settings 에 다섯 번째 탭 "언어"를 넣고 탭 다섯 개가 한 줄에 들어가도록 폭을 나눈다. 탭 글자는 넘치면 줄어든다(ScaleBox). */
+	static bool AuthorLanguageTab(UWidgetTree* SettingsTree);
+	/** 언어 페이지(WBP_LanguageSettings)의 위젯을 만든다. 2열 × 5행 언어 버튼(국기 + 자국어 이름). */
+	static bool AuthorLanguagePage(UWidgetTree* PageTree);
 #endif
 	static UAudioSettingsWidget* CreateFor(APlayerController* Player);
 	void FocusFirstControl();
@@ -133,6 +151,21 @@ private:
 	UFUNCTION() void ShowAudioSettings();
 	UFUNCTION() void ShowAppearanceSettings();
 	UFUNCTION() void ShowKeySettings();
+	UFUNCTION() void ShowLanguageSettings();
+	friend class ULanguageButtonHandler;
+	void BindLanguageButtons();
+	void RefreshLanguageButtons();
+	void SelectLanguage(const FString& Culture);
+	struct FLanguageButton
+	{
+		TWeakObjectPtr<class UButton> Button;
+		FName Name;
+		FString Culture;
+		/** 디자이너의 평소 모습(Disabled 브러시). 현재 언어는 여기에 청록 테두리를 얹는다. */
+		FSlateBrush BaseBrush;
+	};
+	TArray<FLanguageButton> LanguageButtons;
+	UPROPERTY(Transient) TArray<TObjectPtr<ULanguageButtonHandler>> LanguageHandlers;
 	UFUNCTION() void OnKeySelectionModeChanged();
 	UFUNCTION() void OnGameplayKeySelected(FInputChord Chord);
 	UFUNCTION() void ResetGameplayKeys();

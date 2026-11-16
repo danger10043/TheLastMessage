@@ -65,6 +65,7 @@
 #include "Interfaces/ISlateRHIRendererModule.h"
 #include "Modules/ModuleManager.h"
 #include "Misc/App.h"
+#include "Internationalization/Culture.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialExpressionVertexColor.h"
 #include "Materials/MaterialExpressionVectorParameter.h"
@@ -128,6 +129,31 @@ UTextBlock* Text(UWidgetTree* Tree, const TCHAR* Name, int32 Size)
 	Result->SetFont(FSlateFontInfo(LoadObject<UFont>(nullptr, TEXT("/Engine/EngineFonts/Roboto.Roboto")), Size, TEXT("Regular")));
 	Result->SetColorAndOpacity(FSlateColor(FLinearColor::Black));
 	return Result;
+}
+
+/** 위젯 트리에 있는 위젯과 애니메이션만 변수 GUID 표에 남기고, 새 위젯에는 GUID를 만든다. */
+void SyncWidgetGuids(UWidgetBlueprint* Blueprint)
+{
+	TSet<FName> Names;
+	Blueprint->WidgetTree->ForEachWidget([&](UWidget* Widget)
+	{
+		const FName Name = Widget->GetFName();
+		Names.Add(Name);
+		if (!Blueprint->WidgetVariableNameToGuidMap.Contains(Name))
+			Blueprint->WidgetVariableNameToGuidMap.Add(Name, FGuid::NewGuid());
+	});
+	for (const UWidgetAnimation* Animation : Blueprint->Animations)
+		if (Animation) Names.Add(Animation->GetFName());
+	for (auto It = Blueprint->WidgetVariableNameToGuidMap.CreateIterator(); It; ++It)
+		if (!Names.Contains(It.Key())) It.RemoveCurrent();
+}
+
+/** 저장하지 않고 컴파일만 한다. 여러 에셋을 바꿀 때 모두 컴파일된 뒤 한꺼번에 저장하려고 쓴다. */
+bool Compile(UWidgetBlueprint* BP)
+{
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(BP);
+	FKismetEditorUtilities::CompileBlueprint(BP);
+	return BP->Status != BS_Error && BP->GeneratedClass;
 }
 
 bool CompileSave(UWidgetBlueprint* BP)
@@ -1015,6 +1041,137 @@ UIntegratePlayerUICommandlet::UIntegratePlayerUICommandlet()
 int32 UIntegratePlayerUICommandlet::Main(const FString& Params)
 {
 #if WITH_EDITOR
+	if (FParse::Param(*Params, TEXT("PreviewLanguageSettings")))
+	{
+		// 설정 화면을 여러 언어로 그려 Saved/LanguagePreview/*.png 로 저장한다(에셋은 저장하지 않음).
+		// -AllowCommandletRendering 이 필요하고 -NullRHI 는 쓰면 안 된다.
+		if (!FApp::CanEverRender())
+		{
+			UE_LOG(LogTemp, Error, TEXT("Preview requires -AllowCommandletRendering without -NullRHI."));
+			return 1;
+		}
+		if (!FSlateApplication::IsInitialized())
+			FSlateApplication::InitializeAsStandaloneApplication(FModuleManager::LoadModuleChecked<ISlateRHIRendererModule>(TEXT("SlateRHIRenderer")).CreateSlateRHIRenderer());
+		UWorld::InitializationValues Values;
+		Values.AllowAudioPlayback(false).CreatePhysicsScene(false).CreateNavigation(false).CreateAISystem(false);
+		UWorld* World = UWorld::CreateWorld(EWorldType::Game, false, NAME_None, nullptr, true, ERHIFeatureLevel::Num, &Values);
+		GEngine->CreateNewWorldContext(EWorldType::Game).SetCurrentWorld(World);
+		UClass* SettingsClass = LoadClass<UAudioSettingsWidget>(nullptr, TEXT("/Game/Main/UI/Menu/WBP_Settings.WBP_Settings_C"));
+		UClass* StartClass = LoadClass<UStartMenuWidget>(nullptr, TEXT("/Game/Main/UI/Menu/WBP_StartMenu.WBP_StartMenu_C"));
+		auto* Settings = SettingsClass ? CreateWidget<UAudioSettingsWidget>(World, SettingsClass) : nullptr;
+		auto* Start = StartClass ? CreateWidget<UStartMenuWidget>(World, StartClass) : nullptr;
+		if (!Settings || !Start) return 1;
+		TSharedRef<SWidget> SettingsSlate = Settings->TakeWidget();
+		TSharedRef<SWidget> StartSlate = Start->TakeWidget();
+		FTextureCompilingManager::Get().FinishAllCompilation();
+		FlushRenderingCommands();
+		const auto Render = [](const TSharedRef<SWidget>& Slate, const FString& Name)
+		{
+			Slate->SlatePrepass(1.0f);
+			FWidgetRenderer Renderer(true);
+			UTextureRenderTarget2D* Target = Renderer.DrawWidget(Slate, FVector2D(1920, 1080));
+			for (int32 Frame = 0; Frame < 4 && Target; ++Frame)
+			{
+				FlushRenderingCommands();
+				Renderer.DrawWidget(Target, Slate, FVector2D(1920, 1080), 0.016f, false);
+			}
+			FlushRenderingCommands();
+			FBufferArchive PNG;
+			const FString Filename = FPaths::ProjectSavedDir() / TEXT("LanguagePreview") / (Name + TEXT(".png"));
+			IFileManager::Get().MakeDirectory(*FPaths::GetPath(Filename), true);
+			return Target && FImageUtils::ExportRenderTarget2DAsPNG(Target, PNG) && FFileHelper::SaveArrayToFile(PNG, *Filename);
+		};
+		const FString OriginalCulture = FInternationalization::Get().GetCurrentCulture()->GetName();
+		bool bOK = true;
+		auto* LanguageTab = Cast<UButton>(Settings->FindSettingsWidget(TEXT("LanguageSettingsTab")));
+		auto* GraphicsTab = Cast<UButton>(Settings->FindSettingsWidget(TEXT("GeneralSettingsTab")));
+		if (!LanguageTab || !GraphicsTab) return 1;
+		for (const TCHAR* Culture : {TEXT("ko"), TEXT("en"), TEXT("ja"), TEXT("zh-Hans"), TEXT("zh-Hant"), TEXT("ru"), TEXT("de")})
+		{
+			FInternationalization::Get().SetCurrentCulture(Culture);
+			LanguageTab->OnClicked.Broadcast();
+			bOK = Render(SettingsSlate, FString(TEXT("Language_")) + Culture) && bOK;
+		}
+		FInternationalization::Get().SetCurrentCulture(TEXT("ko"));
+		GraphicsTab->OnClicked.Broadcast();
+		bOK = Render(SettingsSlate, TEXT("Graphics_ko")) && bOK;
+		if (auto* Credits = Cast<UButton>(Start->WidgetTree->FindWidget(TEXT("CreditsButton"))))
+		{
+			Credits->OnClicked.Broadcast();
+			bOK = Render(StartSlate, TEXT("Credits_ko")) && bOK;
+		}
+		FInternationalization::Get().SetCurrentCulture(OriginalCulture);
+		Settings->RemoveFromParent();
+		Start->RemoveFromParent();
+		World->DestroyWorld(false);
+		GEngine->DestroyWorldContext(World);
+		UE_LOG(LogTemp, Display, TEXT("Language preview: %s"), bOK ? TEXT("saved to Saved/LanguagePreview") : TEXT("failed"));
+		return bOK ? 0 : 1;
+	}
+	if (FParse::Param(*Params, TEXT("AddLanguagePage")))
+	{
+		// 설정 화면에 다섯 번째 탭 "언어"와 그 페이지 WBP(WBP_LanguageSettings)를 넣는다. 이미 있으면 아무것도 하지 않는다.
+		// 두 에셋 모두 컴파일이 끝난 뒤에만 저장하므로 중간에 실패하면 아무것도 저장되지 않는다.
+		const TCHAR* SettingsPath = TEXT("/Game/Main/UI/Menu/WBP_Settings");
+		const TCHAR* PagePath = TEXT("/Game/Main/UI/Menu/WBP_LanguageSettings");
+		auto* Settings = LoadObject<UWidgetBlueprint>(nullptr, SettingsPath);
+		auto* Pages = Settings ? Cast<UWidgetSwitcher>(Settings->WidgetTree->FindWidget(TEXT("SettingsTabPages"))) : nullptr;
+		if (!Pages)
+		{
+			UE_LOG(LogTemp, Error, TEXT("Add language page: WBP_Settings or SettingsTabPages not found."));
+			return 1;
+		}
+		if (Settings->WidgetTree->FindWidget(TEXT("LanguageSettingsSection")))
+		{
+			UE_LOG(LogTemp, Display, TEXT("Add language page: already added."));
+			return 0;
+		}
+		if (LoadObject<UWidgetBlueprint>(nullptr, PagePath))
+		{
+			UE_LOG(LogTemp, Error, TEXT("Add language page: %s already exists but WBP_Settings does not use it. Delete it or place it by hand."), PagePath);
+			return 1;
+		}
+		// 페이지 순서는 ESettingsPage(0 그래픽, 1 소리, 2 플레이어 외형, 3 키 설정, 4 언어)와 같아야 한다.
+		if (Pages->GetChildrenCount() != 4)
+		{
+			UE_LOG(LogTemp, Error, TEXT("Add language page: expected 4 pages before the language page, found %d."), Pages->GetChildrenCount());
+			return 1;
+		}
+		PlayerUIBuild::Backup(SettingsPath);
+		UWidgetBlueprint* PageBlueprint = PlayerUIBuild::Blueprint(PagePath, UUserWidget::StaticClass());
+		if (!UAudioSettingsWidget::AuthorLanguagePage(PageBlueprint->WidgetTree))
+		{
+			UE_LOG(LogTemp, Error, TEXT("Add language page: could not build the page. Nothing was saved."));
+			return 1;
+		}
+		PlayerUIBuild::SyncWidgetGuids(PageBlueprint);
+		if (!PlayerUIBuild::Compile(PageBlueprint))
+		{
+			UE_LOG(LogTemp, Error, TEXT("Add language page: could not compile %s. Nothing was saved."), PagePath);
+			return 1;
+		}
+		auto* Section = Settings->WidgetTree->ConstructWidget<UUserWidget>(PageBlueprint->GeneratedClass.Get(), TEXT("LanguageSettingsSection"));
+		if (!Section) return 1;
+		Pages->AddChild(Section);
+		if (!UAudioSettingsWidget::AuthorLanguageTab(Settings->WidgetTree))
+		{
+			UE_LOG(LogTemp, Error, TEXT("Add language page: could not add the tab. Nothing was saved."));
+			return 1;
+		}
+		PlayerUIBuild::SyncWidgetGuids(Settings);
+		if (!PlayerUIBuild::Compile(Settings))
+		{
+			UE_LOG(LogTemp, Error, TEXT("Add language page: could not compile WBP_Settings. Nothing was saved."));
+			return 1;
+		}
+		if (!PlayerUIBuild::Save(PageBlueprint) || !PlayerUIBuild::Save(Settings))
+		{
+			UE_LOG(LogTemp, Error, TEXT("Add language page: could not save."));
+			return 1;
+		}
+		UE_LOG(LogTemp, Display, TEXT("Add language page: saved %s and WBP_Settings (%d pages)."), PagePath, Pages->GetChildrenCount());
+		return 0;
+	}
 	if (FParse::Param(*Params, TEXT("SplitSettingsPages")))
 	{
 		// 설정 화면의 하위 탭(그래픽, 플레이어 외형, 키 설정)을 각각 별도 WBP로 옮기고, WBP_Settings에는 그 WBP 인스턴스를 넣는다.
@@ -1027,21 +1184,7 @@ int32 UIntegratePlayerUICommandlet::Main(const FString& Params)
 			UE_LOG(LogTemp, Error, TEXT("Split settings pages: WBP_Settings or SettingsTabPages not found."));
 			return 1;
 		}
-		const auto SyncWidgetGuids = [](UWidgetBlueprint* Blueprint)
-		{
-			TSet<FName> Names;
-			Blueprint->WidgetTree->ForEachWidget([&](UWidget* Widget)
-			{
-				const FName Name = Widget->GetFName();
-				Names.Add(Name);
-				if (!Blueprint->WidgetVariableNameToGuidMap.Contains(Name))
-					Blueprint->WidgetVariableNameToGuidMap.Add(Name, FGuid::NewGuid());
-			});
-			for (const UWidgetAnimation* Animation : Blueprint->Animations)
-				if (Animation) Names.Add(Animation->GetFName());
-			for (auto It = Blueprint->WidgetVariableNameToGuidMap.CreateIterator(); It; ++It)
-				if (!Names.Contains(It.Key())) It.RemoveCurrent();
-		};
+		const auto SyncWidgetGuids = &PlayerUIBuild::SyncWidgetGuids;
 		struct FSettingsPageAsset
 		{
 			int32 Index;

@@ -42,6 +42,11 @@
 #include "InputAction.h"
 #include "Character/Player/PlayerBase.h"
 #include "UI/GameVisualSettingsSubsystem.h"
+#include "UI/GameLanguageSettingsSubsystem.h"
+#include "Components/ScaleBox.h"
+#include "Components/UniformGridPanel.h"
+#include "Components/UniformGridSlot.h"
+#include "Engine/Texture2D.h"
 #include "Components/CheckBox.h"
 #include "Components/ComboBoxString.h"
 #include "Containers/Ticker.h"
@@ -62,7 +67,8 @@ enum ESettingsPage : int32
 	GraphicsPage = 0,
 	AudioPage = 1,
 	AppearancePage = 2,
-	KeysPage = 3
+	KeysPage = 3,
+	LanguagePage = 4
 };
 
 struct FSettingsTab
@@ -78,7 +84,10 @@ const FSettingsTab SettingsTabs[] = {
 	{TEXT("AudioSettingsTab"), TEXT("AudioSettingsTabText"), AudioPage},
 	{TEXT("AppearanceSettingsTab"), TEXT("AppearanceSettingsTabText"), AppearancePage},
 	{TEXT("KeySettingsTab"), TEXT("KeySettingsTabText"), KeysPage},
+	{TEXT("LanguageSettingsTab"), TEXT("LanguageSettingsTabText"), LanguagePage},
 };
+
+FText GetLanguageHelpText() { return NSLOCTEXT("SettingsHelp", "Language", "게임에 표시되는 언어를 바꿉니다."); }
 
 // 드롭다운 항목은 번역되도록 모두 FText(NSLOCTEXT)로 둔다. 전역 static FText는 언어 데이터가 준비되기 전에 만들어질 수 있어서
 // 쓸 때마다 함수로 만든다. UComboBoxString은 문자열만 받으므로 채울 때 현재 언어 문자열로 바꾸고,
@@ -441,6 +450,9 @@ void UAudioSettingsWidget::NativeConstruct()
 		Button->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowAppearanceSettings);
 	if (auto* Button = Cast<UButton>(FindSettingsWidget(TEXT("KeySettingsTab"))))
 		Button->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowKeySettings);
+	if (auto* Button = Cast<UButton>(FindSettingsWidget(TEXT("LanguageSettingsTab"))))
+		Button->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowLanguageSettings);
+	BindLanguageButtons();
 	for (const FSettingsTab& Tab : SettingsTabs)
 		if (auto* Button = Cast<UButton>(FindSettingsWidget(Tab.Button)))
 			FactoryUI::ApplyButtonSounds(Button, FactoryUI::ESound::Confirm);
@@ -460,6 +472,14 @@ void UAudioSettingsWidget::FocusFirstControl()
 	if (Page == AppearancePage) Target = FindSettingsWidget(TEXT("OutlineColorSetting"));
 	else if (Page == KeysPage) Target = FirstKeySelector.Get();
 	else if (Page == AudioPage) Target = FindSettingsWidget(VolumeRows[0].Slider);
+	else if (Page == LanguagePage)
+	{
+		// 현재 언어 버튼에서 시작한다. 방향키로 버튼 사이를 옮기고 Enter로 고른다.
+		const FString Current = UGameLanguageSettingsSubsystem::GetCurrentLanguage();
+		for (const FLanguageButton& Entry : LanguageButtons)
+			if (Entry.Button.IsValid() && (!Target || Entry.Culture == Current))
+				Target = Entry.Button.Get();
+	}
 	else Target = FindSettingsWidget(TEXT("BrightnessSetting"));
 	if (!Target) Target = FindSettingsWidget(VolumeRows[0].Slider);
 	if (Target) Target->SetKeyboardFocus();
@@ -1274,6 +1294,201 @@ bool UAudioSettingsWidget::AuthorSettingsLayout(UWidgetTree* WidgetTree)
 	return AuthorGraphicsAndAudioPages(WidgetTree) && AuthorKeySettingsGroups(WidgetTree)
 		&& AuthorKeySettingsTypography(WidgetTree) && AuthorSettingsHelp(WidgetTree);
 }
+
+bool UAudioSettingsWidget::AuthorLanguageTab(UWidgetTree* Tree)
+{
+	if (Tree->FindWidget(TEXT("LanguageSettingsTab"))) return true;
+	auto* KeyTab = Cast<UButton>(Tree->FindWidget(TEXT("KeySettingsTab")));
+	auto* KeyCaption = Cast<UTextBlock>(Tree->FindWidget(TEXT("KeySettingsTabText")));
+	auto* KeyBox = KeyTab ? Cast<USizeBox>(KeyTab->GetParent()) : nullptr;
+	auto* Tabs = KeyBox ? Cast<UHorizontalBox>(KeyBox->GetParent()) : nullptr;
+	const auto* KeyCaptionSlot = KeyCaption ? Cast<UButtonSlot>(KeyCaption->Slot) : nullptr;
+	const auto* KeyBoxSlot = KeyBox ? Cast<UHorizontalBoxSlot>(KeyBox->Slot) : nullptr;
+	if (!Tabs || !KeyCaptionSlot || !KeyBoxSlot)
+	{
+		UE_LOG(LogTemp, Error, TEXT("Settings layout: the language tab needs KeySettingsTab inside a SizeBox in the tab row, with KeySettingsTabText as its label."));
+		return false;
+	}
+
+	// 지금 탭 줄이 차지하는 폭(탭 폭 + 여백)을 다섯 칸으로 다시 나눈다.
+	const auto TabSpace = [](const UWidget* Tab)
+	{
+		const auto* Box = Cast<USizeBox>(Tab);
+		const auto* BoxSlot = Cast<UHorizontalBoxSlot>(Tab->Slot);
+		const FMargin Padding = BoxSlot ? BoxSlot->GetPadding() : FMargin();
+		return TPair<float, float>(Box ? Box->GetWidthOverride() : 0.f, Padding.Left + Padding.Right);
+	};
+	float RowWidth = 0.f;
+	for (int32 Index = 0; Index < Tabs->GetChildrenCount(); ++Index)
+	{
+		const auto Space = TabSpace(Tabs->GetChildAt(Index));
+		RowWidth += Space.Key + Space.Value;
+	}
+
+	// 키 설정 탭과 같은 모양의 "언어" 탭을 맨 끝에 붙인다.
+	auto* Size = Tree->ConstructWidget<USizeBox>();
+	Size->SetHeightOverride(KeyBox->GetHeightOverride());
+	auto* Button = Tree->ConstructWidget<UButton>(UButton::StaticClass(), TEXT("LanguageSettingsTab"));
+	Button->SetStyle(KeyTab->GetStyle());
+	Button->SetColorAndOpacity(KeyTab->GetColorAndOpacity());
+	Button->SetBackgroundColor(KeyTab->GetBackgroundColor());
+	Size->SetContent(Button);
+	auto* Caption = Tree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("LanguageSettingsTabText"));
+	CopyTextLook(Caption, KeyCaption);
+	Caption->SetText(NSLOCTEXT("Settings", "LanguageTab", "언어"));
+	auto* CaptionSlot = CastChecked<UButtonSlot>(Button->AddChild(Caption));
+	CaptionSlot->SetPadding(KeyCaptionSlot->GetPadding());
+	CaptionSlot->SetHorizontalAlignment(KeyCaptionSlot->GetHorizontalAlignment());
+	CaptionSlot->SetVerticalAlignment(KeyCaptionSlot->GetVerticalAlignment());
+	auto* TabSlot = Tabs->AddChildToHorizontalBox(Size);
+	TabSlot->SetPadding(KeyBoxSlot->GetPadding());
+	TabSlot->SetSize(KeyBoxSlot->GetSize());
+	TabSlot->SetHorizontalAlignment(KeyBoxSlot->GetHorizontalAlignment());
+	TabSlot->SetVerticalAlignment(KeyBoxSlot->GetVerticalAlignment());
+
+	const float PerTab = RowWidth / Tabs->GetChildrenCount();
+	for (int32 Index = 0; Index < Tabs->GetChildrenCount(); ++Index)
+		if (auto* Box = Cast<USizeBox>(Tabs->GetChildAt(Index)))
+			Box->SetWidthOverride(FMath::FloorToFloat(PerTab - TabSpace(Box).Value));
+
+	// 번역하면 탭 이름이 길어질 수 있다(독일어, 러시아어 등). 탭 폭을 넘으면 글자를 줄이도록 ScaleBox로 감싼다.
+	for (const FSettingsTab& Tab : SettingsTabs)
+	{
+		auto* Text = Cast<UTextBlock>(Tree->FindWidget(Tab.Text));
+		auto* Owner = Text ? Cast<UButton>(Text->GetParent()) : nullptr;
+		const auto* OldSlot = Text ? Cast<UButtonSlot>(Text->Slot) : nullptr;
+		if (!Owner || !OldSlot) continue;
+		const FMargin Padding = OldSlot->GetPadding();
+		const EHorizontalAlignment HAlign = OldSlot->GetHorizontalAlignment();
+		const EVerticalAlignment VAlign = OldSlot->GetVerticalAlignment();
+		Owner->RemoveChild(Text);
+		auto* Scale = Tree->ConstructWidget<UScaleBox>(UScaleBox::StaticClass(), *(Text->GetName() + TEXT("Fit")));
+		Scale->SetStretch(EStretch::ScaleToFit);
+		Scale->SetStretchDirection(EStretchDirection::DownOnly);
+		Scale->SetVisibility(ESlateVisibility::HitTestInvisible);
+		Scale->SetContent(Text);
+		auto* ScaleSlot = CastChecked<UButtonSlot>(Owner->AddChild(Scale));
+		ScaleSlot->SetPadding(Padding);
+		ScaleSlot->SetHorizontalAlignment(HAlign);
+		ScaleSlot->SetVerticalAlignment(VAlign);
+	}
+	UE_LOG(LogTemp, Display, TEXT("Settings layout: language tab added, %d tabs at %.0f px."), Tabs->GetChildrenCount(), FMath::FloorToFloat(PerTab - TabSpace(Size).Value));
+	return true;
+}
+
+bool UAudioSettingsWidget::AuthorLanguagePage(UWidgetTree* Tree)
+{
+	if (!Tree || Tree->RootWidget) return false;
+	// 페이지 루트: 다른 페이지와 같은 시작선(왼쪽)에 고정 폭으로 둔다. 디자이너에서 바꿔도 된다.
+	auto* Page = Tree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("LanguageSettingsPage"));
+	Tree->RootWidget = Page;
+	auto* Width = Tree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("LanguageSettingsWidth"));
+	Width->SetWidthOverride(760.f);
+	auto* WidthSlot = Page->AddChildToHorizontalBox(Width);
+	WidthSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+	WidthSlot->SetHorizontalAlignment(HAlign_Left);
+	WidthSlot->SetVerticalAlignment(VAlign_Top);
+	auto* Grid = Tree->ConstructWidget<UUniformGridPanel>(UUniformGridPanel::StaticClass(), TEXT("LanguageGrid"));
+	Grid->SetSlotPadding(FMargin(6.f, 5.f));
+	Width->SetContent(Grid);
+
+	// 버튼 모양은 탭과 같은 둥근 상자. 평소 테두리는 FactoryUI::Edge, 마우스/포커스는 청록. 현재 언어 표시는 코드가 덧입힌다.
+	FButtonStyle Style;
+	Style.Normal = FSlateRoundedBoxBrush(FactoryUI::Panel, 6.f, FactoryUI::Edge, 1.f);
+	Style.Hovered = FSlateRoundedBoxBrush(FLinearColor(0.09f, 0.18f, 0.21f), 6.f, FactoryUI::Cyan, 1.f);
+	Style.Pressed = Style.Hovered;
+	Style.Disabled = Style.Normal;
+	Style.NormalPadding = FMargin(14.f, 4.f);
+	Style.PressedPadding = Style.NormalPadding;
+
+	// 언어 이름은 어느 언어 화면에서든 보여야 한다. 설정 화면 글꼴(F_TLM_UI)의 Fallback에는 한자가 없어서
+	// Fallback이 Noto Sans SC(한자 전체)인 F_TLM_Body로 쓴다. Docs/Fonts.md "다국어" 참고.
+	UFont* NameFont = LoadObject<UFont>(nullptr, TEXT("/Game/Main/UI/Fonts/F_TLM_Body.F_TLM_Body"));
+	if (!NameFont)
+	{
+		UE_LOG(LogTemp, Error, TEXT("Settings layout: F_TLM_Body not found."));
+		return false;
+	}
+	const auto UseNameFont = [NameFont](UTextBlock* Text, int32 Size)
+	{
+		Text->SetFont(FSlateFontInfo(NameFont, Size, TEXT("Medium")));
+	};
+
+	const TConstArrayView<FGameLanguage> Languages = UGameLanguageSettingsSubsystem::GetSupportedLanguages();
+	for (int32 Index = 0; Index < Languages.Num(); ++Index)
+	{
+		const FGameLanguage& Language = Languages[Index];
+		const FString Name = UGameLanguageSettingsSubsystem::GetLanguageWidgetName(Language).ToString();
+		auto* Cell = Tree->ConstructWidget<USizeBox>();
+		Cell->SetHeightOverride(56.f);
+		auto* Button = Tree->ConstructWidget<UButton>(UButton::StaticClass(), *Name);
+		Button->SetStyle(Style);
+		Cell->SetContent(Button);
+		auto* Row = Tree->ConstructWidget<UHorizontalBox>();
+		auto* RowSlot = CastChecked<UButtonSlot>(Button->AddChild(Row));
+		RowSlot->SetHorizontalAlignment(HAlign_Fill);
+		RowSlot->SetVerticalAlignment(VAlign_Center);
+
+		// 국기(4:3) 또는 "繁" 배지
+		auto* FlagBox = Tree->ConstructWidget<USizeBox>();
+		FlagBox->SetWidthOverride(40.f);
+		FlagBox->SetHeightOverride(30.f);
+		if (Language.FlagCode)
+		{
+			auto* Texture = LoadObject<UTexture2D>(nullptr, *UGameLanguageSettingsSubsystem::GetFlagTexturePath(Language));
+			if (!Texture)
+			{
+				UE_LOG(LogTemp, Error, TEXT("Settings layout: flag texture %s not found."), *UGameLanguageSettingsSubsystem::GetFlagTexturePath(Language));
+				return false;
+			}
+			auto* Flag = Tree->ConstructWidget<UImage>(UImage::StaticClass(), *(Name + TEXT("_Flag")));
+			Flag->SetBrushFromTexture(Texture, false);
+			Flag->SetDesiredSizeOverride(FVector2D(40.f, 30.f));
+			FlagBox->SetContent(Flag);
+		}
+		else
+		{
+			// 중국 출시 시 대만 국기 표기가 문제될 수 있어 국기 대신 국기 크기의 판에 "繁" 글자를 얹는다.
+			auto* Badge = Tree->ConstructWidget<UBorder>(UBorder::StaticClass(), *(Name + TEXT("_Badge")));
+			Badge->SetBrush(FactoryUI::Plate(FLinearColor(0.09f, 0.18f, 0.21f), FactoryUI::Cyan, 3.f));
+			Badge->SetPadding(FMargin(0.f));
+			Badge->SetHorizontalAlignment(HAlign_Center);
+			Badge->SetVerticalAlignment(VAlign_Center);
+			auto* Glyph = MakeSettingsLabel(Tree, FText::AsCultureInvariant(TEXT("繁")), 18);
+			Glyph->Rename(*(Name + TEXT("_BadgeText")), Tree);
+			UseNameFont(Glyph, 18);
+			Glyph->SetRenderTranslation(FVector2D(0.f, -1.f));
+			Badge->SetContent(Glyph);
+			FlagBox->SetContent(Badge);
+		}
+		auto* FlagSlot = Row->AddChildToHorizontalBox(FlagBox);
+		FlagSlot->SetVerticalAlignment(VAlign_Center);
+		FlagSlot->SetPadding(FMargin(0.f, 0.f, 14.f, 0.f));
+
+		// 자국어 이름. 번역 대상이 아니므로 문화권 고정 텍스트로 넣는다(Localization 수집에서 빠진다).
+		auto* Label = MakeSettingsLabel(Tree, FText::AsCultureInvariant(Language.NativeName), 20);
+		Label->Rename(*(Name + TEXT("_Name")), Tree);
+		UseNameFont(Label, 20);
+		Label->SetRenderTranslation(FVector2D(0.f, -2.f));
+		Label->SetVisibility(ESlateVisibility::HitTestInvisible);
+		// 긴 이름(Español (Latinoamérica) 등)은 버튼 폭을 넘지 않도록 줄여서 보여 준다.
+		auto* Fit = Tree->ConstructWidget<UScaleBox>(UScaleBox::StaticClass(), *(Name + TEXT("_Fit")));
+		Fit->SetStretch(EStretch::ScaleToFit);
+		Fit->SetStretchDirection(EStretchDirection::DownOnly);
+		Fit->SetVisibility(ESlateVisibility::HitTestInvisible);
+		Fit->SetContent(Label);
+		auto* LabelSlot = Row->AddChildToHorizontalBox(Fit);
+		LabelSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+		LabelSlot->SetHorizontalAlignment(HAlign_Left);
+		LabelSlot->SetVerticalAlignment(VAlign_Center);
+
+		auto* GridSlot = Grid->AddChildToUniformGrid(Cell, Index / 2, Index % 2);
+		GridSlot->SetHorizontalAlignment(HAlign_Fill);
+		GridSlot->SetVerticalAlignment(VAlign_Fill);
+	}
+	UE_LOG(LogTemp, Display, TEXT("Settings layout: language page with %d languages."), Languages.Num());
+	return true;
+}
 #endif
 
 void UAudioSettingsWidget::UpdateSettingsTabs(int32 ActiveIndex)
@@ -1301,6 +1516,68 @@ void UAudioSettingsWidget::ShowGeneralSettings() { ShowSettingsTab(GraphicsPage)
 void UAudioSettingsWidget::ShowAudioSettings() { ShowSettingsTab(AudioPage); }
 void UAudioSettingsWidget::ShowAppearanceSettings() { ShowSettingsTab(AppearancePage); }
 void UAudioSettingsWidget::ShowKeySettings() { ShowSettingsTab(KeysPage); }
+void UAudioSettingsWidget::ShowLanguageSettings() { ShowSettingsTab(LanguagePage); }
+
+void ULanguageButtonHandler::HandleClicked()
+{
+	if (UAudioSettingsWidget* Settings = Owner.Get()) Settings->SelectLanguage(Culture);
+}
+
+void UAudioSettingsWidget::BindLanguageButtons()
+{
+	// 화면을 다시 열어 NativeConstruct가 또 불려도 클릭이 두 번 처리되지 않도록 처음 한 번만 연결한다.
+	if (LanguageButtons.IsEmpty())
+	{
+		for (const FGameLanguage& Language : UGameLanguageSettingsSubsystem::GetSupportedLanguages())
+		{
+			const FName Name = UGameLanguageSettingsSubsystem::GetLanguageWidgetName(Language);
+			auto* Button = Cast<UButton>(FindSettingsWidget(Name));
+			if (!Button) continue;
+			auto* Handler = NewObject<ULanguageButtonHandler>(this);
+			Handler->Culture = Language.Culture;
+			Handler->Owner = this;
+			Button->OnClicked.AddUniqueDynamic(Handler, &ULanguageButtonHandler::HandleClicked);
+			FactoryUI::ApplyButtonSounds(Button, FactoryUI::ESound::Confirm);
+			LanguageHandlers.Add(Handler);
+			LanguageButtons.Add({Button, Name, Language.Culture, Button->GetStyle().Disabled});
+		}
+	}
+	RefreshLanguageButtons();
+}
+
+void UAudioSettingsWidget::RefreshLanguageButtons()
+{
+	// 현재 언어는 탭 선택색과 같은 청록 테두리와 글자로 표시한다.
+	// 메뉴 포커스 처리(FactoryMenuStyle::UpdateFocus)가 포커스가 없을 때 Disabled 브러시를 평소 모습으로 쓰므로 Disabled에 넣는다.
+	const FString Current = UGameLanguageSettingsSubsystem::GetCurrentLanguage();
+	for (const FLanguageButton& Entry : LanguageButtons)
+	{
+		UButton* Button = Entry.Button.Get();
+		if (!Button) continue;
+		const bool bCurrent = Entry.Culture == Current;
+		FSlateBrush Brush = Entry.BaseBrush;
+		if (bCurrent)
+		{
+			Brush.OutlineSettings.Color = FactoryUI::Cyan;
+			Brush.OutlineSettings.Width = FMath::Max(Brush.OutlineSettings.Width, 2.f);
+		}
+		FButtonStyle Style = Button->GetStyle();
+		Style.Disabled = Brush;
+		if (!Button->HasAnyUserFocus()) Style.Normal = Brush;
+		Button->SetStyle(Style);
+		if (auto* Label = Cast<UTextBlock>(FindSettingsWidget(*(Entry.Name.ToString() + TEXT("_Name")))))
+			Label->SetColorAndOpacity(bCurrent ? FactoryUI::Cyan : FactoryUI::Text);
+	}
+}
+
+void UAudioSettingsWidget::SelectLanguage(const FString& Culture)
+{
+	// 고르는 즉시 적용하고 저장한다. FText로 만든 문구는 엔진이 바로 바꾸고, 드롭다운은 HandleCultureChanged가 다시 채운다.
+	if (UGameLanguageSettingsSubsystem::GetCurrentLanguage() == Culture) return;
+	if (!UGameLanguageSettingsSubsystem::SetLanguage(Culture))
+		UE_LOG(LogTemp, Warning, TEXT("Language: could not switch to %s."), *Culture);
+	RefreshLanguageButtons();
+}
 
 void UAudioSettingsWidget::BindSettingsHelp()
 {
@@ -1335,6 +1612,9 @@ void UAudioSettingsWidget::BindSettingsHelp()
 	for (const auto& Entry : KeySelectors)
 		AddHelp(Entry.Key, KeysPage);
 	AddHelp(FindSettingsWidget(TEXT("ResetGameplayKeys")), KeysPage);
+	for (const FGameLanguage& Language : UGameLanguageSettingsSubsystem::GetSupportedLanguages())
+		AddHelp(FindSettingsWidget(UGameLanguageSettingsSubsystem::GetLanguageWidgetName(Language)), LanguagePage,
+			GetLanguageHelpText(), false);
 }
 
 void UAudioSettingsWidget::RefreshSettingsHelp()
@@ -1757,6 +2037,7 @@ void UAudioSettingsWidget::BuildVisualControls()
 
 void UAudioSettingsWidget::HandleCultureChanged()
 {
+	RefreshLanguageButtons();
 	// 화면 모드 확인 중에는 드롭다운이 잠겨 있고 선택 값이 아직 확정되지 않았으므로 다시 채우지 않는다.
 	if (ScreenConfirmation.IsValid()) return;
 	// 아직 적용하지 않은 화면 모드와 해상도 선택은 그대로 둔다.

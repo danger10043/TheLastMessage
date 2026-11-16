@@ -173,11 +173,12 @@ void UStartMenuWidget::NativeConstruct()
 			"사용 글꼴 · SIL Open Font License 1.1\n"
 			"Orbit · © 2022 The Orbit Project Authors\n"
 			"Black Han Sans · © 2015 The Black Han Sans Project Authors\n"
-			"Pretendard, Pretendard JP · © 2021 Kil Hyung-jin (Reserved Font Name: Pretendard)\n"
-			"Russo One · © 2011-2012 Jovanny Lemonad (Reserved Font Name: Russo)\n"
+			"Pretendard, Pretendard JP · © 2021 Kil Hyung-jin\n"
+			"Russo One · © 2011-2012 Jovanny Lemonad\n"
 			"Exo 2 · © 2013 The Exo 2 Project Authors\n"
 			"Dela Gothic One · © 2020 The Dela Gothic Project Authors\n"
-			"Noto Sans JP/SC/TC · © 2014-2021 Adobe\n\n"
+			"Noto Sans JP/SC/TC · © 2014-2021 Adobe\n"
+			"Reserved Font Names: Pretendard, Russo\n\n"
 			"국기 이미지 · flag-icons · © 2013 Panayiotis Lipiridis · MIT License"));
 		Notice->SetAutoWrapText(true);
 		// 줄이 늘어났으므로 크레딧 화면 안에 들어가도록 글자를 조금 줄인다.

@@ -84,10 +84,14 @@ const TCHAR* const QualityPresetOptions[] = {TEXT("낮음"), TEXT("중간"), TEX
 const TCHAR* const CustomQualityOption = TEXT("사용자 지정");
 constexpr int32 QualityPresetCount = UE_ARRAY_COUNT(QualityPresetOptions);
 
+// 색각 보정 드롭다운 항목. 순서가 UGameVisualSettingsSubsystem::ColorVision 값과 같다.
+const TCHAR* const ColorVisionOptions[] = {TEXT("끄기"), TEXT("적색약 (1형)"), TEXT("녹색약 (2형)"), TEXT("청색약 (3형)")};
+static_assert(UE_ARRAY_COUNT(ColorVisionOptions) == UGameVisualSettingsSubsystem::ColorVisionTypeCount);
+
 const FName DisplayHelpControls[] = {
 	TEXT("BrightnessSetting"), TEXT("WindowModeSetting"), TEXT("ResolutionSetting"), TEXT("VSyncSetting"),
 	TEXT("FrameLimitSetting"), TEXT("ShakeSetting"), TEXT("BloomSetting"), TEXT("ReduceFlashesSetting"), TEXT("ApplyScreenButton"),
-	TEXT("QualityPresetSetting"), TEXT("RenderScaleSetting")
+	TEXT("QualityPresetSetting"), TEXT("RenderScaleSetting"), TEXT("ColorVisionSetting"), TEXT("ColorVisionStrengthSetting")
 };
 
 /** 현재 렌더링 해상도 비율(%). 엔진이 값을 정하지 않은 상태(0 이하)면 100%로 본다. */
@@ -657,25 +661,27 @@ bool AuthorSettingsHelp(UWidgetTree* Tree)
 	const FText DisplayHelp[] = {
 		NSLOCTEXT("SettingsHelp", "Brightness", "어두운 곳에서 발판 윤곽이 희미하게 보이도록 조절합니다."),
 		NSLOCTEXT("SettingsHelp", "WindowMode", "전체 화면, 테두리 없는 창, 창 모드 중에서 선택합니다."),
-		NSLOCTEXT("SettingsHelp", "Resolution", "화면 해상도를 선택합니다. 테두리 없는 창은 바탕 화면 해상도를 사용합니다."),
+		NSLOCTEXT("SettingsHelp", "Resolution", "화면 해상도를 고릅니다. 테두리 없는 창은 바탕 화면 해상도입니다."),
 		NSLOCTEXT("SettingsHelp", "VSync", "화면 갱신에 맞춰 프레임을 표시해 화면 찢어짐을 줄입니다."),
 		NSLOCTEXT("SettingsHelp", "FrameLimit", "초당 표시하는 프레임 수의 상한을 정합니다."),
 		NSLOCTEXT("SettingsHelp", "Shake", "전투나 충격으로 화면이 흔들리는 강도를 조절합니다."),
 		NSLOCTEXT("SettingsHelp", "Bloom", "밝은 물체 주변에 빛이 번지는 효과를 켜거나 끕니다."),
 		NSLOCTEXT("SettingsHelp", "ReduceFlashes", "피격과 에너지 무기 발사 시 번쩍임을 줄입니다."),
 		NSLOCTEXT("SettingsHelp", "ApplyScreen", "선택한 화면 모드와 해상도를 적용합니다."),
-		NSLOCTEXT("SettingsHelp", "QualityPreset", "그림자, 조명, 효과 등 전체 그래픽 품질을 한 번에 정합니다. 낮을수록 프레임이 올라갑니다."),
-		NSLOCTEXT("SettingsHelp", "RenderScale", "3D 장면을 그리는 해상도의 비율입니다. 낮추면 프레임이 오르고 화면이 조금 흐려집니다. UI는 그대로 선명합니다.")
+		NSLOCTEXT("SettingsHelp", "QualityPreset", "전체 그래픽 품질을 정합니다. 낮을수록 프레임이 올라갑니다."),
+		NSLOCTEXT("SettingsHelp", "RenderScale", "3D 화면을 그리는 해상도입니다. 낮추면 빨라지지만 흐려집니다."),
+		NSLOCTEXT("SettingsHelp", "ColorVision", "색약 유형에 맞춰 화면 전체의 색을 보정합니다."),
+		NSLOCTEXT("SettingsHelp", "ColorVisionStrength", "색 보정의 세기를 조절합니다.")
 	};
 	static_assert(UE_ARRAY_COUNT(DisplayHelp) == UE_ARRAY_COUNT(DisplayHelpControls));
 	for (int32 Index = 0; Index < UE_ARRAY_COUNT(DisplayHelpControls); ++Index)
 		if (auto* Control = Tree->FindWidget(DisplayHelpControls[Index]); Control && Control->GetToolTipText().IsEmpty())
 			Control->SetToolTipText(DisplayHelp[Index]);
 	const FText AppearanceHelp[] = {
-		NSLOCTEXT("SettingsHelp", "OutlineColor", "플레이어 외곽선 색상을 선택합니다. 사용자 지정으로 팔레트를 열 수 있습니다."),
+		NSLOCTEXT("SettingsHelp", "OutlineColor", "외곽선 색상을 고릅니다. 사용자 지정으로 팔레트를 엽니다."),
 		NSLOCTEXT("SettingsHelp", "OutlineWidth", "플레이어 외곽선의 굵기를 조절합니다."),
 		NSLOCTEXT("SettingsHelp", "OutlineBrightness", "플레이어 외곽선이 얼마나 밝게 빛나는지 조절합니다."),
-		NSLOCTEXT("SettingsHelp", "PlayerColor", "플레이어 본체 색상을 선택합니다. 사용자 지정으로 팔레트를 열 수 있습니다."),
+		NSLOCTEXT("SettingsHelp", "PlayerColor", "본체 색상을 고릅니다. 사용자 지정으로 팔레트를 엽니다."),
 		NSLOCTEXT("SettingsHelp", "ResetAppearance", "플레이어 색상과 외곽선 설정을 기본값으로 되돌립니다."),
 		NSLOCTEXT("SettingsHelp", "AppearancePreview", "현재 적용한 플레이어 색상과 외곽선을 확인합니다.")
 	};
@@ -684,7 +690,7 @@ bool AuthorSettingsHelp(UWidgetTree* Tree)
 		if (auto* Control = Tree->FindWidget(AppearanceHelpControls[Index]); Control && Control->GetToolTipText().IsEmpty())
 			Control->SetToolTipText(AppearanceHelp[Index]);
 	if (auto* Audio = Tree->FindWidget(TEXT("AudioSettingsSection")))
-		Audio->SetToolTipText(NSLOCTEXT("SettingsHelp", "Volume", "슬라이더로 음량을 조절합니다. 손잡이를 클릭하면 음소거하거나 이전 음량으로 복원합니다."));
+		Audio->SetToolTipText(NSLOCTEXT("SettingsHelp", "Volume", "음량을 조절합니다. 손잡이를 클릭하면 음소거하거나 되돌립니다."));
 	if (auto* Reset = Tree->FindWidget(TEXT("ResetGameplayKeys")))
 		Reset->SetToolTipText(NSLOCTEXT("SettingsHelp", "ResetKeys", "변경한 모든 키를 기본값으로 되돌립니다."));
 	for (const auto& Binding : UGameKeySettingsSubsystem::GetDefaultBindings())
@@ -738,7 +744,64 @@ void CopyTextLook(UTextBlock* Target, const UTextBlock* Source)
 	Target->SetVisibility(Source->GetVisibility());
 }
 
-/** 그래픽 탭과 소리 탭을 나누고 그래픽 품질, 렌더링 해상도 줄을 넣는다. 여러 번 실행해도 결과가 같다. */
+/** Column의 끝에 밝기 줄과 같은 크기, 라벨 폭, 글꼴, 여백으로 설정 줄을 하나 추가한다. */
+bool AddRowLikeBrightness(UWidgetTree* Tree, UVerticalBox* Column, const FText& Caption, UWidget* Control)
+{
+	auto* TemplateControl = Tree->FindWidget(TEXT("BrightnessSetting"));
+	auto* TemplateLine = TemplateControl ? Cast<UHorizontalBox>(TemplateControl->GetParent()) : nullptr;
+	auto* TemplateRow = TemplateLine ? Cast<USizeBox>(TemplateLine->GetParent()) : nullptr;
+	auto* TemplateLabelBox = TemplateLine ? Cast<USizeBox>(TemplateLine->GetChildAt(0)) : nullptr;
+	auto* TemplateLabel = TemplateLabelBox ? Cast<UTextBlock>(TemplateLabelBox->GetContent()) : nullptr;
+	const auto* TemplateRowSlot = TemplateRow ? Cast<UVerticalBoxSlot>(TemplateRow->Slot) : nullptr;
+	const auto* TemplateControlSlot = Cast<UHorizontalBoxSlot>(TemplateControl ? TemplateControl->Slot : nullptr);
+	if (!Column || !Control || !TemplateLabel || !TemplateRowSlot || !TemplateControlSlot) return false;
+
+	auto* Row = Tree->ConstructWidget<USizeBox>();
+	Row->SetHeightOverride(TemplateRow->GetHeightOverride());
+	auto* Line = Tree->ConstructWidget<UHorizontalBox>();
+	Row->SetContent(Line);
+	auto* LabelBox = Tree->ConstructWidget<USizeBox>();
+	LabelBox->SetWidthOverride(TemplateLabelBox->GetWidthOverride());
+	auto* Label = Tree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), *(Control->GetName() + TEXT("Label")));
+	CopyTextLook(Label, TemplateLabel);
+	Label->SetText(Caption);
+	LabelBox->SetContent(Label);
+	auto* LabelSlot = Line->AddChildToHorizontalBox(LabelBox);
+	if (const auto* TemplateLabelSlot = Cast<UHorizontalBoxSlot>(TemplateLabelBox->Slot))
+	{
+		LabelSlot->SetPadding(TemplateLabelSlot->GetPadding());
+		LabelSlot->SetVerticalAlignment(TemplateLabelSlot->GetVerticalAlignment());
+	}
+	auto* ControlSlot = Line->AddChildToHorizontalBox(Control);
+	ControlSlot->SetSize(TemplateControlSlot->GetSize());
+	ControlSlot->SetPadding(TemplateControlSlot->GetPadding());
+	ControlSlot->SetHorizontalAlignment(TemplateControlSlot->GetHorizontalAlignment());
+	ControlSlot->SetVerticalAlignment(TemplateControlSlot->GetVerticalAlignment());
+	Column->AddChildToVerticalBox(Row)->SetPadding(TemplateRowSlot->GetPadding());
+	return true;
+}
+
+/** 화면 모드 드롭다운의 디자이너 스타일을 가진 새 드롭다운 */
+UComboBoxString* MakeComboLikeWindowMode(UWidgetTree* Tree, FName Name)
+{
+	auto* Combo = Tree->ConstructWidget<UComboBoxString>(UComboBoxString::StaticClass(), Name);
+	CopyNamedProperties(Combo, Tree->FindWidget(TEXT("WindowModeSetting")), {TEXT("WidgetStyle"), TEXT("ItemStyle"),
+		TEXT("ScrollBarStyle"), TEXT("ContentPadding"), TEXT("MaxListHeight"), TEXT("HasDownArrow"),
+		TEXT("EnableGamepadNavigationMode"), TEXT("Font"), TEXT("ForegroundColor"), TEXT("bIsFocusable")});
+	return Combo;
+}
+
+/** 밝기 슬라이더의 디자이너 스타일을 가진 새 슬라이더 */
+USlider* MakeSliderLikeBrightness(UWidgetTree* Tree, FName Name)
+{
+	auto* Slider = Tree->ConstructWidget<USlider>(USlider::StaticClass(), Name);
+	CopyNamedProperties(Slider, Tree->FindWidget(TEXT("BrightnessSetting")), {TEXT("WidgetStyle"), TEXT("SliderBarColor"),
+		TEXT("SliderHandleColor"), TEXT("IndentHandle"), TEXT("MouseUsesStep"), TEXT("RequiresControllerLock"),
+		TEXT("IsFocusable"), TEXT("Orientation")});
+	return Slider;
+}
+
+/** 그래픽 탭과 소리 탭을 나누고 그래픽 품질, 렌더링 해상도, 색각 보정 줄을 넣는다. 여러 번 실행해도 결과가 같다. */
 bool AuthorGraphicsAndAudioPages(UWidgetTree* Tree)
 {
 	auto* Pages = Cast<UWidgetSwitcher>(Tree->FindWidget(TEXT("SettingsTabPages")));
@@ -834,8 +897,6 @@ bool AuthorGraphicsAndAudioPages(UWidgetTree* Tree)
 			UE_LOG(LogTemp, Error, TEXT("Settings layout: brightness row, window mode dropdown or display heading not found."));
 			return false;
 		}
-		const auto* TemplateRowSlot = CastChecked<UVerticalBoxSlot>(TemplateRow->Slot);
-		const auto* TemplateControlSlot = CastChecked<UHorizontalBoxSlot>(TemplateControl->Slot);
 
 		auto* Quality = Tree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("QualitySettingsColumn"));
 		auto* QualitySlot = Columns->AddChildToHorizontalBox(Quality);
@@ -860,41 +921,11 @@ bool AuthorGraphicsAndAudioPages(UWidgetTree* Tree)
 
 		const auto AddRow = [&](const FText& Caption, UWidget* Control)
 		{
-			auto* Row = Tree->ConstructWidget<USizeBox>();
-			Row->SetHeightOverride(TemplateRow->GetHeightOverride());
-			auto* Line = Tree->ConstructWidget<UHorizontalBox>();
-			Row->SetContent(Line);
-			auto* LabelBox = Tree->ConstructWidget<USizeBox>();
-			LabelBox->SetWidthOverride(TemplateLabelBox->GetWidthOverride());
-			auto* Label = Tree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), *(Control->GetName() + TEXT("Label")));
-			CopyTextLook(Label, TemplateLabel);
-			Label->SetText(Caption);
-			LabelBox->SetContent(Label);
-			auto* LabelSlot = Line->AddChildToHorizontalBox(LabelBox);
-			if (const auto* TemplateLabelSlot = Cast<UHorizontalBoxSlot>(TemplateLabelBox->Slot))
-			{
-				LabelSlot->SetPadding(TemplateLabelSlot->GetPadding());
-				LabelSlot->SetVerticalAlignment(TemplateLabelSlot->GetVerticalAlignment());
-			}
-			auto* ControlSlot = Line->AddChildToHorizontalBox(Control);
-			ControlSlot->SetSize(TemplateControlSlot->GetSize());
-			ControlSlot->SetPadding(TemplateControlSlot->GetPadding());
-			ControlSlot->SetHorizontalAlignment(TemplateControlSlot->GetHorizontalAlignment());
-			ControlSlot->SetVerticalAlignment(TemplateControlSlot->GetVerticalAlignment());
-			auto* RowSlot = Quality->AddChildToVerticalBox(Row);
-			RowSlot->SetPadding(TemplateRowSlot->GetPadding());
+			AddRowLikeBrightness(Tree, Quality, Caption, Control);
 		};
 
-		auto* Preset = Tree->ConstructWidget<UComboBoxString>(UComboBoxString::StaticClass(), TEXT("QualityPresetSetting"));
-		CopyNamedProperties(Preset, TemplateCombo, {TEXT("WidgetStyle"), TEXT("ItemStyle"), TEXT("ScrollBarStyle"),
-			TEXT("ContentPadding"), TEXT("MaxListHeight"), TEXT("HasDownArrow"), TEXT("EnableGamepadNavigationMode"),
-			TEXT("Font"), TEXT("ForegroundColor"), TEXT("bIsFocusable")});
-		AddRow(NSLOCTEXT("Settings", "QualityPreset", "그래픽 품질"), Preset);
-
-		auto* RenderScale = Tree->ConstructWidget<USlider>(USlider::StaticClass(), TEXT("RenderScaleSetting"));
-		CopyNamedProperties(RenderScale, TemplateControl, {TEXT("WidgetStyle"), TEXT("SliderBarColor"), TEXT("SliderHandleColor"),
-			TEXT("IndentHandle"), TEXT("MouseUsesStep"), TEXT("RequiresControllerLock"), TEXT("IsFocusable"), TEXT("Orientation")});
-		AddRow(NSLOCTEXT("Settings", "RenderScale", "렌더링 해상도"), RenderScale);
+		AddRow(NSLOCTEXT("Settings", "QualityPreset", "그래픽 품질"), MakeComboLikeWindowMode(Tree, TEXT("QualityPresetSetting")));
+		AddRow(NSLOCTEXT("Settings", "RenderScale", "렌더링 해상도"), MakeSliderLikeBrightness(Tree, TEXT("RenderScaleSetting")));
 
 		// 화면 열에 있던 효과 줄을 품질 열로 옮긴다. 화면 열에는 화면 모드 적용 버튼까지만 남는다.
 		for (const TCHAR* Name : {TEXT("BloomSetting"), TEXT("ShakeSetting"), TEXT("ReduceFlashesSetting")})
@@ -905,6 +936,20 @@ bool AuthorGraphicsAndAudioPages(UWidgetTree* Tree)
 				Row->RemoveFromParent();
 				Quality->AddChildToVerticalBox(Row)->SetPadding(Padding);
 			}
+		}
+	}
+	// 4. 색각 보정: 품질 및 효과 열 끝에 드롭다운과 세기 슬라이더
+	if (!Tree->FindWidget(TEXT("ColorVisionSetting")))
+	{
+		auto* Quality = Cast<UVerticalBox>(Tree->FindWidget(TEXT("QualitySettingsColumn")));
+		if (!Quality
+			|| !AddRowLikeBrightness(Tree, Quality, NSLOCTEXT("Settings", "ColorVision", "색각 보정"),
+				MakeComboLikeWindowMode(Tree, TEXT("ColorVisionSetting")))
+			|| !AddRowLikeBrightness(Tree, Quality, NSLOCTEXT("Settings", "ColorVisionStrength", "보정 강도"),
+				MakeSliderLikeBrightness(Tree, TEXT("ColorVisionStrengthSetting"))))
+		{
+			UE_LOG(LogTemp, Error, TEXT("Settings layout: could not add the color vision rows."));
+			return false;
 		}
 	}
 	UE_LOG(LogTemp, Display, TEXT("Settings layout: graphics and audio pages are separate (%d pages)."), Pages->GetChildrenCount());
@@ -1595,6 +1640,15 @@ void UAudioSettingsWidget::BuildVisualControls()
 		RenderScale->RequiresControllerLock = false;
 		RenderScale->OnValueChanged.AddUniqueDynamic(this, &ThisClass::SetRenderResolutionScale);
 	}
+	TArray<FString> ColorVisionLabels;
+	for (const TCHAR* Option : ColorVisionOptions) ColorVisionLabels.Add(Option);
+	if (auto* ColorVision = AddCombo(TEXT("ColorVisionSetting"), ColorVisionLabels, Visual->ColorVision))
+		ColorVision->OnSelectionChanged.AddUniqueDynamic(this, &ThisClass::SetColorVision);
+	if (auto* Strength = AddSlider(TEXT("ColorVisionStrengthSetting"), Visual->ColorVisionStrength, 1.f))
+	{
+		Strength->SetIsEnabled(Visual->ColorVision != 0);
+		Strength->OnValueChanged.AddUniqueDynamic(this, &ThisClass::SetColorVisionStrength);
+	}
 	if (auto* Shake = AddSlider(TEXT("ShakeSetting"), Visual->ShakeScale, 1.f))
 		Shake->OnValueChanged.AddUniqueDynamic(this, &ThisClass::SetShake);
 	if (auto* Bloom = AddToggle(TEXT("BloomSetting"), Visual->bBloom))
@@ -1623,7 +1677,7 @@ UWidget* UAudioSettingsWidget::MakeDropdownOption(FString Option)
 	// 코드는 F_TLM_UI의 글자가 줄 높이보다 아래로 그려지는 것만 보정한다(라벨의 -5 오프셋과 같은 이유).
 	const UComboBoxString* Source = nullptr;
 	for (const TCHAR* Name : {TEXT("WindowModeSetting"), TEXT("ResolutionSetting"), TEXT("FrameLimitSetting"),
-		TEXT("QualityPresetSetting"), TEXT("OutlineColorSetting"), TEXT("PlayerColorSetting")})
+		TEXT("QualityPresetSetting"), TEXT("ColorVisionSetting"), TEXT("OutlineColorSetting"), TEXT("PlayerColorSetting")})
 		if (const auto* Combo = Cast<UComboBoxString>(WidgetTree->FindWidget(Name)); Combo && Combo->FindOptionIndex(Option) >= 0)
 		{
 			Source = Combo;
@@ -1660,6 +1714,7 @@ void UAudioSettingsWidget::RefreshVisualReadouts()
 	const float RenderScale = Screen ? GetRenderScalePercent(*Screen) / 100.f : 1.f;
 	const FReadout Entries[] = {
 		{TEXT("RenderScaleSetting"), TEXT("RenderScaleValue"), FText::AsPercent(RenderScale)},
+		{TEXT("ColorVisionStrengthSetting"), TEXT("ColorVisionStrengthValue"), FText::AsPercent(Visual->ColorVisionStrength)},
 		{TEXT("BrightnessSetting"), TEXT("BrightnessValue"), FText::AsPercent(Visual->Brightness)},
 		{TEXT("ShakeSetting"), TEXT("ShakeValue"), FText::AsPercent(Visual->ShakeScale)},
 		{TEXT("OutlineWidthSetting"), TEXT("OutlineWidthValue"), FText::Format(
@@ -1886,6 +1941,26 @@ void UAudioSettingsWidget::SetRenderResolutionScale(float Value)
 	Screen->SetResolutionScaleValueEx(Percent);
 	Screen->ApplyNonResolutionSettings();
 	RefreshVisualReadouts();
+}
+
+void UAudioSettingsWidget::SetColorVision(FString Value, ESelectInfo::Type Selection)
+{
+	if (Selection == ESelectInfo::Direct) return;
+	auto* Combo = Cast<UComboBoxString>(WidgetTree->FindWidget(TEXT("ColorVisionSetting")));
+	auto* Visual = UGameInstance::GetSubsystem<UGameVisualSettingsSubsystem>(GetGameInstance());
+	if (!Combo || !Visual) return;
+	const int32 Index = Combo->FindOptionIndex(Value);
+	if (Index < 0 || Index >= UGameVisualSettingsSubsystem::ColorVisionTypeCount || Index == Visual->ColorVision) return;
+	Visual->ColorVision = Index;
+	if (auto* Strength = WidgetTree->FindWidget(TEXT("ColorVisionStrengthSetting"))) Strength->SetIsEnabled(Index != 0);
+	UpdateVisuals();
+}
+
+void UAudioSettingsWidget::SetColorVisionStrength(float Value)
+{
+	if (auto* Visual = UGameInstance::GetSubsystem<UGameVisualSettingsSubsystem>(GetGameInstance()))
+		Visual->ColorVisionStrength = FMath::Clamp(Value, 0.f, 1.f);
+	UpdateVisuals();
 }
 
 void UAudioSettingsWidget::ApplyScreenMode()

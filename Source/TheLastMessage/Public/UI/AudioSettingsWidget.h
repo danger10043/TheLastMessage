@@ -115,6 +115,8 @@ private:
 	UFUNCTION() void SetFrameLimit(FString Value, ESelectInfo::Type Selection);
 	UFUNCTION() void SetQualityPreset(FString Value, ESelectInfo::Type Selection);
 	UFUNCTION() void SetRenderResolutionScale(float Value);
+	UFUNCTION() void SetColorVision(FString Value, ESelectInfo::Type Selection);
+	UFUNCTION() void SetColorVisionStrength(float Value);
 	UFUNCTION() void SetOutlineColor(FString Value, ESelectInfo::Type Selection);
 	UFUNCTION() void SetPlayerColor(FString Value, ESelectInfo::Type Selection);
 	UFUNCTION() void ShowGeneralSettings();

@@ -203,7 +203,8 @@ bool FPlayerAppearanceSettingsTabTest::RunTest(const FString& Parameters)
 			while (Control && Control->GetParent() != Pages) Control = Control->GetParent();
 			return Control && Control == Pages->GetActiveWidget();
 		};
-		for (const TCHAR* Name : {TEXT("BrightnessSetting"), TEXT("QualityPresetSetting"), TEXT("RenderScaleSetting"), TEXT("BloomSetting")})
+		for (const TCHAR* Name : {TEXT("BrightnessSetting"), TEXT("QualityPresetSetting"), TEXT("RenderScaleSetting"), TEXT("BloomSetting"),
+			TEXT("ColorVisionSetting"), TEXT("ColorVisionStrengthSetting")})
 			TestTrue(FString::Printf(TEXT("%s is on the graphics page"), Name), IsOnActivePage(Name));
 		TestFalse(TEXT("Volume is no longer on the graphics page"), IsOnActivePage(TEXT("AudioSettingsSection")));
 		if (auto* Screen = GEngine->GetGameUserSettings())
@@ -227,6 +228,22 @@ bool FPlayerAppearanceSettingsTabTest::RunTest(const FString& Parameters)
 				Screen->SetResolutionScaleValueEx(PreviousScale > 0.f ? PreviousScale : 100.f);
 				Screen->ApplyNonResolutionSettings();
 			}
+		}
+		auto* ColorVisionCombo = Cast<UComboBoxString>(Tree->FindWidget(TEXT("ColorVisionSetting")));
+		UWidget* ColorVisionStrength = Tree->FindWidget(TEXT("ColorVisionStrengthSetting"));
+		auto* VisualSettings = PlayWorld->GetGameInstance()->GetSubsystem<UGameVisualSettingsSubsystem>();
+		if (TestNotNull(TEXT("Color vision dropdown"), ColorVisionCombo) && TestNotNull(TEXT("Color vision strength"), ColorVisionStrength)
+			&& TestNotNull(TEXT("Visual settings for color vision"), VisualSettings))
+		{
+			const int32 PreviousColorVision = VisualSettings->ColorVision;
+			ColorVisionCombo->OnSelectionChanged.Broadcast(ColorVisionCombo->GetOptionAtIndex(2), ESelectInfo::OnMouseClick);
+			TestEqual(TEXT("Color vision type applies"), VisualSettings->ColorVision, 2);
+			TestTrue(TEXT("Strength is enabled with a filter"), ColorVisionStrength->GetIsEnabled());
+			ColorVisionCombo->OnSelectionChanged.Broadcast(ColorVisionCombo->GetOptionAtIndex(0), ESelectInfo::OnMouseClick);
+			TestEqual(TEXT("Color vision turns off"), VisualSettings->ColorVision, 0);
+			TestFalse(TEXT("Strength is disabled without a filter"), ColorVisionStrength->GetIsEnabled());
+			VisualSettings->ColorVision = PreviousColorVision;
+			VisualSettings->ApplyDisplay();
 		}
 		AudioTab->OnClicked.Broadcast();
 		TestEqual(TEXT("Audio tab opens"), Pages->GetActiveWidgetIndex(), 1);

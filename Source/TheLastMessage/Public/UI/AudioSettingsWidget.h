@@ -38,6 +38,10 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Settings Style|Appearance Preview", meta = (ClampMin = "-0.5", ClampMax = "0.5"))
 	float AppearancePreviewHorizontalOffset = 0.14f;
 
+	/** 렌더링 해상도 슬라이더의 범위(%)와 한 칸. 출력 해상도는 그대로 두고 3D 장면을 그리는 해상도만 바꾼다. */
+	UPROPERTY(EditAnywhere, Category = "Settings|Graphics", meta = (ClampMin = 25, ClampMax = 100)) float MinRenderScalePercent = 50.f;
+	UPROPERTY(EditAnywhere, Category = "Settings|Graphics", meta = (ClampMin = 1, ClampMax = 50)) float RenderScaleStepPercent = 5.f;
+
 	/** 밝기·흔들림·외곽선 굵기 슬라이더의 한 칸 */
 	UPROPERTY(EditAnywhere, Category = "Settings Style|Slider", meta = (ClampMin = 0.001)) float VisualSliderStep = 0.05f;
 
@@ -109,9 +113,12 @@ private:
 	UFUNCTION() void SetShake(float Value);
 	UFUNCTION() void SetWindowMode(FString Value, ESelectInfo::Type Selection);
 	UFUNCTION() void SetFrameLimit(FString Value, ESelectInfo::Type Selection);
+	UFUNCTION() void SetQualityPreset(FString Value, ESelectInfo::Type Selection);
+	UFUNCTION() void SetRenderResolutionScale(float Value);
 	UFUNCTION() void SetOutlineColor(FString Value, ESelectInfo::Type Selection);
 	UFUNCTION() void SetPlayerColor(FString Value, ESelectInfo::Type Selection);
 	UFUNCTION() void ShowGeneralSettings();
+	UFUNCTION() void ShowAudioSettings();
 	UFUNCTION() void ShowAppearanceSettings();
 	UFUNCTION() void ShowKeySettings();
 	UFUNCTION() void OnKeySelectionModeChanged();

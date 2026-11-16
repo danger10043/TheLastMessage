@@ -23,6 +23,8 @@
 #include "Engine/World.h"
 #include "GameFramework/WorldSettings.h"
 #include "GameFramework/GameModeBase.h"
+#include "GameFramework/GameUserSettings.h"
+#include "Engine/Engine.h"
 #include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInterface.h"
 #include "Misc/App.h"
@@ -186,16 +188,51 @@ bool FPlayerAppearanceSettingsTabTest::RunTest(const FString& Parameters)
 		auto* Pages = Cast<UWidgetSwitcher>(Tree->FindWidget(TEXT("SettingsTabPages")));
 		auto* Appearance = Cast<UButton>(Tree->FindWidget(TEXT("AppearanceSettingsTab")));
 		auto* General = Cast<UButton>(Tree->FindWidget(TEXT("GeneralSettingsTab")));
+		auto* AudioTab = Cast<UButton>(Tree->FindWidget(TEXT("AudioSettingsTab")));
 		if (!TestNotNull(TEXT("Settings pages"), Pages) || !TestNotNull(TEXT("Appearance tab"), Appearance)
-			|| !TestNotNull(TEXT("General tab"), General)) return;
-		TestEqual(TEXT("General tab opens first"), Pages->GetActiveWidgetIndex(), 0);
-		for (const TCHAR* Name : {TEXT("GeneralSettingsTabText"), TEXT("AppearanceSettingsTabText")})
+			|| !TestNotNull(TEXT("General tab"), General) || !TestNotNull(TEXT("Audio tab"), AudioTab)) return;
+		TestEqual(TEXT("Graphics tab opens first"), Pages->GetActiveWidgetIndex(), 0);
+		for (const TCHAR* Name : {TEXT("GeneralSettingsTabText"), TEXT("AudioSettingsTabText"), TEXT("AppearanceSettingsTabText")})
 		{
 			auto* Caption = Cast<UTextBlock>(Tree->FindWidget(Name));
 			TestTrue(Name, Caption && FMath::IsNearlyZero(Caption->GetRenderTransform().Translation.Y));
 		}
+		const auto IsOnActivePage = [&](const TCHAR* Name)
+		{
+			UWidget* Control = Tree->FindWidget(Name);
+			while (Control && Control->GetParent() != Pages) Control = Control->GetParent();
+			return Control && Control == Pages->GetActiveWidget();
+		};
+		for (const TCHAR* Name : {TEXT("BrightnessSetting"), TEXT("QualityPresetSetting"), TEXT("RenderScaleSetting"), TEXT("BloomSetting")})
+			TestTrue(FString::Printf(TEXT("%s is on the graphics page"), Name), IsOnActivePage(Name));
+		TestFalse(TEXT("Volume is no longer on the graphics page"), IsOnActivePage(TEXT("AudioSettingsSection")));
+		if (auto* Screen = GEngine->GetGameUserSettings())
+		{
+			auto* Quality = Cast<UComboBoxString>(Tree->FindWidget(TEXT("QualityPresetSetting")));
+			auto* RenderScale = Cast<USlider>(Tree->FindWidget(TEXT("RenderScaleSetting")));
+			if (TestNotNull(TEXT("Quality dropdown"), Quality) && TestNotNull(TEXT("Render scale slider"), RenderScale))
+			{
+				float Normalized, PreviousScale, MinScale, MaxScale;
+				Screen->GetResolutionScaleInformationEx(Normalized, PreviousScale, MinScale, MaxScale);
+				const int32 PreviousLevel = Screen->GetOverallScalabilityLevel();
+				RenderScale->OnValueChanged.Broadcast(0.75f);
+				float Scale = 0.f;
+				Screen->GetResolutionScaleInformationEx(Normalized, Scale, MinScale, MaxScale);
+				TestEqual(TEXT("Render scale applies"), Scale, 75.f);
+				Quality->OnSelectionChanged.Broadcast(Quality->GetOptionAtIndex(1), ESelectInfo::OnMouseClick);
+				TestEqual(TEXT("Quality preset applies"), Screen->GetOverallScalabilityLevel(), 1);
+				Screen->GetResolutionScaleInformationEx(Normalized, Scale, MinScale, MaxScale);
+				TestEqual(TEXT("Quality preset keeps the render scale"), Scale, 75.f);
+				if (PreviousLevel >= 0) Screen->SetOverallScalabilityLevel(PreviousLevel);
+				Screen->SetResolutionScaleValueEx(PreviousScale > 0.f ? PreviousScale : 100.f);
+				Screen->ApplyNonResolutionSettings();
+			}
+		}
+		AudioTab->OnClicked.Broadcast();
+		TestEqual(TEXT("Audio tab opens"), Pages->GetActiveWidgetIndex(), 1);
+		TestTrue(TEXT("Volume sliders are on the audio page"), IsOnActivePage(TEXT("AudioSettingsSection")));
 		Appearance->OnClicked.Broadcast();
-		TestEqual(TEXT("Appearance tab opens"), Pages->GetActiveWidgetIndex(), 1);
+		TestEqual(TEXT("Appearance tab opens"), Pages->GetActiveWidgetIndex(), 2);
 		for (const TCHAR* Name : {TEXT("OutlineColorSetting"), TEXT("OutlineWidthSetting"), TEXT("OutlineBrightnessSetting"), TEXT("PlayerColorSetting")})
 		{
 			UWidget* Control = Tree->FindWidget(Name);

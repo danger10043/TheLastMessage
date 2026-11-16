@@ -55,12 +55,49 @@
 
 namespace
 {
-const FName SettingsTabNames[] = {TEXT("GeneralSettingsTab"), TEXT("AppearanceSettingsTab"), TEXT("KeySettingsTab")};
-const FName SettingsTabTextNames[] = {TEXT("GeneralSettingsTabText"), TEXT("AppearanceSettingsTabText"), TEXT("KeySettingsTabText")};
+// SettingsTabPages의 페이지 순서. 탭 버튼도 같은 순서로 놓인다.
+enum ESettingsPage : int32
+{
+	GraphicsPage = 0,
+	AudioPage = 1,
+	AppearancePage = 2,
+	KeysPage = 3
+};
+
+struct FSettingsTab
+{
+	const TCHAR* Button;
+	const TCHAR* Text;
+	int32 Page;
+};
+
+// 그래픽 탭은 예전 "화면 및 소리" 탭의 위젯 이름(GeneralSettingsTab)을 그대로 쓴다.
+const FSettingsTab SettingsTabs[] = {
+	{TEXT("GeneralSettingsTab"), TEXT("GeneralSettingsTabText"), GraphicsPage},
+	{TEXT("AudioSettingsTab"), TEXT("AudioSettingsTabText"), AudioPage},
+	{TEXT("AppearanceSettingsTab"), TEXT("AppearanceSettingsTabText"), AppearancePage},
+	{TEXT("KeySettingsTab"), TEXT("KeySettingsTabText"), KeysPage},
+};
+
+// 그래픽 품질 드롭다운 항목. 순서가 Scalability 단계(0 낮음 ~ 3 최상)와 같다.
+const TCHAR* const QualityPresetOptions[] = {TEXT("낮음"), TEXT("중간"), TEXT("높음"), TEXT("최상")};
+const TCHAR* const CustomQualityOption = TEXT("사용자 지정");
+constexpr int32 QualityPresetCount = UE_ARRAY_COUNT(QualityPresetOptions);
+
 const FName DisplayHelpControls[] = {
 	TEXT("BrightnessSetting"), TEXT("WindowModeSetting"), TEXT("ResolutionSetting"), TEXT("VSyncSetting"),
-	TEXT("FrameLimitSetting"), TEXT("ShakeSetting"), TEXT("BloomSetting"), TEXT("ReduceFlashesSetting"), TEXT("ApplyScreenButton")
+	TEXT("FrameLimitSetting"), TEXT("ShakeSetting"), TEXT("BloomSetting"), TEXT("ReduceFlashesSetting"), TEXT("ApplyScreenButton"),
+	TEXT("QualityPresetSetting"), TEXT("RenderScaleSetting")
 };
+
+/** 현재 렌더링 해상도 비율(%). 엔진이 값을 정하지 않은 상태(0 이하)면 100%로 본다. */
+float GetRenderScalePercent(const UGameUserSettings& Screen)
+{
+	float Normalized = 1.f, Percent = 100.f, MinPercent = 0.f, MaxPercent = 100.f;
+	// 읽기 전용 함수지만 엔진 버전에 따라 const가 아니어서 const_cast로 부른다.
+	const_cast<UGameUserSettings&>(Screen).GetResolutionScaleInformationEx(Normalized, Percent, MinPercent, MaxPercent);
+	return Percent > 0.f ? FMath::Min(Percent, 100.f) : 100.f;
+}
 const FName AppearanceHelpControls[] = {
 	TEXT("OutlineColorSetting"), TEXT("OutlineWidthSetting"), TEXT("OutlineBrightnessSetting"),
 	TEXT("PlayerColorSetting"), TEXT("ResetAppearanceButton"), TEXT("AppearancePreviewBox")
@@ -318,12 +355,14 @@ void UAudioSettingsWidget::NativeConstruct()
 	BindSettingsHelp();
 	if (auto* Button = Cast<UButton>(WidgetTree->FindWidget(TEXT("GeneralSettingsTab"))))
 		Button->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowGeneralSettings);
+	if (auto* Button = Cast<UButton>(WidgetTree->FindWidget(TEXT("AudioSettingsTab"))))
+		Button->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowAudioSettings);
 	if (auto* Button = Cast<UButton>(WidgetTree->FindWidget(TEXT("AppearanceSettingsTab"))))
 		Button->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowAppearanceSettings);
 	if (auto* Button = Cast<UButton>(WidgetTree->FindWidget(TEXT("KeySettingsTab"))))
 		Button->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowKeySettings);
-	for (const FName Name : SettingsTabNames)
-		if (auto* Button = Cast<UButton>(WidgetTree->FindWidget(Name)))
+	for (const FSettingsTab& Tab : SettingsTabs)
+		if (auto* Button = Cast<UButton>(WidgetTree->FindWidget(Tab.Button)))
 			FactoryUI::ApplyButtonSounds(Button, FactoryUI::ESound::Confirm);
 	if (auto* Button = Cast<UButton>(WidgetTree->FindWidget(TEXT("ResetAppearanceButton"))))
 	{
@@ -336,14 +375,17 @@ void UAudioSettingsWidget::FocusFirstControl()
 {
 	ForceLayoutPrepass();
 	auto* Pages = Cast<UWidgetSwitcher>(WidgetTree->FindWidget(TEXT("SettingsTabPages")));
-	if (Pages && Pages->GetActiveWidgetIndex() == 1)
+	const int32 Page = Pages ? Pages->GetActiveWidgetIndex() : INDEX_NONE;
+	if (Page == AppearancePage)
 	{
 		if (auto* Control = WidgetTree->FindWidget(TEXT("OutlineColorSetting"))) Control->SetKeyboardFocus();
 	}
-	else if (Pages && Pages->GetActiveWidgetIndex() == 2)
+	else if (Page == KeysPage)
 	{
 		if (auto* Control = FirstKeySelector.Get()) Control->SetKeyboardFocus();
 	}
+	else if (auto* AudioPageSection = Page == AudioPage ? Cast<UAudioSettingsWidget>(WidgetTree->FindWidget(TEXT("AudioSettingsSection"))) : nullptr)
+		AudioPageSection->FocusFirstControl();
 	else if (auto* Slider = WidgetTree->FindWidget(TEXT("BrightnessSetting"))) Slider->SetKeyboardFocus();
 	else if (auto* Audio = Cast<UAudioSettingsWidget>(WidgetTree->FindWidget(TEXT("AudioSettingsSection"))))
 		Audio->FocusFirstControl();
@@ -363,6 +405,10 @@ void UAudioSettingsWidget::NativeDestruct()
 		FTSTicker::GetCoreTicker().RemoveTicker(ScreenConfirmation);
 		RevertScreenMode(0.f);
 	}
+	// 렌더링 해상도 슬라이더는 움직이는 동안 저장하지 않으므로 닫을 때 한 번 저장한다.
+	// (화면 모드 확인 중이었다면 위에서 되돌리면서 이미 저장했다.)
+	else if (auto* Screen = GEngine ? GEngine->GetGameUserSettings() : nullptr; Screen && WidgetTree && WidgetTree->FindWidget(TEXT("RenderScaleSetting")))
+		Screen->SaveSettings();
 	if (auto* Audio = UGameInstance::GetSubsystem<UGameAudioSettingsSubsystem>(GetGameInstance())) Audio->SaveVolumes();
 	if (auto* Visual = UGameInstance::GetSubsystem<UGameVisualSettingsSubsystem>(GetGameInstance())) Visual->Save();
 	Super::NativeDestruct();
@@ -617,7 +663,9 @@ bool AuthorSettingsHelp(UWidgetTree* Tree)
 		NSLOCTEXT("SettingsHelp", "Shake", "전투나 충격으로 화면이 흔들리는 강도를 조절합니다."),
 		NSLOCTEXT("SettingsHelp", "Bloom", "밝은 물체 주변에 빛이 번지는 효과를 켜거나 끕니다."),
 		NSLOCTEXT("SettingsHelp", "ReduceFlashes", "피격과 에너지 무기 발사 시 번쩍임을 줄입니다."),
-		NSLOCTEXT("SettingsHelp", "ApplyScreen", "선택한 화면 모드와 해상도를 적용합니다.")
+		NSLOCTEXT("SettingsHelp", "ApplyScreen", "선택한 화면 모드와 해상도를 적용합니다."),
+		NSLOCTEXT("SettingsHelp", "QualityPreset", "그림자, 조명, 효과 등 전체 그래픽 품질을 한 번에 정합니다. 낮을수록 프레임이 올라갑니다."),
+		NSLOCTEXT("SettingsHelp", "RenderScale", "3D 장면을 그리는 해상도의 비율입니다. 낮추면 프레임이 오르고 화면이 조금 흐려집니다. UI는 그대로 선명합니다.")
 	};
 	static_assert(UE_ARRAY_COUNT(DisplayHelp) == UE_ARRAY_COUNT(DisplayHelpControls));
 	for (int32 Index = 0; Index < UE_ARRAY_COUNT(DisplayHelpControls); ++Index)
@@ -644,7 +692,7 @@ bool AuthorSettingsHelp(UWidgetTree* Tree)
 		auto* Selector = Tree->FindWidget(Binding.WidgetName);
 		if (!Selector) continue;
 		if (Binding.WidgetName.ToString().StartsWith(TEXT("IA_Drop_")))
-			Selector->SetToolTipText(NSLOCTEXT("SettingsHelp", "Drop", "아래 키를 누른 상태에서 점프키를 누르면 하향 점프합니다. 클릭하면 아래 키를 바꿉니다."));
+			Selector->SetToolTipText(NSLOCTEXT("SettingsHelp", "Drop", "아래 키 + 점프키로 하향 점프합니다. 클릭하면 아래 키를 바꿉니다."));
 		else if (Selector->GetToolTipText().IsEmpty())
 			Selector->SetToolTipText(NSLOCTEXT("SettingsHelp", "CaptureKey", "클릭한 뒤 새 키를 누릅니다. Esc를 누르면 취소됩니다."));
 	}
@@ -668,6 +716,199 @@ bool AuthorSettingsHelp(UWidgetTree* Tree)
 	Space->SetHeightOverride(62.f);
 	Space->SetContent(Frame);
 	return PlaceSettingsHelpInCanvas(Tree, Space);
+}
+
+void CopyNamedProperties(UObject* Target, const UObject* Source, std::initializer_list<const TCHAR*> Names)
+{
+	// 디자이너에서 꾸민 스타일을 그대로 옮긴다. 일부 프로퍼티는 setter가 없거나 위젯 생성 전에만 바꿀 수 있어서 리플렉션으로 복사한다.
+	if (!Target || !Source || !Target->IsA(Source->GetClass())) return;
+	for (const TCHAR* Name : Names)
+		if (const FProperty* Property = Source->GetClass()->FindPropertyByName(Name))
+			Property->CopyCompleteValue_InContainer(Target, Source);
+}
+
+void CopyTextLook(UTextBlock* Target, const UTextBlock* Source)
+{
+	if (!Target || !Source) return;
+	Target->SetFont(Source->GetFont());
+	Target->SetColorAndOpacity(Source->GetColorAndOpacity());
+	// UTextBlock에는 정렬 getter가 없어서 리플렉션으로 복사한다.
+	CopyNamedProperties(Target, Source, {TEXT("Justification")});
+	Target->SetRenderTransform(Source->GetRenderTransform());
+	Target->SetVisibility(Source->GetVisibility());
+}
+
+/** 그래픽 탭과 소리 탭을 나누고 그래픽 품질, 렌더링 해상도 줄을 넣는다. 여러 번 실행해도 결과가 같다. */
+bool AuthorGraphicsAndAudioPages(UWidgetTree* Tree)
+{
+	auto* Pages = Cast<UWidgetSwitcher>(Tree->FindWidget(TEXT("SettingsTabPages")));
+	auto* Columns = Cast<UHorizontalBox>(Tree->FindWidget(TEXT("SettingsColumns")));
+	auto* Display = Cast<UVerticalBox>(Tree->FindWidget(TEXT("VisualSettingsColumn")));
+	auto* GeneralTab = Cast<UButton>(Tree->FindWidget(TEXT("GeneralSettingsTab")));
+	auto* GeneralCaption = Cast<UTextBlock>(Tree->FindWidget(TEXT("GeneralSettingsTabText")));
+	auto* GeneralTabBox = GeneralTab ? Cast<USizeBox>(GeneralTab->GetParent()) : nullptr;
+	auto* Tabs = GeneralTabBox ? Cast<UHorizontalBox>(GeneralTabBox->GetParent()) : nullptr;
+	if (!Pages || !Columns || !Display || !GeneralTab || !GeneralCaption || !Tabs)
+	{
+		UE_LOG(LogTemp, Error, TEXT("Settings layout: graphics/audio split needs SettingsTabPages, SettingsColumns, VisualSettingsColumn and GeneralSettingsTab."));
+		return false;
+	}
+
+	// 1. 탭: "화면 및 소리" -> "그래픽", 바로 뒤에 "소리"
+	GeneralCaption->SetText(NSLOCTEXT("Settings", "GraphicsTab", "그래픽"));
+	if (!Tree->FindWidget(TEXT("AudioSettingsTab")))
+	{
+		auto* Size = Tree->ConstructWidget<USizeBox>();
+		Size->SetWidthOverride(GeneralTabBox->GetWidthOverride());
+		Size->SetHeightOverride(GeneralTabBox->GetHeightOverride());
+		auto* Button = Tree->ConstructWidget<UButton>(UButton::StaticClass(), TEXT("AudioSettingsTab"));
+		Button->SetStyle(GeneralTab->GetStyle());
+		Button->SetColorAndOpacity(GeneralTab->GetColorAndOpacity());
+		Button->SetBackgroundColor(GeneralTab->GetBackgroundColor());
+		Size->SetContent(Button);
+		auto* Caption = Tree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("AudioSettingsTabText"));
+		CopyTextLook(Caption, GeneralCaption);
+		Caption->SetText(NSLOCTEXT("Settings", "AudioTab", "소리"));
+		auto* CaptionSlot = CastChecked<UButtonSlot>(Button->AddChild(Caption));
+		if (const auto* GeneralCaptionSlot = Cast<UButtonSlot>(GeneralCaption->Slot))
+		{
+			CaptionSlot->SetPadding(GeneralCaptionSlot->GetPadding());
+			CaptionSlot->SetHorizontalAlignment(GeneralCaptionSlot->GetHorizontalAlignment());
+			CaptionSlot->SetVerticalAlignment(GeneralCaptionSlot->GetVerticalAlignment());
+		}
+		auto* TabSlot = Cast<UHorizontalBoxSlot>(Tabs->InsertChildAt(Tabs->GetChildIndex(GeneralTabBox) + 1, Size));
+		if (const auto* GeneralSlot = Cast<UHorizontalBoxSlot>(GeneralTabBox->Slot); TabSlot && GeneralSlot)
+		{
+			TabSlot->SetPadding(GeneralSlot->GetPadding());
+			TabSlot->SetSize(GeneralSlot->GetSize());
+			TabSlot->SetHorizontalAlignment(GeneralSlot->GetHorizontalAlignment());
+			TabSlot->SetVerticalAlignment(GeneralSlot->GetVerticalAlignment());
+		}
+	}
+
+	// 2. 소리 페이지: 그래픽 페이지 오른쪽에 있던 볼륨 섹션을 독립 페이지(1번)로 옮긴다.
+	if (!Tree->FindWidget(TEXT("AudioSettingsPage")))
+	{
+		UWidget* Audio = Tree->FindWidget(TEXT("AudioSettingsSection"));
+		if (!Audio)
+		{
+			UE_LOG(LogTemp, Error, TEXT("Settings layout: AudioSettingsSection not found."));
+			return false;
+		}
+		FMargin Padding;
+		if (const auto* OldSlot = Cast<UHorizontalBoxSlot>(Audio->Slot)) Padding = OldSlot->GetPadding();
+		Audio->RemoveFromParent();
+		auto* Page = Tree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("AudioSettingsPage"));
+		auto* Width = Tree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("AudioSettingsWidth"));
+		// 페이지 전체 폭으로 늘리면 슬라이더가 지나치게 길어져서 폭을 고정하고 왼쪽(다른 탭과 같은 시작선)에 둔다.
+		// 최대 폭(MaxDesiredWidth)만 주면 슬라이더의 원하는 크기가 작아서 줄어들므로 고정 폭을 쓴다. 디자이너에서 바꿔도 된다.
+		Width->SetWidthOverride(760.f);
+		Width->SetContent(Audio);
+		auto* WidthSlot = Page->AddChildToHorizontalBox(Width);
+		WidthSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+		WidthSlot->SetHorizontalAlignment(HAlign_Left);
+		WidthSlot->SetVerticalAlignment(VAlign_Top);
+		WidthSlot->SetPadding(Padding);
+		Pages->InsertChildAt(AudioPage, Page);
+	}
+
+	// 3. 그래픽 페이지 오른쪽 열: 품질 및 효과
+	if (!Tree->FindWidget(TEXT("QualitySettingsColumn")))
+	{
+		const auto FindRow = [&](FName ControlName, UPanelWidget* Column) -> UWidget*
+		{
+			UWidget* Row = Tree->FindWidget(ControlName);
+			while (Row && Row->GetParent() && Row->GetParent() != Column) Row = Row->GetParent();
+			return Row && Row->GetParent() == Column ? Row : nullptr;
+		};
+		// 새 줄은 밝기 줄의 크기, 라벨 폭, 글꼴, 여백을 그대로 따른다.
+		auto* TemplateControl = Cast<USlider>(Tree->FindWidget(TEXT("BrightnessSetting")));
+		auto* TemplateRow = Cast<USizeBox>(FindRow(TEXT("BrightnessSetting"), Display));
+		auto* TemplateLine = TemplateControl ? Cast<UHorizontalBox>(TemplateControl->GetParent()) : nullptr;
+		auto* TemplateLabelBox = TemplateLine ? Cast<USizeBox>(TemplateLine->GetChildAt(0)) : nullptr;
+		auto* TemplateLabel = TemplateLabelBox ? Cast<UTextBlock>(TemplateLabelBox->GetContent()) : nullptr;
+		auto* TemplateCombo = Cast<UComboBoxString>(Tree->FindWidget(TEXT("WindowModeSetting")));
+		auto* DisplayHeading = Cast<UTextBlock>(Display->GetChildAt(0));
+		if (!TemplateControl || !TemplateRow || !TemplateLabelBox || !TemplateLabel || !TemplateCombo || !DisplayHeading)
+		{
+			UE_LOG(LogTemp, Error, TEXT("Settings layout: brightness row, window mode dropdown or display heading not found."));
+			return false;
+		}
+		const auto* TemplateRowSlot = CastChecked<UVerticalBoxSlot>(TemplateRow->Slot);
+		const auto* TemplateControlSlot = CastChecked<UHorizontalBoxSlot>(TemplateControl->Slot);
+
+		auto* Quality = Tree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass(), TEXT("QualitySettingsColumn"));
+		auto* QualitySlot = Columns->AddChildToHorizontalBox(Quality);
+		if (const auto* DisplaySlot = Cast<UHorizontalBoxSlot>(Display->Slot))
+		{
+			const FMargin Padding = DisplaySlot->GetPadding();
+			QualitySlot->SetPadding(FMargin(Padding.Right, Padding.Top, Padding.Left, Padding.Bottom));
+			QualitySlot->SetSize(DisplaySlot->GetSize());
+			QualitySlot->SetHorizontalAlignment(DisplaySlot->GetHorizontalAlignment());
+			QualitySlot->SetVerticalAlignment(DisplaySlot->GetVerticalAlignment());
+		}
+
+		auto* Heading = Tree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), TEXT("QualityHeading"));
+		CopyTextLook(Heading, DisplayHeading);
+		Heading->SetText(NSLOCTEXT("Settings", "QualityHeading", "품질 및 효과"));
+		auto* HeadingSlot = Quality->AddChildToVerticalBox(Heading);
+		if (const auto* DisplayHeadingSlot = Cast<UVerticalBoxSlot>(DisplayHeading->Slot))
+		{
+			HeadingSlot->SetPadding(DisplayHeadingSlot->GetPadding());
+			HeadingSlot->SetHorizontalAlignment(DisplayHeadingSlot->GetHorizontalAlignment());
+		}
+
+		const auto AddRow = [&](const FText& Caption, UWidget* Control)
+		{
+			auto* Row = Tree->ConstructWidget<USizeBox>();
+			Row->SetHeightOverride(TemplateRow->GetHeightOverride());
+			auto* Line = Tree->ConstructWidget<UHorizontalBox>();
+			Row->SetContent(Line);
+			auto* LabelBox = Tree->ConstructWidget<USizeBox>();
+			LabelBox->SetWidthOverride(TemplateLabelBox->GetWidthOverride());
+			auto* Label = Tree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), *(Control->GetName() + TEXT("Label")));
+			CopyTextLook(Label, TemplateLabel);
+			Label->SetText(Caption);
+			LabelBox->SetContent(Label);
+			auto* LabelSlot = Line->AddChildToHorizontalBox(LabelBox);
+			if (const auto* TemplateLabelSlot = Cast<UHorizontalBoxSlot>(TemplateLabelBox->Slot))
+			{
+				LabelSlot->SetPadding(TemplateLabelSlot->GetPadding());
+				LabelSlot->SetVerticalAlignment(TemplateLabelSlot->GetVerticalAlignment());
+			}
+			auto* ControlSlot = Line->AddChildToHorizontalBox(Control);
+			ControlSlot->SetSize(TemplateControlSlot->GetSize());
+			ControlSlot->SetPadding(TemplateControlSlot->GetPadding());
+			ControlSlot->SetHorizontalAlignment(TemplateControlSlot->GetHorizontalAlignment());
+			ControlSlot->SetVerticalAlignment(TemplateControlSlot->GetVerticalAlignment());
+			auto* RowSlot = Quality->AddChildToVerticalBox(Row);
+			RowSlot->SetPadding(TemplateRowSlot->GetPadding());
+		};
+
+		auto* Preset = Tree->ConstructWidget<UComboBoxString>(UComboBoxString::StaticClass(), TEXT("QualityPresetSetting"));
+		CopyNamedProperties(Preset, TemplateCombo, {TEXT("WidgetStyle"), TEXT("ItemStyle"), TEXT("ScrollBarStyle"),
+			TEXT("ContentPadding"), TEXT("MaxListHeight"), TEXT("HasDownArrow"), TEXT("EnableGamepadNavigationMode"),
+			TEXT("Font"), TEXT("ForegroundColor"), TEXT("bIsFocusable")});
+		AddRow(NSLOCTEXT("Settings", "QualityPreset", "그래픽 품질"), Preset);
+
+		auto* RenderScale = Tree->ConstructWidget<USlider>(USlider::StaticClass(), TEXT("RenderScaleSetting"));
+		CopyNamedProperties(RenderScale, TemplateControl, {TEXT("WidgetStyle"), TEXT("SliderBarColor"), TEXT("SliderHandleColor"),
+			TEXT("IndentHandle"), TEXT("MouseUsesStep"), TEXT("RequiresControllerLock"), TEXT("IsFocusable"), TEXT("Orientation")});
+		AddRow(NSLOCTEXT("Settings", "RenderScale", "렌더링 해상도"), RenderScale);
+
+		// 화면 열에 있던 효과 줄을 품질 열로 옮긴다. 화면 열에는 화면 모드 적용 버튼까지만 남는다.
+		for (const TCHAR* Name : {TEXT("BloomSetting"), TEXT("ShakeSetting"), TEXT("ReduceFlashesSetting")})
+		{
+			if (UWidget* Row = FindRow(Name, Display))
+			{
+				const FMargin Padding = CastChecked<UVerticalBoxSlot>(Row->Slot)->GetPadding();
+				Row->RemoveFromParent();
+				Quality->AddChildToVerticalBox(Row)->SetPadding(Padding);
+			}
+		}
+	}
+	UE_LOG(LogTemp, Display, TEXT("Settings layout: graphics and audio pages are separate (%d pages)."), Pages->GetChildrenCount());
+	return true;
 }
 
 bool AuthorKeySettingsGroups(UWidgetTree* Tree)
@@ -756,7 +997,8 @@ bool UAudioSettingsWidget::AuthorSettingsLayout(UWidgetTree* WidgetTree)
 	if (!Display) return false;
 	BuildVisualLayout(WidgetTree, Display);
 	if (WidgetTree->FindWidget(TEXT("SettingsTabPages")))
-		return AuthorKeySettingsGroups(WidgetTree) && AuthorKeySettingsTypography(WidgetTree) && AuthorSettingsHelp(WidgetTree);
+		return AuthorGraphicsAndAudioPages(WidgetTree) && AuthorKeySettingsGroups(WidgetTree)
+			&& AuthorKeySettingsTypography(WidgetTree) && AuthorSettingsHelp(WidgetTree);
 	auto* Columns = Cast<UHorizontalBox>(WidgetTree->FindWidget(TEXT("SettingsColumns")));
 	UPanelWidget* Parent = Columns ? Columns->GetParent() : nullptr;
 	if (!Parent) return false;
@@ -775,7 +1017,7 @@ bool UAudioSettingsWidget::AuthorSettingsLayout(UWidgetTree* WidgetTree)
 		Size->SetHeightOverride(40.f);
 		Size->SetWidthOverride(174.f);
 		Tabs->AddChildToHorizontalBox(Size)->SetPadding(FMargin(0.f, 0.f, 3.f, 0.f));
-		auto* Button = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), SettingsTabNames[Index]);
+		auto* Button = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), SettingsTabs[Index].Button);
 		Size->SetContent(Button);
 		FButtonStyle Style;
 		const FVector4 Corners(9.f, 9.f, 0.f, 0.f);
@@ -785,7 +1027,7 @@ bool UAudioSettingsWidget::AuthorSettingsLayout(UWidgetTree* WidgetTree)
 		Style.Disabled = Style.Normal;
 		Button->SetStyle(Style);
 		auto* Text = MakeSettingsLabel(WidgetTree, Caption, 18);
-		Text->Rename(*SettingsTabTextNames[Index].ToString(), WidgetTree);
+		Text->Rename(SettingsTabs[Index].Text, WidgetTree);
 		Text->SetJustification(ETextJustify::Center);
 		Text->SetRenderTranslation(FVector2D(0.f, -4.f));
 		Text->SetVisibility(ESlateVisibility::HitTestInvisible);
@@ -793,9 +1035,10 @@ bool UAudioSettingsWidget::AuthorSettingsLayout(UWidgetTree* WidgetTree)
 		LabelSlot->SetHorizontalAlignment(HAlign_Fill);
 		LabelSlot->SetVerticalAlignment(VAlign_Center);
 	};
-	AddTab(0, NSLOCTEXT("Settings", "GeneralTab", "화면 및 소리"));
-	AddTab(1, NSLOCTEXT("Settings", "AppearanceTab", "플레이어 외형"));
-	AddTab(2, NSLOCTEXT("Settings", "KeysTab", "키 설정"));
+	// 소리 탭(1)은 AuthorGraphicsAndAudioPages가 그래픽 탭 바로 뒤에 넣는다.
+	AddTab(0, NSLOCTEXT("Settings", "GraphicsTab", "그래픽"));
+	AddTab(2, NSLOCTEXT("Settings", "AppearanceTab", "플레이어 외형"));
+	AddTab(3, NSLOCTEXT("Settings", "KeysTab", "키 설정"));
 	auto* TabLine = WidgetTree->ConstructWidget<UImage>();
 	auto TabLineBrush = FactoryUI::Plate(FactoryUI::Edge, FactoryUI::Edge, 0.f);
 	TabLineBrush.ImageSize = FVector2f(1.f, 1.f);
@@ -895,16 +1138,17 @@ bool UAudioSettingsWidget::AuthorSettingsLayout(UWidgetTree* WidgetTree)
 		PreviewSlot->SetPadding(FMargin(8.f, 6.f));
 	}
 	AuthorKeySettingsPage(WidgetTree, Pages);
-	return AuthorKeySettingsGroups(WidgetTree) && AuthorKeySettingsTypography(WidgetTree) && AuthorSettingsHelp(WidgetTree);
+	return AuthorGraphicsAndAudioPages(WidgetTree) && AuthorKeySettingsGroups(WidgetTree)
+		&& AuthorKeySettingsTypography(WidgetTree) && AuthorSettingsHelp(WidgetTree);
 }
 #endif
 
 void UAudioSettingsWidget::UpdateSettingsTabs(int32 ActiveIndex)
 {
-	for (int32 Index = 0; Index < UE_ARRAY_COUNT(SettingsTabNames); ++Index)
+	for (const FSettingsTab& Tab : SettingsTabs)
 	{
-		if (auto* Label = Cast<UTextBlock>(WidgetTree->FindWidget(SettingsTabTextNames[Index])))
-			Label->SetColorAndOpacity(Index == ActiveIndex ? FactoryUI::Cyan : FactoryUI::Text);
+		if (auto* Label = Cast<UTextBlock>(WidgetTree->FindWidget(Tab.Text)))
+			Label->SetColorAndOpacity(Tab.Page == ActiveIndex ? FactoryUI::Cyan : FactoryUI::Text);
 	}
 }
 
@@ -914,15 +1158,16 @@ void UAudioSettingsWidget::ShowSettingsTab(int32 Index)
 	{
 		Pages->SetActiveWidgetIndex(Index);
 		UpdateSettingsTabs(Index);
-		if (Index == 1) RefreshAppearancePreview();
-		if (Index == 2) RefreshKeySelectors();
+		if (Index == AppearancePage) RefreshAppearancePreview();
+		if (Index == KeysPage) RefreshKeySelectors();
 		FocusFirstControl();
 	}
 }
 
-void UAudioSettingsWidget::ShowGeneralSettings() { ShowSettingsTab(0); }
-void UAudioSettingsWidget::ShowAppearanceSettings() { ShowSettingsTab(1); }
-void UAudioSettingsWidget::ShowKeySettings() { ShowSettingsTab(2); }
+void UAudioSettingsWidget::ShowGeneralSettings() { ShowSettingsTab(GraphicsPage); }
+void UAudioSettingsWidget::ShowAudioSettings() { ShowSettingsTab(AudioPage); }
+void UAudioSettingsWidget::ShowAppearanceSettings() { ShowSettingsTab(AppearancePage); }
+void UAudioSettingsWidget::ShowKeySettings() { ShowSettingsTab(KeysPage); }
 
 void UAudioSettingsWidget::BindSettingsHelp()
 {
@@ -943,9 +1188,9 @@ void UAudioSettingsWidget::BindSettingsHelp()
 		SettingsHelpEntries.Add({Row, MoveTemp(Help), PageIndex});
 	};
 	for (const FName Name : DisplayHelpControls)
-		AddHelp(WidgetTree->FindWidget(Name), 0);
+		AddHelp(WidgetTree->FindWidget(Name), GraphicsPage);
 	for (const FName Name : AppearanceHelpControls)
-		AddHelp(WidgetTree->FindWidget(Name), 1, FText::GetEmpty(), Name != TEXT("AppearancePreviewBox"));
+		AddHelp(WidgetTree->FindWidget(Name), AppearancePage, FText::GetEmpty(), Name != TEXT("AppearancePreviewBox"));
 	auto* Audio = Cast<UAudioSettingsWidget>(WidgetTree->FindWidget(TEXT("AudioSettingsSection")));
 	UWidgetTree* AudioTree = Audio ? Audio->WidgetTree.Get() : WidgetTree.Get();
 	const FText AudioHelp = Audio ? Audio->GetToolTipText() : FText::GetEmpty();
@@ -955,11 +1200,11 @@ void UAudioSettingsWidget::BindSettingsHelp()
 		const auto* VolumeLabel = Cast<UTextBlock>(AudioTree->FindWidget(TEXT("MasterVolumeSliderLabel")));
 		if (VolumeLabel) Text->SetFont(VolumeLabel->GetFont());
 		for (const auto& Entry : VolumeRows)
-			AddHelp(AudioTree->FindWidget(Entry.Slider), 0, AudioHelp);
+			AddHelp(AudioTree->FindWidget(Entry.Slider), AudioPage, AudioHelp);
 	}
 	for (const auto& Entry : KeySelectors)
-		AddHelp(Entry.Key, 2);
-	AddHelp(WidgetTree->FindWidget(TEXT("ResetGameplayKeys")), 2);
+		AddHelp(Entry.Key, KeysPage);
+	AddHelp(WidgetTree->FindWidget(TEXT("ResetGameplayKeys")), KeysPage);
 }
 
 void UAudioSettingsWidget::RefreshSettingsHelp()
@@ -978,7 +1223,7 @@ void UAudioSettingsWidget::RefreshSettingsHelp()
 	if (Entry)
 	{
 		FText HelpText = Entry->Text;
-		if (PageIndex == 1)
+		if (PageIndex == AppearancePage)
 		{
 			for (const TCHAR* Name : {TEXT("OutlineColorSwatch"), TEXT("PlayerColorSwatch")})
 			{
@@ -1331,6 +1576,25 @@ void UAudioSettingsWidget::BuildVisualControls()
 	if (auto* FrameLimit = AddCombo(TEXT("FrameLimitSetting"),
 		{TEXT("제한 없음"), TEXT("30"), TEXT("60"), TEXT("120")}, Limit == 30 ? 1 : Limit == 60 ? 2 : Limit == 120 ? 3 : 0))
 		FrameLimit->OnSelectionChanged.AddUniqueDynamic(this, &ThisClass::SetFrameLimit);
+	// 엔진 단계 4(시네마틱)나 그룹별로 섞인 값(-1)은 메뉴에 없으므로 "사용자 지정"으로 보여 준다.
+	const int32 QualityLevel = Screen->GetOverallScalabilityLevel();
+	TArray<FString> QualityOptions;
+	for (const TCHAR* Option : QualityPresetOptions) QualityOptions.Add(Option);
+	const bool bPresetLevel = QualityLevel >= 0 && QualityLevel < QualityPresetCount;
+	if (!bPresetLevel) QualityOptions.Add(CustomQualityOption);
+	if (auto* Quality = AddCombo(TEXT("QualityPresetSetting"), QualityOptions, bPresetLevel ? QualityLevel : QualityPresetCount))
+		Quality->OnSelectionChanged.AddUniqueDynamic(this, &ThisClass::SetQualityPreset);
+	if (auto* RenderScale = Cast<USlider>(WidgetTree->FindWidget(TEXT("RenderScaleSetting"))))
+	{
+		StyleSettingsSlider(RenderScale);
+		RenderScale->SetMinValue(FMath::Clamp(MinRenderScalePercent, 10.f, 100.f) / 100.f);
+		RenderScale->SetMaxValue(1.f);
+		RenderScale->SetStepSize(RenderScaleStepPercent / 100.f);
+		RenderScale->SetValue(GetRenderScalePercent(*Screen) / 100.f);
+		RenderScale->MouseUsesStep = true;
+		RenderScale->RequiresControllerLock = false;
+		RenderScale->OnValueChanged.AddUniqueDynamic(this, &ThisClass::SetRenderResolutionScale);
+	}
 	if (auto* Shake = AddSlider(TEXT("ShakeSetting"), Visual->ShakeScale, 1.f))
 		Shake->OnValueChanged.AddUniqueDynamic(this, &ThisClass::SetShake);
 	if (auto* Bloom = AddToggle(TEXT("BloomSetting"), Visual->bBloom))
@@ -1359,7 +1623,7 @@ UWidget* UAudioSettingsWidget::MakeDropdownOption(FString Option)
 	// 코드는 F_TLM_UI의 글자가 줄 높이보다 아래로 그려지는 것만 보정한다(라벨의 -5 오프셋과 같은 이유).
 	const UComboBoxString* Source = nullptr;
 	for (const TCHAR* Name : {TEXT("WindowModeSetting"), TEXT("ResolutionSetting"), TEXT("FrameLimitSetting"),
-		TEXT("OutlineColorSetting"), TEXT("PlayerColorSetting")})
+		TEXT("QualityPresetSetting"), TEXT("OutlineColorSetting"), TEXT("PlayerColorSetting")})
 		if (const auto* Combo = Cast<UComboBoxString>(WidgetTree->FindWidget(Name)); Combo && Combo->FindOptionIndex(Option) >= 0)
 		{
 			Source = Combo;
@@ -1392,7 +1656,10 @@ void UAudioSettingsWidget::RefreshVisualReadouts()
 	Decimal.MinimumFractionalDigits = 2;
 	Decimal.MaximumFractionalDigits = 2;
 	struct FReadout { const TCHAR* Control; const TCHAR* Name; FText Text; };
+	const auto* Screen = GEngine ? GEngine->GetGameUserSettings() : nullptr;
+	const float RenderScale = Screen ? GetRenderScalePercent(*Screen) / 100.f : 1.f;
 	const FReadout Entries[] = {
+		{TEXT("RenderScaleSetting"), TEXT("RenderScaleValue"), FText::AsPercent(RenderScale)},
 		{TEXT("BrightnessSetting"), TEXT("BrightnessValue"), FText::AsPercent(Visual->Brightness)},
 		{TEXT("ShakeSetting"), TEXT("ShakeValue"), FText::AsPercent(Visual->ShakeScale)},
 		{TEXT("OutlineWidthSetting"), TEXT("OutlineWidthValue"), FText::Format(
@@ -1587,6 +1854,38 @@ void UAudioSettingsWidget::SetVSync(bool bValue)
 		Screen->ApplyNonResolutionSettings();
 		if (!ScreenConfirmation.IsValid()) Screen->SaveSettings();
 	}
+}
+
+void UAudioSettingsWidget::SetQualityPreset(FString Value, ESelectInfo::Type Selection)
+{
+	if (Selection == ESelectInfo::Direct) return;
+	auto* Combo = Cast<UComboBoxString>(WidgetTree->FindWidget(TEXT("QualityPresetSetting")));
+	auto* Screen = GEngine ? GEngine->GetGameUserSettings() : nullptr;
+	if (!Combo || !Screen) return;
+	const int32 Level = Combo->FindOptionIndex(Value);
+	// "사용자 지정"은 현재 상태를 보여 주는 항목일 뿐 고를 수 있는 값이 아니다.
+	if (Level < 0 || Level >= QualityPresetCount) return;
+	// 엔진의 전체 품질 단계에는 렌더링 해상도도 들어 있어서, 품질을 바꿔도 사용자가 고른 비율이 유지되도록 되돌려 놓는다.
+	const float RenderScalePercent = GetRenderScalePercent(*Screen);
+	Screen->SetOverallScalabilityLevel(Level);
+	Screen->SetResolutionScaleValueEx(RenderScalePercent);
+	Screen->ApplyNonResolutionSettings();
+	if (!ScreenConfirmation.IsValid()) Screen->SaveSettings();
+	if (Combo->GetOptionCount() > QualityPresetCount) Combo->RemoveOption(CustomQualityOption);
+	// 빛 번짐 같은 개별 설정이 품질 단계 값에 덮이지 않도록 다시 적용한다.
+	UpdateVisuals();
+}
+
+void UAudioSettingsWidget::SetRenderResolutionScale(float Value)
+{
+	auto* Screen = GEngine ? GEngine->GetGameUserSettings() : nullptr;
+	if (!Screen) return;
+	const float Step = FMath::Max(RenderScaleStepPercent, 1.f);
+	const float Percent = FMath::Clamp(FMath::GridSnap(Value * 100.f, Step), FMath::Clamp(MinRenderScalePercent, 10.f, 100.f), 100.f);
+	if (FMath::IsNearlyEqual(Percent, GetRenderScalePercent(*Screen))) return;
+	Screen->SetResolutionScaleValueEx(Percent);
+	Screen->ApplyNonResolutionSettings();
+	RefreshVisualReadouts();
 }
 
 void UAudioSettingsWidget::ApplyScreenMode()

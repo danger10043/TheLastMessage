@@ -83,6 +83,40 @@ ASideScrollingPlayerController::ASideScrollingPlayerController()
 	MapWidgetClass = UAreaMapWidget::StaticClass();
 }
 
+void ASideScrollingPlayerController::ClientShowLaserPuzzleIntroWidget_Implementation()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	if (APlayerHUD* LocalHUD = Cast<APlayerHUD>(GetHUD()))
+	{
+		LocalHUD->ShowLaserPuzzleIntro();
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("레이저 퍼즐 UI를 표시할 PlayerHUD가 없습니다."));
+	}
+}
+
+void ASideScrollingPlayerController::ClientShowCorePuzzleIntroWidget_Implementation()
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	if (APlayerHUD* LocalHUD = Cast<APlayerHUD>(GetHUD()))
+	{
+		LocalHUD->ShowCorePuzzleIntro();
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("코어 퍼즐 UI를 표시할 PlayerHUD가 없습니다."));
+	}
+}
+
 
 void ASideScrollingPlayerController::BuildInputStack(TArray<UInputComponent*>& InputStack)
 {

@@ -27,6 +27,12 @@ public:
 	UFUNCTION(Client, Reliable)
 	void ClientSetBossSequenceInputBlocked(class ABossMonster* SourceBoss, bool bBlocked);
 
+	UFUNCTION(Client, Reliable)
+	void ClientShowLaserPuzzleIntroWidget();
+
+	UFUNCTION(Client, Reliable)
+	void ClientShowCorePuzzleIntroWidget();
+
 	bool IsBossSequenceInputBlocked() const { return bBossSequenceInputBlocked; }
 
 protected:

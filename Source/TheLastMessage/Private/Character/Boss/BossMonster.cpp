@@ -763,6 +763,20 @@ void ABossMonster::StartShieldPuzzle(EBossPuzzleType PuzzleType)
     {
         PlayLaserPuzzleStartSequence();
     }
+
+    if (PuzzleType == EBossPuzzleType::CorePuzzle
+        && CurrentState == EBossState::ShieldPuzzle
+        && IsValid(ShieldComponent.Get()) && ShieldComponent->IsShieldActive()
+        && !bIsResettingBoss && !IsActorBeingDestroyed())
+    {
+        APawn* PlayerPawn = Cast<APawn>(GetCurrentTarget());
+        ASideScrollingPlayerController* PC = IsValid(PlayerPawn)
+            ? Cast<ASideScrollingPlayerController>(PlayerPawn->GetController()) : nullptr;
+        if (IsValid(PC))
+        {
+            PC->ClientShowCorePuzzleIntroWidget();
+        }
+    }
 }
 
 void ABossMonster::HandleBossDeath()
@@ -1126,7 +1140,7 @@ bool ABossMonster::TrySkipPhaseCinematic(APlayerController* RequestingController
         StartPlayer->GoToEndAndStop();
         if (ActiveLaserStartSequencePlayer.Get() == StartPlayer)
         {
-            StopLaserPuzzleStartSequence();
+            HandleLaserPuzzleStartSequenceFinished();
         }
         return true;
     }
@@ -1254,7 +1268,22 @@ void ABossMonster::StopLaserPuzzleStartSequence()
 
 void ABossMonster::HandleLaserPuzzleStartSequenceFinished()
 {
+    ASideScrollingPlayerController* PC = SequenceInputController.Get();
+    const bool bShouldShowIntro = HasAuthority()
+        && IsValid(ActiveLaserStartSequencePlayer.Get())
+        && bLaserPuzzleActive
+        && CurrentState == EBossState::ShieldPuzzle
+        && !bIsResettingBoss
+        && !IsActorBeingDestroyed();
+
     StopLaserPuzzleStartSequence();
+
+    if (bShouldShowIntro && IsValid(PC)
+        && bLaserPuzzleActive && CurrentState == EBossState::ShieldPuzzle
+        && !bIsResettingBoss && !IsActorBeingDestroyed())
+    {
+        PC->ClientShowLaserPuzzleIntroWidget();
+    }
 }
 
 void ABossMonster::PlayLaserPuzzleStartSequence()

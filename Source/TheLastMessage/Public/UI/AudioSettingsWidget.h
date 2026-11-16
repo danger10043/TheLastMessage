@@ -72,6 +72,7 @@ private:
 	void RefreshAppearancePreview();
 	bool bSynchronizingAppearanceControls = false;
 	void SetAppearanceColor(const FString& Value, ESelectInfo::Type Selection, bool bOutline);
+	void OpenAppearancePalette(bool bOutline);
 	TWeakObjectPtr<class USkeletalMeshComponent> AppearancePreviewMesh;
 	UPROPERTY(Transient) TObjectPtr<class UMaterialInterface> AppearancePreviewBody;
 	UFUNCTION() UWidget* MakeDropdownOption(FString Option);
@@ -91,7 +92,6 @@ private:
 	UFUNCTION() void ShowAppearanceSettings();
 	UFUNCTION() void ResetAppearanceSettings();
 	UFUNCTION() void SetVSync(bool bValue);
-	UFUNCTION() void SetMotionBlur(bool bValue);
 	UFUNCTION() void SetBloom(bool bValue);
 	UFUNCTION() void ApplyScreenMode();
 	bool RevertScreenMode(float DeltaTime);

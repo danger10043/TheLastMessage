@@ -3,6 +3,8 @@
 #include "Character/Player/PlayerBase.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/Engine.h"
+#include "Engine/GameInstance.h"
+#include "Engine/World.h"
 #include "HAL/IConsoleManager.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Misc/ConfigCacheIni.h"
@@ -41,6 +43,7 @@ void UGameVisualSettingsSubsystem::Initialize(FSubsystemCollectionBase& Collecti
 	ReadCustomColor(TEXT("CustomPlayerColor"), CustomPlayerColor);
 	GConfig->GetBool(VisualSettingsSection, TEXT("MotionBlur"), bMotionBlur, GGameUserSettingsIni);
 	GConfig->GetBool(VisualSettingsSection, TEXT("Bloom"), bBloom, GGameUserSettingsIni);
+	GConfig->GetBool(VisualSettingsSection, TEXT("ReduceFlashes"), bReduceFlashes, GGameUserSettingsIni);
 	Brightness = FMath::IsFinite(Brightness) ? FMath::Clamp(Brightness, 0.f, 1.f) : 0.5f;
 	OutlineScale = FMath::IsFinite(OutlineScale) ? FMath::Clamp(OutlineScale, 0.f, 2.f) : DefaultOutlineScale;
 	OutlineBrightness = FMath::IsFinite(OutlineBrightness) ? FMath::Clamp(OutlineBrightness, 0.f, 2.f) : DefaultOutlineBrightness;
@@ -154,6 +157,12 @@ void UGameVisualSettingsSubsystem::ResetAppearance()
 	CustomPlayerColor = FLinearColor::White;
 }
 
+float UGameVisualSettingsSubsystem::GetFlashIntensity(const UWorld* World)
+{
+	const auto* Settings = UGameInstance::GetSubsystem<UGameVisualSettingsSubsystem>(World ? World->GetGameInstance() : nullptr);
+	return Settings && Settings->bReduceFlashes ? 0.25f : 1.f;
+}
+
 void UGameVisualSettingsSubsystem::Save() const
 {
 	GConfig->SetFloat(VisualSettingsSection, TEXT("Brightness"), Brightness, GGameUserSettingsIni);
@@ -166,5 +175,6 @@ void UGameVisualSettingsSubsystem::Save() const
 	GConfig->SetString(VisualSettingsSection, TEXT("CustomPlayerColor"), *CustomPlayerColor.ToFColorSRGB().ToHex(), GGameUserSettingsIni);
 	GConfig->SetBool(VisualSettingsSection, TEXT("MotionBlur"), bMotionBlur, GGameUserSettingsIni);
 	GConfig->SetBool(VisualSettingsSection, TEXT("Bloom"), bBloom, GGameUserSettingsIni);
+	GConfig->SetBool(VisualSettingsSection, TEXT("ReduceFlashes"), bReduceFlashes, GGameUserSettingsIni);
 	GConfig->Flush(false, GGameUserSettingsIni);
 }

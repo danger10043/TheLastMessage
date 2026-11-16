@@ -1,4 +1,5 @@
 #include "Character/Enemy/EnemyBase.h"
+#include "UI/GameVisualSettingsSubsystem.h"
 #include "Character/Enemy/EnemyAIController.h"
 #include "Character/Enemy/EnemyAttributeSet.h"
 #include "Character/Enemy/Drop/EnemyHealthPickup.h"
@@ -626,6 +627,7 @@ void AEnemyBase::StartHitFlash()
 	{
 		return;
 	}
+	if (UGameVisualSettingsSubsystem::GetFlashIntensity(GetWorld()) < 1.f) return;
 
 	GetMesh()->SetOverlayMaterial(HitFlashMaterial);
 

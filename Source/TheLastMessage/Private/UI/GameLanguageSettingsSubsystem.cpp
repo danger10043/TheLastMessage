@@ -2,6 +2,7 @@
 
 #include "Internationalization/Culture.h"
 #include "Internationalization/Internationalization.h"
+#include "Internationalization/TextLocalizationManager.h"
 #include "Misc/CommandLine.h"
 #include "Misc/ConfigCacheIni.h"
 #include "Misc/Parse.h"
@@ -26,6 +27,9 @@ const FGameLanguage SupportedLanguages[] = {
 	{TEXT("fr"), TEXT("Français"), TEXT("fr")},
 };
 
+// 에디터에서 고른 게임 언어(미리보기). 비어 있으면 미리보기를 쓰지 않는 중이다.
+FString EditorPreviewCulture;
+
 int32 FindExact(const FString& Culture)
 {
 	for (int32 Index = 0; Index < UE_ARRAY_COUNT(SupportedLanguages); ++Index)
@@ -46,6 +50,19 @@ void UGameLanguageSettingsSubsystem::Initialize(FSubsystemCollectionBase& Collec
 	// 첫 실행에는 저장하지 않는다. 플레이어가 언어 설정에서 직접 고르면 그때 저장된다.
 	FInternationalization::Get().SetCurrentCulture(Startup);
 	UE_LOG(LogTemp, Display, TEXT("Language: no saved culture, system %s -> %s"), *SystemCulture, *Startup);
+}
+
+void UGameLanguageSettingsSubsystem::Deinitialize()
+{
+	ClearEditorPreview();
+	Super::Deinitialize();
+}
+
+void UGameLanguageSettingsSubsystem::ClearEditorPreview()
+{
+	if (!GIsEditor || EditorPreviewCulture.IsEmpty()) return;
+	EditorPreviewCulture.Reset();
+	FTextLocalizationManager::Get().DisableGameLocalizationPreview();
 }
 
 TConstArrayView<FGameLanguage> UGameLanguageSettingsSubsystem::GetSupportedLanguages()
@@ -86,6 +103,7 @@ int32 UGameLanguageSettingsSubsystem::FindSupportedLanguage(const FString& Cultu
 
 FString UGameLanguageSettingsSubsystem::GetCurrentLanguage()
 {
+	if (GIsEditor && !EditorPreviewCulture.IsEmpty()) return EditorPreviewCulture;
 	const int32 Index = FindSupportedLanguage(FInternationalization::Get().GetCurrentLanguage()->GetName());
 	return Index == INDEX_NONE ? FString() : FString(SupportedLanguages[Index].Culture);
 }
@@ -99,7 +117,18 @@ FString UGameLanguageSettingsSubsystem::GetStartupLanguage(const FString& System
 bool UGameLanguageSettingsSubsystem::SetLanguage(const FString& Culture)
 {
 	const int32 Index = FindExact(Culture);
-	if (Index == INDEX_NONE || !FInternationalization::Get().SetCurrentCulture(SupportedLanguages[Index].Culture)) return false;
+	if (Index == INDEX_NONE) return false;
+	if (GIsEditor)
+	{
+		// 에디터 화면 언어는 그대로 두고 게임 문구만 바꾼다. 원문(ko)을 고르면 미리보기를 끈다.
+		// (번역 데이터 Content/Localization/Game 이 없으면 엔진이 미리보기를 켜지 않고 원문을 보여 준다.)
+		EditorPreviewCulture = SupportedLanguages[Index].Culture;
+		FTextLocalizationManager::Get().EnableGameLocalizationPreview(EditorPreviewCulture);
+	}
+	else if (!FInternationalization::Get().SetCurrentCulture(SupportedLanguages[Index].Culture))
+	{
+		return false;
+	}
 	// UKismetInternationalizationLibrary::SetCurrentCulture(Culture, true)와 같은 곳에 저장한다.
 	// 엔진 함수는 에디터에서 저장을 건너뛰지만, 여기서는 PIE와 자동화 테스트에서도 저장 결과를 확인할 수 있도록 항상 저장한다.
 	// (에디터는 시작할 때 이 값을 읽지 않으므로 에디터 언어에는 영향이 없다.)

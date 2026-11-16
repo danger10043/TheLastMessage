@@ -19,6 +19,8 @@
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
 #include "Components/SizeBox.h"
+#include "Components/SizeBoxSlot.h"
+#include "Components/ScaleBoxSlot.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
@@ -55,6 +57,7 @@
 #include "Kismet/KismetSystemLibrary.h"
 #include "Misc/App.h"
 #include "Internationalization/Internationalization.h"
+#include "Internationalization/TextLocalizationManager.h"
 #include "Styling/CoreStyle.h"
 #include "Widgets/Colors/SColorPicker.h"
 
@@ -437,9 +440,12 @@ void UAudioSettingsWidget::NativeConstruct()
 	}
 
 	RefreshVolumeValues();
+	FitSettingsLabels();
 	BuildVisualControls();
 	if (!CultureChangedHandle.IsValid())
-		CultureChangedHandle = FInternationalization::Get().OnCultureChanged().AddUObject(this, &ThisClass::HandleCultureChanged);
+		// 컬처가 바뀌면 엔진은 번역 데이터를 비동기로 읽는다. 컬처 변경 알림 시점에 다시 채우면 이전 언어 문자열이 들어가므로
+		// 번역 데이터가 바뀐 뒤 오는 문구 갱신 알림(에디터의 게임 언어 미리보기 포함)에서 다시 채운다.
+		CultureChangedHandle = FTextLocalizationManager::Get().OnTextRevisionChangedEvent.AddUObject(this, &ThisClass::HandleCultureChanged);
 	BindKeySelectors();
 	BindSettingsHelp();
 	if (auto* Button = Cast<UButton>(FindSettingsWidget(TEXT("GeneralSettingsTab"))))
@@ -500,7 +506,7 @@ void UAudioSettingsWidget::NativeDestruct()
 	}
 	if (CultureChangedHandle.IsValid())
 	{
-		FInternationalization::Get().OnCultureChanged().Remove(CultureChangedHandle);
+		FTextLocalizationManager::Get().OnTextRevisionChangedEvent.Remove(CultureChangedHandle);
 		CultureChangedHandle.Reset();
 	}
 	if (ScreenConfirmation.IsValid())
@@ -1572,7 +1578,7 @@ void UAudioSettingsWidget::RefreshLanguageButtons()
 
 void UAudioSettingsWidget::SelectLanguage(const FString& Culture)
 {
-	// 고르는 즉시 적용하고 저장한다. FText로 만든 문구는 엔진이 바로 바꾸고, 드롭다운은 HandleCultureChanged가 다시 채운다.
+	// 고르는 즉시 적용하고 저장한다. FText로 만든 문구는 엔진이 바꾸고, 드롭다운은 번역 데이터를 다 읽은 뒤 HandleCultureChanged가 다시 채운다.
 	if (UGameLanguageSettingsSubsystem::GetCurrentLanguage() == Culture) return;
 	if (!UGameLanguageSettingsSubsystem::SetLanguage(Culture))
 		UE_LOG(LogTemp, Warning, TEXT("Language: could not switch to %s."), *Culture);
@@ -2033,6 +2039,75 @@ void UAudioSettingsWidget::BuildVisualControls()
 		Apply->OnClicked.AddUniqueDynamic(this, &ThisClass::ApplyScreenMode);
 	RefreshVisualReadouts();
 	RefreshApplyButton();
+}
+
+void UAudioSettingsWidget::FitSettingsLabels()
+{
+	// 영어·독일어·러시아어는 한국어보다 30~50% 길어서 라벨 칸(179px 등)을 넘는다(Docs/LanguageSettingsPlan.md 6절).
+	ForEachSettingsTree([](UWidgetTree* Tree)
+	{
+		TArray<UTextBlock*> Labels;
+		Tree->ForEachWidget([&Labels](UWidget* Widget)
+		{
+			auto* Label = Cast<UTextBlock>(Widget);
+			const auto* Box = Label ? Cast<USizeBox>(Label->GetParent()) : nullptr;
+			if (Box && Box->GetWidthOverride() > 0.f && Label->GetName().EndsWith(TEXT("Label"))) Labels.Add(Label);
+		});
+		for (UTextBlock* Label : Labels)
+		{
+			auto* Box = CastChecked<USizeBox>(Label->GetParent());
+			auto* Fit = Tree->ConstructWidget<UScaleBox>(UScaleBox::StaticClass(), *(Label->GetName() + TEXT("Fit")));
+			Fit->SetStretch(EStretch::ScaleToFit);
+			Fit->SetStretchDirection(EStretchDirection::DownOnly);
+			Fit->SetVisibility(Label->GetVisibility() == ESlateVisibility::Visible ? ESlateVisibility::SelfHitTestInvisible : Label->GetVisibility());
+			Box->RemoveChild(Label);
+			Fit->SetContent(Label);
+			// ScaleBox는 내용을 가운데에 두므로 라벨 시작선이 어긋나지 않게 왼쪽에 붙인다.
+			if (auto* LabelSlot = Cast<UScaleBoxSlot>(Label->Slot))
+			{
+				LabelSlot->SetHorizontalAlignment(HAlign_Left);
+				LabelSlot->SetVerticalAlignment(VAlign_Center);
+			}
+			Box->SetContent(Fit);
+			// 글자가 칸보다 짧으면 원래처럼 왼쪽에 붙고, 길면 칸 폭에 맞춰 줄어든다.
+			if (auto* FitSlot = Cast<USizeBoxSlot>(Fit->Slot))
+			{
+				FitSlot->SetHorizontalAlignment(HAlign_Left);
+				FitSlot->SetVerticalAlignment(VAlign_Center);
+			}
+		}
+
+		// 버튼 글자(기본값 복원, 화면 모드 적용 등)도 번역으로 길어지면 버튼 밖으로 나가므로 같은 방식으로 줄인다.
+		TArray<UTextBlock*> Captions;
+		Tree->ForEachWidget([&Captions](UWidget* Widget)
+		{
+			if (auto* Caption = Cast<UTextBlock>(Widget); Caption && Cast<UButton>(Caption->GetParent())) Captions.Add(Caption);
+		});
+		for (UTextBlock* Caption : Captions)
+		{
+			auto* Button = CastChecked<UButton>(Caption->GetParent());
+			const auto* OldSlot = Cast<UButtonSlot>(Caption->Slot);
+			const FMargin Padding = OldSlot ? OldSlot->GetPadding() : FMargin();
+			const EHorizontalAlignment HAlign = OldSlot ? OldSlot->GetHorizontalAlignment() : HAlign_Center;
+			const EVerticalAlignment VAlign = OldSlot ? OldSlot->GetVerticalAlignment() : VAlign_Center;
+			auto* Fit = Tree->ConstructWidget<UScaleBox>(UScaleBox::StaticClass(), *(Caption->GetName() + TEXT("Fit")));
+			Fit->SetStretch(EStretch::ScaleToFit);
+			Fit->SetStretchDirection(EStretchDirection::DownOnly);
+			Fit->SetVisibility(ESlateVisibility::HitTestInvisible);
+			Button->RemoveChild(Caption);
+			Fit->SetContent(Caption);
+			auto* FitSlot = CastChecked<UButtonSlot>(Button->AddChild(Fit));
+			FitSlot->SetPadding(Padding);
+			// 줄어들 수 있게 ScaleBox는 버튼 폭을 다 쓰고, 글자 정렬은 ScaleBox 안에서 원래대로 맞춘다.
+			FitSlot->SetHorizontalAlignment(HAlign_Fill);
+			FitSlot->SetVerticalAlignment(VAlign);
+			if (auto* CaptionSlot = Cast<UScaleBoxSlot>(Caption->Slot))
+			{
+				CaptionSlot->SetHorizontalAlignment(HAlign == HAlign_Fill ? HAlign_Center : HAlign);
+				CaptionSlot->SetVerticalAlignment(VAlign_Center);
+			}
+		}
+	});
 }
 
 void UAudioSettingsWidget::HandleCultureChanged()

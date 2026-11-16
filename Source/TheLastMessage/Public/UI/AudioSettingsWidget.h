@@ -122,6 +122,11 @@ private:
 	void BuildVisualControls();
 	/** 언어가 바뀌면 문자열로 채운 드롭다운을 새 언어로 다시 채운다(FText로 만든 문구는 엔진이 알아서 바꾼다). */
 	void HandleCultureChanged();
+	/**
+	 * 설정 줄 라벨(이름이 Label 로 끝나고 고정 폭 SizeBox 안에 있는 TextBlock)을 ScaleBox 로 감싸서,
+	 * 번역으로 길어진 글자가 라벨 칸을 넘으면 줄여서 보여 준다. 이미 감싼 라벨은 건너뛴다.
+	 */
+	void FitSettingsLabels();
 	FDelegateHandle CultureChangedHandle;
 	void ShowSettingsTab(int32 Index);
 	void RefreshAppearancePreview();

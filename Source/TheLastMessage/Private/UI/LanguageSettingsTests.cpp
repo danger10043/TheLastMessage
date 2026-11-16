@@ -24,6 +24,7 @@
 #include "Internationalization/Internationalization.h"
 #include "Kismet/GameplayStatics.h"
 #include "Misc/ConfigCacheIni.h"
+#include "UObject/StrongObjectPtr.h"
 
 namespace
 {
@@ -92,7 +93,15 @@ bool FLanguageSettingsTabTest::RunTest(const FString& Parameters)
 	UWorld* World = FAutomationEditorCommonUtils::CreateNewMap();
 	World->GetWorldSettings()->DefaultGameMode = AGameModeBase::StaticClass();
 	ADD_LATENT_AUTOMATION_COMMAND(FStartPIECommand(false));
-	ADD_LATENT_AUTOMATION_COMMAND(FDelayedFunctionLatentCommand([this]
+	struct FTestState
+	{
+		TStrongObjectPtr<UAudioSettingsWidget> Widget;
+		TSharedPtr<SWidget> Slate;
+		FString OriginalLanguage, OriginalLocale, OriginalSaved, First;
+		bool bHadSaved = false;
+	};
+	const TSharedRef<FTestState> State = MakeShared<FTestState>();
+	ADD_LATENT_AUTOMATION_COMMAND(FDelayedFunctionLatentCommand([this, State]
 	{
 		UWorld* PlayWorld = GEditor->PlayWorld;
 		APlayerController* Controller = PlayWorld ? UGameplayStatics::GetPlayerController(PlayWorld, 0) : nullptr;
@@ -143,44 +152,65 @@ bool FLanguageSettingsTabTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("All language buttons exist"), ButtonCount, 10);
 
 		// 고르면 바로 바뀌고 저장된다. 테스트가 끝나면 원래 언어와 저장 값을 되돌린다.
-		const FString OriginalLanguage = FInternationalization::Get().GetCurrentLanguage()->GetName();
-		const FString OriginalLocale = FInternationalization::Get().GetCurrentLocale()->GetName();
-		FString OriginalSaved;
-		const bool bHadSaved = GConfig->GetString(TEXT("Internationalization"), TEXT("Culture"), OriginalSaved, GGameUserSettingsIni);
-		const FString Target = UGameLanguageSettingsSubsystem::GetCurrentLanguage() == TEXT("en") ? TEXT("de") : TEXT("en");
+		State->Widget.Reset(Widget);
+		State->Slate = SettingsSlate;
+		State->OriginalLanguage = FInternationalization::Get().GetCurrentLanguage()->GetName();
+		State->OriginalLocale = FInternationalization::Get().GetCurrentLocale()->GetName();
+		State->bHadSaved = GConfig->GetString(TEXT("Internationalization"), TEXT("Culture"), State->OriginalSaved, GGameUserSettingsIni);
+		State->First = UGameLanguageSettingsSubsystem::GetCurrentLanguage() == TEXT("en") ? TEXT("de") : TEXT("en");
 		const FString Previous = UGameLanguageSettingsSubsystem::GetCurrentLanguage();
-		const FString TargetName = TEXT("Language_") + Target;
-		if (auto* TargetButton = Cast<UButton>(Widget->FindSettingsWidget(*TargetName)))
+		const FString TargetName = TEXT("Language_") + State->First;
+		auto* TargetButton = Cast<UButton>(Widget->FindSettingsWidget(*TargetName));
+		if (!TestNotNull(*TargetName, TargetButton)) return;
+		TargetButton->OnClicked.Broadcast();
+		TestEqual(TEXT("Selecting a language switches the culture"), UGameLanguageSettingsSubsystem::GetCurrentLanguage(), State->First);
+		TestEqual(TEXT("Selecting a language saves it"), UGameLanguageSettingsSubsystem::GetSavedLanguage(), State->First);
+		// PIE는 에디터와 같은 프로세스다. 게임 언어만 바뀌고 에디터 화면 언어는 그대로여야 한다.
+		TestEqual(TEXT("Editor language is unchanged in PIE"), FInternationalization::Get().GetCurrentLanguage()->GetName(), State->OriginalLanguage);
+		const auto* Label = Cast<UTextBlock>(Widget->FindSettingsWidget(*(TargetName + TEXT("_Name"))));
+		TestTrue(TEXT("Current language name is cyan"), Label && Label->GetColorAndOpacity().GetSpecifiedColor().Equals(FactoryUI::Cyan));
+		TestTrue(TEXT("Current language has a cyan border"),
+			TargetButton->GetStyle().Disabled.OutlineSettings.Color.GetSpecifiedColor().Equals(FactoryUI::Cyan));
+		if (!Previous.IsEmpty())
 		{
-			TargetButton->OnClicked.Broadcast();
-			TestEqual(TEXT("Selecting a language switches the culture"), UGameLanguageSettingsSubsystem::GetCurrentLanguage(), Target);
-			TestEqual(TEXT("Selecting a language saves it"), UGameLanguageSettingsSubsystem::GetSavedLanguage(), Target);
-			const auto* Label = Cast<UTextBlock>(Widget->FindSettingsWidget(*(TargetName + TEXT("_Name"))));
-			TestTrue(TEXT("Current language name is cyan"), Label && Label->GetColorAndOpacity().GetSpecifiedColor().Equals(FactoryUI::Cyan));
-			TestTrue(TEXT("Current language has a cyan border"),
-				TargetButton->GetStyle().Disabled.OutlineSettings.Color.GetSpecifiedColor().Equals(FactoryUI::Cyan));
-			if (!Previous.IsEmpty())
-			{
-				const auto* PreviousLabel = Cast<UTextBlock>(Widget->FindSettingsWidget(*(TEXT("Language_") + Previous.Replace(TEXT("-"), TEXT("_")) + TEXT("_Name"))));
-				TestTrue(TEXT("Previous language is no longer highlighted"), PreviousLabel
-					&& PreviousLabel->GetColorAndOpacity().GetSpecifiedColor().Equals(FactoryUI::Text));
-			}
-			// 문자열로 채운 드롭다운은 언어가 바뀌면 다시 채워진다(번역이 없으면 원문 그대로).
-			const auto* FrameLimit = Cast<UComboBoxString>(Widget->FindSettingsWidget(TEXT("FrameLimitSetting")));
-			TestTrue(TEXT("Dropdowns are refilled after the language changes"), FrameLimit && FrameLimit->GetOptionCount() == 4
-				&& FrameLimit->GetOptionAtIndex(0) == NSLOCTEXT("SettingsOptions", "FrameLimitNone", "제한 없음").ToString());
+			const auto* PreviousLabel = Cast<UTextBlock>(Widget->FindSettingsWidget(*(TEXT("Language_") + Previous.Replace(TEXT("-"), TEXT("_")) + TEXT("_Name"))));
+			TestTrue(TEXT("Previous language is no longer highlighted"), PreviousLabel
+				&& PreviousLabel->GetColorAndOpacity().GetSpecifiedColor().Equals(FactoryUI::Text));
 		}
-		else
-		{
-			AddError(TEXT("Target language button not found: ") + TargetName);
-		}
-		FInternationalization::Get().SetCurrentLanguage(OriginalLanguage);
-		FInternationalization::Get().SetCurrentLocale(OriginalLocale);
-		if (bHadSaved) GConfig->SetString(TEXT("Internationalization"), TEXT("Culture"), *OriginalSaved, GGameUserSettingsIni);
+	}, 0.2f));
+	// 엔진은 번역 데이터를 비동기로 읽는다. 다 읽은 뒤 드롭다운(문자열로 채움)이 고른 언어로 바뀌었는지 본다.
+	// 예전에는 컬처 변경 즉시 다시 채워서 이전 언어 문자열이 들어갔다(영어를 고르면 한국어, 그다음 일본어를 고르면 영어).
+	const auto ExpectFrameLimitLabel = [this, State](const FString& Culture)
+	{
+		// Content/Localization/Game 의 초안 번역 "제한 없음"
+		const FString Expected = Culture == TEXT("en") ? TEXT("Unlimited") : Culture == TEXT("de") ? TEXT("Unbegrenzt") : TEXT("無制限");
+		const auto* FrameLimit = State->Widget ? Cast<UComboBoxString>(State->Widget->FindSettingsWidget(TEXT("FrameLimitSetting"))) : nullptr;
+		TestTrue(FString::Printf(TEXT("Dropdowns are refilled in %s"), *Culture), FrameLimit && FrameLimit->GetOptionCount() == 4);
+		if (FrameLimit && FrameLimit->GetOptionCount() == 4)
+			TestEqual(FString::Printf(TEXT("Frame limit option is in %s"), *Culture), FrameLimit->GetOptionAtIndex(0), Expected);
+		const auto* Graphics = State->Widget ? Cast<UTextBlock>(State->Widget->FindSettingsWidget(TEXT("GeneralSettingsTabText"))) : nullptr;
+		const FString ExpectedTab = Culture == TEXT("en") ? TEXT("Graphics") : Culture == TEXT("de") ? TEXT("Grafik") : TEXT("グラフィック");
+		TestTrue(FString::Printf(TEXT("Graphics tab caption is in %s"), *Culture), Graphics && Graphics->GetText().ToString() == ExpectedTab);
+	};
+	ADD_LATENT_AUTOMATION_COMMAND(FDelayedFunctionLatentCommand([this, State, ExpectFrameLimitLabel]
+	{
+		ExpectFrameLimitLabel(State->First);
+		if (auto* Japanese = State->Widget ? Cast<UButton>(State->Widget->FindSettingsWidget(TEXT("Language_ja"))) : nullptr)
+			Japanese->OnClicked.Broadcast();
+	}, 1.0f));
+	ADD_LATENT_AUTOMATION_COMMAND(FDelayedFunctionLatentCommand([this, State, ExpectFrameLimitLabel]
+	{
+		ExpectFrameLimitLabel(TEXT("ja"));
+		UGameLanguageSettingsSubsystem::ClearEditorPreview();
+		FInternationalization::Get().SetCurrentLanguage(State->OriginalLanguage);
+		FInternationalization::Get().SetCurrentLocale(State->OriginalLocale);
+		if (State->bHadSaved) GConfig->SetString(TEXT("Internationalization"), TEXT("Culture"), *State->OriginalSaved, GGameUserSettingsIni);
 		else GConfig->RemoveKey(TEXT("Internationalization"), TEXT("Culture"), GGameUserSettingsIni);
 		GConfig->Flush(false, GGameUserSettingsIni);
-		TestEqual(TEXT("Original language restored"), FInternationalization::Get().GetCurrentLanguage()->GetName(), OriginalLanguage);
-	}, 0.2f));
+		TestEqual(TEXT("Original language restored"), FInternationalization::Get().GetCurrentLanguage()->GetName(), State->OriginalLanguage);
+		State->Widget.Reset();
+		State->Slate.Reset();
+	}, 1.0f));
 	ADD_LATENT_AUTOMATION_COMMAND(FEndPlayMapCommand());
 	return true;
 }

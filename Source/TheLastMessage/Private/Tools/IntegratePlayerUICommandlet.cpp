@@ -15,6 +15,8 @@
 #include "UI/SaveNotificationWidget.h"
 #include "UI/PauseMenuWidget.h"
 #include "Components/Button.h"
+#include "Components/InputKeySelector.h"
+#include "InputCoreTypes.h"
 #include "Components/WidgetSwitcher.h"
 #include "Blueprint/UserWidget.h"
 #include "Character/Player/PlayerBase.h"
@@ -66,6 +68,11 @@
 #include "Modules/ModuleManager.h"
 #include "Misc/App.h"
 #include "Internationalization/Culture.h"
+#include "Internationalization/TextLocalizationManager.h"
+#include "UI/GameLanguageSettingsSubsystem.h"
+#include "LocalizationSettings.h"
+#include "LocalizationTargetTypes.h"
+#include "LocalizationConfigurationScript.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialExpressionVertexColor.h"
 #include "Materials/MaterialExpressionVectorParameter.h"
@@ -1041,6 +1048,59 @@ UIntegratePlayerUICommandlet::UIntegratePlayerUICommandlet()
 int32 UIntegratePlayerUICommandlet::Main(const FString& Params)
 {
 #if WITH_EDITOR
+	if (FParse::Param(*Params, TEXT("SetupLocalization")))
+	{
+		// Localization Dashboard의 Game 타깃을 설정한다(Docs/LanguageSettingsPlan.md 4절). 대시보드에서 직접 고치는 것과 같다.
+		// - 원문 언어 ko + 지원 언어 10개, Gather: Source(NSLOCTEXT/LOCTEXT) + Content(WBP, 데이터 에셋)
+		// - DefaultEditor.ini 의 [/Script/Localization.LocalizationSettings] 와 Config/Localization/Game_*.ini 를 쓴다.
+		ULocalizationTargetSet* TargetSet = ULocalizationSettings::GetGameTargetSet();
+		if (!TargetSet) return 1;
+		ULocalizationTarget* Target = nullptr;
+		for (ULocalizationTarget* Existing : TargetSet->TargetObjects)
+			if (Existing && Existing->Settings.Name == TEXT("Game")) Target = Existing;
+		if (!Target)
+		{
+			Target = NewObject<ULocalizationTarget>(TargetSet);
+			Target->Settings.Name = TEXT("Game");
+			TargetSet->TargetObjects.Add(Target);
+		}
+		FLocalizationTargetSettings& Settings = Target->Settings;
+		Settings.SupportedCulturesStatistics.Reset();
+		for (const FGameLanguage& Language : UGameLanguageSettingsSubsystem::GetSupportedLanguages())
+			Settings.SupportedCulturesStatistics.Emplace(Language.Culture);
+		Settings.NativeCultureIndex = 0; // ko (원문)
+		Settings.GatherFromTextFiles.IsEnabled = true;
+		Settings.GatherFromTextFiles.SearchDirectories.Reset();
+		FGatherTextSearchDirectory SourceDirectory;
+		SourceDirectory.Path = TEXT("Source");
+		Settings.GatherFromTextFiles.SearchDirectories.Add(SourceDirectory);
+		Settings.GatherFromPackages.IsEnabled = true;
+		// 게임 에셋만 수집한다. _ExternalAssets(마켓 에셋 데모 맵의 영어 설명)와 개인 테스트 폴더(Test_*)는 게임에 나오지 않는다.
+		Settings.GatherFromPackages.IncludePathWildcards.Reset();
+		for (const TCHAR* Pattern : {TEXT("Content/Main/*"), TEXT("Content/__ExternalActors__/Main/*"), TEXT("Content/__ExternalObjects__/Main/*")})
+		{
+			FGatherTextIncludePath ContentPath;
+			ContentPath.Pattern = Pattern;
+			Settings.GatherFromPackages.IncludePathWildcards.Add(ContentPath);
+		}
+		// 번역 결과 폴더와 개인 작업 폴더는 수집하지 않는다.
+		Settings.GatherFromPackages.ExcludePathWildcards.Reset();
+		for (const TCHAR* Pattern : {TEXT("Content/L10N/*"), TEXT("Content/Localization/*"), TEXT("Content/Developers/*")})
+		{
+			FGatherTextExcludePath Exclude;
+			Exclude.Pattern = Pattern;
+			Settings.GatherFromPackages.ExcludePathWildcards.Add(Exclude);
+		}
+		Settings.GatherFromMetaData.IsEnabled = false;
+
+		// 대시보드처럼 설정 객체에서 ini로 옮겨 쓰고, Gather/Export/Import/Compile용 설정 파일을 만든다.
+		ULocalizationSettings* LocalizationSettings = GetMutableDefault<ULocalizationSettings>();
+		FPropertyChangedEvent ChangedEvent(nullptr);
+		LocalizationSettings->PostEditChangeProperty(ChangedEvent);
+		LocalizationConfigurationScript::GenerateAllConfigFiles(Target);
+		UE_LOG(LogTemp, Display, TEXT("Localization: target Game, native ko, %d cultures, config files written."), Settings.SupportedCulturesStatistics.Num());
+		return 0;
+	}
 	if (FParse::Param(*Params, TEXT("PreviewLanguageSettings")))
 	{
 		// 설정 화면을 여러 언어로 그려 Saved/LanguagePreview/*.png 로 저장한다(에셋은 저장하지 않음).
@@ -1063,6 +1123,9 @@ int32 UIntegratePlayerUICommandlet::Main(const FString& Params)
 		if (!Settings || !Start) return 1;
 		TSharedRef<SWidget> SettingsSlate = Settings->TakeWidget();
 		TSharedRef<SWidget> StartSlate = Start->TakeWidget();
+		UClass* PauseClass = LoadClass<UUserWidget>(nullptr, TEXT("/Game/Main/UI/Menu/WBP_PauseMenu.WBP_PauseMenu_C"));
+		UUserWidget* Pause = PauseClass ? CreateWidget<UUserWidget>(World, PauseClass) : nullptr;
+		TSharedPtr<SWidget> PauseSlate = Pause ? Pause->TakeWidget().ToSharedPtr() : nullptr;
 		FTextureCompilingManager::Get().FinishAllCompilation();
 		FlushRenderingCommands();
 		const auto Render = [](const TSharedRef<SWidget>& Slate, const FString& Name)
@@ -1086,20 +1149,65 @@ int32 UIntegratePlayerUICommandlet::Main(const FString& Params)
 		auto* LanguageTab = Cast<UButton>(Settings->FindSettingsWidget(TEXT("LanguageSettingsTab")));
 		auto* GraphicsTab = Cast<UButton>(Settings->FindSettingsWidget(TEXT("GeneralSettingsTab")));
 		if (!LanguageTab || !GraphicsTab) return 1;
-		for (const TCHAR* Culture : {TEXT("ko"), TEXT("en"), TEXT("ja"), TEXT("zh-Hans"), TEXT("zh-Hant"), TEXT("ru"), TEXT("de")})
+		// 커맨드렛은 에디터라서 게임 번역은 게임 언어 미리보기를 켜야 보인다. 컬처도 함께 바꿔 컬처별 글꼴(Sub-Font)이 골라지게 한다.
+		const auto UseCulture = [](const TCHAR* Culture)
 		{
 			FInternationalization::Get().SetCurrentCulture(Culture);
+			FTextLocalizationManager::Get().EnableGameLocalizationPreview(Culture);
+		};
+		auto* KeysTab = Cast<UButton>(Settings->FindSettingsWidget(TEXT("KeySettingsTab")));
+		auto* AppearanceTab = Cast<UButton>(Settings->FindSettingsWidget(TEXT("AppearanceSettingsTab")));
+		for (const TCHAR* Culture : {TEXT("ko"), TEXT("en"), TEXT("ja"), TEXT("zh-Hans"), TEXT("zh-Hant"), TEXT("ru"), TEXT("es-419"), TEXT("pt-BR"), TEXT("de"), TEXT("fr")})
+		{
+			UseCulture(Culture);
 			LanguageTab->OnClicked.Broadcast();
 			bOK = Render(SettingsSlate, FString(TEXT("Language_")) + Culture) && bOK;
+			GraphicsTab->OnClicked.Broadcast();
+			bOK = Render(SettingsSlate, FString(TEXT("Graphics_")) + Culture) && bOK;
+			if (KeysTab)
+			{
+				// 미리보기에는 키 설정 서브시스템이 없어서 키 칸이 비어 있다. 키 이름(엔진 문구)이 언어에 따라 바뀌는지 보려고 몇 개를 채운다.
+				const FKey SampleKeys[] = {EKeys::SpaceBar, EKeys::LeftShift, EKeys::LeftControl, EKeys::Escape, EKeys::Tab, EKeys::A, EKeys::Left, EKeys::Right};
+				int32 SampleIndex = 0;
+				UUserWidget* const KeyPages[] = {Settings, Cast<UUserWidget>(Settings->FindSettingsWidget(TEXT("KeySettingsSection")))};
+				for (UUserWidget* Page : KeyPages)
+					if (Page && Page->WidgetTree)
+						Page->WidgetTree->ForEachWidget([&](UWidget* Widget)
+						{
+							if (auto* Selector = Cast<UInputKeySelector>(Widget))
+								Selector->SetSelectedKey(FInputChord(SampleKeys[SampleIndex++ % UE_ARRAY_COUNT(SampleKeys)]));
+						});
+				KeysTab->OnClicked.Broadcast();
+				bOK = Render(SettingsSlate, FString(TEXT("Keys_")) + Culture) && bOK;
+			}
+			if (AppearanceTab)
+			{
+				AppearanceTab->OnClicked.Broadcast();
+				bOK = Render(SettingsSlate, FString(TEXT("Appearance_")) + Culture) && bOK;
+			}
+			// 시작 메뉴, 크레딧, 일시정지 메뉴
+			auto* CreditsButton = Cast<UButton>(Start->WidgetTree->FindWidget(TEXT("CreditsButton")));
+			auto* CreditsBack = Cast<UButton>(Start->WidgetTree->FindWidget(TEXT("CreditsBackButton")));
+			if (CreditsButton && CreditsBack)
+			{
+				CreditsBack->OnClicked.Broadcast();
+				bOK = Render(StartSlate, FString(TEXT("Start_")) + Culture) && bOK;
+				CreditsButton->OnClicked.Broadcast();
+				bOK = Render(StartSlate, FString(TEXT("Credits_")) + Culture) && bOK;
+				CreditsBack->OnClicked.Broadcast();
+			}
+			if (PauseSlate.IsValid()) bOK = Render(PauseSlate.ToSharedRef(), FString(TEXT("Pause_")) + Culture) && bOK;
 		}
-		FInternationalization::Get().SetCurrentCulture(TEXT("ko"));
-		GraphicsTab->OnClicked.Broadcast();
-		bOK = Render(SettingsSlate, TEXT("Graphics_ko")) && bOK;
-		if (auto* Credits = Cast<UButton>(Start->WidgetTree->FindWidget(TEXT("CreditsButton"))))
+		// PIE와 같은 상황: 에디터 언어(ko)는 그대로 두고 게임 문구만 미리보기로 바꾼다. 컬처별 Sub-Font 가 ko 기준으로 골라진다.
+		for (const TCHAR* Culture : {TEXT("ja"), TEXT("zh-Hans"), TEXT("zh-Hant")})
 		{
-			Credits->OnClicked.Broadcast();
-			bOK = Render(StartSlate, TEXT("Credits_ko")) && bOK;
+			FInternationalization::Get().SetCurrentCulture(TEXT("ko"));
+			FTextLocalizationManager::Get().EnableGameLocalizationPreview(Culture);
+			GraphicsTab->OnClicked.Broadcast();
+			bOK = Render(SettingsSlate, FString(TEXT("PIE_Graphics_")) + Culture) && bOK;
 		}
+		UseCulture(TEXT("ko"));
+		FTextLocalizationManager::Get().DisableGameLocalizationPreview();
 		FInternationalization::Get().SetCurrentCulture(OriginalCulture);
 		Settings->RemoveFromParent();
 		Start->RemoveFromParent();

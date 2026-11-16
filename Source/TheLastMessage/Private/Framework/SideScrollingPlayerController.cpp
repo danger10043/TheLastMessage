@@ -29,11 +29,166 @@
 #include "DataAsset/WeaponDataAsset.h"
 // +추가----
 #include "Components/SceneComponent.h"
+#include "Framework/Application/IInputProcessor.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Input/Events.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "TimerManager.h"
 // +--------
+
+namespace
+{
+	class FBossSequenceInputProcessor final : public IInputProcessor
+	{
+	public:
+		FBossSequenceInputProcessor(
+			ASideScrollingPlayerController* InController, TFunction<void()> InSkip)
+			: Controller(InController), Skip(MoveTemp(InSkip)) {}
+
+		virtual void Tick(const float, FSlateApplication&, TSharedRef<ICursor>) override {}
+
+		virtual bool HandleKeyDownEvent(FSlateApplication&, const FKeyEvent& Event) override
+		{
+			if (!ShouldBlock()) return false;
+			if (Event.GetKey() == EKeys::Zero && !Event.IsRepeat())
+			{
+				Skip();
+			}
+			return true;
+		}
+
+		virtual bool HandleKeyUpEvent(FSlateApplication&, const FKeyEvent&) override { return ShouldBlock(); }
+		virtual bool HandleAnalogInputEvent(FSlateApplication&, const FAnalogInputEvent&) override { return ShouldBlock(); }
+		virtual bool HandleMouseMoveEvent(FSlateApplication&, const FPointerEvent&) override { return ShouldBlock(); }
+		virtual bool HandleMouseButtonDownEvent(FSlateApplication&, const FPointerEvent&) override { return ShouldBlock(); }
+		virtual bool HandleMouseButtonUpEvent(FSlateApplication&, const FPointerEvent&) override { return ShouldBlock(); }
+		virtual bool HandleMouseButtonDoubleClickEvent(FSlateApplication&, const FPointerEvent&) override { return ShouldBlock(); }
+		virtual bool HandleMouseWheelOrGestureEvent(FSlateApplication&, const FPointerEvent&, const FPointerEvent*) override { return ShouldBlock(); }
+		virtual bool HandleMotionDetectedEvent(FSlateApplication&, const FMotionEvent&) override { return ShouldBlock(); }
+
+	private:
+		bool ShouldBlock() const
+		{
+			return Controller.IsValid() && Controller->IsBossSequenceInputBlocked();
+		}
+
+		TWeakObjectPtr<ASideScrollingPlayerController> Controller;
+		TFunction<void()> Skip;
+	};
+}
+
 
 ASideScrollingPlayerController::ASideScrollingPlayerController()
 {
 	MapWidgetClass = UAreaMapWidget::StaticClass();
+}
+
+
+void ASideScrollingPlayerController::BuildInputStack(TArray<UInputComponent*>& InputStack)
+{
+	if (bBossSequenceInputBlocked)
+	{
+		InputStack.Reset();
+		return;
+	}
+	Super::BuildInputStack(InputStack);
+}
+
+void ASideScrollingPlayerController::ClientSetBossSequenceInputBlocked_Implementation(
+	ABossMonster* SourceBoss, bool bBlocked)
+{
+	if (!IsLocalController()) return;
+
+	for (auto It = BossSequenceInputSources.CreateIterator(); It; ++It)
+	{
+		if (!It->IsValid()) It.RemoveCurrent();
+	}
+
+	const TWeakObjectPtr<ABossMonster> Source(SourceBoss);
+	if (bBlocked && Source.IsValid())
+	{
+		BossSequenceInputSources.Add(Source);
+		ApplyBossSequenceInputBlock(true);
+	}
+	else
+	{
+		BossSequenceInputSources.Remove(Source);
+		GetWorldTimerManager().SetTimerForNextTick(FTimerDelegate::CreateWeakLambda(this, [this]()
+			{
+				if (IsActorBeingDestroyed()) return;
+				for (auto It = BossSequenceInputSources.CreateIterator(); It; ++It)
+				{
+					if (!It->IsValid()) It.RemoveCurrent();
+				}
+				ApplyBossSequenceInputBlock(!BossSequenceInputSources.IsEmpty());
+			}));
+	}
+}
+
+void ASideScrollingPlayerController::ApplyBossSequenceInputBlock(bool bBlocked)
+{
+	if (bBossSequenceInputBlocked == bBlocked) return;
+
+	bBossSequenceInputBlocked = bBlocked;
+	FlushPressedKeys();
+	SetIgnoreMoveInput(bBlocked);
+	SetIgnoreLookInput(bBlocked);
+
+	if (bBlocked)
+	{
+		if (APlayerBase* ControlledPlayer = Cast<APlayerBase>(GetPawn()))
+		{
+			ControlledPlayer->CancelWeaponInputsForUI();
+			ControlledPlayer->ReleaseGrapplingHook();
+			ControlledPlayer->DoMove(0.f);
+			ControlledPlayer->DoDrop(0.f);
+		}
+		if (APawn* PlayerPawn = GetPawn())
+		{
+			PlayerPawn->ConsumeMovementInputVector();
+		}
+		if (ACharacter* ControlledCharacter = Cast<ACharacter>(GetPawn()))
+		{
+			UCharacterMovementComponent* Movement = ControlledCharacter->GetCharacterMovement();
+			BossSequenceMovement = Movement;
+			SavedBossSequenceMovementMode = Movement->MovementMode;
+			SavedBossSequenceCustomMode = Movement->CustomMovementMode;
+			Movement->StopMovementImmediately();
+			Movement->DisableMovement();
+		}
+
+		if (FSlateApplication::IsInitialized())
+		{
+			TWeakObjectPtr<ASideScrollingPlayerController> WeakThis(this);
+			BossSequenceInputProcessor = MakeShared<FBossSequenceInputProcessor>(this, [WeakThis]()
+				{
+					if (WeakThis.IsValid()) WeakThis->SkipCinematic();
+				});
+			FSlateApplication::Get().RegisterInputPreProcessor(BossSequenceInputProcessor, 0);
+			FSlateApplication::Get().SetAllUserFocusToGameViewport();
+		}
+	}
+	else
+	{
+		if (FSlateApplication::IsInitialized() && BossSequenceInputProcessor.IsValid())
+		{
+			FSlateApplication::Get().UnregisterInputPreProcessor(BossSequenceInputProcessor);
+		}
+		BossSequenceInputProcessor.Reset();
+
+		UCharacterMovementComponent* Movement = BossSequenceMovement.Get();
+		ACharacter* ControlledCharacter = Cast<ACharacter>(GetPawn());
+		APlayerBase* ControlledPlayer = Cast<APlayerBase>(GetPawn());
+		if (IsValid(Movement) && IsValid(ControlledCharacter)
+			&& ControlledCharacter->GetCharacterMovement() == Movement
+			&& (!IsValid(ControlledPlayer) || !ControlledPlayer->IsDead()))
+		{
+			Movement->SetMovementMode(
+				static_cast<EMovementMode>(SavedBossSequenceMovementMode),
+				SavedBossSequenceCustomMode);
+		}
+		BossSequenceMovement.Reset();
+	}
 }
 
 // +추가----
@@ -106,6 +261,8 @@ void ASideScrollingPlayerController::ServerSkipCinematic_Implementation()
 
 void ASideScrollingPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	BossSequenceInputSources.Reset();
+	ApplyBossSequenceInputBlock(false);
 	// +추가----
 	ClearAudioListenerAttenuationOverride();
 	// +--------

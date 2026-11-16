@@ -22,6 +22,7 @@ class UAnimMontage;
 class ALaserEmitter;
 class ALaserReceiver;
 class ALaserReflector;
+class APointLight;
 class UMaterialInterface;
 struct FOnAttributeChangeData;
 class UNiagaraSystem;
@@ -117,7 +118,44 @@ public:
 
     void StartShieldPuzzle(EBossPuzzleType PuzzleType);
 
-    void StopLaserPuzzle();
+    void StopLaserPuzzle(bool bHideActors = true);
+
+
+    UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Boss|Puzzle|Laser|Cinematic")
+    TObjectPtr<class ALevelSequenceActor> LaserPuzzleStartSequenceActor;
+
+    UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Boss|Puzzle|Laser|Cinematic")
+    TObjectPtr<class ALevelSequenceActor> LaserPuzzleClearSequenceActor;
+
+    UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Boss|Puzzle|Laser|Cinematic")
+    TObjectPtr<AActor> LaserPuzzlePlayerMarker;
+
+    UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Boss|Puzzle|Laser|Cinematic")
+    TObjectPtr<AActor> LaserPuzzleBossMarker;
+
+    UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Boss|Puzzle|Laser|Cinematic")
+    void TeleportActorsForLaserPuzzleSequence();
+
+    void PlayLaserPuzzleStartSequence();
+
+    UPROPERTY(Transient)
+    TObjectPtr<class ULevelSequencePlayer> ActiveLaserStartSequencePlayer;
+
+    UPROPERTY(Transient)
+    TWeakObjectPtr<ACharacter> LaserSequencePlayerCharacter;
+
+    bool bLaserSequenceTeleportApplied = false;
+    bool bLaserClearSequencePlaying = false;
+
+    void SetBossSequenceInputBlocked(bool bBlocked);
+    void StopLaserPuzzleStartSequence();
+
+    UFUNCTION()
+    void HandleLaserPuzzleStartSequenceFinished();
+
+    UPROPERTY(Transient)
+    TWeakObjectPtr<class ASideScrollingPlayerController> SequenceInputController;
+
 
     UFUNCTION(BlueprintCallable, Category = "Boss|Puzzle")
     void CompleteShieldPuzzle();
@@ -174,7 +212,7 @@ protected:
     UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Boss|Phase|Cinematic")
     TObjectPtr<class ALevelSequenceActor> Phase30SequenceActor;
 
-    void PlayPhaseSequence(EBossPuzzleType PuzzleType);
+    void PlayPhaseSequence(EBossPuzzleType PuzzleType, bool bPlayLaserClearSequence = true);
     void StopPhaseSequence();
 
     UFUNCTION()
@@ -206,6 +244,9 @@ protected:
 
     UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Boss|Puzzle|Laser")
     TArray<TObjectPtr<ALaserReflector>> LaserReflectors;
+
+    UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Boss|Puzzle|Laser")
+    TArray<TObjectPtr<APointLight>> LaserPuzzlePointLights;
 
     bool bLaserPuzzleActive = false;
 

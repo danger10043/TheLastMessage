@@ -240,7 +240,7 @@ bool APlayerBase::UpdateAimFromWorldRay(FVector RayOrigin, FVector RayDirection)
 void APlayerBase::UpdateMouseAim()
 {
 	APlayerController* PC = Cast<APlayerController>(GetController());
-	if (!PC || !PC->IsLocalController() || IsDead()) return;
+	if (!PC || !PC->IsLocalController() || PC->IsLookInputIgnored() || IsDead()) return;
 	FVector RayOrigin, RayDirection;
 	if (PC->DeprojectMousePositionToWorld(RayOrigin, RayDirection))
 	{

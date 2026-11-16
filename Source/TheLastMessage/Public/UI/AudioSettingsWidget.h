@@ -34,6 +34,10 @@ protected:
 	/** 드롭다운 글자 위치 보정. F_TLM_UI 글자가 줄 높이보다 아래로 그려져서 라벨처럼 위로 올린다. */
 	UPROPERTY(EditAnywhere, Category = "Settings Style|Dropdown") FVector2D DropdownTextOffset = FVector2D(0, -5);
 
+	/** 카메라와 플레이어 사이의 거리에 대한 가로 구도 보정 비율. 양수는 화면에서 플레이어를 왼쪽으로 이동시킨다. */
+	UPROPERTY(EditAnywhere, Category = "Settings Style|Appearance Preview", meta = (ClampMin = "-0.5", ClampMax = "0.5"))
+	float AppearancePreviewHorizontalOffset = 0.14f;
+
 	/** 밝기·흔들림·외곽선 굵기 슬라이더의 한 칸 */
 	UPROPERTY(EditAnywhere, Category = "Settings Style|Slider", meta = (ClampMin = 0.001)) float VisualSliderStep = 0.05f;
 

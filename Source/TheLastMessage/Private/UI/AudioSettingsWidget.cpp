@@ -1010,7 +1010,8 @@ void UAudioSettingsWidget::RefreshAppearancePreview()
 			if (!ProjectedBounds.bIsValid) break;
 			CameraOffset += ProjectedBounds.GetCenter() * Distance;
 		}
-		ViewLocation += ViewRotation.RotateVector(FVector(0.0, CameraOffset.X, CameraOffset.Y));
+		const double HorizontalOffset = CameraOffset.X + Distance * AppearancePreviewHorizontalOffset;
+		ViewLocation += ViewRotation.RotateVector(FVector(0.0, HorizontalOffset, CameraOffset.Y));
 		Viewport->SetViewLocation(ViewLocation);
 		Viewport->SetViewRotation(ViewRotation);
 		AddPreviewBackdrop(Actor, ViewLocation, ViewRotation, Distance);

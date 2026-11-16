@@ -1,9 +1,15 @@
 #include "UI/AudioSettingsWidget.h"
+#include "AppearanceColorComboBox.h"
 #include "UI/FactoryMenuStyle.h"
 #include "UI/FactoryUIStyle.h"
 #include "UI/FactoryUIAssetSettings.h"
 #include "Animation/SkeletalMeshActor.h"
 #include "Engine/Font.h"
+#include "Engine/SkeletalMesh.h"
+#include "Engine/Texture2D.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "ProceduralMeshComponent.h"
+#include "Rendering/SkeletalMeshRenderData.h"
 #include "UI/GameAudioSettingsSubsystem.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/Border.h"
@@ -46,6 +52,57 @@
 
 namespace
 {
+const FColor PreviewBackgroundEdge(23, 28, 34);
+const FColor PreviewBackgroundCenter(52, 58, 66);
+
+void AddPreviewBackdrop(ASkeletalMeshActor* Actor, const FVector& ViewLocation, const FRotator& ViewRotation, double Distance)
+{
+	auto* Material = LoadObject<UMaterialInterface>(nullptr,
+		TEXT("/Engine/EngineMaterials/Widget3DPassThrough_Opaque.Widget3DPassThrough_Opaque"));
+	if (!Material) return;
+
+	constexpr int32 TextureSize = 128;
+	TArray<FColor> Pixels;
+	Pixels.SetNumUninitialized(TextureSize * TextureSize);
+	const FLinearColor Edge = FLinearColor::FromSRGBColor(PreviewBackgroundEdge);
+	const FLinearColor Center = FLinearColor::FromSRGBColor(PreviewBackgroundCenter);
+	for (int32 Y = 0; Y < TextureSize; ++Y)
+	{
+		for (int32 X = 0; X < TextureSize; ++X)
+		{
+			const FVector2D Offset = FVector2D(X, Y) * (2.0 / (TextureSize - 1)) - FVector2D(1.0, 1.0);
+			const double Brightness = 1.0 - FMath::SmoothStep(0.0, 1.0, Offset.Size());
+			Pixels[Y * TextureSize + X] = FMath::Lerp(Edge, Center, Brightness).ToFColorSRGB();
+		}
+	}
+	auto* Texture = UTexture2D::CreateTransient(TextureSize, TextureSize, PF_B8G8R8A8, NAME_None,
+		MakeArrayView(reinterpret_cast<const uint8*>(Pixels.GetData()), Pixels.Num() * sizeof(FColor)));
+	if (!Texture) return;
+
+	auto* Backdrop = NewObject<UProceduralMeshComponent>(Actor);
+	Actor->AddInstanceComponent(Backdrop);
+	Backdrop->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	Backdrop->SetCastShadow(false);
+	Backdrop->SetReceivesDecals(false);
+	auto* Gradient = UMaterialInstanceDynamic::Create(Material, Backdrop);
+	Gradient->SetTextureParameterValue(TEXT("SlateUI"), Texture);
+	// Supply the same material inputs as a world-space widget, with an opaque, untinted backdrop.
+	Gradient->SetVectorParameterValue(TEXT("TintColorAndOpacity"), FLinearColor::White);
+	Gradient->SetVectorParameterValue(TEXT("BackColor"), Edge);
+	Gradient->SetScalarParameterValue(TEXT("OpacityFromTexture"), 1.0f);
+	Backdrop->SetMaterial(0, Gradient);
+
+	const double Depth = 3.0 * Distance;
+	const double Extent = Depth * 1.05;
+	const FVector PlaneCenter = ViewLocation + ViewRotation.Vector() * Depth;
+	const FVector Right = ViewRotation.RotateVector(FVector::RightVector) * Extent;
+	const FVector Up = ViewRotation.RotateVector(FVector::UpVector) * Extent;
+	Backdrop->CreateMeshSection_LinearColor(0,
+		{PlaneCenter - Right + Up, PlaneCenter + Right + Up, PlaneCenter - Right - Up, PlaneCenter + Right - Up},
+		{0, 1, 2, 2, 1, 3}, {}, {{0, 0}, {1, 0}, {0, 1}, {1, 1}}, {}, {}, false);
+	Backdrop->RegisterComponent();
+}
+
 FSlateRoundedBoxBrush MakeControlBrush(const FLinearColor& Fill, const FLinearColor& Edge, const FVector2D& Size)
 {
 	auto Brush = FactoryUI::Plate(Fill, Edge, 3.f);
@@ -392,7 +449,20 @@ void AddSettingsRow(UWidgetTree* Tree, UVerticalBox* Column, const FText& Captio
 
 void UAudioSettingsWidget::BuildVisualLayout(UWidgetTree* Tree, UVerticalBox* Column)
 {
-	if (!Column || Column->GetChildrenCount()) return;
+	if (!Column) return;
+	const FText BloomLabel = NSLOCTEXT("Settings", "Bloom", "빛 번짐");
+	if (Column->GetChildrenCount())
+	{
+		if (auto* MotionBlur = Tree->FindWidget(TEXT("MotionBlurSetting")))
+		{
+			UWidget* Row = MotionBlur;
+			while (Row && Row->GetParent() != Column) Row = Row->GetParent();
+			if (Row) Row->RemoveFromParent();
+		}
+		if (auto* Label = Cast<UTextBlock>(Tree->FindWidget(TEXT("BloomSettingLabel"))))
+			Label->SetText(BloomLabel);
+		return;
+	}
 	auto AddRow = [&](const FText& Caption, UWidget* Control) { AddSettingsRow(Tree, Column, Caption, Control); };
 
 	Column->AddChildToVerticalBox(MakeSettingsLabel(Tree, NSLOCTEXT("Settings", "DisplayHeading", "화면"), 24));
@@ -402,9 +472,8 @@ void UAudioSettingsWidget::BuildVisualLayout(UWidgetTree* Tree, UVerticalBox* Co
 	AddRow(NSLOCTEXT("Settings", "VSync", "수직 동기화"), Tree->ConstructWidget<UCheckBox>(UCheckBox::StaticClass(), TEXT("VSyncSetting")));
 	AddRow(NSLOCTEXT("Settings", "FrameLimit", "최대 프레임"), Tree->ConstructWidget<UComboBoxString>(UComboBoxString::StaticClass(), TEXT("FrameLimitSetting")));
 	AddRow(NSLOCTEXT("Settings", "Shake", "화면 흔들림"), Tree->ConstructWidget<USlider>(USlider::StaticClass(), TEXT("ShakeSetting")));
-	AddRow(NSLOCTEXT("Settings", "MotionBlur", "모션 블러"), Tree->ConstructWidget<UCheckBox>(UCheckBox::StaticClass(), TEXT("MotionBlurSetting")));
-	AddRow(NSLOCTEXT("Settings", "Bloom", "블룸"), Tree->ConstructWidget<UCheckBox>(UCheckBox::StaticClass(), TEXT("BloomSetting")));
-	AddRow(NSLOCTEXT("Settings", "OutlineColor", "외곽선 색상"), Tree->ConstructWidget<UComboBoxString>(UComboBoxString::StaticClass(), TEXT("OutlineColorSetting")));
+	AddRow(BloomLabel, Tree->ConstructWidget<UCheckBox>(UCheckBox::StaticClass(), TEXT("BloomSetting")));
+	AddRow(NSLOCTEXT("Settings", "OutlineColor", "외곽선 색상"), Tree->ConstructWidget<UAppearanceColorComboBox>(UAppearanceColorComboBox::StaticClass(), TEXT("OutlineColorSetting")));
 	AddRow(NSLOCTEXT("Settings", "OutlineWidth", "외곽선 굵기"), Tree->ConstructWidget<USlider>(USlider::StaticClass(), TEXT("OutlineWidthSetting")));
 	FactoryMenuStyle::AddButton(Tree, Column, TEXT("ApplyScreenButton"), TEXT("ApplyScreenText"),
 		NSLOCTEXT("Settings", "ApplyScreen", "화면 모드 적용"), true);
@@ -419,6 +488,7 @@ void UAudioSettingsWidget::BuildAppearanceTabs()
 	auto* Display = Cast<UVerticalBox>(WidgetTree->FindWidget(TEXT("VisualSettingsColumn")));
 	UPanelWidget* Parent = Columns ? Columns->GetParent() : nullptr;
 	if (!Parent || !Display) return;
+	BuildVisualLayout(WidgetTree, Display);
 
 	auto* Container = WidgetTree->ConstructWidget<UVerticalBox>();
 	if (!Parent->ReplaceChild(Columns, Container)) return;
@@ -448,7 +518,7 @@ void UAudioSettingsWidget::BuildAppearanceTabs()
 		Label->SetColorAndOpacity(FactoryUI::Cyan);
 
 	auto* Pages = WidgetTree->ConstructWidget<UWidgetSwitcher>(UWidgetSwitcher::StaticClass(), TEXT("SettingsTabPages"));
-	Container->AddChildToVerticalBox(Pages);
+	Container->AddChildToVerticalBox(Pages)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 	Pages->AddChild(Columns);
 	auto* AppearanceColumns = WidgetTree->ConstructWidget<UHorizontalBox>();
 	Pages->AddChild(AppearanceColumns);
@@ -456,6 +526,7 @@ void UAudioSettingsWidget::BuildAppearanceTabs()
 	auto* AppearanceSlot = AppearanceColumns->AddChildToHorizontalBox(Appearance);
 	AppearanceSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 	AppearanceSlot->SetVerticalAlignment(VAlign_Top);
+	AppearanceSlot->SetPadding(FMargin(0.f, 0.f, 16.f, 0.f));
 	auto* Heading = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("VisualHeading")));
 	if (!Heading) Heading = Cast<UTextBlock>(Display->GetChildAt(0));
 	if (Heading)
@@ -475,15 +546,33 @@ void UAudioSettingsWidget::BuildAppearanceTabs()
 			AddSettingsRow(WidgetTree, Appearance, Caption, WidgetTree->ConstructWidget<UWidget>(ControlClass, ControlName));
 		}
 	};
-	MoveRow(TEXT("OutlineColorSetting"), NSLOCTEXT("Settings", "OutlineColor", "외곽선 색상"), UComboBoxString::StaticClass());
+	const FName OutlineColorName(TEXT("OutlineColorSetting"));
+	auto* AuthoredCombo = Cast<UComboBoxString>(WidgetTree->FindWidget(OutlineColorName));
+	auto* ColorRow = AuthoredCombo ? Cast<UHorizontalBox>(AuthoredCombo->GetParent()) : nullptr;
+	if (ColorRow && !AuthoredCombo->IsA<UAppearanceColorComboBox>())
+	{
+		const auto* OldSlot = CastChecked<UHorizontalBoxSlot>(AuthoredCombo->Slot);
+		const int32 SlotIndex = ColorRow->GetChildIndex(AuthoredCombo);
+		const FName OldName = MakeUniqueObjectName(WidgetTree, AuthoredCombo->GetClass(), OutlineColorName);
+		AuthoredCombo->Rename(*OldName.ToString(), WidgetTree, REN_DontCreateRedirectors | REN_DoNotDirty);
+		auto* Combo = WidgetTree->ConstructWidget<UAppearanceColorComboBox>(UAppearanceColorComboBox::StaticClass(), OutlineColorName);
+		Combo->CopyStyleFrom(*AuthoredCombo);
+		ColorRow->RemoveChild(AuthoredCombo);
+		auto* ComboSlot = ColorRow->AddChildToHorizontalBox(Combo);
+		ComboSlot->SetSize(OldSlot->GetSize());
+		ComboSlot->SetPadding(OldSlot->GetPadding());
+		ComboSlot->SetHorizontalAlignment(OldSlot->GetHorizontalAlignment());
+		ComboSlot->SetVerticalAlignment(OldSlot->GetVerticalAlignment());
+		ColorRow->ShiftChild(SlotIndex, Combo);
+	}
+	MoveRow(OutlineColorName, NSLOCTEXT("Settings", "OutlineColor", "외곽선 색상"), UAppearanceColorComboBox::StaticClass());
 	MoveRow(TEXT("OutlineWidthSetting"), NSLOCTEXT("Settings", "OutlineWidth", "외곽선 굵기"), USlider::StaticClass());
 	AddSettingsRow(WidgetTree, Appearance, NSLOCTEXT("Settings", "OutlineBrightness", "외곽선 밝기"),
 		WidgetTree->ConstructWidget<USlider>(USlider::StaticClass(), TEXT("OutlineBrightnessSetting")));
 	const FName PlayerColorName(TEXT("PlayerColorSetting"));
-	auto* OutlineColor = Cast<UComboBoxString>(WidgetTree->FindWidget(TEXT("OutlineColorSetting")));
-	auto* PlayerColor = OutlineColor ? DuplicateObject<UComboBoxString>(OutlineColor, WidgetTree, PlayerColorName)
-		: WidgetTree->ConstructWidget<UComboBoxString>(UComboBoxString::StaticClass(), PlayerColorName);
-	PlayerColor->Slot = nullptr;
+	auto* PlayerColor = WidgetTree->ConstructWidget<UAppearanceColorComboBox>(UAppearanceColorComboBox::StaticClass(), PlayerColorName);
+	if (const auto* OutlineColor = Cast<UComboBoxString>(WidgetTree->FindWidget(OutlineColorName)))
+		PlayerColor->CopyStyleFrom(*OutlineColor);
 	AddSettingsRow(WidgetTree, Appearance, NSLOCTEXT("Settings", "PlayerColor", "플레이어 색상"), PlayerColor);
 	for (int32 Index = 0; Index < Appearance->GetChildrenCount(); ++Index)
 	{
@@ -508,12 +597,14 @@ void UAudioSettingsWidget::BuildAppearanceTabs()
 		Frame->SetBrush(FactoryUI::Chamfer());
 		Frame->SetPadding(FMargin(8.f));
 		auto* PreviewBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("AppearancePreviewBox"));
-		PreviewBox->SetWidthOverride(340.f);
-		PreviewBox->SetHeightOverride(190.f);
+		PreviewBox->SetWidthOverride(370.f);
+		PreviewBox->SetHeightOverride(420.f);
 		Frame->SetContent(PreviewBox);
 		auto* PreviewSlot = AppearanceColumns->AddChildToHorizontalBox(Frame);
-		PreviewSlot->SetVerticalAlignment(VAlign_Top);
-		PreviewSlot->SetPadding(FMargin(36.f, 6.f, 0.f, 0.f));
+		PreviewSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+		PreviewSlot->SetHorizontalAlignment(HAlign_Center);
+		PreviewSlot->SetVerticalAlignment(VAlign_Center);
+		PreviewSlot->SetPadding(FMargin(8.f, 6.f));
 	}
 }
 
@@ -571,7 +662,7 @@ void UAudioSettingsWidget::RefreshAppearancePreview()
 		if (!Viewport)
 		{
 			Viewport = WidgetTree->ConstructWidget<UViewport>();
-			Viewport->SetBackgroundColor(FLinearColor::FromSRGBColor(FColor(13, 30, 42)));
+			Viewport->SetBackgroundColor(FLinearColor::FromSRGBColor(PreviewBackgroundEdge));
 			Viewport->SetVisibility(ESlateVisibility::HitTestInvisible);
 			Box->SetContent(Viewport);
 		}
@@ -589,9 +680,51 @@ void UAudioSettingsWidget::RefreshAppearancePreview()
 
 		const FBoxSphereBounds Bounds = Mesh->CalcBounds(Mesh->GetComponentTransform());
 		const FVector Direction = FVector(0.72, 0.69, 0.1).GetSafeNormal();
-		const double Distance = FMath::Max(3.0 * Bounds.BoxExtent.Z, 2.1 * Bounds.SphereRadius);
-		Viewport->SetViewLocation(Bounds.Origin + Distance * Direction);
-		Viewport->SetViewRotation((-Direction).Rotation());
+		const double Distance = FMath::Max(1.65 * Bounds.BoxExtent.Z, 1.4 * Bounds.SphereRadius);
+		const FRotator ViewRotation = (-Direction).Rotation();
+		const FTransform MeshToWorld = Mesh->GetComponentTransform();
+		const FBox MeshBox = Mesh->GetSkeletalMeshAsset()->GetImportedBounds().GetBox();
+		FVector ViewLocation = MeshToWorld.TransformPosition(MeshBox.GetCenter()) + Distance * Direction;
+		TArray<FVector> ViewPoints;
+		const FSkeletalMeshRenderData* RenderData = Mesh->GetSkeletalMeshRenderData();
+		if (RenderData && RenderData->LODRenderData.Num() > 0)
+		{
+			const auto& Positions = RenderData->LODRenderData[0].StaticVertexBuffers.PositionVertexBuffer;
+			if (Positions.GetVertexData())
+			{
+				ViewPoints.Reserve(Positions.GetNumVertices());
+				for (uint32 Index = 0; Index < Positions.GetNumVertices(); ++Index)
+					ViewPoints.Add(FVector(Positions.VertexPosition(Index)));
+			}
+		}
+		if (ViewPoints.IsEmpty())
+		{
+			for (int32 Corner = 0; Corner < 8; ++Corner)
+			{
+				ViewPoints.Emplace(
+					(Corner & 1) ? MeshBox.Max.X : MeshBox.Min.X,
+					(Corner & 2) ? MeshBox.Max.Y : MeshBox.Min.Y,
+					(Corner & 4) ? MeshBox.Max.Z : MeshBox.Min.Z);
+			}
+		}
+		for (FVector& Point : ViewPoints)
+			Point = ViewRotation.UnrotateVector(MeshToWorld.TransformPosition(Point) - ViewLocation);
+
+		// Use the projected geometry so empty corners of the mesh bounds do not bias the framing.
+		FVector2D CameraOffset = FVector2D::ZeroVector;
+		for (int32 Pass = 0; Pass < 4; ++Pass)
+		{
+			FBox2D ProjectedBounds(ForceInit);
+			for (const FVector& Point : ViewPoints)
+				if (Point.X > UE_SMALL_NUMBER)
+					ProjectedBounds += (FVector2D(Point.Y, Point.Z) - CameraOffset) / Point.X;
+			if (!ProjectedBounds.bIsValid) break;
+			CameraOffset += ProjectedBounds.GetCenter() * Distance;
+		}
+		ViewLocation += ViewRotation.RotateVector(FVector(0.0, CameraOffset.X, CameraOffset.Y));
+		Viewport->SetViewLocation(ViewLocation);
+		Viewport->SetViewRotation(ViewRotation);
+		AddPreviewBackdrop(Actor, ViewLocation, ViewRotation, Distance);
 		Viewport->SetLightIntensity(2.0f);
 		Viewport->SetSkyIntensity(1.2f);
 	}
@@ -666,12 +799,10 @@ void UAudioSettingsWidget::BuildVisualControls()
 		FrameLimit->OnSelectionChanged.AddUniqueDynamic(this, &ThisClass::SetFrameLimit);
 	if (auto* Shake = AddSlider(TEXT("ShakeSetting"), Visual->ShakeScale, 1.f))
 		Shake->OnValueChanged.AddUniqueDynamic(this, &ThisClass::SetShake);
-	if (auto* MotionBlur = AddToggle(TEXT("MotionBlurSetting"), Visual->bMotionBlur))
-		MotionBlur->OnCheckStateChanged.AddUniqueDynamic(this, &ThisClass::SetMotionBlur);
 	if (auto* Bloom = AddToggle(TEXT("BloomSetting"), Visual->bBloom))
 		Bloom->OnCheckStateChanged.AddUniqueDynamic(this, &ThisClass::SetBloom);
 	const TArray<FString> AppearanceColors = {TEXT("기본"), TEXT("흰색"), TEXT("청록"), TEXT("주황"),
-		TEXT("분홍"), TEXT("연두"), TEXT("사용자 지정"), TEXT("팔레트 열기…")};
+		TEXT("분홍"), TEXT("연두"), TEXT("사용자 지정")};
 	if (auto* OutlineColor = AddCombo(TEXT("OutlineColorSetting"), AppearanceColors, Visual->OutlineColor))
 		OutlineColor->OnSelectionChanged.AddUniqueDynamic(this, &ThisClass::SetOutlineColor);
 	if (auto* PlayerColor = AddCombo(TEXT("PlayerColorSetting"), AppearanceColors, Visual->PlayerColor))
@@ -820,42 +951,47 @@ void UAudioSettingsWidget::SetAppearanceColor(const FString& Value, ESelectInfo:
 	auto* Combo = Cast<UComboBoxString>(WidgetTree->FindWidget(ComboName));
 	auto* Visual = UGameInstance::GetSubsystem<UGameVisualSettingsSubsystem>(GetGameInstance());
 	if (!Combo || !Visual) return;
-	int32& SelectedColor = bOutline ? Visual->OutlineColor : Visual->PlayerColor;
 	const int32 Index = Combo->FindOptionIndex(Value);
-	if (Index > UGameVisualSettingsSubsystem::CustomColorIndex)
+	if (Index < 0) return;
+	int32& SelectedColor = bOutline ? Visual->OutlineColor : Visual->PlayerColor;
+	if (Index == UGameVisualSettingsSubsystem::CustomColorIndex)
 	{
 		Combo->SetSelectedIndex(SelectedColor);
-		const FLinearColor InitialColor = bOutline
-			? Visual->GetOutlineColor(Cast<APlayerBase>(GetOwningPlayerPawn()))
-			: Visual->GetPlayerColor();
-		FColorPickerArgs Args(InitialColor,
-			FOnLinearColorValueChanged::CreateWeakLambda(this, [this, ComboName, bOutline](FLinearColor Color)
-			{
-				auto* Settings = UGameInstance::GetSubsystem<UGameVisualSettingsSubsystem>(GetGameInstance());
-				if (!Settings) return;
-				(bOutline ? Settings->CustomOutlineColor : Settings->CustomPlayerColor) = Color.GetClamped();
-				(bOutline ? Settings->OutlineColor : Settings->PlayerColor) = UGameVisualSettingsSubsystem::CustomColorIndex;
-				if (auto* Picker = Cast<UComboBoxString>(WidgetTree->FindWidget(ComboName)))
-					Picker->SetSelectedIndex(UGameVisualSettingsSubsystem::CustomColorIndex);
-				UpdateVisuals();
-			}));
-		Args.ParentWidget = TakeWidget();
-		Args.bIsModal = true;
-		Args.bOnlyRefreshOnOk = true;
-		Args.bClampValue = true;
-		Args.OnColorPickerCancelled.BindLambda([](FLinearColor) {});
-		OpenColorPicker(Args);
+		FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateWeakLambda(this, [this, bOutline](float)
+		{
+			OpenAppearancePalette(bOutline);
+			return false;
+		}));
 		return;
 	}
-	if (Index < 0) return;
+	if (SelectedColor == Index) return;
 	SelectedColor = Index;
 	UpdateVisuals();
 }
 
-void UAudioSettingsWidget::SetMotionBlur(bool bValue)
+void UAudioSettingsWidget::OpenAppearancePalette(bool bOutline)
 {
-	if (auto* Visual = UGameInstance::GetSubsystem<UGameVisualSettingsSubsystem>(GetGameInstance())) Visual->bMotionBlur = bValue;
-	UpdateVisuals();
+	const auto* Visual = UGameInstance::GetSubsystem<UGameVisualSettingsSubsystem>(GetGameInstance());
+	if (!Visual) return;
+	const FLinearColor InitialColor = bOutline ? Visual->CustomOutlineColor : Visual->CustomPlayerColor;
+	FColorPickerArgs Args(InitialColor,
+		FOnLinearColorValueChanged::CreateWeakLambda(this, [this, bOutline](FLinearColor Color)
+		{
+			auto* Settings = UGameInstance::GetSubsystem<UGameVisualSettingsSubsystem>(GetGameInstance());
+			if (!Settings) return;
+			(bOutline ? Settings->CustomOutlineColor : Settings->CustomPlayerColor) = Color.GetClamped();
+			(bOutline ? Settings->OutlineColor : Settings->PlayerColor) = UGameVisualSettingsSubsystem::CustomColorIndex;
+			const FName ComboName = bOutline ? TEXT("OutlineColorSetting") : TEXT("PlayerColorSetting");
+			if (auto* Combo = Cast<UComboBoxString>(WidgetTree->FindWidget(ComboName)))
+				Combo->SetSelectedIndex(UGameVisualSettingsSubsystem::CustomColorIndex);
+			UpdateVisuals();
+		}));
+	Args.ParentWidget = TakeWidget();
+	Args.bIsModal = true;
+	Args.bOnlyRefreshOnOk = true;
+	Args.bClampValue = true;
+	Args.OnColorPickerCancelled.BindLambda([](FLinearColor) {});
+	OpenColorPicker(Args);
 }
 
 void UAudioSettingsWidget::SetBloom(bool bValue)

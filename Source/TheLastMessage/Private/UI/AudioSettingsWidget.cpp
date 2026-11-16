@@ -49,6 +49,7 @@
 #include "GameFramework/GameUserSettings.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Misc/App.h"
+#include "Internationalization/Internationalization.h"
 #include "Styling/CoreStyle.h"
 #include "Widgets/Colors/SColorPicker.h"
 
@@ -79,14 +80,57 @@ const FSettingsTab SettingsTabs[] = {
 	{TEXT("KeySettingsTab"), TEXT("KeySettingsTabText"), KeysPage},
 };
 
+// 드롭다운 항목은 번역되도록 모두 FText(NSLOCTEXT)로 둔다. 전역 static FText는 언어 데이터가 준비되기 전에 만들어질 수 있어서
+// 쓸 때마다 함수로 만든다. UComboBoxString은 문자열만 받으므로 채울 때 현재 언어 문자열로 바꾸고,
+// 언어가 바뀌면 BuildVisualControls로 다시 채운다. 고른 값은 항목 순서(인덱스)로 판단한다.
+
 // 그래픽 품질 드롭다운 항목. 순서가 Scalability 단계(0 낮음 ~ 3 최상)와 같다.
-const TCHAR* const QualityPresetOptions[] = {TEXT("낮음"), TEXT("중간"), TEXT("높음"), TEXT("최상")};
-const TCHAR* const CustomQualityOption = TEXT("사용자 지정");
-constexpr int32 QualityPresetCount = UE_ARRAY_COUNT(QualityPresetOptions);
+constexpr int32 QualityPresetCount = 4;
+TArray<FText> GetQualityPresetOptions()
+{
+	return {NSLOCTEXT("SettingsOptions", "QualityLow", "낮음"), NSLOCTEXT("SettingsOptions", "QualityMedium", "중간"),
+		NSLOCTEXT("SettingsOptions", "QualityHigh", "높음"), NSLOCTEXT("SettingsOptions", "QualityEpic", "최상")};
+}
+FText GetCustomQualityOption() { return NSLOCTEXT("SettingsOptions", "QualityCustom", "사용자 지정"); }
 
 // 색각 보정 드롭다운 항목. 순서가 UGameVisualSettingsSubsystem::ColorVision 값과 같다.
-const TCHAR* const ColorVisionOptions[] = {TEXT("끄기"), TEXT("적색약 (1형)"), TEXT("녹색약 (2형)"), TEXT("청색약 (3형)")};
-static_assert(UE_ARRAY_COUNT(ColorVisionOptions) == UGameVisualSettingsSubsystem::ColorVisionTypeCount);
+TArray<FText> GetColorVisionOptions()
+{
+	return {NSLOCTEXT("SettingsOptions", "ColorVisionOff", "끄기"), NSLOCTEXT("SettingsOptions", "Protanopia", "적색약 (1형)"),
+		NSLOCTEXT("SettingsOptions", "Deuteranopia", "녹색약 (2형)"), NSLOCTEXT("SettingsOptions", "Tritanopia", "청색약 (3형)")};
+}
+
+// 화면 모드 드롭다운 항목. 순서가 EWindowMode(0 전체 화면, 1 테두리 없는 창, 2 창 모드)와 같다.
+TArray<FText> GetWindowModeOptions()
+{
+	return {NSLOCTEXT("SettingsOptions", "Fullscreen", "전체 화면"), NSLOCTEXT("SettingsOptions", "WindowedFullscreen", "테두리 없는 창"),
+		NSLOCTEXT("SettingsOptions", "Windowed", "창 모드")};
+}
+
+// 최대 프레임 드롭다운. 첫 항목(0)은 제한 없음.
+constexpr int32 FrameLimitValues[] = {0, 30, 60, 120};
+TArray<FText> GetFrameLimitOptions()
+{
+	TArray<FText> Options = {NSLOCTEXT("SettingsOptions", "FrameLimitNone", "제한 없음")};
+	for (int32 Index = 1; Index < UE_ARRAY_COUNT(FrameLimitValues); ++Index) Options.Add(FText::AsNumber(FrameLimitValues[Index]));
+	return Options;
+}
+
+// 외형 색상 드롭다운 항목. 순서가 UGameVisualSettingsSubsystem의 색상 인덱스와 같고 마지막이 사용자 지정이다.
+TArray<FText> GetAppearanceColorOptions()
+{
+	return {NSLOCTEXT("SettingsOptions", "ColorDefault", "기본"), NSLOCTEXT("SettingsOptions", "ColorWhite", "흰색"),
+		NSLOCTEXT("SettingsOptions", "ColorCyan", "청록"), NSLOCTEXT("SettingsOptions", "ColorOrange", "주황"),
+		NSLOCTEXT("SettingsOptions", "ColorPink", "분홍"), NSLOCTEXT("SettingsOptions", "ColorLime", "연두"),
+		NSLOCTEXT("SettingsOptions", "ColorCustom", "사용자 지정")};
+}
+
+TArray<FString> ToOptionStrings(const TArray<FText>& Options)
+{
+	TArray<FString> Result;
+	for (const FText& Option : Options) Result.Add(Option.ToString());
+	return Result;
+}
 
 const FName DisplayHelpControls[] = {
 	TEXT("BrightnessSetting"), TEXT("WindowModeSetting"), TEXT("ResolutionSetting"), TEXT("VSyncSetting"),
@@ -385,6 +429,8 @@ void UAudioSettingsWidget::NativeConstruct()
 
 	RefreshVolumeValues();
 	BuildVisualControls();
+	if (!CultureChangedHandle.IsValid())
+		CultureChangedHandle = FInternationalization::Get().OnCultureChanged().AddUObject(this, &ThisClass::HandleCultureChanged);
 	BindKeySelectors();
 	BindSettingsHelp();
 	if (auto* Button = Cast<UButton>(FindSettingsWidget(TEXT("GeneralSettingsTab"))))
@@ -431,6 +477,11 @@ void UAudioSettingsWidget::NativeDestruct()
 	{
 		Super::NativeDestruct();
 		return;
+	}
+	if (CultureChangedHandle.IsValid())
+	{
+		FInternationalization::Get().OnCultureChanged().Remove(CultureChangedHandle);
+		CultureChangedHandle.Reset();
 	}
 	if (ScreenConfirmation.IsValid())
 	{
@@ -1635,7 +1686,7 @@ void UAudioSettingsWidget::BuildVisualControls()
 		BrightnessSlider->OnValueChanged.AddUniqueDynamic(this, &ThisClass::SetBrightness);
 	}
 	if (auto* Mode = AddCombo(TEXT("WindowModeSetting"),
-		{TEXT("전체 화면"), TEXT("테두리 없는 창"), TEXT("창 모드")}, static_cast<int32>(Screen->GetFullscreenMode())))
+		ToOptionStrings(GetWindowModeOptions()), static_cast<int32>(Screen->GetFullscreenMode())))
 		Mode->OnSelectionChanged.AddUniqueDynamic(this, &ThisClass::SetWindowMode);
 	UKismetSystemLibrary::GetSupportedFullscreenResolutions(Resolutions);
 	const FIntPoint Current = Screen->GetScreenResolution();
@@ -1651,16 +1702,17 @@ void UAudioSettingsWidget::BuildVisualControls()
 	}
 	if (auto* VSync = AddToggle(TEXT("VSyncSetting"), Screen->IsVSyncEnabled()))
 		VSync->OnCheckStateChanged.AddUniqueDynamic(this, &ThisClass::SetVSync);
-	const float Limit = Screen->GetFrameRateLimit();
-	if (auto* FrameLimit = AddCombo(TEXT("FrameLimitSetting"),
-		{TEXT("제한 없음"), TEXT("30"), TEXT("60"), TEXT("120")}, Limit == 30 ? 1 : Limit == 60 ? 2 : Limit == 120 ? 3 : 0))
+	const int32 Limit = FMath::RoundToInt(Screen->GetFrameRateLimit());
+	int32 LimitIndex = 0;
+	for (int32 Index = 0; Index < UE_ARRAY_COUNT(FrameLimitValues); ++Index)
+		if (FrameLimitValues[Index] == Limit) LimitIndex = Index;
+	if (auto* FrameLimit = AddCombo(TEXT("FrameLimitSetting"), ToOptionStrings(GetFrameLimitOptions()), LimitIndex))
 		FrameLimit->OnSelectionChanged.AddUniqueDynamic(this, &ThisClass::SetFrameLimit);
 	// 엔진 단계 4(시네마틱)나 그룹별로 섞인 값(-1)은 메뉴에 없으므로 "사용자 지정"으로 보여 준다.
 	const int32 QualityLevel = GetQualityPresetLevel(*Screen);
-	TArray<FString> QualityOptions;
-	for (const TCHAR* Option : QualityPresetOptions) QualityOptions.Add(Option);
+	TArray<FString> QualityOptions = ToOptionStrings(GetQualityPresetOptions());
 	const bool bPresetLevel = QualityLevel >= 0 && QualityLevel < QualityPresetCount;
-	if (!bPresetLevel) QualityOptions.Add(CustomQualityOption);
+	if (!bPresetLevel) QualityOptions.Add(GetCustomQualityOption().ToString());
 	if (auto* Quality = AddCombo(TEXT("QualityPresetSetting"), QualityOptions, bPresetLevel ? QualityLevel : QualityPresetCount))
 		Quality->OnSelectionChanged.AddUniqueDynamic(this, &ThisClass::SetQualityPreset);
 	if (auto* RenderScale = Cast<USlider>(FindSettingsWidget(TEXT("RenderScaleSetting"))))
@@ -1674,9 +1726,7 @@ void UAudioSettingsWidget::BuildVisualControls()
 		RenderScale->RequiresControllerLock = false;
 		RenderScale->OnValueChanged.AddUniqueDynamic(this, &ThisClass::SetRenderResolutionScale);
 	}
-	TArray<FString> ColorVisionLabels;
-	for (const TCHAR* Option : ColorVisionOptions) ColorVisionLabels.Add(Option);
-	if (auto* ColorVision = AddCombo(TEXT("ColorVisionSetting"), ColorVisionLabels, Visual->ColorVision))
+	if (auto* ColorVision = AddCombo(TEXT("ColorVisionSetting"), ToOptionStrings(GetColorVisionOptions()), Visual->ColorVision))
 		ColorVision->OnSelectionChanged.AddUniqueDynamic(this, &ThisClass::SetColorVision);
 	if (auto* Strength = AddSlider(TEXT("ColorVisionStrengthSetting"), Visual->ColorVisionStrength, 1.f))
 	{
@@ -1689,8 +1739,8 @@ void UAudioSettingsWidget::BuildVisualControls()
 		Bloom->OnCheckStateChanged.AddUniqueDynamic(this, &ThisClass::SetBloom);
 	if (auto* ReduceFlashes = AddToggle(TEXT("ReduceFlashesSetting"), Visual->bReduceFlashes))
 		ReduceFlashes->OnCheckStateChanged.AddUniqueDynamic(this, &ThisClass::SetReduceFlashes);
-	const TArray<FString> AppearanceColors = {TEXT("기본"), TEXT("흰색"), TEXT("청록"), TEXT("주황"),
-		TEXT("분홍"), TEXT("연두"), TEXT("사용자 지정")};
+	const TArray<FString> AppearanceColors = ToOptionStrings(GetAppearanceColorOptions());
+	static_assert(UGameVisualSettingsSubsystem::CustomColorIndex == 6, "외형 색상 항목(GetAppearanceColorOptions)은 사용자 지정까지 7개다.");
 	if (auto* OutlineColor = AddCombo(TEXT("OutlineColorSetting"), AppearanceColors, Visual->OutlineColor))
 		OutlineColor->OnSelectionChanged.AddUniqueDynamic(this, &ThisClass::SetOutlineColor);
 	if (auto* PlayerColor = AddCombo(TEXT("PlayerColorSetting"), AppearanceColors, Visual->PlayerColor))
@@ -1702,6 +1752,21 @@ void UAudioSettingsWidget::BuildVisualControls()
 	if (auto* Apply = Cast<UButton>(FindSettingsWidget(TEXT("ApplyScreenButton"))))
 		Apply->OnClicked.AddUniqueDynamic(this, &ThisClass::ApplyScreenMode);
 	RefreshVisualReadouts();
+	RefreshApplyButton();
+}
+
+void UAudioSettingsWidget::HandleCultureChanged()
+{
+	// 화면 모드 확인 중에는 드롭다운이 잠겨 있고 선택 값이 아직 확정되지 않았으므로 다시 채우지 않는다.
+	if (ScreenConfirmation.IsValid()) return;
+	// 아직 적용하지 않은 화면 모드와 해상도 선택은 그대로 둔다.
+	TMap<FName, int32> PendingSelections;
+	for (const FName Name : {FName(TEXT("WindowModeSetting")), FName(TEXT("ResolutionSetting"))})
+		if (const auto* Combo = Cast<UComboBoxString>(FindSettingsWidget(Name))) PendingSelections.Add(Name, Combo->GetSelectedIndex());
+	BuildVisualControls();
+	for (const auto& Pending : PendingSelections)
+		if (auto* Combo = Cast<UComboBoxString>(FindSettingsWidget(Pending.Key)); Combo && Pending.Value >= 0)
+			Combo->SetSelectedIndex(Pending.Value);
 	RefreshApplyButton();
 }
 
@@ -1929,9 +1994,13 @@ void UAudioSettingsWidget::RefreshApplyButton()
 
 void UAudioSettingsWidget::SetFrameLimit(FString Value, ESelectInfo::Type Selection)
 {
+	// 표시 문구는 언어마다 달라서 항목 순서로 값을 정한다. 다시 채울 때(Direct)는 값이 바뀌지 않았으므로 무시한다.
+	auto* Combo = Cast<UComboBoxString>(FindSettingsWidget(TEXT("FrameLimitSetting")));
+	const int32 Index = Combo ? Combo->FindOptionIndex(Value) : INDEX_NONE;
+	if (Selection == ESelectInfo::Direct || Index < 0 || Index >= UE_ARRAY_COUNT(FrameLimitValues)) return;
 	if (auto* Screen = GEngine ? GEngine->GetGameUserSettings() : nullptr)
 	{
-		Screen->SetFrameRateLimit(FCString::Atof(*Value));
+		Screen->SetFrameRateLimit(static_cast<float>(FrameLimitValues[Index]));
 		Screen->ApplyNonResolutionSettings();
 		if (!ScreenConfirmation.IsValid()) Screen->SaveSettings();
 	}
@@ -1975,7 +2044,7 @@ void UAudioSettingsWidget::SetQualityPreset(FString Value, ESelectInfo::Type Sel
 	Screen->SetResolutionScaleValueEx(RenderScalePercent);
 	Screen->ApplyNonResolutionSettings();
 	if (!ScreenConfirmation.IsValid()) Screen->SaveSettings();
-	if (Combo->GetOptionCount() > QualityPresetCount) Combo->RemoveOption(CustomQualityOption);
+	if (Combo->GetOptionCount() > QualityPresetCount) Combo->RemoveOption(Combo->GetOptionAtIndex(QualityPresetCount));
 	// 빛 번짐 같은 개별 설정이 품질 단계 값에 덮이지 않도록 다시 적용한다.
 	UpdateVisuals();
 }

@@ -102,6 +102,9 @@ private:
 	void RefreshKeySelectors();
 	void UpdateSettingsTabs(int32 ActiveIndex);
 	void BuildVisualControls();
+	/** 언어가 바뀌면 문자열로 채운 드롭다운을 새 언어로 다시 채운다(FText로 만든 문구는 엔진이 알아서 바꾼다). */
+	void HandleCultureChanged();
+	FDelegateHandle CultureChangedHandle;
 	void ShowSettingsTab(int32 Index);
 	void RefreshAppearancePreview();
 	bool bSynchronizingAppearanceControls = false;

@@ -11,6 +11,7 @@
 #include "ProceduralMeshComponent.h"
 #include "Rendering/SkeletalMeshRenderData.h"
 #include "UI/GameAudioSettingsSubsystem.h"
+#include "UI/GameKeySettingsSubsystem.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/Border.h"
 #include "Components/Button.h"
@@ -22,6 +23,7 @@
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
 #include "Components/Image.h"
+#include "Components/InputKeySelector.h"
 #include "Components/Slider.h"
 #include "VolumeSlider.h"
 #include "Components/TextBlock.h"
@@ -52,6 +54,9 @@
 
 namespace
 {
+const FName SettingsTabNames[] = {TEXT("GeneralSettingsTab"), TEXT("AppearanceSettingsTab"), TEXT("KeySettingsTab")};
+const FName SettingsTabTextNames[] = {TEXT("GeneralSettingsTabText"), TEXT("AppearanceSettingsTabText"), TEXT("KeySettingsTabText")};
+
 const FColor PreviewBackgroundEdge(23, 28, 34);
 const FColor PreviewBackgroundCenter(52, 58, 66);
 
@@ -254,8 +259,6 @@ void UAudioSettingsWidget::BuildDefaultLayout(UWidgetTree* Tree, bool bIncludeDi
 
 TSharedRef<SWidget> UAudioSettingsWidget::RebuildWidget()
 {
-	if (WidgetTree && !WidgetTree->RootWidget) BuildDefaultLayout(WidgetTree, true);
-	if (WidgetTree) BuildAppearanceTabs();
 	return FactoryMenuStyle::WithMenuFocusStyle(Super::RebuildWidget());
 }
 
@@ -263,7 +266,7 @@ UAudioSettingsWidget* UAudioSettingsWidget::CreateFor(APlayerController* Player)
 {
 	if (!Player) return nullptr;
 	UClass* Class = LoadClass<UAudioSettingsWidget>(nullptr, TEXT("/Game/Main/UI/Menu/WBP_Settings.WBP_Settings_C"));
-	return CreateWidget<UAudioSettingsWidget>(Player, Class ? Class : StaticClass());
+	return Class ? CreateWidget<UAudioSettingsWidget>(Player, Class) : nullptr;
 }
 
 void UAudioSettingsWidget::NativeConstruct()
@@ -302,10 +305,16 @@ void UAudioSettingsWidget::NativeConstruct()
 
 	RefreshVolumeValues();
 	BuildVisualControls();
+	BindKeySelectors();
 	if (auto* Button = Cast<UButton>(WidgetTree->FindWidget(TEXT("GeneralSettingsTab"))))
 		Button->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowGeneralSettings);
 	if (auto* Button = Cast<UButton>(WidgetTree->FindWidget(TEXT("AppearanceSettingsTab"))))
 		Button->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowAppearanceSettings);
+	if (auto* Button = Cast<UButton>(WidgetTree->FindWidget(TEXT("KeySettingsTab"))))
+		Button->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowKeySettings);
+	for (const FName Name : SettingsTabNames)
+		if (auto* Button = Cast<UButton>(WidgetTree->FindWidget(Name)))
+			FactoryUI::ApplyButtonSounds(Button, FactoryUI::ESound::Confirm);
 	if (auto* Button = Cast<UButton>(WidgetTree->FindWidget(TEXT("ResetAppearanceButton"))))
 	{
 		Button->OnClicked.AddUniqueDynamic(this, &ThisClass::ResetAppearanceSettings);
@@ -320,6 +329,10 @@ void UAudioSettingsWidget::FocusFirstControl()
 	if (Pages && Pages->GetActiveWidgetIndex() == 1)
 	{
 		if (auto* Control = WidgetTree->FindWidget(TEXT("OutlineColorSetting"))) Control->SetKeyboardFocus();
+	}
+	else if (Pages && Pages->GetActiveWidgetIndex() == 2)
+	{
+		if (auto* Control = FirstKeySelector.Get()) Control->SetKeyboardFocus();
 	}
 	else if (auto* Slider = WidgetTree->FindWidget(TEXT("BrightnessSetting"))) Slider->SetKeyboardFocus();
 	else if (auto* Audio = Cast<UAudioSettingsWidget>(WidgetTree->FindWidget(TEXT("AudioSettingsSection"))))
@@ -347,6 +360,8 @@ void UAudioSettingsWidget::NativeDestruct()
 
 FReply UAudioSettingsWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, const FKeyEvent& Event)
 {
+	if (const auto* Selector = CapturingKey.Get(); Selector && Selector->GetIsSelectingKey())
+		return Super::NativeOnPreviewKeyDown(Geometry, Event);
 	const auto* Inputs = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetOwningLocalPlayer());
 	if (Event.GetKey() == EKeys::Escape
 		|| (Inputs && PauseInputAction && Inputs->QueryKeysMappedToAction(PauseInputAction).Contains(Event.GetKey())))
@@ -481,41 +496,139 @@ void UAudioSettingsWidget::BuildVisualLayout(UWidgetTree* Tree, UVerticalBox* Co
 	if (auto* Box = Cast<USizeBox>(Apply->GetParent())) Box->SetHeightOverride(44);
 }
 
-void UAudioSettingsWidget::BuildAppearanceTabs()
+#if WITH_EDITOR
+namespace
 {
-	if (WidgetTree->FindWidget(TEXT("SettingsTabPages"))) return;
+bool AuthorKeySettingsGroups(UWidgetTree* Tree)
+{
+	if (Tree->FindWidget(TEXT("KeySettingsMovementHeading"))) return true;
+
+	struct FKeyRow
+	{
+		UWidget* Widget;
+		int32 Order;
+	};
+	TArray<FKeyRow> MovementRows;
+	TArray<FKeyRow> CombatRows;
+	TArray<FKeyRow> UIRows;
+	UHorizontalBox* Columns = nullptr;
+	for (const auto& Binding : UGameKeySettingsSubsystem::GetDefaultBindings())
+	{
+		UWidget* Row = Tree->FindWidget(Binding.WidgetName);
+		while (Row && !Cast<UVerticalBox>(Row->GetParent())) Row = Row->GetParent();
+		if (!Row) continue;
+		if (!Columns) Columns = Cast<UHorizontalBox>(Row->GetParent()->GetParent());
+
+		const FString Name = Binding.WidgetName.ToString();
+		if (Name.StartsWith(TEXT("IA_Move_"))) MovementRows.Add({Row, 0});
+		else if (Name.StartsWith(TEXT("IA_Jump_"))) MovementRows.Add({Row, 1});
+		else if (Name.StartsWith(TEXT("IA_Drop_"))) MovementRows.Add({Row, 2});
+		else if (Name.StartsWith(TEXT("IA_GrapplingHook_"))) MovementRows.Add({Row, 3});
+		else if (Name.StartsWith(TEXT("IA_Interact_")) || Name.StartsWith(TEXT("IA_Map_")) || Binding.MappingIndex == INDEX_NONE)
+			UIRows.Add({Row, 0});
+		else
+			CombatRows.Add({Row, Name.StartsWith(TEXT("IA_Weapon")) ? 1 : 0});
+	}
+	auto* Left = Columns ? Cast<UVerticalBox>(Columns->GetChildAt(0)) : nullptr;
+	auto* Right = Columns ? Cast<UVerticalBox>(Columns->GetChildAt(1)) : nullptr;
+	if (!Left || !Right) return false;
+	for (const auto* Group : {&MovementRows, &CombatRows, &UIRows})
+		for (const auto& Row : *Group)
+			Row.Widget->RemoveFromParent();
+
+	const auto AddGroup = [&](UVerticalBox* Column, FName HeadingName, const FText& Caption, TArray<FKeyRow>& Rows)
+	{
+		auto* Heading = MakeSettingsLabel(Tree, Caption, 18);
+		Heading->Rename(*HeadingName.ToString(), Tree);
+		Heading->SetColorAndOpacity(FactoryUI::Cyan);
+		Heading->SetRenderTranslation(FVector2D(0.f, -3.f));
+		Column->AddChildToVerticalBox(Heading)->SetPadding(FMargin(0.f, 3.f, 0.f, 4.f));
+		Rows.StableSort([](const FKeyRow& A, const FKeyRow& B) { return A.Order < B.Order; });
+		for (const auto& Row : Rows)
+			Column->AddChildToVerticalBox(Row.Widget)->SetPadding(FMargin(0.f, 2.f));
+	};
+	AddGroup(Left, TEXT("KeySettingsMovementHeading"), NSLOCTEXT("KeySettings", "MovementGroup", "이동"), MovementRows);
+	AddGroup(Left, TEXT("KeySettingsUIHeading"), NSLOCTEXT("KeySettings", "UIGroup", "UI"), UIRows);
+	AddGroup(Right, TEXT("KeySettingsCombatHeading"), NSLOCTEXT("KeySettings", "CombatGroup", "전투"), CombatRows);
+	return true;
+}
+
+bool AuthorKeySettingsTypography(UWidgetTree* Tree)
+{
+	const auto* FontAsset = GetDefault<UFactoryUIAssetSettings>()->BodyFont.LoadSynchronous();
+	if (!FontAsset) return false;
+	const FSlateFontInfo KeyFont(FontAsset, 17, TEXT("Regular"));
+	Tree->ForEachWidget([&](UWidget* Widget)
+	{
+		if (auto* Selector = Cast<UInputKeySelector>(Widget))
+		{
+			auto Style = Selector->GetTextStyle();
+			Style.SetFont(KeyFont);
+			Selector->SetTextStyle(Style);
+			Selector->SetMargin(FMargin(6.f, -4.f, 6.f, 4.f));
+		}
+	});
+	if (auto* Reset = Cast<UTextBlock>(Tree->FindWidget(TEXT("ResetGameplayKeysText"))))
+	{
+		Reset->SetFont(KeyFont);
+		Reset->SetRenderTranslation(FVector2D(0.f, -4.f));
+	}
+	if (auto* Jump = Cast<UTextBlock>(Tree->FindWidget(TEXT("DropJumpKey"))))
+		Jump->SetText(NSLOCTEXT("KeySettings", "DropJumpKeyLabel", "+ 점프키"));
+	return true;
+}
+}
+
+bool UAudioSettingsWidget::AuthorSettingsLayout(UWidgetTree* WidgetTree)
+{
+	if (WidgetTree->FindWidget(TEXT("SettingsTabPages")))
+		return AuthorKeySettingsGroups(WidgetTree) && AuthorKeySettingsTypography(WidgetTree);
 	auto* Columns = Cast<UHorizontalBox>(WidgetTree->FindWidget(TEXT("SettingsColumns")));
 	auto* Display = Cast<UVerticalBox>(WidgetTree->FindWidget(TEXT("VisualSettingsColumn")));
 	UPanelWidget* Parent = Columns ? Columns->GetParent() : nullptr;
-	if (!Parent || !Display) return;
+	if (!Parent || !Display) return false;
 	BuildVisualLayout(WidgetTree, Display);
 
 	auto* Container = WidgetTree->ConstructWidget<UVerticalBox>();
-	if (!Parent->ReplaceChild(Columns, Container)) return;
-	Columns->Slot = nullptr;
+	const int32 ColumnsIndex = Parent->GetChildIndex(Columns);
+	UPanelSlot* ColumnsSlot = Columns->Slot;
+	Parent->RemoveChild(Columns);
+	Parent->InsertChildAt(ColumnsIndex, Container, ColumnsSlot);
 
 	auto* Tabs = WidgetTree->ConstructWidget<UHorizontalBox>();
-	Container->AddChildToVerticalBox(Tabs)->SetPadding(FMargin(0.f, 0.f, 0.f, 12.f));
-	auto AddTab = [&](FName Name, FName TextName, const FText& Caption)
+	Container->AddChildToVerticalBox(Tabs)->SetPadding(FMargin(4.f, 0.f, 4.f, 0.f));
+	auto AddTab = [&](int32 Index, const FText& Caption)
 	{
-		auto* Cell = WidgetTree->ConstructWidget<UVerticalBox>();
-		auto* Slot = Tabs->AddChildToHorizontalBox(Cell);
-		Slot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-		Slot->SetPadding(FMargin(4.f, 0.f));
-		FactoryMenuStyle::AddButton(WidgetTree, Cell, Name, TextName, Caption, true);
-		auto* Button = CastChecked<UButton>(WidgetTree->FindWidget(Name));
-		CastChecked<USizeBox>(Button->GetParent())->SetHeightOverride(40.f);
-		auto* Text = CastChecked<UTextBlock>(WidgetTree->FindWidget(TextName));
-		auto Font = Text->GetFont();
-		Font.Size = 22;
-		Text->SetFont(Font);
-		CastChecked<UButtonSlot>(Text->Slot)->SetVerticalAlignment(VAlign_Center);
-		FactoryUI::ApplyButtonSounds(Button, FactoryUI::ESound::Confirm);
+		auto* Size = WidgetTree->ConstructWidget<USizeBox>();
+		Size->SetHeightOverride(40.f);
+		Size->SetWidthOverride(174.f);
+		Tabs->AddChildToHorizontalBox(Size)->SetPadding(FMargin(0.f, 0.f, 3.f, 0.f));
+		auto* Button = WidgetTree->ConstructWidget<UButton>(UButton::StaticClass(), SettingsTabNames[Index]);
+		Size->SetContent(Button);
+		FButtonStyle Style;
+		const FVector4 Corners(9.f, 9.f, 0.f, 0.f);
+		Style.Normal = FSlateRoundedBoxBrush(FactoryUI::Panel, Corners, FactoryUI::Edge, 1.f);
+		Style.Hovered = FSlateRoundedBoxBrush(FLinearColor(0.09f, 0.18f, 0.21f), Corners, FactoryUI::Cyan, 1.f);
+		Style.Pressed = Style.Hovered;
+		Style.Disabled = Style.Normal;
+		Button->SetStyle(Style);
+		auto* Text = MakeSettingsLabel(WidgetTree, Caption, 18);
+		Text->Rename(*SettingsTabTextNames[Index].ToString(), WidgetTree);
+		Text->SetJustification(ETextJustify::Center);
+		Text->SetRenderTranslation(FVector2D(0.f, -4.f));
+		Text->SetVisibility(ESlateVisibility::HitTestInvisible);
+		auto* LabelSlot = CastChecked<UButtonSlot>(Button->AddChild(Text));
+		LabelSlot->SetHorizontalAlignment(HAlign_Fill);
+		LabelSlot->SetVerticalAlignment(VAlign_Center);
 	};
-	AddTab(TEXT("GeneralSettingsTab"), TEXT("GeneralSettingsTabText"), NSLOCTEXT("Settings", "GeneralTab", "화면 및 소리"));
-	AddTab(TEXT("AppearanceSettingsTab"), TEXT("AppearanceSettingsTabText"), NSLOCTEXT("Settings", "AppearanceTab", "플레이어 외형"));
-	if (auto* Label = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("GeneralSettingsTabText"))))
-		Label->SetColorAndOpacity(FactoryUI::Cyan);
+	AddTab(0, NSLOCTEXT("Settings", "GeneralTab", "화면 및 소리"));
+	AddTab(1, NSLOCTEXT("Settings", "AppearanceTab", "플레이어 외형"));
+	AddTab(2, NSLOCTEXT("Settings", "KeysTab", "키 설정"));
+	auto* TabLine = WidgetTree->ConstructWidget<UImage>();
+	auto TabLineBrush = FactoryUI::Plate(FactoryUI::Edge, FactoryUI::Edge, 0.f);
+	TabLineBrush.ImageSize = FVector2f(1.f, 1.f);
+	TabLine->SetBrush(TabLineBrush);
+	Container->AddChildToVerticalBox(TabLine)->SetPadding(FMargin(4.f, 0.f, 4.f, 12.f));
 
 	auto* Pages = WidgetTree->ConstructWidget<UWidgetSwitcher>(UWidgetSwitcher::StaticClass(), TEXT("SettingsTabPages"));
 	Container->AddChildToVerticalBox(Pages)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
@@ -591,7 +704,6 @@ void UAudioSettingsWidget::BuildAppearanceTabs()
 	ResetText->SetFont(Font);
 	CastChecked<UButtonSlot>(ResetText->Slot)->SetVerticalAlignment(VAlign_Center);
 
-	if (FApp::CanEverRender())
 	{
 		auto* Frame = WidgetTree->ConstructWidget<UBorder>();
 		Frame->SetBrush(FactoryUI::Chamfer());
@@ -599,12 +711,28 @@ void UAudioSettingsWidget::BuildAppearanceTabs()
 		auto* PreviewBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), TEXT("AppearancePreviewBox"));
 		PreviewBox->SetWidthOverride(370.f);
 		PreviewBox->SetHeightOverride(420.f);
+		auto* Preview = WidgetTree->ConstructWidget<UViewport>(UViewport::StaticClass(), TEXT("AppearancePreview"));
+		Preview->SetBackgroundColor(FLinearColor::FromSRGBColor(PreviewBackgroundEdge));
+		Preview->SetVisibility(ESlateVisibility::HitTestInvisible);
+		PreviewBox->SetContent(Preview);
 		Frame->SetContent(PreviewBox);
 		auto* PreviewSlot = AppearanceColumns->AddChildToHorizontalBox(Frame);
 		PreviewSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 		PreviewSlot->SetHorizontalAlignment(HAlign_Center);
 		PreviewSlot->SetVerticalAlignment(VAlign_Center);
 		PreviewSlot->SetPadding(FMargin(8.f, 6.f));
+	}
+	AuthorKeySettingsPage(WidgetTree, Pages);
+	return AuthorKeySettingsGroups(WidgetTree) && AuthorKeySettingsTypography(WidgetTree);
+}
+#endif
+
+void UAudioSettingsWidget::UpdateSettingsTabs(int32 ActiveIndex)
+{
+	for (int32 Index = 0; Index < UE_ARRAY_COUNT(SettingsTabNames); ++Index)
+	{
+		if (auto* Label = Cast<UTextBlock>(WidgetTree->FindWidget(SettingsTabTextNames[Index])))
+			Label->SetColorAndOpacity(Index == ActiveIndex ? FactoryUI::Cyan : FactoryUI::Text);
 	}
 }
 
@@ -613,17 +741,184 @@ void UAudioSettingsWidget::ShowSettingsTab(int32 Index)
 	if (auto* Pages = Cast<UWidgetSwitcher>(WidgetTree->FindWidget(TEXT("SettingsTabPages"))))
 	{
 		Pages->SetActiveWidgetIndex(Index);
-		if (auto* Label = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("GeneralSettingsTabText"))))
-			Label->SetColorAndOpacity(Index == 0 ? FactoryUI::Cyan : FactoryUI::Text);
-		if (auto* Label = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("AppearanceSettingsTabText"))))
-			Label->SetColorAndOpacity(Index == 1 ? FactoryUI::Cyan : FactoryUI::Text);
+		UpdateSettingsTabs(Index);
 		if (Index == 1) RefreshAppearancePreview();
+		if (Index == 2) RefreshKeySelectors();
 		FocusFirstControl();
 	}
 }
 
 void UAudioSettingsWidget::ShowGeneralSettings() { ShowSettingsTab(0); }
 void UAudioSettingsWidget::ShowAppearanceSettings() { ShowSettingsTab(1); }
+void UAudioSettingsWidget::ShowKeySettings() { ShowSettingsTab(2); }
+
+#if WITH_EDITOR
+void UAudioSettingsWidget::AuthorKeySettingsPage(UWidgetTree* WidgetTree, UWidgetSwitcher* Pages)
+{
+	auto* Page = WidgetTree->ConstructWidget<UVerticalBox>();
+	Pages->AddChild(Page);
+	auto Bindings = UGameKeySettingsSubsystem::GetDefaultBindings();
+	const auto IsJump = [](const FGameKeyBinding& Binding) { return Binding.WidgetName.ToString().StartsWith(TEXT("IA_Jump_")); };
+	const auto IsDrop = [](const FGameKeyBinding& Binding) { return Binding.WidgetName.ToString().StartsWith(TEXT("IA_Drop_")); };
+	const int32 DropIndex = Bindings.IndexOfByPredicate(IsDrop);
+	if (DropIndex != INDEX_NONE && Bindings.ContainsByPredicate(IsJump))
+	{
+		const auto Drop = Bindings[DropIndex];
+		Bindings.RemoveAt(DropIndex);
+		Bindings.Insert(Drop, Bindings.IndexOfByPredicate(IsJump) + 1);
+	}
+	if (Bindings.IsEmpty())
+	{
+		Page->AddChildToVerticalBox(MakeSettingsLabel(WidgetTree,
+			NSLOCTEXT("KeySettings", "Unavailable", "키 설정을 불러올 수 없습니다."), 19));
+		return;
+	}
+
+	auto* Columns = WidgetTree->ConstructWidget<UHorizontalBox>();
+	Page->AddChildToVerticalBox(Columns)->SetPadding(FMargin(4.f, 0.f));
+	UVerticalBox* BindingColumns[2];
+	for (int32 Index = 0; Index < 2; ++Index)
+	{
+		BindingColumns[Index] = WidgetTree->ConstructWidget<UVerticalBox>();
+		auto* ColumnSlot = Columns->AddChildToHorizontalBox(BindingColumns[Index]);
+		ColumnSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+		ColumnSlot->SetPadding(FMargin(0.f, 0.f, Index == 0 ? 24.f : 0.f, 0.f));
+	}
+	auto TextStyle = FCoreStyle::Get().GetWidgetStyle<FTextBlockStyle>(TEXT("NormalText"));
+	TextStyle.SetColorAndOpacity(FactoryUI::Text);
+	FButtonStyle KeyButtonStyle = FactoryUI::Button();
+	KeyButtonStyle.NormalPadding = FMargin(6.f, 0.f);
+	KeyButtonStyle.PressedPadding = KeyButtonStyle.NormalPadding;
+	const int32 LeftCount = (Bindings.Num() + 1) / 2;
+	for (int32 Index = 0; Index < Bindings.Num(); ++Index)
+	{
+		const auto& Binding = Bindings[Index];
+		auto* Selector = WidgetTree->ConstructWidget<UInputKeySelector>(UInputKeySelector::StaticClass(), Binding.WidgetName);
+		Selector->SetButtonStyle(KeyButtonStyle);
+		Selector->SetTextStyle(TextStyle);
+		Selector->SetAllowModifierKeys(false);
+		Selector->SetAllowGamepadKeys(false);
+		Selector->SetKeySelectionText(NSLOCTEXT("KeySettings", "Capture", "키 입력…"));
+		Selector->SetToolTipText(NSLOCTEXT("KeySettings", "CaptureTip", "클릭 후 새 키를 누르세요. Esc로 취소할 수 있습니다."));
+		UWidget* Control = Selector;
+		if (IsDrop(Binding))
+		{
+			auto* Chord = WidgetTree->ConstructWidget<UHorizontalBox>();
+			auto* DownKeySlot = Chord->AddChildToHorizontalBox(Selector);
+			DownKeySlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+			auto* JumpKey = MakeSettingsLabel(WidgetTree, FText::GetEmpty(), 17);
+			JumpKey->Rename(TEXT("DropJumpKey"), WidgetTree);
+			JumpKey->SetRenderTranslation(FVector2D(0.f, -3.f));
+			auto* JumpKeySlot = Chord->AddChildToHorizontalBox(JumpKey);
+			JumpKeySlot->SetVerticalAlignment(VAlign_Center);
+			JumpKeySlot->SetPadding(FMargin(8.f, 0.f));
+			Control = Chord;
+		}
+		auto* Column = BindingColumns[Index < LeftCount ? 0 : 1];
+		AddSettingsRow(WidgetTree, Column, Binding.Label, Control);
+		CastChecked<USizeBox>(Column->GetChildAt(Column->GetChildrenCount() - 1))->SetHeightOverride(42.f);
+	}
+
+	auto* Footer = WidgetTree->ConstructWidget<UHorizontalBox>();
+	Page->AddChildToVerticalBox(Footer)->SetPadding(FMargin(4.f, 6.f, 4.f, 0.f));
+	auto* Status = MakeSettingsLabel(WidgetTree, FText::GetEmpty(), 18);
+	Status->Rename(TEXT("KeySettingsStatus"), WidgetTree);
+	Status->SetColorAndOpacity(FactoryUI::Amber);
+	auto* StatusSlot = Footer->AddChildToHorizontalBox(Status);
+	StatusSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+	StatusSlot->SetVerticalAlignment(VAlign_Center);
+	auto* ResetRow = WidgetTree->ConstructWidget<UVerticalBox>();
+	Footer->AddChildToHorizontalBox(ResetRow);
+	FactoryMenuStyle::AddButton(WidgetTree, ResetRow, TEXT("ResetGameplayKeys"), TEXT("ResetGameplayKeysText"),
+		NSLOCTEXT("KeySettings", "Defaults", "기본값 복원"), true);
+	auto* Reset = CastChecked<UButton>(WidgetTree->FindWidget(TEXT("ResetGameplayKeys")));
+	auto* ResetBox = CastChecked<USizeBox>(Reset->GetParent());
+	ResetBox->SetHeightOverride(42.f);
+	ResetBox->SetWidthOverride(190.f);
+	auto* ResetLabel = CastChecked<UTextBlock>(WidgetTree->FindWidget(TEXT("ResetGameplayKeysText")));
+	ResetLabel->SetAutoWrapText(false);
+	auto* ResetSlot = CastChecked<UButtonSlot>(ResetLabel->Slot);
+	ResetSlot->SetVerticalAlignment(VAlign_Center);
+	ResetSlot->SetPadding(FMargin(10.f, 0.f));
+}
+#endif
+
+void UAudioSettingsWidget::BindKeySelectors()
+{
+	KeySelectors.Reset();
+	FirstKeySelector.Reset();
+	if (const auto* Settings = ULocalPlayer::GetSubsystem<UGameKeySettingsSubsystem>(GetOwningLocalPlayer()))
+	{
+		for (const auto& Binding : Settings->GetBindings())
+		{
+			if (auto* Selector = Cast<UInputKeySelector>(WidgetTree->FindWidget(Binding.WidgetName)))
+			{
+				KeySelectors.Add(Selector, Binding.MappingIndex);
+				if (Binding.WidgetName.ToString().StartsWith(TEXT("IA_Jump_")) || !FirstKeySelector.IsValid())
+					FirstKeySelector = Selector;
+				Selector->OnIsSelectingKeyChanged.AddUniqueDynamic(this, &ThisClass::OnKeySelectionModeChanged);
+				Selector->OnKeySelected.AddUniqueDynamic(this, &ThisClass::OnGameplayKeySelected);
+			}
+		}
+	}
+	if (auto* Reset = Cast<UButton>(WidgetTree->FindWidget(TEXT("ResetGameplayKeys"))))
+	{
+		Reset->OnClicked.AddUniqueDynamic(this, &ThisClass::ResetGameplayKeys);
+		FactoryUI::ApplyButtonSounds(Reset, FactoryUI::ESound::Confirm);
+	}
+	RefreshKeySelectors();
+	UpdateSettingsTabs(0);
+}
+
+void UAudioSettingsWidget::OnKeySelectionModeChanged()
+{
+	for (const auto& Entry : KeySelectors)
+	{
+		if (Entry.Key->GetIsSelectingKey())
+		{
+			CapturingKey = Entry.Key;
+			if (auto* Status = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("KeySettingsStatus"))))
+				Status->SetText(FText::GetEmpty());
+			break;
+		}
+	}
+}
+
+void UAudioSettingsWidget::OnGameplayKeySelected(FInputChord Chord)
+{
+	if (bRefreshingKeys) return;
+	const int32* Index = KeySelectors.Find(CapturingKey.Get());
+	CapturingKey.Reset();
+	auto* Settings = ULocalPlayer::GetSubsystem<UGameKeySettingsSubsystem>(GetOwningLocalPlayer());
+	if (!Index || !Settings) return;
+	FText Error;
+	Settings->TrySetKey(*Index, Chord.Key, Error);
+	if (auto* Status = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("KeySettingsStatus"))))
+		Status->SetText(Error);
+	RefreshKeySelectors();
+}
+
+void UAudioSettingsWidget::RefreshKeySelectors()
+{
+	const auto* Settings = ULocalPlayer::GetSubsystem<UGameKeySettingsSubsystem>(GetOwningLocalPlayer());
+	if (!Settings) return;
+	const auto Bindings = Settings->GetBindings();
+	TGuardValue<bool> Guard(bRefreshingKeys, true);
+	for (const auto& Entry : KeySelectors)
+	{
+		const auto* Binding = Bindings.FindByPredicate([&Entry](const FGameKeyBinding& Row) { return Row.MappingIndex == Entry.Value; });
+		if (Binding) Entry.Key->SetSelectedKey(FInputChord(Binding->Key));
+	}
+}
+
+void UAudioSettingsWidget::ResetGameplayKeys()
+{
+	if (auto* Settings = ULocalPlayer::GetSubsystem<UGameKeySettingsSubsystem>(GetOwningLocalPlayer()))
+		Settings->ResetKeys();
+	if (auto* Status = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("KeySettingsStatus"))))
+		Status->SetText(FText::GetEmpty());
+	RefreshKeySelectors();
+}
 
 void UAudioSettingsWidget::ResetAppearanceSettings()
 {
@@ -644,7 +939,7 @@ void UAudioSettingsWidget::RefreshAppearancePreview()
 {
 	auto* Box = Cast<USizeBox>(WidgetTree->FindWidget(TEXT("AppearancePreviewBox")));
 	auto* Visual = UGameInstance::GetSubsystem<UGameVisualSettingsSubsystem>(GetGameInstance());
-	if (!Box || !Visual) return;
+	if (!Box || !Visual || !FApp::CanEverRender()) return;
 
 	auto* Mesh = AppearancePreviewMesh.Get();
 	if (!Mesh)
@@ -659,13 +954,7 @@ void UAudioSettingsWidget::RefreshAppearancePreview()
 			return;
 		}
 		auto* Viewport = Cast<UViewport>(Box->GetContent());
-		if (!Viewport)
-		{
-			Viewport = WidgetTree->ConstructWidget<UViewport>();
-			Viewport->SetBackgroundColor(FLinearColor::FromSRGBColor(PreviewBackgroundEdge));
-			Viewport->SetVisibility(ESlateVisibility::HitTestInvisible);
-			Box->SetContent(Viewport);
-		}
+		if (!Viewport) return;
 		auto* Actor = Cast<ASkeletalMeshActor>(Viewport->Spawn(ASkeletalMeshActor::StaticClass()));
 		if (!Actor) return;
 		Mesh = Actor->GetSkeletalMeshComponent();

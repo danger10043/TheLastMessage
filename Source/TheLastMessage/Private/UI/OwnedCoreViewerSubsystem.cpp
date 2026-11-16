@@ -14,15 +14,14 @@
 #include "GAS/CombatAttributeSet.h"
 #include "Kismet/GameplayStatics.h"
 #include "UI/OwnedCoreWidget.h"
+#include "UI/GameKeySettingsSubsystem.h"
 
-UOwnedCoreViewerSubsystem::UOwnedCoreViewerSubsystem()
-{
-	ToggleKey = EKeys::I;
-}
+UOwnedCoreViewerSubsystem::UOwnedCoreViewerSubsystem() = default;
 
 void UOwnedCoreViewerSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
+	Collection.InitializeDependency<UGameKeySettingsSubsystem>();
 	if (APlayerController* Controller = GetLocalPlayer()->PlayerController) PlayerControllerChanged(Controller);
 }
 
@@ -37,9 +36,17 @@ void UOwnedCoreViewerSubsystem::PlayerControllerChanged(APlayerController* Contr
 	MenuInput = NewObject<UInputComponent>(Controller, NAME_None, RF_Transient);
 	MenuInput->Priority = 10;
 	MenuInput->RegisterComponent();
-	MenuInput->BindKey(ToggleKey, IE_Pressed, this, &ThisClass::ToggleViewer);
+	RefreshToggleBinding();
 	Controller->PushInputComponent(MenuInput);
 	Controller->OnPossessedPawnChanged.AddDynamic(this, &ThisClass::HandlePawnChanged);
+}
+
+void UOwnedCoreViewerSubsystem::RefreshToggleBinding()
+{
+	if (!MenuInput) return;
+	const auto* Settings = GetLocalPlayer()->GetSubsystem<UGameKeySettingsSubsystem>();
+	MenuInput->KeyBindings.Reset();
+	MenuInput->BindKey(Settings ? Settings->GetCoreViewerKey() : ToggleKey, IE_Pressed, this, &ThisClass::ToggleViewer);
 }
 
 bool UOwnedCoreViewerSubsystem::IsViewerOpen() const
@@ -64,7 +71,8 @@ bool UOwnedCoreViewerSubsystem::OpenViewer()
 	UClass* Class = ViewerClass.LoadSynchronous();
 	if (!Class || Class->HasAnyClassFlags(CLASS_Abstract)) return false;
 	UOwnedCoreWidget* Screen = CreateWidget<UOwnedCoreWidget>(Controller, Class);
-	if (!Screen || !Screen->SetSources(Core, ASC, ToggleKey)) return false;
+	const auto* Settings = GetLocalPlayer()->GetSubsystem<UGameKeySettingsSubsystem>();
+	if (!Screen || !Screen->SetSources(Core, ASC, Settings ? Settings->GetCoreViewerKey() : ToggleKey)) return false;
 	Viewer = Screen;
 	bOwnsPause = Controller->SetPause(true, FCanUnpause::CreateUObject(this, &ThisClass::CanUnpause));
 	if (!bOwnsPause) { Screen->ReleaseSources(); Viewer = nullptr; return false; }

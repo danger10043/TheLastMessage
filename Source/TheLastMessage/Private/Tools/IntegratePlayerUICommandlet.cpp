@@ -16,6 +16,7 @@
 #include "UI/PauseMenuWidget.h"
 #include "Components/Button.h"
 #include "Components/WidgetSwitcher.h"
+#include "Blueprint/UserWidget.h"
 #include "Character/Player/PlayerBase.h"
 #include "GAS/CombatAttributeSet.h"
 #include "GAS/WeaponSlotAttributeSet.h"
@@ -1014,6 +1015,120 @@ UIntegratePlayerUICommandlet::UIntegratePlayerUICommandlet()
 int32 UIntegratePlayerUICommandlet::Main(const FString& Params)
 {
 #if WITH_EDITOR
+	if (FParse::Param(*Params, TEXT("SplitSettingsPages")))
+	{
+		// 설정 화면의 하위 탭(그래픽, 플레이어 외형, 키 설정)을 각각 별도 WBP로 옮기고, WBP_Settings에는 그 WBP 인스턴스를 넣는다.
+		// 소리 탭은 이미 WBP_AudioSettings다. 이미 나눈 탭은 건너뛰므로 여러 번 실행해도 된다.
+		PlayerUIBuild::Backup(TEXT("/Game/Main/UI/Menu/WBP_Settings"));
+		auto* Settings = LoadObject<UWidgetBlueprint>(nullptr, TEXT("/Game/Main/UI/Menu/WBP_Settings"));
+		auto* Pages = Settings ? Cast<UWidgetSwitcher>(Settings->WidgetTree->FindWidget(TEXT("SettingsTabPages"))) : nullptr;
+		if (!Pages)
+		{
+			UE_LOG(LogTemp, Error, TEXT("Split settings pages: WBP_Settings or SettingsTabPages not found."));
+			return 1;
+		}
+		const auto SyncWidgetGuids = [](UWidgetBlueprint* Blueprint)
+		{
+			TSet<FName> Names;
+			Blueprint->WidgetTree->ForEachWidget([&](UWidget* Widget)
+			{
+				const FName Name = Widget->GetFName();
+				Names.Add(Name);
+				if (!Blueprint->WidgetVariableNameToGuidMap.Contains(Name))
+					Blueprint->WidgetVariableNameToGuidMap.Add(Name, FGuid::NewGuid());
+			});
+			for (const UWidgetAnimation* Animation : Blueprint->Animations)
+				if (Animation) Names.Add(Animation->GetFName());
+			for (auto It = Blueprint->WidgetVariableNameToGuidMap.CreateIterator(); It; ++It)
+				if (!Names.Contains(It.Key())) It.RemoveCurrent();
+		};
+		struct FSettingsPageAsset
+		{
+			int32 Index;
+			const TCHAR* Path;
+			const TCHAR* Section;
+		};
+		// 인덱스는 UAudioSettingsWidget의 ESettingsPage와 같다(0 그래픽, 1 소리, 2 플레이어 외형, 3 키 설정).
+		const FSettingsPageAsset PageAssets[] = {
+			{0, TEXT("/Game/Main/UI/Menu/WBP_GraphicsSettings"), TEXT("GraphicsSettingsSection")},
+			{2, TEXT("/Game/Main/UI/Menu/WBP_AppearanceSettings"), TEXT("AppearanceSettingsSection")},
+			{3, TEXT("/Game/Main/UI/Menu/WBP_KeySettings"), TEXT("KeySettingsSection")},
+		};
+		TArray<UWidgetBlueprint*> PageBlueprints;
+		for (const FSettingsPageAsset& PageAsset : PageAssets)
+		{
+			if (Settings->WidgetTree->FindWidget(PageAsset.Section)) continue;
+			UWidget* Content = Pages->GetChildAt(PageAsset.Index);
+			if (!Content || Content->IsA<UUserWidget>())
+			{
+				UE_LOG(LogTemp, Error, TEXT("Split settings pages: page %d is missing or already a user widget."), PageAsset.Index);
+				return 1;
+			}
+			if (LoadObject<UWidgetBlueprint>(nullptr, PageAsset.Path))
+			{
+				UE_LOG(LogTemp, Error, TEXT("Split settings pages: %s already exists but WBP_Settings does not use it. Delete it or place it by hand."), PageAsset.Path);
+				return 1;
+			}
+			UWidgetBlueprint* PageBlueprint = PlayerUIBuild::Blueprint(PageAsset.Path, UUserWidget::StaticClass());
+			// ForWidgetAndChildren은 자손만 돌려주므로 페이지 루트(Content)는 직접 넣는다.
+			TArray<UWidget*> Moved = {Content};
+			UWidgetTree::ForWidgetAndChildren(Content, [&Moved](UWidget* Widget) { Moved.AddUnique(Widget); });
+			Pages->RemoveChild(Content);
+			// 위젯 이름을 그대로 유지한 채 새 WBP의 위젯 트리로 옮긴다. 슬롯은 각 패널의 하위 오브젝트라 함께 따라간다.
+			for (UWidget* Widget : Moved)
+				Widget->Rename(nullptr, PageBlueprint->WidgetTree, REN_DontCreateRedirectors | REN_DoNotDirty | REN_NonTransactional);
+			PageBlueprint->WidgetTree->RootWidget = Content;
+			// 하나라도 옮겨지지 않았으면 저장 단계에서 다른 패키지를 참조해 멈추므로, 저장 전에 중단한다(아무것도 저장되지 않음).
+			for (const UWidget* Widget : Moved)
+			{
+				if (Widget->GetOuter() != PageBlueprint->WidgetTree)
+				{
+					UE_LOG(LogTemp, Error, TEXT("Split settings pages: %s was not moved to %s. Nothing was saved."), *Widget->GetName(), PageAsset.Path);
+					return 1;
+				}
+			}
+			SyncWidgetGuids(PageBlueprint);
+			// 저장은 모든 페이지와 WBP_Settings 컴파일이 끝난 뒤 한꺼번에 한다(중간 실패 시 아무것도 저장되지 않음).
+			FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(PageBlueprint);
+			FKismetEditorUtilities::CompileBlueprint(PageBlueprint);
+			if (PageBlueprint->Status == BS_Error || !PageBlueprint->GeneratedClass)
+			{
+				UE_LOG(LogTemp, Error, TEXT("Split settings pages: could not compile %s. Nothing was saved."), PageAsset.Path);
+				return 1;
+			}
+			auto* Section = Settings->WidgetTree->ConstructWidget<UUserWidget>(PageBlueprint->GeneratedClass.Get(), PageAsset.Section);
+			if (!Section) return 1;
+			Pages->InsertChildAt(PageAsset.Index, Section);
+			PageBlueprints.Add(PageBlueprint);
+			UE_LOG(LogTemp, Display, TEXT("Split settings pages: page %d -> %s (%d widgets)."), PageAsset.Index, PageAsset.Path, Moved.Num());
+		}
+		if (PageBlueprints.IsEmpty())
+		{
+			UE_LOG(LogTemp, Display, TEXT("Split settings pages: already split."));
+			return 0;
+		}
+		SyncWidgetGuids(Settings);
+		FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Settings);
+		FKismetEditorUtilities::CompileBlueprint(Settings);
+		if (Settings->Status == BS_Error)
+		{
+			UE_LOG(LogTemp, Error, TEXT("Split settings pages: could not compile WBP_Settings. Nothing was saved."));
+			return 1;
+		}
+		for (UWidgetBlueprint* PageBlueprint : PageBlueprints)
+			if (!PlayerUIBuild::Save(PageBlueprint))
+			{
+				UE_LOG(LogTemp, Error, TEXT("Split settings pages: could not save %s."), *PageBlueprint->GetPathName());
+				return 1;
+			}
+		if (!PlayerUIBuild::Save(Settings))
+		{
+			UE_LOG(LogTemp, Error, TEXT("Split settings pages: could not save WBP_Settings."));
+			return 1;
+		}
+		UE_LOG(LogTemp, Display, TEXT("Split settings pages: saved %d pages and WBP_Settings."), PageBlueprints.Num());
+		return 0;
+	}
 	if (FParse::Param(*Params, TEXT("AuthorSettings")))
 	{
 		auto* Settings = LoadObject<UWidgetBlueprint>(nullptr, TEXT("/Game/Main/UI/Menu/WBP_Settings"));

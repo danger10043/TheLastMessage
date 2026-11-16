@@ -78,7 +78,8 @@ public:
 		UUserWidget* SettingsScreen = SettingsWidgets[0];
 		auto* AudioSection = Cast<UUserWidget>(SettingsScreen->WidgetTree->FindWidget(TEXT("AudioSettingsSection")));
 		if (!Test->TestNotNull(TEXT("Settings contains the audio Blueprint"), AudioSection)) return true;
-		Test->TestNotNull(TEXT("Settings contains the brightness slider"), SettingsScreen->WidgetTree->FindWidget(TEXT("BrightnessSetting")));
+		Test->TestNotNull(TEXT("Settings contains the brightness slider"),
+			Cast<UAudioSettingsWidget>(SettingsScreen)->FindSettingsWidget(TEXT("BrightnessSetting")));
 		auto* Audio = World->GetGameInstance()->GetSubsystem<UGameAudioSettingsSubsystem>();
 		const TPair<const TCHAR*, EGameVolume> VolumeControls[] = {
 			{TEXT("MasterVolumeSlider"), EGameVolume::Master},
@@ -184,23 +185,30 @@ bool FPlayerAppearanceSettingsTabTest::RunTest(const FString& Parameters)
 		auto* Widget = UAudioSettingsWidget::CreateFor(Controller);
 		if (!TestNotNull(TEXT("Settings widget"), Widget)) return;
 		const TSharedRef<SWidget> SettingsSlate = Widget->TakeWidget();
-		UWidgetTree* Tree = Widget->WidgetTree;
-		auto* Pages = Cast<UWidgetSwitcher>(Tree->FindWidget(TEXT("SettingsTabPages")));
-		auto* Appearance = Cast<UButton>(Tree->FindWidget(TEXT("AppearanceSettingsTab")));
-		auto* General = Cast<UButton>(Tree->FindWidget(TEXT("GeneralSettingsTab")));
-		auto* AudioTab = Cast<UButton>(Tree->FindWidget(TEXT("AudioSettingsTab")));
+		// 하위 탭은 별도 WBP라서 위젯의 부모를 따라 올라가다 페이지 WBP 루트에 닿으면 그 페이지 위젯으로 넘어간다.
+		const auto ParentOf = [Widget](UWidget* Child) -> UWidget*
+		{
+			if (UWidget* Parent = Child->GetParent()) return Parent;
+			auto* Page = Child->GetTypedOuter<UUserWidget>();
+			return Page && Page != Widget ? Page : nullptr;
+		};
+		auto* Pages = Cast<UWidgetSwitcher>(Widget->FindSettingsWidget(TEXT("SettingsTabPages")));
+		auto* Appearance = Cast<UButton>(Widget->FindSettingsWidget(TEXT("AppearanceSettingsTab")));
+		auto* General = Cast<UButton>(Widget->FindSettingsWidget(TEXT("GeneralSettingsTab")));
+		auto* AudioTab = Cast<UButton>(Widget->FindSettingsWidget(TEXT("AudioSettingsTab")));
 		if (!TestNotNull(TEXT("Settings pages"), Pages) || !TestNotNull(TEXT("Appearance tab"), Appearance)
 			|| !TestNotNull(TEXT("General tab"), General) || !TestNotNull(TEXT("Audio tab"), AudioTab)) return;
 		TestEqual(TEXT("Graphics tab opens first"), Pages->GetActiveWidgetIndex(), 0);
 		for (const TCHAR* Name : {TEXT("GeneralSettingsTabText"), TEXT("AudioSettingsTabText"), TEXT("AppearanceSettingsTabText")})
 		{
-			auto* Caption = Cast<UTextBlock>(Tree->FindWidget(Name));
-			TestTrue(Name, Caption && FMath::IsNearlyZero(Caption->GetRenderTransform().Translation.Y));
+			auto* Caption = Cast<UTextBlock>(Widget->FindSettingsWidget(Name));
+			// 글꼴 줄 높이 때문에 탭 글자는 위로 4픽셀 올려 버튼 가운데에 맞춘다(AudioSettingsWidget의 탭 구성 코드와 같은 값).
+			TestTrue(Name, Caption && FMath::IsNearlyEqual(Caption->GetRenderTransform().Translation.Y, -4.f));
 		}
 		const auto IsOnActivePage = [&](const TCHAR* Name)
 		{
-			UWidget* Control = Tree->FindWidget(Name);
-			while (Control && Control->GetParent() != Pages) Control = Control->GetParent();
+			UWidget* Control = Widget->FindSettingsWidget(Name);
+			while (Control && Control->GetParent() != Pages) Control = ParentOf(Control);
 			return Control && Control == Pages->GetActiveWidget();
 		};
 		for (const TCHAR* Name : {TEXT("BrightnessSetting"), TEXT("QualityPresetSetting"), TEXT("RenderScaleSetting"), TEXT("BloomSetting"),
@@ -209,19 +217,19 @@ bool FPlayerAppearanceSettingsTabTest::RunTest(const FString& Parameters)
 		TestFalse(TEXT("Volume is no longer on the graphics page"), IsOnActivePage(TEXT("AudioSettingsSection")));
 		if (auto* Screen = GEngine->GetGameUserSettings())
 		{
-			auto* Quality = Cast<UComboBoxString>(Tree->FindWidget(TEXT("QualityPresetSetting")));
-			auto* RenderScale = Cast<USlider>(Tree->FindWidget(TEXT("RenderScaleSetting")));
+			auto* Quality = Cast<UComboBoxString>(Widget->FindSettingsWidget(TEXT("QualityPresetSetting")));
+			auto* RenderScale = Cast<USlider>(Widget->FindSettingsWidget(TEXT("RenderScaleSetting")));
 			if (TestNotNull(TEXT("Quality dropdown"), Quality) && TestNotNull(TEXT("Render scale slider"), RenderScale))
 			{
 				float Normalized, PreviousScale, MinScale, MaxScale;
 				Screen->GetResolutionScaleInformationEx(Normalized, PreviousScale, MinScale, MaxScale);
-				const int32 PreviousLevel = Screen->GetOverallScalabilityLevel();
+				const int32 PreviousLevel = UAudioSettingsWidget::GetQualityPresetLevel(*Screen);
 				RenderScale->OnValueChanged.Broadcast(0.75f);
 				float Scale = 0.f;
 				Screen->GetResolutionScaleInformationEx(Normalized, Scale, MinScale, MaxScale);
 				TestEqual(TEXT("Render scale applies"), Scale, 75.f);
 				Quality->OnSelectionChanged.Broadcast(Quality->GetOptionAtIndex(1), ESelectInfo::OnMouseClick);
-				TestEqual(TEXT("Quality preset applies"), Screen->GetOverallScalabilityLevel(), 1);
+				TestEqual(TEXT("Quality preset applies"), UAudioSettingsWidget::GetQualityPresetLevel(*Screen), 1);
 				Screen->GetResolutionScaleInformationEx(Normalized, Scale, MinScale, MaxScale);
 				TestEqual(TEXT("Quality preset keeps the render scale"), Scale, 75.f);
 				if (PreviousLevel >= 0) Screen->SetOverallScalabilityLevel(PreviousLevel);
@@ -229,8 +237,8 @@ bool FPlayerAppearanceSettingsTabTest::RunTest(const FString& Parameters)
 				Screen->ApplyNonResolutionSettings();
 			}
 		}
-		auto* ColorVisionCombo = Cast<UComboBoxString>(Tree->FindWidget(TEXT("ColorVisionSetting")));
-		UWidget* ColorVisionStrength = Tree->FindWidget(TEXT("ColorVisionStrengthSetting"));
+		auto* ColorVisionCombo = Cast<UComboBoxString>(Widget->FindSettingsWidget(TEXT("ColorVisionSetting")));
+		UWidget* ColorVisionStrength = Widget->FindSettingsWidget(TEXT("ColorVisionStrengthSetting"));
 		auto* VisualSettings = PlayWorld->GetGameInstance()->GetSubsystem<UGameVisualSettingsSubsystem>();
 		if (TestNotNull(TEXT("Color vision dropdown"), ColorVisionCombo) && TestNotNull(TEXT("Color vision strength"), ColorVisionStrength)
 			&& TestNotNull(TEXT("Visual settings for color vision"), VisualSettings))
@@ -252,16 +260,16 @@ bool FPlayerAppearanceSettingsTabTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("Appearance tab opens"), Pages->GetActiveWidgetIndex(), 2);
 		for (const TCHAR* Name : {TEXT("OutlineColorSetting"), TEXT("OutlineWidthSetting"), TEXT("OutlineBrightnessSetting"), TEXT("PlayerColorSetting")})
 		{
-			UWidget* Control = Tree->FindWidget(Name);
-			while (Control && Control->GetParent() != Pages) Control = Control->GetParent();
+			UWidget* Control = Widget->FindSettingsWidget(Name);
+			while (Control && Control->GetParent() != Pages) Control = ParentOf(Control);
 			TestTrue(Name, Control && Control == Pages->GetActiveWidget());
 		}
 		auto* Visual = PlayWorld->GetGameInstance()->GetSubsystem<UGameVisualSettingsSubsystem>();
-		auto* Brightness = Cast<USlider>(Tree->FindWidget(TEXT("OutlineBrightnessSetting")));
-		auto* Width = Cast<USlider>(Tree->FindWidget(TEXT("OutlineWidthSetting")));
-		auto* Color = Cast<UComboBoxString>(Tree->FindWidget(TEXT("PlayerColorSetting")));
-		auto* Outline = Cast<UComboBoxString>(Tree->FindWidget(TEXT("OutlineColorSetting")));
-		auto* Reset = Cast<UButton>(Tree->FindWidget(TEXT("ResetAppearanceButton")));
+		auto* Brightness = Cast<USlider>(Widget->FindSettingsWidget(TEXT("OutlineBrightnessSetting")));
+		auto* Width = Cast<USlider>(Widget->FindSettingsWidget(TEXT("OutlineWidthSetting")));
+		auto* Color = Cast<UComboBoxString>(Widget->FindSettingsWidget(TEXT("PlayerColorSetting")));
+		auto* Outline = Cast<UComboBoxString>(Widget->FindSettingsWidget(TEXT("OutlineColorSetting")));
+		auto* Reset = Cast<UButton>(Widget->FindSettingsWidget(TEXT("ResetAppearanceButton")));
 		TestTrue(TEXT("Color dropdowns share the authored style"), Color && Outline
 			&& Color->GetWidgetStyle().ComboButtonStyle.ButtonStyle.Normal == Outline->GetWidgetStyle().ComboButtonStyle.ButtonStyle.Normal
 			&& Color->GetItemStyle().TextColor == Outline->GetItemStyle().TextColor
@@ -270,7 +278,7 @@ bool FPlayerAppearanceSettingsTabTest::RunTest(const FString& Parameters)
 		USkeletalMeshComponent* PreviewMesh = nullptr;
 		if (FApp::CanEverRender())
 		{
-			auto* Box = Cast<USizeBox>(Tree->FindWidget(TEXT("AppearancePreviewBox")));
+			auto* Box = Cast<USizeBox>(Widget->FindSettingsWidget(TEXT("AppearancePreviewBox")));
 			auto* Viewport = Box ? Cast<UViewport>(Box->GetContent()) : nullptr;
 			UWorld* PreviewWorld = Viewport ? Viewport->GetViewportWorld() : nullptr;
 			auto* Preview = PreviewWorld
@@ -288,7 +296,7 @@ bool FPlayerAppearanceSettingsTabTest::RunTest(const FString& Parameters)
 			const FLinearColor PreviousCustomOutline = Visual->CustomOutlineColor;
 			const FLinearColor PreviousCustomPlayer = Visual->CustomPlayerColor;
 			Width->SetValue(0.70f);
-			auto* WidthLabel = Cast<UTextBlock>(Tree->FindWidget(TEXT("OutlineWidthValue")));
+			auto* WidthLabel = Cast<UTextBlock>(Widget->FindSettingsWidget(TEXT("OutlineWidthValue")));
 			FNumberFormattingOptions TwoDigits;
 			TwoDigits.MinimumFractionalDigits = TwoDigits.MaximumFractionalDigits = 2;
 			TestTrue(TEXT("Outline width keeps its trailing zero and a fixed label width"), WidthLabel

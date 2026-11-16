@@ -23,6 +23,10 @@ public:
 #endif
 	static UAudioSettingsWidget* CreateFor(APlayerController* Player);
 	void FocusFirstControl();
+	/** 설정 화면과 하위 탭 페이지 WBP(WBP_GraphicsSettings 등)를 모두 뒤져 이름으로 위젯을 찾는다. */
+	UWidget* FindSettingsWidget(FName Name) const;
+	/** 렌더링 해상도를 뺀 품질 그룹이 모두 같은 단계면 그 단계, 섞여 있으면 -1. 해상도는 따로 정하므로 품질 단계 판정에서 뺀다. */
+	static int32 GetQualityPresetLevel(const class UGameUserSettings& Screen);
 	void SetPauseInputAction(class UInputAction* Action) { PauseInputAction = Action; }
 	FAudioSettingsClosed OnClosed;
 
@@ -69,6 +73,9 @@ protected:
 	virtual FReply NativeOnPreviewKeyDown(const FGeometry& Geometry, const FKeyEvent& Event) override;
 
 private:
+	/** 다른 설정 화면 안에 페이지로 들어가 있으면 true. 이때 동작은 바깥 설정 화면이 맡고 이 위젯은 화면만 제공한다. */
+	bool IsNestedSettingsPage() const;
+	void ForEachSettingsTree(TFunctionRef<void(UWidgetTree*)> Visit) const;
 	UPROPERTY(Transient) TObjectPtr<class UInputAction> PauseInputAction;
 	UFUNCTION() void Close();
 	UFUNCTION() void SetMasterVolume(float Value);

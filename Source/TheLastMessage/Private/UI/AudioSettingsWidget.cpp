@@ -307,6 +307,35 @@ void UAudioSettingsWidget::BuildDefaultLayout(UWidgetTree* Tree, bool bIncludeDi
 		Hint->SetText(NSLOCTEXT("Pause", "VolumeNavigation", "↑↓ 선택    ←→ 볼륨 조절"));
 }
 
+bool UAudioSettingsWidget::IsNestedSettingsPage() const
+{
+	// 다른 설정 화면 안에 들어간 페이지(WBP_AudioSettings 등)는 화면만 제공하고, 동작은 바깥 설정 화면이 맡는다.
+	return GetTypedOuter<UAudioSettingsWidget>() != nullptr;
+}
+
+void UAudioSettingsWidget::ForEachSettingsTree(TFunctionRef<void(UWidgetTree*)> Visit) const
+{
+	if (!WidgetTree) return;
+	Visit(WidgetTree);
+	// 하위 탭은 각각 별도 WBP(WBP_GraphicsSettings 등)라서 위젯이 그 위젯 트리 안에 있다. 한 단계 아래까지 함께 찾는다.
+	TArray<UWidgetTree*> PageTrees;
+	WidgetTree->ForEachWidget([&PageTrees](UWidget* Widget)
+	{
+		if (const auto* Page = Cast<UUserWidget>(Widget); Page && Page->WidgetTree) PageTrees.Add(Page->WidgetTree);
+	});
+	for (UWidgetTree* Tree : PageTrees) Visit(Tree);
+}
+
+UWidget* UAudioSettingsWidget::FindSettingsWidget(FName Name) const
+{
+	UWidget* Found = nullptr;
+	ForEachSettingsTree([&Found, Name](UWidgetTree* Tree)
+	{
+		if (!Found) Found = Tree->FindWidget(Name);
+	});
+	return Found;
+}
+
 TSharedRef<SWidget> UAudioSettingsWidget::RebuildWidget()
 {
 	return FactoryMenuStyle::WithMenuFocusStyle(Super::RebuildWidget());
@@ -322,24 +351,25 @@ UAudioSettingsWidget* UAudioSettingsWidget::CreateFor(APlayerController* Player)
 void UAudioSettingsWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
-	if (auto* Button = Cast<UButton>(WidgetTree->FindWidget(TEXT("SettingsBackButton"))))
+	if (IsNestedSettingsPage()) return;
+	if (auto* Button = Cast<UButton>(FindSettingsWidget(TEXT("SettingsBackButton"))))
 	{
 		Button->OnClicked.AddUniqueDynamic(this, &ThisClass::Close);
 		FactoryUI::ApplyButtonSounds(Button, FactoryUI::ESound::Cancel);
 	}
-	if (auto* Slider = Cast<USlider>(WidgetTree->FindWidget(VolumeRows[0].Slider)))
+	if (auto* Slider = Cast<USlider>(FindSettingsWidget(VolumeRows[0].Slider)))
 		Slider->OnValueChanged.AddUniqueDynamic(this, &ThisClass::SetMasterVolume);
-	if (auto* Slider = Cast<USlider>(WidgetTree->FindWidget(VolumeRows[1].Slider)))
+	if (auto* Slider = Cast<USlider>(FindSettingsWidget(VolumeRows[1].Slider)))
 		Slider->OnValueChanged.AddUniqueDynamic(this, &ThisClass::SetMusicVolume);
-	if (auto* Slider = Cast<USlider>(WidgetTree->FindWidget(VolumeRows[2].Slider)))
+	if (auto* Slider = Cast<USlider>(FindSettingsWidget(VolumeRows[2].Slider)))
 		Slider->OnValueChanged.AddUniqueDynamic(this, &ThisClass::SetEffectsVolume);
-	if (auto* Slider = Cast<USlider>(WidgetTree->FindWidget(VolumeRows[3].Slider)))
+	if (auto* Slider = Cast<USlider>(FindSettingsWidget(VolumeRows[3].Slider)))
 		Slider->OnValueChanged.AddUniqueDynamic(this, &ThisClass::SetAmbienceVolume);
-	if (auto* Slider = Cast<USlider>(WidgetTree->FindWidget(VolumeRows[4].Slider)))
+	if (auto* Slider = Cast<USlider>(FindSettingsWidget(VolumeRows[4].Slider)))
 		Slider->OnValueChanged.AddUniqueDynamic(this, &ThisClass::SetInterfaceVolume);
 	for (const FVolumeRow& Entry : VolumeRows)
 	{
-		auto* Slider = Cast<USlider>(WidgetTree->FindWidget(Entry.Slider));
+		auto* Slider = Cast<USlider>(FindSettingsWidget(Entry.Slider));
 		if (!Slider) continue;
 		StyleSettingsSlider(Slider);
 		if (auto* VolumeSlider = Cast<UVolumeSlider>(Slider))
@@ -357,18 +387,18 @@ void UAudioSettingsWidget::NativeConstruct()
 	BuildVisualControls();
 	BindKeySelectors();
 	BindSettingsHelp();
-	if (auto* Button = Cast<UButton>(WidgetTree->FindWidget(TEXT("GeneralSettingsTab"))))
+	if (auto* Button = Cast<UButton>(FindSettingsWidget(TEXT("GeneralSettingsTab"))))
 		Button->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowGeneralSettings);
-	if (auto* Button = Cast<UButton>(WidgetTree->FindWidget(TEXT("AudioSettingsTab"))))
+	if (auto* Button = Cast<UButton>(FindSettingsWidget(TEXT("AudioSettingsTab"))))
 		Button->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowAudioSettings);
-	if (auto* Button = Cast<UButton>(WidgetTree->FindWidget(TEXT("AppearanceSettingsTab"))))
+	if (auto* Button = Cast<UButton>(FindSettingsWidget(TEXT("AppearanceSettingsTab"))))
 		Button->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowAppearanceSettings);
-	if (auto* Button = Cast<UButton>(WidgetTree->FindWidget(TEXT("KeySettingsTab"))))
+	if (auto* Button = Cast<UButton>(FindSettingsWidget(TEXT("KeySettingsTab"))))
 		Button->OnClicked.AddUniqueDynamic(this, &ThisClass::ShowKeySettings);
 	for (const FSettingsTab& Tab : SettingsTabs)
-		if (auto* Button = Cast<UButton>(WidgetTree->FindWidget(Tab.Button)))
+		if (auto* Button = Cast<UButton>(FindSettingsWidget(Tab.Button)))
 			FactoryUI::ApplyButtonSounds(Button, FactoryUI::ESound::Confirm);
-	if (auto* Button = Cast<UButton>(WidgetTree->FindWidget(TEXT("ResetAppearanceButton"))))
+	if (auto* Button = Cast<UButton>(FindSettingsWidget(TEXT("ResetAppearanceButton"))))
 	{
 		Button->OnClicked.AddUniqueDynamic(this, &ThisClass::ResetAppearanceSettings);
 		FactoryUI::ApplyButtonSounds(Button, FactoryUI::ESound::Confirm);
@@ -378,22 +408,15 @@ void UAudioSettingsWidget::NativeConstruct()
 void UAudioSettingsWidget::FocusFirstControl()
 {
 	ForceLayoutPrepass();
-	auto* Pages = Cast<UWidgetSwitcher>(WidgetTree->FindWidget(TEXT("SettingsTabPages")));
+	auto* Pages = Cast<UWidgetSwitcher>(FindSettingsWidget(TEXT("SettingsTabPages")));
 	const int32 Page = Pages ? Pages->GetActiveWidgetIndex() : INDEX_NONE;
-	if (Page == AppearancePage)
-	{
-		if (auto* Control = WidgetTree->FindWidget(TEXT("OutlineColorSetting"))) Control->SetKeyboardFocus();
-	}
-	else if (Page == KeysPage)
-	{
-		if (auto* Control = FirstKeySelector.Get()) Control->SetKeyboardFocus();
-	}
-	else if (auto* AudioPageSection = Page == AudioPage ? Cast<UAudioSettingsWidget>(WidgetTree->FindWidget(TEXT("AudioSettingsSection"))) : nullptr)
-		AudioPageSection->FocusFirstControl();
-	else if (auto* Slider = WidgetTree->FindWidget(TEXT("BrightnessSetting"))) Slider->SetKeyboardFocus();
-	else if (auto* Audio = Cast<UAudioSettingsWidget>(WidgetTree->FindWidget(TEXT("AudioSettingsSection"))))
-		Audio->FocusFirstControl();
-	else if (auto* Volume = WidgetTree->FindWidget(VolumeRows[0].Slider)) Volume->SetKeyboardFocus();
+	UWidget* Target = nullptr;
+	if (Page == AppearancePage) Target = FindSettingsWidget(TEXT("OutlineColorSetting"));
+	else if (Page == KeysPage) Target = FirstKeySelector.Get();
+	else if (Page == AudioPage) Target = FindSettingsWidget(VolumeRows[0].Slider);
+	else Target = FindSettingsWidget(TEXT("BrightnessSetting"));
+	if (!Target) Target = FindSettingsWidget(VolumeRows[0].Slider);
+	if (Target) Target->SetKeyboardFocus();
 }
 
 void UAudioSettingsWidget::Close()
@@ -404,6 +427,11 @@ void UAudioSettingsWidget::Close()
 
 void UAudioSettingsWidget::NativeDestruct()
 {
+	if (IsNestedSettingsPage())
+	{
+		Super::NativeDestruct();
+		return;
+	}
 	if (ScreenConfirmation.IsValid())
 	{
 		FTSTicker::GetCoreTicker().RemoveTicker(ScreenConfirmation);
@@ -411,7 +439,7 @@ void UAudioSettingsWidget::NativeDestruct()
 	}
 	// 렌더링 해상도 슬라이더는 움직이는 동안 저장하지 않으므로 닫을 때 한 번 저장한다.
 	// (화면 모드 확인 중이었다면 위에서 되돌리면서 이미 저장했다.)
-	else if (auto* Screen = GEngine ? GEngine->GetGameUserSettings() : nullptr; Screen && WidgetTree && WidgetTree->FindWidget(TEXT("RenderScaleSetting")))
+	else if (auto* Screen = GEngine ? GEngine->GetGameUserSettings() : nullptr; Screen && WidgetTree && FindSettingsWidget(TEXT("RenderScaleSetting")))
 		Screen->SaveSettings();
 	if (auto* Audio = UGameInstance::GetSubsystem<UGameAudioSettingsSubsystem>(GetGameInstance())) Audio->SaveVolumes();
 	if (auto* Visual = UGameInstance::GetSubsystem<UGameVisualSettingsSubsystem>(GetGameInstance())) Visual->Save();
@@ -420,6 +448,7 @@ void UAudioSettingsWidget::NativeDestruct()
 
 FReply UAudioSettingsWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, const FKeyEvent& Event)
 {
+	if (IsNestedSettingsPage()) return Super::NativeOnPreviewKeyDown(Geometry, Event);
 	if (const auto* Selector = CapturingKey.Get(); Selector && Selector->GetIsSelectingKey())
 		return Super::NativeOnPreviewKeyDown(Geometry, Event);
 	const auto* Inputs = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetOwningLocalPlayer());
@@ -437,6 +466,8 @@ FReply UAudioSettingsWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, c
 void UAudioSettingsWidget::NativeTick(const FGeometry& Geometry, float DeltaTime)
 {
 	Super::NativeTick(Geometry, DeltaTime);
+	if (IsNestedSettingsPage()) return;
+	const auto UpdateFocus = [this] { ForEachSettingsTree([](UWidgetTree* Tree) { FactoryMenuStyle::UpdateFocus(Tree); }); };
 	RefreshSettingsHelp();
 	if (ScreenConfirmation.IsValid())
 	{
@@ -446,18 +477,18 @@ void UAudioSettingsWidget::NativeTick(const FGeometry& Geometry, float DeltaTime
 		{
 			FTSTicker::GetCoreTicker().RemoveTicker(ScreenConfirmation);
 			RevertScreenMode(0.f);
-			FactoryMenuStyle::UpdateFocus(WidgetTree);
+			UpdateFocus();
 			return;
 		}
 		const int32 Seconds = FMath::Max(1, FMath::CeilToInt(Remaining));
 		if (DisplayedSeconds != Seconds)
 		{
 			DisplayedSeconds = Seconds;
-			if (auto* Text = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("ApplyScreenText"))))
+			if (auto* Text = Cast<UTextBlock>(FindSettingsWidget(TEXT("ApplyScreenText"))))
 				Text->SetText(FText::Format(ConfirmCountdownLabel, Seconds));
 		}
 	}
-	FactoryMenuStyle::UpdateFocus(WidgetTree);
+	UpdateFocus();
 }
 
 void UAudioSettingsWidget::RefreshVolumeValues()
@@ -466,8 +497,8 @@ void UAudioSettingsWidget::RefreshVolumeValues()
 	for (const FVolumeRow& Entry : VolumeRows)
 	{
 		const float Value = Audio ? Audio->GetVolume(Entry.Channel) : 1.0f;
-		if (auto* Slider = Cast<USlider>(WidgetTree->FindWidget(Entry.Slider))) Slider->SetValue(Value);
-		if (auto* Label = Cast<UTextBlock>(WidgetTree->FindWidget(Entry.Percent))) Label->SetText(FText::AsPercent(Value));
+		if (auto* Slider = Cast<USlider>(FindSettingsWidget(Entry.Slider))) Slider->SetValue(Value);
+		if (auto* Label = Cast<UTextBlock>(FindSettingsWidget(Entry.Percent))) Label->SetText(FText::AsPercent(Value));
 	}
 }
 
@@ -1038,6 +1069,12 @@ bool AuthorKeySettingsTypography(UWidgetTree* Tree)
 
 bool UAudioSettingsWidget::AuthorSettingsLayout(UWidgetTree* WidgetTree)
 {
+	// 하위 탭을 별도 WBP로 나눈 뒤에는 각 페이지 WBP를 디자이너에서 직접 고친다. 이 자동 구성은 나누기 전 구조에만 쓴다.
+	if (WidgetTree->FindWidget(TEXT("GraphicsSettingsSection")))
+	{
+		UE_LOG(LogTemp, Display, TEXT("Settings layout: tab pages are separate Widget Blueprints. Edit WBP_GraphicsSettings, WBP_AudioSettings, WBP_AppearanceSettings and WBP_KeySettings directly."));
+		return true;
+	}
 	auto* Display = Cast<UVerticalBox>(WidgetTree->FindWidget(TEXT("VisualSettingsColumn")));
 	if (!Display) return false;
 	BuildVisualLayout(WidgetTree, Display);
@@ -1192,14 +1229,14 @@ void UAudioSettingsWidget::UpdateSettingsTabs(int32 ActiveIndex)
 {
 	for (const FSettingsTab& Tab : SettingsTabs)
 	{
-		if (auto* Label = Cast<UTextBlock>(WidgetTree->FindWidget(Tab.Text)))
+		if (auto* Label = Cast<UTextBlock>(FindSettingsWidget(Tab.Text)))
 			Label->SetColorAndOpacity(Tab.Page == ActiveIndex ? FactoryUI::Cyan : FactoryUI::Text);
 	}
 }
 
 void UAudioSettingsWidget::ShowSettingsTab(int32 Index)
 {
-	if (auto* Pages = Cast<UWidgetSwitcher>(WidgetTree->FindWidget(TEXT("SettingsTabPages"))))
+	if (auto* Pages = Cast<UWidgetSwitcher>(FindSettingsWidget(TEXT("SettingsTabPages"))))
 	{
 		Pages->SetActiveWidgetIndex(Index);
 		UpdateSettingsTabs(Index);
@@ -1216,7 +1253,7 @@ void UAudioSettingsWidget::ShowKeySettings() { ShowSettingsTab(KeysPage); }
 
 void UAudioSettingsWidget::BindSettingsHelp()
 {
-	auto* Text = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("SettingsHelpText")));
+	auto* Text = Cast<UTextBlock>(FindSettingsWidget(TEXT("SettingsHelpText")));
 	if (!Text || SettingsHelpText == Text) return;
 	SettingsHelpText = Text;
 	SettingsHelpEntries.Reset();
@@ -1233,29 +1270,26 @@ void UAudioSettingsWidget::BindSettingsHelp()
 		SettingsHelpEntries.Add({Row, MoveTemp(Help), PageIndex});
 	};
 	for (const FName Name : DisplayHelpControls)
-		AddHelp(WidgetTree->FindWidget(Name), GraphicsPage);
+		AddHelp(FindSettingsWidget(Name), GraphicsPage);
 	for (const FName Name : AppearanceHelpControls)
-		AddHelp(WidgetTree->FindWidget(Name), AppearancePage, FText::GetEmpty(), Name != TEXT("AppearancePreviewBox"));
-	auto* Audio = Cast<UAudioSettingsWidget>(WidgetTree->FindWidget(TEXT("AudioSettingsSection")));
-	UWidgetTree* AudioTree = Audio ? Audio->WidgetTree.Get() : WidgetTree.Get();
+		AddHelp(FindSettingsWidget(Name), AppearancePage, FText::GetEmpty(), Name != TEXT("AppearancePreviewBox"));
+	// 볼륨 줄의 도움말은 소리 페이지(AudioSettingsSection)의 툴팁 하나를 함께 쓴다.
+	UWidget* Audio = FindSettingsWidget(TEXT("AudioSettingsSection"));
 	const FText AudioHelp = Audio ? Audio->GetToolTipText() : FText::GetEmpty();
 	if (Audio) Audio->SetToolTipText(FText::GetEmpty());
-	if (AudioTree)
-	{
-		const auto* VolumeLabel = Cast<UTextBlock>(AudioTree->FindWidget(TEXT("MasterVolumeSliderLabel")));
-		if (VolumeLabel) Text->SetFont(VolumeLabel->GetFont());
-		for (const auto& Entry : VolumeRows)
-			AddHelp(AudioTree->FindWidget(Entry.Slider), AudioPage, AudioHelp);
-	}
+	if (const auto* VolumeLabel = Cast<UTextBlock>(FindSettingsWidget(TEXT("MasterVolumeSliderLabel"))))
+		Text->SetFont(VolumeLabel->GetFont());
+	for (const auto& Entry : VolumeRows)
+		AddHelp(FindSettingsWidget(Entry.Slider), AudioPage, AudioHelp);
 	for (const auto& Entry : KeySelectors)
 		AddHelp(Entry.Key, KeysPage);
-	AddHelp(WidgetTree->FindWidget(TEXT("ResetGameplayKeys")), KeysPage);
+	AddHelp(FindSettingsWidget(TEXT("ResetGameplayKeys")), KeysPage);
 }
 
 void UAudioSettingsWidget::RefreshSettingsHelp()
 {
 	auto* Text = SettingsHelpText.Get();
-	const auto* Pages = Text ? Cast<UWidgetSwitcher>(WidgetTree->FindWidget(TEXT("SettingsTabPages"))) : nullptr;
+	const auto* Pages = Text ? Cast<UWidgetSwitcher>(FindSettingsWidget(TEXT("SettingsTabPages"))) : nullptr;
 	if (!Pages || !Text->GetParent() || !FSlateApplication::IsInitialized()) return;
 
 	const int32 PageIndex = Pages->GetActiveWidgetIndex();
@@ -1272,7 +1306,7 @@ void UAudioSettingsWidget::RefreshSettingsHelp()
 		{
 			for (const TCHAR* Name : {TEXT("OutlineColorSwatch"), TEXT("PlayerColorSwatch")})
 			{
-				const auto* Swatch = Cast<UTextBlock>(WidgetTree->FindWidget(Name));
+				const auto* Swatch = Cast<UTextBlock>(FindSettingsWidget(Name));
 				if (!Swatch || !Swatch->GetCachedGeometry().IsUnderLocation(CursorPosition)) continue;
 				const FString Hex = Swatch->GetColorAndOpacity().GetSpecifiedColor().ToFColorSRGB().ToHex().Left(6);
 				HelpText = FText::Format(NSLOCTEXT("SettingsHelp", "CurrentColor", "현재 색상 #{0}"), FText::FromString(Hex));
@@ -1384,7 +1418,7 @@ void UAudioSettingsWidget::BindKeySelectors()
 	{
 		for (const auto& Binding : Settings->GetBindings())
 		{
-			if (auto* Selector = Cast<UInputKeySelector>(WidgetTree->FindWidget(Binding.WidgetName)))
+			if (auto* Selector = Cast<UInputKeySelector>(FindSettingsWidget(Binding.WidgetName)))
 			{
 				KeySelectors.Add(Selector, Binding.MappingIndex);
 				if (Binding.WidgetName.ToString().StartsWith(TEXT("IA_Jump_")) || !FirstKeySelector.IsValid())
@@ -1394,7 +1428,7 @@ void UAudioSettingsWidget::BindKeySelectors()
 			}
 		}
 	}
-	if (auto* Reset = Cast<UButton>(WidgetTree->FindWidget(TEXT("ResetGameplayKeys"))))
+	if (auto* Reset = Cast<UButton>(FindSettingsWidget(TEXT("ResetGameplayKeys"))))
 	{
 		Reset->OnClicked.AddUniqueDynamic(this, &ThisClass::ResetGameplayKeys);
 		FactoryUI::ApplyButtonSounds(Reset, FactoryUI::ESound::Confirm);
@@ -1410,7 +1444,7 @@ void UAudioSettingsWidget::OnKeySelectionModeChanged()
 		if (Entry.Key->GetIsSelectingKey())
 		{
 			CapturingKey = Entry.Key;
-			if (auto* Status = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("KeySettingsStatus"))))
+			if (auto* Status = Cast<UTextBlock>(FindSettingsWidget(TEXT("KeySettingsStatus"))))
 				Status->SetText(FText::GetEmpty());
 			break;
 		}
@@ -1426,7 +1460,7 @@ void UAudioSettingsWidget::OnGameplayKeySelected(FInputChord Chord)
 	if (!Index || !Settings) return;
 	FText Error;
 	Settings->TrySetKey(*Index, Chord.Key, Error);
-	if (auto* Status = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("KeySettingsStatus"))))
+	if (auto* Status = Cast<UTextBlock>(FindSettingsWidget(TEXT("KeySettingsStatus"))))
 		Status->SetText(Error);
 	RefreshKeySelectors();
 }
@@ -1448,7 +1482,7 @@ void UAudioSettingsWidget::ResetGameplayKeys()
 {
 	if (auto* Settings = ULocalPlayer::GetSubsystem<UGameKeySettingsSubsystem>(GetOwningLocalPlayer()))
 		Settings->ResetKeys();
-	if (auto* Status = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("KeySettingsStatus"))))
+	if (auto* Status = Cast<UTextBlock>(FindSettingsWidget(TEXT("KeySettingsStatus"))))
 		Status->SetText(FText::GetEmpty());
 	RefreshKeySelectors();
 }
@@ -1461,16 +1495,16 @@ void UAudioSettingsWidget::ResetAppearanceSettings()
 	{
 		TGuardValue<bool> Guard(bSynchronizingAppearanceControls, true);
 		for (const TCHAR* Name : {TEXT("OutlineColorSetting"), TEXT("PlayerColorSetting")})
-			if (auto* Combo = Cast<UComboBoxString>(WidgetTree->FindWidget(Name))) Combo->SetSelectedIndex(0);
-		if (auto* Slider = Cast<USlider>(WidgetTree->FindWidget(TEXT("OutlineWidthSetting")))) Slider->SetValue(Visual->OutlineScale);
-		if (auto* Slider = Cast<USlider>(WidgetTree->FindWidget(TEXT("OutlineBrightnessSetting")))) Slider->SetValue(Visual->OutlineBrightness);
+			if (auto* Combo = Cast<UComboBoxString>(FindSettingsWidget(Name))) Combo->SetSelectedIndex(0);
+		if (auto* Slider = Cast<USlider>(FindSettingsWidget(TEXT("OutlineWidthSetting")))) Slider->SetValue(Visual->OutlineScale);
+		if (auto* Slider = Cast<USlider>(FindSettingsWidget(TEXT("OutlineBrightnessSetting")))) Slider->SetValue(Visual->OutlineBrightness);
 	}
 	UpdateVisuals();
 }
 
 void UAudioSettingsWidget::RefreshAppearancePreview()
 {
-	auto* Box = Cast<USizeBox>(WidgetTree->FindWidget(TEXT("AppearancePreviewBox")));
+	auto* Box = Cast<USizeBox>(FindSettingsWidget(TEXT("AppearancePreviewBox")));
 	auto* Visual = UGameInstance::GetSubsystem<UGameVisualSettingsSubsystem>(GetGameInstance());
 	if (!Box || !Visual || !FApp::CanEverRender()) return;
 
@@ -1556,7 +1590,7 @@ void UAudioSettingsWidget::RefreshAppearancePreview()
 
 void UAudioSettingsWidget::BuildVisualControls()
 {
-	auto* Column = Cast<UVerticalBox>(WidgetTree->FindWidget(TEXT("VisualSettingsColumn")));
+	auto* Column = Cast<UVerticalBox>(FindSettingsWidget(TEXT("VisualSettingsColumn")));
 	auto* Visual = UGameInstance::GetSubsystem<UGameVisualSettingsSubsystem>(GetGameInstance());
 	auto* Screen = GEngine ? GEngine->GetGameUserSettings() : nullptr;
 	if (!Column || !Visual || !Screen) return;
@@ -1564,7 +1598,7 @@ void UAudioSettingsWidget::BuildVisualControls()
 
 	auto AddSlider = [&](FName Name, float Value, float Maximum)
 	{
-		auto* Slider = Cast<USlider>(WidgetTree->FindWidget(Name));
+		auto* Slider = Cast<USlider>(FindSettingsWidget(Name));
 		if (!Slider) return Slider;
 		StyleSettingsSlider(Slider);
 		Slider->SetMaxValue(Maximum);
@@ -1575,7 +1609,7 @@ void UAudioSettingsWidget::BuildVisualControls()
 	};
 	auto AddCombo = [&](FName Name, const TArray<FString>& Options, int32 Selected)
 	{
-		auto* Combo = Cast<UComboBoxString>(WidgetTree->FindWidget(Name));
+		auto* Combo = Cast<UComboBoxString>(FindSettingsWidget(Name));
 		if (!Combo) return Combo;
 		Combo->OnGenerateWidgetEvent.BindDynamic(this, &ThisClass::MakeDropdownOption);
 		Combo->ClearOptions();
@@ -1585,7 +1619,7 @@ void UAudioSettingsWidget::BuildVisualControls()
 	};
 	auto AddToggle = [&](FName Name, bool bValue)
 	{
-		auto* Check = Cast<UCheckBox>(WidgetTree->FindWidget(Name));
+		auto* Check = Cast<UCheckBox>(FindSettingsWidget(Name));
 		if (Check)
 		{
 			StyleSettingsCheckBox(Check);
@@ -1596,7 +1630,7 @@ void UAudioSettingsWidget::BuildVisualControls()
 	// 디자이너에서 위젯 이름을 바꾸거나 지워도 패키징 빌드에서 멈추지 않도록 모두 null을 확인한다.
 	if (auto* BrightnessSlider = AddSlider(TEXT("BrightnessSetting"), Visual->Brightness, 1.f))
 	{
-		if (!WidgetTree->FindWidget(TEXT("SettingsHelpText")) && BrightnessSlider->GetToolTipText().IsEmpty())
+		if (!FindSettingsWidget(TEXT("SettingsHelpText")) && BrightnessSlider->GetToolTipText().IsEmpty())
 			BrightnessSlider->SetToolTipText(BrightnessHelpText);
 		BrightnessSlider->OnValueChanged.AddUniqueDynamic(this, &ThisClass::SetBrightness);
 	}
@@ -1622,14 +1656,14 @@ void UAudioSettingsWidget::BuildVisualControls()
 		{TEXT("제한 없음"), TEXT("30"), TEXT("60"), TEXT("120")}, Limit == 30 ? 1 : Limit == 60 ? 2 : Limit == 120 ? 3 : 0))
 		FrameLimit->OnSelectionChanged.AddUniqueDynamic(this, &ThisClass::SetFrameLimit);
 	// 엔진 단계 4(시네마틱)나 그룹별로 섞인 값(-1)은 메뉴에 없으므로 "사용자 지정"으로 보여 준다.
-	const int32 QualityLevel = Screen->GetOverallScalabilityLevel();
+	const int32 QualityLevel = GetQualityPresetLevel(*Screen);
 	TArray<FString> QualityOptions;
 	for (const TCHAR* Option : QualityPresetOptions) QualityOptions.Add(Option);
 	const bool bPresetLevel = QualityLevel >= 0 && QualityLevel < QualityPresetCount;
 	if (!bPresetLevel) QualityOptions.Add(CustomQualityOption);
 	if (auto* Quality = AddCombo(TEXT("QualityPresetSetting"), QualityOptions, bPresetLevel ? QualityLevel : QualityPresetCount))
 		Quality->OnSelectionChanged.AddUniqueDynamic(this, &ThisClass::SetQualityPreset);
-	if (auto* RenderScale = Cast<USlider>(WidgetTree->FindWidget(TEXT("RenderScaleSetting"))))
+	if (auto* RenderScale = Cast<USlider>(FindSettingsWidget(TEXT("RenderScaleSetting"))))
 	{
 		StyleSettingsSlider(RenderScale);
 		RenderScale->SetMinValue(FMath::Clamp(MinRenderScalePercent, 10.f, 100.f) / 100.f);
@@ -1665,7 +1699,7 @@ void UAudioSettingsWidget::BuildVisualControls()
 		OutlineWidth->OnValueChanged.AddUniqueDynamic(this, &ThisClass::SetOutlineWidth);
 	if (auto* OutlineBrightness = AddSlider(TEXT("OutlineBrightnessSetting"), Visual->OutlineBrightness, 2.f))
 		OutlineBrightness->OnValueChanged.AddUniqueDynamic(this, &ThisClass::SetOutlineBrightness);
-	if (auto* Apply = Cast<UButton>(WidgetTree->FindWidget(TEXT("ApplyScreenButton"))))
+	if (auto* Apply = Cast<UButton>(FindSettingsWidget(TEXT("ApplyScreenButton"))))
 		Apply->OnClicked.AddUniqueDynamic(this, &ThisClass::ApplyScreenMode);
 	RefreshVisualReadouts();
 	RefreshApplyButton();
@@ -1678,7 +1712,7 @@ UWidget* UAudioSettingsWidget::MakeDropdownOption(FString Option)
 	const UComboBoxString* Source = nullptr;
 	for (const TCHAR* Name : {TEXT("WindowModeSetting"), TEXT("ResolutionSetting"), TEXT("FrameLimitSetting"),
 		TEXT("QualityPresetSetting"), TEXT("ColorVisionSetting"), TEXT("OutlineColorSetting"), TEXT("PlayerColorSetting")})
-		if (const auto* Combo = Cast<UComboBoxString>(WidgetTree->FindWidget(Name)); Combo && Combo->FindOptionIndex(Option) >= 0)
+		if (const auto* Combo = Cast<UComboBoxString>(FindSettingsWidget(Name)); Combo && Combo->FindOptionIndex(Option) >= 0)
 		{
 			Source = Combo;
 			break;
@@ -1725,13 +1759,15 @@ void UAudioSettingsWidget::RefreshVisualReadouts()
 	};
 	for (const FReadout& Entry : Entries)
 	{
-		auto* Label = Cast<UTextBlock>(WidgetTree->FindWidget(Entry.Name));
+		auto* Label = Cast<UTextBlock>(FindSettingsWidget(Entry.Name));
 		if (!Label)
 		{
-			auto* Control = WidgetTree->FindWidget(Entry.Control);
+			auto* Control = FindSettingsWidget(Entry.Control);
 			auto* Row = Control ? Cast<UHorizontalBox>(Control->GetParent()) : nullptr;
-			if (!Row) continue;
-			Label = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), Entry.Name);
+			// 디자이너에 수치 TextBlock이 없으면 만든다. 그 줄이 속한 페이지 WBP의 위젯 트리에 만든다.
+			UWidgetTree* RowTree = Row ? Row->GetTypedOuter<UWidgetTree>() : nullptr;
+			if (!RowTree) continue;
+			Label = RowTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), Entry.Name);
 			auto Font = Label->GetFont();
 			if (auto* Body = GetDefault<UFactoryUIAssetSettings>()->BodyFont.LoadSynchronous()) Font.FontObject = Body;
 			Font.Size = ReadoutFontSize;
@@ -1743,7 +1779,7 @@ void UAudioSettingsWidget::RefreshVisualReadouts()
 			UWidget* Readout = Label;
 			if (FName(Entry.Name) == TEXT("OutlineWidthValue"))
 			{
-				auto* FixedWidth = WidgetTree->ConstructWidget<USizeBox>();
+				auto* FixedWidth = RowTree->ConstructWidget<USizeBox>();
 				FixedWidth->SetWidthOverride(FMath::Max(64.f, ReadoutMinWidth));
 				FixedWidth->SetContent(Label);
 				Readout = FixedWidth;
@@ -1805,7 +1841,7 @@ void UAudioSettingsWidget::SetAppearanceColor(const FString& Value, ESelectInfo:
 {
 	if (bSynchronizingAppearanceControls || Selection == ESelectInfo::Direct) return;
 	const FName ComboName = bOutline ? TEXT("OutlineColorSetting") : TEXT("PlayerColorSetting");
-	auto* Combo = Cast<UComboBoxString>(WidgetTree->FindWidget(ComboName));
+	auto* Combo = Cast<UComboBoxString>(FindSettingsWidget(ComboName));
 	auto* Visual = UGameInstance::GetSubsystem<UGameVisualSettingsSubsystem>(GetGameInstance());
 	if (!Combo || !Visual) return;
 	const int32 Index = Combo->FindOptionIndex(Value);
@@ -1839,7 +1875,7 @@ void UAudioSettingsWidget::OpenAppearancePalette(bool bOutline)
 			(bOutline ? Settings->CustomOutlineColor : Settings->CustomPlayerColor) = Color.GetClamped();
 			(bOutline ? Settings->OutlineColor : Settings->PlayerColor) = UGameVisualSettingsSubsystem::CustomColorIndex;
 			const FName ComboName = bOutline ? TEXT("OutlineColorSetting") : TEXT("PlayerColorSetting");
-			if (auto* Combo = Cast<UComboBoxString>(WidgetTree->FindWidget(ComboName)))
+			if (auto* Combo = Cast<UComboBoxString>(FindSettingsWidget(ComboName)))
 				Combo->SetSelectedIndex(UGameVisualSettingsSubsystem::CustomColorIndex);
 			UpdateVisuals();
 		}));
@@ -1868,8 +1904,8 @@ void UAudioSettingsWidget::SetReduceFlashes(bool bValue)
 
 void UAudioSettingsWidget::SetWindowMode(FString Value, ESelectInfo::Type Selection)
 {
-	auto* Mode = Cast<UComboBoxString>(WidgetTree->FindWidget(TEXT("WindowModeSetting")));
-	auto* Resolution = WidgetTree->FindWidget(TEXT("ResolutionSetting"));
+	auto* Mode = Cast<UComboBoxString>(FindSettingsWidget(TEXT("WindowModeSetting")));
+	auto* Resolution = FindSettingsWidget(TEXT("ResolutionSetting"));
 	if (Mode && Resolution) Resolution->SetIsEnabled(Mode->FindOptionIndex(Value) != static_cast<int32>(EWindowMode::WindowedFullscreen));
 	RefreshApplyButton();
 }
@@ -1878,9 +1914,9 @@ void UAudioSettingsWidget::OnResolutionChanged(FString Value, ESelectInfo::Type 
 
 void UAudioSettingsWidget::RefreshApplyButton()
 {
-	auto* Apply = Cast<UButton>(WidgetTree->FindWidget(TEXT("ApplyScreenButton")));
-	auto* Mode = Cast<UComboBoxString>(WidgetTree->FindWidget(TEXT("WindowModeSetting")));
-	auto* Resolution = Cast<UComboBoxString>(WidgetTree->FindWidget(TEXT("ResolutionSetting")));
+	auto* Apply = Cast<UButton>(FindSettingsWidget(TEXT("ApplyScreenButton")));
+	auto* Mode = Cast<UComboBoxString>(FindSettingsWidget(TEXT("WindowModeSetting")));
+	auto* Resolution = Cast<UComboBoxString>(FindSettingsWidget(TEXT("ResolutionSetting")));
 	const auto* Screen = GEngine ? GEngine->GetGameUserSettings() : nullptr;
 	if (!Apply || !Mode || !Resolution || !Screen) return;
 	const int32 Index = Resolution->GetSelectedIndex();
@@ -1911,10 +1947,23 @@ void UAudioSettingsWidget::SetVSync(bool bValue)
 	}
 }
 
+int32 UAudioSettingsWidget::GetQualityPresetLevel(const UGameUserSettings& Screen)
+{
+	// 엔진의 GetOverallScalabilityLevel은 렌더링 해상도까지 단계 기본값과 같아야 단계를 돌려준다.
+	// 이 메뉴는 품질을 바꿔도 사용자가 고른 해상도를 유지하므로, 해상도를 빼고 판정한다.
+	const Scalability::FQualityLevels& Q = Screen.ScalabilityQuality;
+	const int32 Level = Q.ViewDistanceQuality;
+	const int32 Groups[] = {Q.AntiAliasingQuality, Q.ShadowQuality, Q.GlobalIlluminationQuality, Q.ReflectionQuality,
+		Q.PostProcessQuality, Q.TextureQuality, Q.EffectsQuality, Q.FoliageQuality, Q.ShadingQuality, Q.LandscapeQuality};
+	for (const int32 Group : Groups)
+		if (Group != Level) return -1;
+	return Level;
+}
+
 void UAudioSettingsWidget::SetQualityPreset(FString Value, ESelectInfo::Type Selection)
 {
 	if (Selection == ESelectInfo::Direct) return;
-	auto* Combo = Cast<UComboBoxString>(WidgetTree->FindWidget(TEXT("QualityPresetSetting")));
+	auto* Combo = Cast<UComboBoxString>(FindSettingsWidget(TEXT("QualityPresetSetting")));
 	auto* Screen = GEngine ? GEngine->GetGameUserSettings() : nullptr;
 	if (!Combo || !Screen) return;
 	const int32 Level = Combo->FindOptionIndex(Value);
@@ -1946,13 +1995,13 @@ void UAudioSettingsWidget::SetRenderResolutionScale(float Value)
 void UAudioSettingsWidget::SetColorVision(FString Value, ESelectInfo::Type Selection)
 {
 	if (Selection == ESelectInfo::Direct) return;
-	auto* Combo = Cast<UComboBoxString>(WidgetTree->FindWidget(TEXT("ColorVisionSetting")));
+	auto* Combo = Cast<UComboBoxString>(FindSettingsWidget(TEXT("ColorVisionSetting")));
 	auto* Visual = UGameInstance::GetSubsystem<UGameVisualSettingsSubsystem>(GetGameInstance());
 	if (!Combo || !Visual) return;
 	const int32 Index = Combo->FindOptionIndex(Value);
 	if (Index < 0 || Index >= UGameVisualSettingsSubsystem::ColorVisionTypeCount || Index == Visual->ColorVision) return;
 	Visual->ColorVision = Index;
-	if (auto* Strength = WidgetTree->FindWidget(TEXT("ColorVisionStrengthSetting"))) Strength->SetIsEnabled(Index != 0);
+	if (auto* Strength = FindSettingsWidget(TEXT("ColorVisionStrengthSetting"))) Strength->SetIsEnabled(Index != 0);
 	UpdateVisuals();
 }
 
@@ -1966,9 +2015,9 @@ void UAudioSettingsWidget::SetColorVisionStrength(float Value)
 void UAudioSettingsWidget::ApplyScreenMode()
 {
 	auto* Screen = GEngine ? GEngine->GetGameUserSettings() : nullptr;
-	auto* Mode = Cast<UComboBoxString>(WidgetTree->FindWidget(TEXT("WindowModeSetting")));
-	auto* Resolution = Cast<UComboBoxString>(WidgetTree->FindWidget(TEXT("ResolutionSetting")));
-	auto* Label = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("ApplyScreenText")));
+	auto* Mode = Cast<UComboBoxString>(FindSettingsWidget(TEXT("WindowModeSetting")));
+	auto* Resolution = Cast<UComboBoxString>(FindSettingsWidget(TEXT("ResolutionSetting")));
+	auto* Label = Cast<UTextBlock>(FindSettingsWidget(TEXT("ApplyScreenText")));
 	if (!Screen || !Mode || !Resolution || !Label) return;
 	if (ScreenConfirmation.IsValid())
 	{
@@ -2011,18 +2060,18 @@ bool UAudioSettingsWidget::RevertScreenMode(float DeltaTime)
 		Screen->ApplyResolutionSettings(false);
 		Screen->ConfirmVideoMode();
 		Screen->SaveSettings();
-		if (auto* Mode = Cast<UComboBoxString>(WidgetTree->FindWidget(TEXT("WindowModeSetting"))))
+		if (auto* Mode = Cast<UComboBoxString>(FindSettingsWidget(TEXT("WindowModeSetting"))))
 		{
 			Mode->SetSelectedIndex(static_cast<int32>(Screen->GetFullscreenMode()));
 			Mode->SetIsEnabled(true);
 		}
-		if (auto* Resolution = Cast<UComboBoxString>(WidgetTree->FindWidget(TEXT("ResolutionSetting"))))
+		if (auto* Resolution = Cast<UComboBoxString>(FindSettingsWidget(TEXT("ResolutionSetting"))))
 		{
 			Resolution->SetSelectedIndex(Resolutions.IndexOfByKey(Screen->GetScreenResolution()));
 			Resolution->SetIsEnabled(Screen->GetFullscreenMode() != EWindowMode::WindowedFullscreen);
 		}
 	}
-	if (auto* Label = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("ApplyScreenText"))))
+	if (auto* Label = Cast<UTextBlock>(FindSettingsWidget(TEXT("ApplyScreenText"))))
 		Label->SetText(ApplyScreenLabel);
 	RefreshApplyButton();
 	return false;

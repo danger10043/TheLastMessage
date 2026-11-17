@@ -120,6 +120,51 @@ void ASideScrollingPlayerController::ClientShowCorePuzzleIntroWidget_Implementat
 	}
 }
 
+void ASideScrollingPlayerController::ClientSetBossDeathUIHidden_Implementation(bool bHideDeathUI)
+{
+	if (!IsLocalController())
+	{
+		return;
+	}
+
+	if (bHideDeathUI)
+	{
+		if (bBossDeathHUDStateSaved)
+		{
+			return;
+		}
+
+		APlayerHUD* DeathHUD = Cast<APlayerHUD>(GetHUD());
+		if (!IsValid(DeathHUD))
+		{
+			return;
+		}
+
+		BossDeathHUD = DeathHUD;
+		bBossDeathPreviousHUDVisible = DeathHUD->bShowHUD;
+		bBossDeathHUDStateSaved = true;
+		DeathHUD->SetPlayerUIVisible(false);
+	}
+	else
+	{
+		if (!bBossDeathHUDStateSaved)
+		{
+			return;
+		}
+
+		APlayerHUD* DeathHUD = BossDeathHUD.Get();
+		const bool bRestoreVisible = bBossDeathPreviousHUDVisible;
+		bBossDeathHUDStateSaved = false;
+		BossDeathHUD.Reset();
+
+		if (IsValid(DeathHUD))
+		{
+			DeathHUD->SetPlayerUIVisible(bRestoreVisible);
+		}
+	}
+}
+
+
 
 void ASideScrollingPlayerController::BuildInputStack(TArray<UInputComponent*>& InputStack)
 {

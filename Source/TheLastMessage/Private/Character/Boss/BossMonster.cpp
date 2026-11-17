@@ -998,6 +998,7 @@ bool ABossMonster::PlayBossDeathSequence(APlayerController* InDeathController)
         Cast<ASideScrollingPlayerController>(InDeathController))
     {
         DeathPC->ClientSetBossSequenceInputBlocked(this, true);
+        DeathPC->ClientSetBossDeathUIHidden(true);
     }
 
     DeathPlayer->Play();
@@ -1027,6 +1028,7 @@ void ABossMonster::StopBossDeathSequence()
         Cast<ASideScrollingPlayerController>(DeathPC))
     {
         LocalDeathPC->ClientSetBossSequenceInputBlocked(this, false);
+        LocalDeathPC->ClientSetBossDeathUIHidden(false);
     }
 }
 

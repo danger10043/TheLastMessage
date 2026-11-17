@@ -10,6 +10,7 @@
 #include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
 #include "Map/RoomStreamingSubsystem.h"
+#include "Framework/CutsceneFreezeSubsystem.h"
 
 bool URemoteGatePresenter::ShouldCreateSubsystem(UObject* Outer) const
 {
@@ -75,6 +76,9 @@ void URemoteGatePresenter::Begin(const FRemoteGateEntry& Entry, APlayerControlle
 	Phase = EPhase::FadingOut;
 	PhaseTime = 0.f;
 	LoadedTime = 0.f;
+
+	// 연출 동안 몬스터를 멈추고 플레이어를 피해에서 보호한다.
+	if (UCutsceneFreezeSubsystem* Freeze = UCutsceneFreezeSubsystem::Get(this)) Freeze->SetFreezeSource(TEXT("RemoteGate"), true);
 
 	SetInputLocked(true);
 	FadeTo(0.f, 1.f);
@@ -235,5 +239,6 @@ void URemoteGatePresenter::Finish(bool bNotify)
 		if (PC->PlayerCameraManager) PC->PlayerCameraManager->StopCameraFade();
 	SetInputLocked(false);
 	if (UWorldFlagSubsystem* Flags = UWorldFlagSubsystem::Get(this)) Flags->EndFlagDeferral(Active.Flag, bNotify);
+	if (UCutsceneFreezeSubsystem* Freeze = UCutsceneFreezeSubsystem::Get(this)) Freeze->SetFreezeSource(TEXT("RemoteGate"), false);
 	Phase = EPhase::Idle;
 }

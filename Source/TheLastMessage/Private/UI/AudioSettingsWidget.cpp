@@ -1,5 +1,7 @@
 #include "UI/AudioSettingsWidget.h"
-#include "AppearanceColorComboBox.h"
+// +수정----
+#include "UI/AppearanceColorComboBox.h"
+// +--------
 #include "UI/FactoryMenuStyle.h"
 #include "UI/FactoryUIStyle.h"
 #include "UI/FactoryUIAssetSettings.h"
@@ -27,7 +29,9 @@
 #include "Components/Image.h"
 #include "Components/InputKeySelector.h"
 #include "Components/Slider.h"
-#include "VolumeSlider.h"
+// +수정----
+#include "UI/VolumeSlider.h"
+// +--------
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"

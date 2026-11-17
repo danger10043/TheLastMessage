@@ -33,6 +33,9 @@ public:
 	UFUNCTION(Client, Reliable)
 	void ClientShowCorePuzzleIntroWidget();
 
+	UFUNCTION(Client, Reliable)
+	void ClientSetBossDeathUIHidden(bool bHideDeathUI);
+
 	bool IsBossSequenceInputBlocked() const { return bBossSequenceInputBlocked; }
 
 protected:
@@ -46,6 +49,10 @@ private:
 	uint8 SavedBossSequenceMovementMode = 0;
 	uint8 SavedBossSequenceCustomMode = 0;
 	bool bBossSequenceInputBlocked = false;
+
+	TWeakObjectPtr<class APlayerHUD> BossDeathHUD;
+	bool bBossDeathHUDStateSaved = false;
+	bool bBossDeathPreviousHUDVisible = true;
 
 public:
 	// +추가----

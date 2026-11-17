@@ -26,6 +26,16 @@ public:
 	virtual bool DoesSupportWorldType(const EWorldType::Type WorldType) const override;
 	virtual void Tick(float DeltaTime) override;
 	virtual TStatId GetStatId() const override;
+	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
+
+	/**
+	 * 시작 단계: 맵이 처음 열리면 모든 방이 한꺼번에 올라와 있다. 이 구간에서는 불필요한 방을 대기 없이 바로 내리고,
+	 * 정리가 끝날 때까지(IsStartupSettled) 로딩 화면이 유지되도록 LoadingTransitionSubsystem이 EndStartupPhase를 늦춘다.
+	 */
+	bool IsStartupPhase() const { return bStartupPhase; }
+	/** 플레이어 위치의 리전 기준으로 필요한 방이 모두 올라오고 나머지가 모두 내려갔는가. 오래 걸리면(최대 25초) true로 포기한다. */
+	bool IsStartupSettled() const;
+	void EndStartupPhase() { bStartupPhase = false; }
 
 	UFUNCTION(BlueprintPure, Category = "Room Streaming")
 	FName GetCurrentRegionId() const { return CurrentRegionId; }
@@ -61,6 +71,9 @@ private:
 	void BuildLevelInstanceIndex(TMap<FName, ALevelInstance*>& OutIndex) const;
 
 	float Accumulated = 0.f;
+	bool bStartupPhase = false;
+	/** 시작 단계가 시작된 실시간(FPlatformTime). */
+	double StartupBeginTime = 0.0;
 	FName CurrentRegionId;
 	TSet<FName> DesiredRooms;
 	bool bHasDesired = false;

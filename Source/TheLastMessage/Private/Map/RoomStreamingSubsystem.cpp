@@ -37,6 +37,73 @@ bool URoomStreamingSubsystem::DoesSupportWorldType(const EWorldType::Type WorldT
 	return WorldType == EWorldType::Game || WorldType == EWorldType::PIE;
 }
 
+namespace
+{
+	/** 시작 단계에서 리전이나 방을 못 찾았을 때 포기하는 시간(초). */
+	constexpr double StartupGiveUpSeconds = 8.0;
+	/** 시작 단계 정리를 기다리는 최대 시간(초). */
+	constexpr double StartupMaxWaitSeconds = 25.0;
+}
+
+void URoomStreamingSubsystem::OnWorldBeginPlay(UWorld& InWorld)
+{
+	Super::OnWorldBeginPlay(InWorld);
+	if (GetDefault<URoomStreamingSettings>()->Rooms.IsEmpty()) return;
+	// 레벨 인스턴스가 없는 맵(메인 메뉴 등)에서는 정리할 것이 없다.
+	TActorIterator<ALevelInstance> It(&InWorld);
+	if (!It) return;
+	bStartupPhase = true;
+	StartupBeginTime = FPlatformTime::Seconds();
+}
+
+bool URoomStreamingSubsystem::IsStartupSettled() const
+{
+	if (!bStartupPhase) return true;
+	const double Elapsed = FPlatformTime::Seconds() - StartupBeginTime;
+	if (Elapsed >= StartupMaxWaitSeconds) return true;
+
+	UWorld* World = GetWorld();
+	ULevelInstanceSubsystem* LevelInstances = World ? World->GetSubsystem<ULevelInstanceSubsystem>() : nullptr;
+	if (!LevelInstances) return true;
+
+	// 플레이어가 있는 리전이 아직 반영되지 않았으면(체크포인트 복원 직후 등) 기다린다.
+	const FName Region = FindRegionAtPlayer();
+	if (!Region.IsNone() && Region != CurrentRegionId)
+	{
+		TSet<FName> Unused;
+		if (BuildDesiredRooms(Region, Unused)) return false;
+	}
+	if (!bHasDesired) return Elapsed >= StartupGiveUpSeconds;
+
+	TSet<FName> Wanted = DesiredRooms;
+	for (const TPair<FName, int32>& Pin : PinnedRooms) Wanted.Add(Pin.Key);
+
+	TMap<FName, ALevelInstance*> Index;
+	BuildLevelInstanceIndex(Index);
+	bool bFoundAny = false;
+	for (const FRoomStreamEntry& Room : GetDefault<URoomStreamingSettings>()->Rooms)
+	{
+		ALevelInstance** Found = Index.Find(FName(*Room.Level.GetLongPackageName()));
+		const ILevelInstanceInterface* Instance = Found ? Cast<ILevelInstanceInterface>(*Found) : nullptr;
+		if (!Instance)
+		{
+			// 필요한 방의 부모 레벨이 아직 안 올라왔을 수 있다. 잠시 기다린 뒤 이 맵에 없는 방으로 본다.
+			if (Wanted.Contains(Room.RoomId) && Elapsed < StartupGiveUpSeconds) return false;
+			continue;
+		}
+		bFoundAny = true;
+		if (Wanted.Contains(Room.RoomId))
+		{
+			if (!LevelInstances->IsLoaded(Instance)) return false;
+		}
+		else if (LevelInstances->IsLoaded(Instance) || LevelInstances->IsLoading(Instance))
+		{
+			return false; // 아직 내려가는 중이다.
+		}
+	}
+	return bFoundAny || Elapsed >= StartupGiveUpSeconds;
+}
+
 TStatId URoomStreamingSubsystem::GetStatId() const
 {
 	RETURN_QUICK_DECLARE_CYCLE_STAT(URoomStreamingSubsystem, STATGROUP_Tickables);
@@ -169,12 +236,10 @@ void URoomStreamingSubsystem::Update()
 		}
 		else if (bLoaded)
 		{
-			const double* Deadline = UnloadAfter.Find(Room.RoomId);
-			if (!Deadline)
-			{
-				UnloadAfter.Add(Room.RoomId, Now + Settings->UnloadDelaySeconds);
-			}
-			else if (Now >= *Deadline)
+			// 시작 단계에서는 로딩 화면 뒤에서 처리하므로 대기 없이 바로 내린다.
+			const double Delay = bStartupPhase ? 0.0 : Settings->UnloadDelaySeconds;
+			const double Deadline = UnloadAfter.FindOrAdd(Room.RoomId, Now + Delay);
+			if (Now >= Deadline)
 			{
 				UE_LOG(LogRoomStreaming, Log, TEXT("Unload room %s"), *Room.RoomId.ToString());
 				UnloadAfter.Remove(Room.RoomId);

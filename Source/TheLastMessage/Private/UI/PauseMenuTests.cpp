@@ -9,7 +9,9 @@
 #include "Blueprint/WidgetBlueprintLibrary.h"
 #include "UI/GameAudioSettingsSubsystem.h"
 #include "UI/GameVisualSettingsSubsystem.h"
-#include "VolumeSlider.h"
+// +수정----
+#include "UI/VolumeSlider.h"
+// +--------
 #include "Blueprint/WidgetTree.h"
 #include "Components/Button.h"
 #include "Components/ComboBoxString.h"

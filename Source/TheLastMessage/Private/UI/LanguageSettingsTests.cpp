@@ -4,7 +4,9 @@
 #include "Editor.h"
 #include "UI/AudioSettingsWidget.h"
 #include "UI/GameLanguageSettingsSubsystem.h"
-#include "FactoryUIStyle.h"
+// +수정----
+#include "UI/FactoryUIStyle.h"
+// +--------
 #include "Blueprint/WidgetTree.h"
 #include "Components/Border.h"
 #include "Components/Button.h"

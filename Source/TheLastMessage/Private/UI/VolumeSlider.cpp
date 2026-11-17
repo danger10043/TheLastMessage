@@ -1,4 +1,6 @@
-#include "VolumeSlider.h"
+// +수정----
+#include "UI/VolumeSlider.h"
+// +--------
 #include "InputCoreTypes.h"
 #include "Widgets/Input/SSlider.h"
 

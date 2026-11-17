@@ -11,7 +11,9 @@
 #include "Engine/LocalPlayer.h"
 #include "Engine/World.h"
 #include "Blueprint/UserWidget.h"
-#include "../../TheLastMessage.h"
+// +수정----
+#include "TheLastMessage.h"
+// +--------
 #include "Widgets/Input/SVirtualJoystick.h"
 #include "EnhancedInputComponent.h"
 #include "Map/AreaMapComponent.h"

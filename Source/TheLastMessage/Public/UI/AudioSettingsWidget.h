@@ -174,6 +174,9 @@ private:
 	UFUNCTION() void OnKeySelectionModeChanged();
 	UFUNCTION() void OnGameplayKeySelected(FInputChord Chord);
 	UFUNCTION() void ResetGameplayKeys();
+	/** 키 설정 페이지의 "조작 방식" 드롭다운(InputDeviceSetting)을 채우고 연결한다. */
+	void BindInputDeviceSetting();
+	UFUNCTION() void SetInputDevice(FString Value, ESelectInfo::Type Selection);
 	TMap<class UInputKeySelector*, int32> KeySelectors;
 	TWeakObjectPtr<class UInputKeySelector> FirstKeySelector;
 	TWeakObjectPtr<class UInputKeySelector> CapturingKey;

@@ -22,6 +22,8 @@ public:
 	static void BuildDefaultLayout(UWidgetTree* Tree);
 	static bool AddConfirmationLayout(UWidgetTree* Tree);
 	static bool AddCreditsLayout(UWidgetTree* Tree);
+	static void UpdateCreditsNotice(UWidgetTree* Tree);
+	UButton* GetCreditsBackButton() const { return CreditsBackButton; }
 	UFUNCTION(BlueprintCallable, Category="Menu") void ShowMainMenu();
 	UFUNCTION(BlueprintCallable, Category="Menu") void ShowNewGameSlots();
 	UFUNCTION(BlueprintCallable, Category="Menu") void ShowLoadGameSlots();
@@ -42,7 +44,7 @@ protected:
 	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UButton> LoadGameButton;
 	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UButton> ExitButton;
 	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UButton> CreditsButton;
-	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UButton> CreditsBackButton;
+	UPROPERTY(Transient) TObjectPtr<UButton> CreditsBackButton;
 	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UButton> Slot1Button;
 	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UButton> Slot2Button;
 	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UButton> Slot3Button;

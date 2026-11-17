@@ -28,7 +28,10 @@ void UBossShieldComponent::ActivateShield(EBossPuzzleType PuzzleType)
     switch (PuzzleType)
     {
     case EBossPuzzleType::LaserPuzzle:
+        PuzzleTimeLimit = Phase70PuzzleTimeLimit;
+        break;
     case EBossPuzzleType::CorePuzzle:
+        PuzzleTimeLimit = Phase30PuzzleTimeLimit;
         break;
     default:
         UE_LOG(LogTemp, Warning, TEXT("BossShieldComponent::ActivateShield - 잘못된 퍼즐 종류입니다."));
@@ -95,11 +98,11 @@ void UBossShieldComponent::StopPuzzleTimer()
     RemainingPuzzleTime = 0.f;
 }
 
-void UBossShieldComponent::DeactivateShield()
+void UBossShieldComponent::DeactivateShield(bool bHideLaserActors)
 {
     if (ABossMonster* Boss = Cast<ABossMonster>(GetOwner()))
     {
-        Boss->StopLaserPuzzle();
+        Boss->StopLaserPuzzle(bHideLaserActors);
     }
 
     StopPuzzleTimer();

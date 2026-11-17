@@ -563,6 +563,20 @@ private:
 	// 클라이언트가 취소 요청을 매 프레임 보내지 않도록 마지막 요청 시각을 기억한다.
 	double LastAttackCancelRequestTime = -1.0;
 	void UpdateMouseAim();
+	/** 패드 조준: 오른쪽 스틱(중립이면 보는 방향)으로 커서를 플레이어 주변에 옮긴다. 조준을 처리했으면 true. */
+	bool UpdateGamepadAim(APlayerController& PC);
+	/** 오른쪽 스틱 조준을 시작하는 기울기. */
+	UPROPERTY(EditDefaultsOnly, Category="Player|Input|Gamepad", meta=(ClampMin="0.05", ClampMax="0.9"))
+	float GamepadAimDeadZone = 0.3f;
+	/** 패드 조준 커서와 플레이어 사이 거리(화면 높이 비율). */
+	UPROPERTY(EditDefaultsOnly, Category="Player|Input|Gamepad", meta=(ClampMin="0.05", ClampMax="0.5"))
+	float GamepadAimScreenRadius = 0.22f;
+	bool bGamepadAimActive = false;
+	FVector2D GamepadAimStick = FVector2D::ZeroVector;
+	FVector2D LastGamepadCursorPosition = FVector2D::ZeroVector;
+	int32 GamepadCursorMismatchFrames = 0;
+	uint64 GamepadAimFrame = 0;
+	bool bGamepadAimHandledThisFrame = false;
 	bool SetAimTarget(FVector WorldPoint);
 	FVector GetAimPlaneNormal() const;
 	UFUNCTION(Server, Unreliable)

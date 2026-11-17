@@ -323,7 +323,7 @@ bool APlayerBase::UpdateGamepadAim(APlayerController& PC)
 void APlayerBase::UpdateMouseAim()
 {
 	APlayerController* PC = Cast<APlayerController>(GetController());
-	if (!PC || !PC->IsLocalController() || IsDead()) return;
+	if (!PC || !PC->IsLocalController() || PC->IsLookInputIgnored() || IsDead()) return;
 	if (UpdateGamepadAim(*PC)) return;
 	FVector RayOrigin, RayDirection;
 	if (PC->DeprojectMousePositionToWorld(RayOrigin, RayDirection))

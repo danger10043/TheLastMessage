@@ -99,8 +99,83 @@ void URoomStreamingSubsystem::Deinitialize()
 	Super::Deinitialize();
 }
 
+void URoomStreamingSubsystem::RegisterBoundActors(ULevel* Level)
+{
+	if (!Level) return;
+	const FString Prefix = RoomBoundTagPrefix();
+	bool bAdded = false;
+	for (AActor* Actor : Level->Actors)
+	{
+		if (!Actor) continue;
+		FName RoomId;
+		for (const FName& Tag : Actor->Tags)
+		{
+			const FString TagString = Tag.ToString();
+			if (TagString.StartsWith(Prefix))
+			{
+				RoomId = FName(*TagString.Mid(Prefix.Len()));
+				break;
+			}
+		}
+		if (RoomId.IsNone()) continue;
+		if (BoundActors.ContainsByPredicate([Actor](const FRoomBoundActor& B) { return B.Actor.Get() == Actor; })) continue;
+
+		FRoomBoundActor& Bound = BoundActors.AddDefaulted_GetRef();
+		Bound.Actor = Actor;
+		Bound.RoomId = RoomId;
+		Bound.bOrigHidden = Actor->IsHidden();
+		Bound.bOrigCollision = Actor->GetActorEnableCollision();
+		Bound.bOrigTick = Actor->IsActorTickEnabled();
+		bAdded = true;
+	}
+	if (bAdded) ApplyBoundActors();
+}
+
+void URoomStreamingSubsystem::ApplyBoundActors()
+{
+	if (BoundActors.IsEmpty()) return;
+	UWorld* World = GetWorld();
+	ULevelInstanceSubsystem* LevelInstances = World ? World->GetSubsystem<ULevelInstanceSubsystem>() : nullptr;
+	if (!LevelInstances) return;
+
+	TMap<FName, ALevelInstance*> Index;
+	BuildLevelInstanceIndex(Index);
+	TMap<FName, bool> RoomLoaded;
+	for (const FRoomStreamEntry& Room : GetDefault<URoomStreamingSettings>()->Rooms)
+	{
+		ALevelInstance** Found = Index.Find(FName(*Room.Level.GetLongPackageName()));
+		const ILevelInstanceInterface* Instance = Found ? Cast<ILevelInstanceInterface>(*Found) : nullptr;
+		RoomLoaded.Add(Room.RoomId, Instance && LevelInstances->IsLoaded(Instance));
+	}
+
+	for (int32 i = BoundActors.Num() - 1; i >= 0; --i)
+	{
+		FRoomBoundActor& Bound = BoundActors[i];
+		AActor* Actor = Bound.Actor.Get();
+		if (!Actor || Actor->IsActorBeingDestroyed())
+		{
+			BoundActors.RemoveAtSwap(i);
+			continue;
+		}
+
+		// 설정에 없는 방은 관리하지 않으므로 그대로 둔다. 다른 액터에 붙어 있으면(들고 있는 아이템) 방과 상관없이 켠다.
+		const bool* bLoaded = RoomLoaded.Find(Bound.RoomId);
+		const bool bWantEnabled = !bLoaded || *bLoaded || Actor->GetAttachParentActor() != nullptr;
+		if (Bound.bEnabled == bWantEnabled) continue;
+		Bound.bEnabled = bWantEnabled;
+
+		Actor->SetActorHiddenInGame(bWantEnabled ? Bound.bOrigHidden : true);
+		Actor->SetActorEnableCollision(bWantEnabled ? Bound.bOrigCollision : false);
+		Actor->SetActorTickEnabled(bWantEnabled ? Bound.bOrigTick : false);
+		UE_LOG(LogRoomStreaming, Verbose, TEXT("Room-bound %s (room %s): %s"), *Actor->GetName(), *Bound.RoomId.ToString(),
+			bWantEnabled ? TEXT("enabled") : TEXT("disabled"));
+	}
+}
+
 void URoomStreamingSubsystem::HandleLevelAdded(ULevel* Level, UWorld* InWorld)
 {
+	if (Level && InWorld == GetWorld()) RegisterBoundActors(Level);
+
 	// 올릴 방을 아직 모르면(시작 리전이 없을 때) 예전처럼 모두 올라오게 둔다.
 	if (!Level || InWorld != GetWorld() || !bHasDesired) return;
 	ULevelInstanceSubsystem* LevelInstances = InWorld->GetSubsystem<ULevelInstanceSubsystem>();
@@ -131,6 +206,8 @@ void URoomStreamingSubsystem::HandleLevelAdded(ULevel* Level, UWorld* InWorld)
 void URoomStreamingSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 {
 	Super::OnWorldBeginPlay(InWorld);
+	// 이미 붙어 있는 레벨(LV_Main 등)의 방 종속 액터를 등록한다. 나중에 붙는 레벨은 HandleLevelAdded가 등록한다.
+	for (ULevel* Level : InWorld.GetLevels()) RegisterBoundActors(Level);
 	if (GetDefault<URoomStreamingSettings>()->Rooms.IsEmpty()) return;
 	// 레벨 인스턴스가 없는 맵(메인 메뉴 등)에서는 정리할 것이 없다.
 	TActorIterator<ALevelInstance> It(&InWorld);
@@ -268,6 +345,8 @@ void URoomStreamingSubsystem::Update()
 	UWorld* World = GetWorld();
 	ULevelInstanceSubsystem* LevelInstances = World ? World->GetSubsystem<ULevelInstanceSubsystem>() : nullptr;
 	if (!LevelInstances) return;
+
+	ApplyBoundActors();
 
 	// 부활 대기 중이면 플레이어 위치 대신 고정된 리전을 따른다. 어느 리전에도 없으면(점프 중, 복도 리전이 아직 없는 구간) 마지막 상태를 유지한다.
 	FName Found;

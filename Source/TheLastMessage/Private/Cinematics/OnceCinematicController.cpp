@@ -10,6 +10,7 @@
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
+#include "Framework/SideScrollingPlayerController.h"
 #include "Kismet/GameplayStatics.h"
 #include "LevelSequenceActor.h"
 #include "LevelSequencePlayer.h"
@@ -34,9 +35,37 @@ void AOnceCinematicController::BeginPlay()
 void AOnceCinematicController::TryAutoPlay()
 {
 	if (bConsumed) return;
-	if (!bPlayOnBeginPlay && TriggerActor && !TriggerActor->IsOverlappingActor(UGameplayStatics::GetPlayerPawn(this, 0))) return;
+
+	if (bStartBossCombatOnCompletion && !CinematicId.IsNone())
+	{
+		UProgressSaveSubsystem* Saves = GetGameInstance()
+			? GetGameInstance()->GetSubsystem<UProgressSaveSubsystem>() : nullptr;
+		if (Saves && Saves->IsRestoringProgress())
+		{
+			GetWorldTimerManager().SetTimer(
+				StartupTimer, this, &AOnceCinematicController::TryAutoPlay, 0.05f, false);
+			return;
+		}
+
+		const FName Map(*UGameplayStatics::GetCurrentLevelName(this, true));
+		if (Saves && ((bSkipOnLoad && Saves->IsLoadedMap(Map))
+			|| Saves->HasPlayedCinematic(Map, CinematicId)))
+		{
+			bConsumed = true;
+			Saves->MarkCinematicPlayed(Map, CinematicId);
+			ApplyCompletion();
+			return;
+		}
+	}
+
+	if (!bPlayOnBeginPlay && TriggerActor
+		&& !TriggerActor->IsOverlappingActor(UGameplayStatics::GetPlayerPawn(this, 0))) return;
 	if (RequestPlay() || bConsumed) return;
-	if (++StartupAttempts < 100) GetWorldTimerManager().SetTimer(StartupTimer, this, &AOnceCinematicController::TryAutoPlay, 0.05f, false);
+	if (++StartupAttempts < 100)
+	{
+		GetWorldTimerManager().SetTimer(
+			StartupTimer, this, &AOnceCinematicController::TryAutoPlay, 0.05f, false);
+	}
 }
 
 void AOnceCinematicController::TriggerEntered(AActor* OverlappedActor, AActor* OtherActor)
@@ -58,8 +87,15 @@ bool AOnceCinematicController::RequestPlay()
 	}
 	APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0);
 	APlayerBase* Pawn = PC ? Cast<APlayerBase>(PC->GetPawn()) : nullptr;
-	ULevelSequencePlayer* Sequence = SequenceActor ? SequenceActor->GetSequencePlayer() : nullptr;
-	if (!PC || !Pawn || !Pawn->HasActorBegunPlay() || !Sequence) return false;
+	ULevelSequencePlayer* Sequence = IsValid(SequenceActor)
+		? SequenceActor->GetSequencePlayer() : nullptr;
+	if (!IsValid(PC) || !IsValid(Pawn) || Pawn->IsDead()
+		|| !Pawn->HasActorBegunPlay() || !IsValid(Sequence)
+		|| !IsValid(Sequence->GetSequence()) || Sequence->IsPlaying() || Sequence->IsPaused()
+		|| Sequence->GetDuration().AsSeconds() <= 0.0)
+	{
+		return false;
+	}
 	// Defer until the save system has restored the player, so a scene cannot race the load teleport.
 	if (Saves && Saves->IsRestoringProgress()) return false;
 	bConsumed = true;
@@ -69,9 +105,17 @@ bool AOnceCinematicController::RequestPlay()
 	bPreviousHUD = PlayerHUD.IsValid() ? PlayerHUD->bShowHUD : true;
 	bPresenting = true;
 	Pawn->CancelWeaponInputsForUI();
-	Pawn->SetActorHiddenInGame(true); Pawn->DisableInput(PC);
+	Pawn->SetActorHiddenInGame(bPreviousHidden || bHidePlayerDuringCinematic);
+	Pawn->DisableInput(PC);
 	if (PlayerHUD.IsValid()) PlayerHUD->SetPlayerUIVisible(false);
 	SuspendBossCombat();
+	if (IsValid(Boss))
+	{
+		if (ASideScrollingPlayerController* BossPC = Cast<ASideScrollingPlayerController>(PC))
+		{
+			BossPC->ClientSetBossSequenceInputBlocked(Boss.Get(), true);
+		}
+	}
 	if (Boss) Boss->SetBossUIVisible(false);
 	Sequence->OnFinished.AddUniqueDynamic(this, &AOnceCinematicController::SequenceEnded);
 	Sequence->OnStop.AddUniqueDynamic(this, &AOnceCinematicController::SequenceEnded);
@@ -101,6 +145,11 @@ void AOnceCinematicController::RestorePresentation()
 		if (bPreviousInput && Controller.IsValid()) Player->EnableInput(Controller.Get());
 	}
 	if (PlayerHUD.IsValid()) PlayerHUD->SetPlayerUIVisible(bPreviousHUD);
+	if (ASideScrollingPlayerController* BossPC =
+		Cast<ASideScrollingPlayerController>(Controller.Get()))
+	{
+		BossPC->ClientSetBossSequenceInputBlocked(Boss.Get(), false);
+	}
 }
 
 void AOnceCinematicController::SuspendBossCombat()
@@ -142,12 +191,22 @@ void AOnceCinematicController::RestoreBossCombat()
 
 void AOnceCinematicController::ApplyCompletion()
 {
+	if (bStartBossCombatOnCompletion && IsValid(Boss))
+	{
+		Boss->StartBossCombatAfterEntrance();
+	}
+
 	if (Boss) Boss->SetBossUIVisible(true);
 	for (AActor* Actor : CleanupActors) if (IsValid(Actor) && Actor != this) Actor->Destroy();
 }
 
 void AOnceCinematicController::SequenceEnded()
 {
+	if (ASideScrollingPlayerController* BossPC =
+		Cast<ASideScrollingPlayerController>(Controller.Get()))
+	{
+		BossPC->ClientSetBossSequenceInputBlocked(Boss.Get(), false);
+	}
 	if (!bPresenting) return;
 	RestorePresentation();
 	ApplyCompletion();

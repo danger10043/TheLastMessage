@@ -15,7 +15,7 @@ class THELASTMESSAGE_API UBossShieldComponent : public UActorComponent
 public:
     void ActivateShield(EBossPuzzleType PuzzleType);
 
-    void DeactivateShield();
+    void DeactivateShield(bool bHideLaserActors = true);
 
     void StartPuzzleTimer();
 
@@ -45,8 +45,17 @@ private:
     UPROPERTY()
     EBossPuzzleType CurrentPuzzleType = EBossPuzzleType::None;
 
-    // 명세에서 미정. 0은 설정 전 임시값이다.
-    UPROPERTY(EditDefaultsOnly)
+    UPROPERTY(EditAnywhere, Category = "Boss|Puzzle|Timer",
+        meta = (ClampMin = "0.1", Units = "s",
+            DisplayName = "70% Puzzle Time Limit"))
+    float Phase70PuzzleTimeLimit = 0.f;
+
+    UPROPERTY(EditAnywhere, Category = "Boss|Puzzle|Timer",
+        meta = (ClampMin = "0.1", Units = "s",
+            DisplayName = "30% Puzzle Time Limit"))
+    float Phase30PuzzleTimeLimit = 0.f;
+
+    UPROPERTY(Transient)
     float PuzzleTimeLimit = 0.f;
 
     UPROPERTY()

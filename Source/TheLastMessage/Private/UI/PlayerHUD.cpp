@@ -2,6 +2,7 @@
 #include "UI/GameVisualSettingsSubsystem.h"
 #include "UI/PlayerStatusWidget.h"
 #include "UI/WeaponChargeWidget.h"
+#include "Character/Boss/BossPuzzleIntroWidget.h"
 #include "Character/Player/PlayerBase.h"
 #include "Components/CapsuleComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -34,6 +35,62 @@ APlayerHUD::APlayerHUD()
 	PrimaryActorTick.bCanEverTick = true;
 	PrimaryActorTick.bStartWithTickEnabled = true;
 	SaveNotificationClass = USaveNotificationWidget::StaticClass();
+}
+
+void APlayerHUD::ShowLaserPuzzleIntro()
+{
+	APlayerController* PC = GetOwningPlayerController();
+	if (!IsValid(PC) || !PC->IsLocalController() || !PC->GetLocalPlayer())
+	{
+		return;
+	}
+	if (!LaserPuzzleIntroWidgetClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("HUD에 LaserPuzzleIntroWidgetClass를 지정하세요."));
+		return;
+	}
+
+	if (IsValid(LaserPuzzleIntroWidget.Get()))
+	{
+		LaserPuzzleIntroWidget->RemoveFromParent();
+	}
+	LaserPuzzleIntroWidget = CreateWidget<UBossPuzzleIntroWidget>(
+		PC, LaserPuzzleIntroWidgetClass);
+	if (!IsValid(LaserPuzzleIntroWidget.Get()))
+	{
+		return;
+	}
+
+	LaserPuzzleIntroWidget->AddToViewport(50);
+	LaserPuzzleIntroWidget->PlayIntro();
+}
+
+void APlayerHUD::ShowCorePuzzleIntro()
+{
+	APlayerController* PC = GetOwningPlayerController();
+	if (!IsValid(PC) || !PC->IsLocalController() || !PC->GetLocalPlayer())
+	{
+		return;
+	}
+	if (!CorePuzzleIntroWidgetClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("HUD에 CorePuzzleIntroWidgetClass를 지정하세요."));
+		return;
+	}
+
+	if (IsValid(CorePuzzleIntroWidget.Get()))
+	{
+		CorePuzzleIntroWidget->RemoveFromParent();
+	}
+	CorePuzzleIntroWidget = CreateWidget<UBossPuzzleIntroWidget>(
+		PC, CorePuzzleIntroWidgetClass);
+	if (!IsValid(CorePuzzleIntroWidget.Get()))
+	{
+		return;
+	}
+
+	CorePuzzleIntroWidget->AddToViewport(50);
+	CorePuzzleIntroWidget->PlayIntro();
 }
 
 void APlayerHUD::BeginPlay()
@@ -278,6 +335,16 @@ void APlayerHUD::SetPlayerUIVisible(bool bVisible)
 
 void APlayerHUD::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (IsValid(CorePuzzleIntroWidget.Get()))
+	{
+		CorePuzzleIntroWidget->RemoveFromParent();
+	}
+	CorePuzzleIntroWidget = nullptr;
+	if (IsValid(LaserPuzzleIntroWidget.Get()))
+	{
+		LaserPuzzleIntroWidget->RemoveFromParent();
+	}
+	LaserPuzzleIntroWidget = nullptr;
 	if (GetGameInstance()) GetGameInstance()->GetSubsystem<UProgressSaveSubsystem>()->OnCheckpointSaveFinished.RemoveDynamic(this, &APlayerHUD::CheckpointSaveFinished);
 	if (SaveNotification) SaveNotification->RemoveFromParent();
 	SaveNotification = nullptr;

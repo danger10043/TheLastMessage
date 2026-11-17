@@ -18,7 +18,7 @@ constexpr TCHAR CoreViewerBinding[] = TEXT("CoreViewer");
 constexpr TCHAR CoreViewerGamepadBinding[] = TEXT("CoreViewerGamepad");
 
 // EKeys는 다른 번역 단위의 정적 변수라 전역 초기화에 쓰지 않고 함수로 꺼낸다.
-FKey GetDefaultCoreViewerGamepadKey() { return EKeys::Gamepad_RightShoulder; }
+FKey GetDefaultCoreViewerGamepadKey() { return EKeys::Gamepad_FaceButton_Top; }
 
 bool IsBindableKeyboardKey(const FKey& Key)
 {

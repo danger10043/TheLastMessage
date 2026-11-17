@@ -9,6 +9,8 @@
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
 #include "Components/SizeBox.h"
+#include "Components/ScrollBox.h"
+#include "Framework/Application/SlateApplication.h"
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
@@ -356,6 +358,11 @@ void UStartMenuWidget::ShowError(const FText& Message)
 FReply UStartMenuWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, const FKeyEvent& Event)
 {
 	const FKey Key = Event.GetKey();
+	if (Key == EKeys::SpaceBar && Pages && Pages->GetActiveWidget() == WidgetTree->FindWidget(TEXT("CreditsPage")))
+	{
+		bCreditsSpaceHeld = true;
+		return FReply::Handled();
+	}
 	if (Pages && (Key == EKeys::Up || Key == EKeys::Down))
 	{
 		if (bWorking) return FReply::Handled();
@@ -400,4 +407,39 @@ FReply UStartMenuWidget::NativeOnKeyDown(const FGeometry& Geometry, const FKeyEv
 	return Super::NativeOnKeyDown(Geometry, Event);
 }
 
-void UStartMenuWidget::NativeTick(const FGeometry& Geometry, float DeltaTime) { Super::NativeTick(Geometry, DeltaTime); FactoryMenuStyle::UpdateFocus(WidgetTree); }
+FReply UStartMenuWidget::NativeOnKeyUp(const FGeometry& Geometry, const FKeyEvent& Event)
+{
+	if (Event.GetKey() == EKeys::SpaceBar && bCreditsSpaceHeld)
+	{
+		bCreditsSpaceHeld = false;
+		return FReply::Handled();
+	}
+	return Super::NativeOnKeyUp(Geometry, Event);
+}
+
+void UStartMenuWidget::NativeTick(const FGeometry& Geometry, float DeltaTime)
+{
+	Super::NativeTick(Geometry, DeltaTime);
+	FactoryMenuStyle::UpdateFocus(WidgetTree);
+
+	auto* Credits = Cast<UUserWidget>(Pages ? Pages->GetActiveWidget() : nullptr);
+	if (!Credits || Credits->GetFName() != TEXT("CreditsPage"))
+	{
+		bCreditsSpaceHeld = false;
+		return;
+	}
+
+	if (!HasAnyUserFocus() && !HasFocusedDescendants())
+		bCreditsSpaceHeld = false;
+
+	const bool bLeftMouseHeld = FSlateApplication::IsInitialized() &&
+		FSlateApplication::Get().GetPressedMouseButtons().Contains(EKeys::LeftMouseButton);
+	if (!bCreditsSpaceHeld && !bLeftMouseHeld) return;
+
+	if (auto* Scroll = Cast<UScrollBox>(Credits->GetWidgetFromName(TEXT("CreditsScroll"))))
+	{
+		// WBP_StartMenu supplies the normal 40 units/sec and handles looping.
+		constexpr float ExtraScrollSpeed = 120.0f;
+		Scroll->SetScrollOffset(FMath::Min(Scroll->GetScrollOffset() + ExtraScrollSpeed * DeltaTime, Scroll->GetScrollOffsetOfEnd()));
+	}
+}

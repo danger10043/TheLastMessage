@@ -38,6 +38,7 @@ protected:
 	virtual void NativeConstruct() override;
 	virtual void NativeTick(const FGeometry& Geometry, float DeltaTime) override;
 	virtual FReply NativeOnKeyDown(const FGeometry& Geometry, const FKeyEvent& Event) override;
+	virtual FReply NativeOnKeyUp(const FGeometry& Geometry, const FKeyEvent& Event) override;
 	virtual FReply NativeOnPreviewKeyDown(const FGeometry& Geometry, const FKeyEvent& Event) override;
 	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UWidgetSwitcher> Pages;
 	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UButton> NewGameButton;
@@ -73,6 +74,7 @@ private:
 	UFUNCTION() void CancelOverwrite();
 	bool bNewGame = true;
 	bool bWorking = false;
+	bool bCreditsSpaceHeld = false;
 	int32 PendingSlot = 0;
 	bool Occupied[3] = {false, false, false};
 	bool Loadable[3] = {false, false, false};

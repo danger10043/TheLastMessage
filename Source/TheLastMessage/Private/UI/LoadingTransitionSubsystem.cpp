@@ -168,6 +168,16 @@ bool ULoadingTransitionSubsystem::Tick(float Delta)
    return true;
   }
  }
+ // 방 스트리밍 시작 단계: 맵이 처음 열리면 모든 방이 한꺼번에 올라와 있어서, 필요 없는 방을 내리는 동안 렉이 생긴다.
+ // 그 정리가 끝날 때까지 로딩 화면을 유지한다.
+ UWorld* GameWorld=GetGameInstance()->GetWorld();
+ URoomStreamingSubsystem* StartupRooms=GameWorld?GameWorld->GetSubsystem<URoomStreamingSubsystem>():nullptr;
+ if(StartupRooms && StartupRooms->IsStartupPhase() && !bLoading && !bDeath)
+ {
+  // 맵 로딩 화면이 없었던 경우(에디터 PIE 등): 지금 로딩 화면을 띄운다.
+  PreLoad(TEXT("")); Started=Now-1.0;
+  if(bLoading) bArrived=true;
+ }
  if(!bLoading || !bArrived) return true;
  auto* PC=GetGameInstance()->GetFirstLocalPlayerController(); if(!PC) return true;
  if(!PC->IsMoveInputIgnored()) PC->SetIgnoreMoveInput(true); if(!PC->IsLookInputIgnored()) PC->SetIgnoreLookInput(true);
@@ -199,6 +209,11 @@ bool ULoadingTransitionSubsystem::Tick(float Delta)
   bWaitingForSpawnFloor=false; bRespawnFloorWait=false;
   if(LockedSpawnPlayer.Get()==Player) Movement->SetDefaultMovementMode();
   LockedSpawnPlayer.Reset();
+ }
+ if(StartupRooms && StartupRooms->IsStartupPhase())
+ {
+  if(!StartupRooms->IsStartupSettled()) return true;
+  StartupRooms->EndStartupPhase();
  }
  if(!bFading && (!IndicatorAt || Now-IndicatorAt>=0.3)){bFading=true;ReadyAt=Now;}
  if(bFading && Now-ReadyAt>=0.5)

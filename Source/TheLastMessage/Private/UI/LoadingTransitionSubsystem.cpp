@@ -3,6 +3,7 @@
 #include "Save/ProgressSaveSubsystem.h"
 #include "Save/ProgressSaveGame.h"
 #include "Map/RoomStreamingSubsystem.h"
+#include "Framework/CutsceneFreezeSubsystem.h"
 #include "Engine/GameInstance.h"
 #include "Engine/GameViewportClient.h"
 #include "Engine/World.h"
@@ -84,6 +85,9 @@ void ULoadingTransitionSubsystem::OnMapLoaded(UWorld* World)
  const auto* Progress=Saves->GetWorkingProgress();
  bWaitingForSpawnFloor=Saves->GetActiveSlot()>0 && Progress
   && Progress->MapPackage==UWorld::RemovePIEPrefix(World->GetOutermost()->GetName());
+ // 방이 처음부터 올라오지 않으므로, 시작 방의 바닥이 올라올 때까지 플레이어가 떨어지지 않게 붙잡아 둔다(최대 12초).
+ if(const URoomStreamingSubsystem* StartRooms=World->GetSubsystem<URoomStreamingSubsystem>(); StartRooms && StartRooms->IsStartupPhase())
+ {bWaitingForSpawnFloor=true; bRespawnFloorWait=true; RespawnFloorStart=FPlatformTime::Seconds();}
  if(auto* PC=GetGameInstance()->GetFirstLocalPlayerController())
   LockSpawnMovement(Cast<APlayerBase>(PC->GetPawn()));
 }
@@ -119,6 +123,10 @@ bool ULoadingTransitionSubsystem::BeginDeath(APlayerBase* Player,float Delay)
 bool ULoadingTransitionSubsystem::Tick(float Delta)
 {
  const double Now=FPlatformTime::Seconds();
+ // 로딩 화면이 떠 있는 동안(맵 로딩·시작 정리·부활 대기)은 플레이어가 조작할 수 없으므로 몬스터를 멈추고 플레이어를 피해에서 보호한다.
+ if(UWorld* FreezeWorld=GetGameInstance()?GetGameInstance()->GetWorld():nullptr)
+  if(UCutsceneFreezeSubsystem* Freeze=FreezeWorld->GetSubsystem<UCutsceneFreezeSubsystem>())
+   Freeze->SetFreezeSource(TEXT("Loading"),bLoading||bRespawnOverlay);
  if(!bLoading && PendingDeathPlayer.IsValid())
  {
   APlayerBase* Pending=PendingDeathPlayer.Get(); PendingDeathPlayer.Reset();
@@ -176,7 +184,12 @@ bool ULoadingTransitionSubsystem::Tick(float Delta)
  {
   // 맵 로딩 화면이 없었던 경우(에디터 PIE 등): 지금 로딩 화면을 띄운다.
   PreLoad(TEXT("")); Started=Now-1.0;
-  if(bLoading) bArrived=true;
+  if(bLoading)
+  {
+   bArrived=true;
+   // 시작 방의 바닥이 올라올 때까지 플레이어가 떨어지지 않게 붙잡아 둔다(최대 12초).
+   bWaitingForSpawnFloor=true; bRespawnFloorWait=true; RespawnFloorStart=Now;
+  }
  }
  if(!bLoading || !bArrived) return true;
  auto* PC=GetGameInstance()->GetFirstLocalPlayerController(); if(!PC) return true;

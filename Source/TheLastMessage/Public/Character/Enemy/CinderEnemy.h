@@ -215,8 +215,14 @@ private:
 	bool TraceSurface(const FVector& Start, const FVector& End, FHitResult& OutHit) const;
 	static FVector ProjectNormal(const FVector& Normal);
 
-	/** 스폰 위치에서 가장 가까운 표면에 붙는다. */
-	void SnapToSurface();
+	/**
+	 * 몸 중심을 Center에 두어도 몸(반지름 SurfaceOffset * BodyClearanceScale)이 지형에 끼지 않는지 확인한다.
+	 * 표면 추적은 선이라 몸 크기를 모르므로, 이동하기 전에 이 검사로 좁은 틈에 들어가는 것을 막는다(XZ 평면 8방향 복합 콜리전 선).
+	 */
+	bool HasBodyClearance(const FVector& Center) const;
+
+	/** 스폰 위치에서 가장 가까운 표면에 붙는다. 찾으면 true. 못 찾으면 위쪽을 바닥으로 보고 스폰 위치에 둔다. */
+	bool SnapToSurface(bool bLogIfMissing);
 	void ResetCinderState();
 	void BeginPatrolWait();
 
@@ -247,6 +253,16 @@ private:
 	FVector CrawlPosition = FVector::ZeroVector;
 	float MoveSign = 1.f;
 	float LaneY = 0.f;
+
+	/** 몸 크기 검사 반지름 비율(SurfaceOffset 기준). 표면 자체는 닿지 않도록 1보다 작게 둔다. */
+	static constexpr float BodyClearanceScale = 0.9f;
+
+	/** 스폰 때 표면을 못 찾았을 때 다시 찾아보는 시간(초). 방이 막 올라온 순간에는 바닥 충돌이 아직 없을 수 있다. */
+	static constexpr float SnapRetryDuration = 3.f;
+
+	/** 표면을 찾았는가. 못 찾았으면 TickCrawl이 SnapRetryRemaining 동안 다시 찾는다. */
+	bool bSurfaceFound = false;
+	float SnapRetryRemaining = 0.f;
 
 	float PatrolRemaining = 0.f;
 	float WaitRemaining = 0.f;

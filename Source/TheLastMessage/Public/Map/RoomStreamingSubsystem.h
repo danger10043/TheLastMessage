@@ -26,11 +26,15 @@ public:
 	virtual bool DoesSupportWorldType(const EWorldType::Type WorldType) const override;
 	virtual void Tick(float DeltaTime) override;
 	virtual TStatId GetStatId() const override;
+	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
+	virtual void Deinitialize() override;
 	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
 
 	/**
-	 * 시작 단계: 맵이 처음 열리면 모든 방이 한꺼번에 올라와 있다. 이 구간에서는 불필요한 방을 대기 없이 바로 내리고,
-	 * 정리가 끝날 때까지(IsStartupSettled) 로딩 화면이 유지되도록 LoadingTransitionSubsystem이 EndStartupPhase를 늦춘다.
+	 * 시작 단계: 맵이 처음 열릴 때 방은 처음부터 올리지 않고, 시작 리전(저장된 체크포인트 또는 설정의 StartRegionId)과 이어진 방만 올린다.
+	 * 레벨 인스턴스는 부모 레벨이 붙을 때 자동으로 로드를 요청하므로, 필요 없는 방은 그 요청을 바로 취소한다(HandleLevelAdded).
+	 * 이 구간에서는 대기 없이 바로 정리하고, 정리가 끝날 때까지(IsStartupSettled) 로딩 화면이 유지되도록
+	 * LoadingTransitionSubsystem이 EndStartupPhase를 늦춘다.
 	 */
 	bool IsStartupPhase() const { return bStartupPhase; }
 	/** 플레이어 위치의 리전 기준으로 필요한 방이 모두 올라오고 나머지가 모두 내려갔는가. 오래 걸리면(최대 25초) true로 포기한다. */
@@ -64,6 +68,13 @@ public:
 
 private:
 	bool AreDesiredRoomsLoaded() const;
+
+	/** 레벨이 월드에 붙은 직후: 그 안의 방 레벨 인스턴스 중 지금 필요 없는 방의 로드 요청을 취소한다. */
+	void HandleLevelAdded(ULevel* Level, UWorld* World);
+	FDelegateHandle LevelAddedHandle;
+
+	/** 시작할 때 처음 올릴 리전(체크포인트 → 설정). 없으면 NAME_None. */
+	FName ResolveStartRegion() const;
 
 	void Update();
 	FName FindRegionAtPlayer() const;

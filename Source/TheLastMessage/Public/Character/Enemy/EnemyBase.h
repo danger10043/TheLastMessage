@@ -41,6 +41,13 @@ public:
 
 	virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override;
 
+	/**
+	 * 시야 감지(AI Perception)의 시작 위치. 엔진 기본은 액터 위치에서 월드 위쪽(+Z)으로 BaseEyeHeight만큼이라서,
+	 * 천장에 거꾸로 달리거나 벽에 붙은 몬스터는 눈이 천장·벽 속에 들어가 플레이어가 보이지 않는다.
+	 * 액터의 위쪽 방향(붙은 면에서 바깥쪽)으로 올려서 어떤 방향으로 설치해도 지형 밖에서 시작하게 한다.
+	 */
+	virtual FVector GetPawnViewLocation() const override;
+
 	/** 스폰 직후 호출. 여러 번 호출해도 한 번만 초기화된다. */
 	UFUNCTION(BlueprintCallable, Category = "Enemy")
 	void InitializeEnemy();
@@ -159,6 +166,17 @@ public:
 	/** 풀에 보관 중(비활성)인지 */
 	UFUNCTION(BlueprintPure, Category = "Enemy|Pool")
 	bool IsPooled() const { return bInPool; }
+
+	/**
+	 * 로딩 화면·문 열림 연출 동안 몬스터를 멈추거나 푼다(UCutsceneFreezeSubsystem이 부른다).
+	 * 멈추면 시간 흐름을 거의 0으로 하고(애니메이션·이동 정지), 진행 중인 공격을 취소하고, AI를 일시정지한다.
+	 * 죽었거나 풀에 있는 몬스터는 건드리지 않는다.
+	 */
+	void SetCutsceneFrozen(bool bFrozen);
+	bool IsCutsceneFrozen() const { return bCutsceneFrozen; }
+
+	/** 멈춤 상태에 맞춰 AI를 일시정지/재개한다. 컨트롤러가 늦게 붙거나 AI가 다시 시작될 때도 불러 준다(여러 번 불러도 안전). */
+	void ApplyFreezeToAI();
 
 	/** 풀로 돌아갈 때 호출된다(스폰 포인트가 참조를 정리하는 데 사용). */
 	UPROPERTY(BlueprintAssignable, Category = "Enemy|Events")
@@ -465,6 +483,11 @@ private:
 
 	/** 풀에 보관 중인지 */
 	bool bInPool = false;
+
+	/** 로딩·연출로 멈춰 있는지, 멈추기 전 시간 흐름 값, 이 멈춤이 AI를 일시정지시켰는지 */
+	bool bCutsceneFrozen = false;
+	float PreFreezeTimeDilation = 1.f;
+	bool bFreezePausedAI = false;
 
 	/** 사망으로 꺼 두는 캡슐 충돌을 풀에서 다시 꺼낼 때 복구하기 위한 원래 값 */
 	ECollisionEnabled::Type DefaultCapsuleCollision = ECollisionEnabled::QueryAndPhysics;

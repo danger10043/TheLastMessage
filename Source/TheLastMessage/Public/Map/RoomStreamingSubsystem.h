@@ -4,7 +4,9 @@
 #include "Subsystems/WorldSubsystem.h"
 #include "RoomStreamingSubsystem.generated.h"
 
+class AActor;
 class ALevelInstance;
+class ULevel;
 struct FRoomStreamEntry;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogRoomStreaming, Log, All);
@@ -66,7 +68,30 @@ public:
 	/** 목록의 방이 모두 로드되었는가. 이 맵에 없는 방은 로드된 것으로 본다. */
 	bool AreRoomsLoaded(const TArray<FName>& RoomIds) const;
 
+	/**
+	 * 방 레벨이 아니라 부모 레벨(Area 레벨, LV_Main)에 놓인 액터가 방이 내려갔을 때 허공에 남지 않게 한다.
+	 * 액터에 태그 "RoomBound.<방 번호>"(예: RoomBound.01)를 달면, 그 방이 로드되어 있을 때만 보이고 충돌·틱이 켜진다.
+	 * 방이 내려가면 숨기고 충돌·틱을 끈다. 상태(스위치 켜짐 등)는 액터에 그대로 남는다.
+	 * 다른 액터에 붙어 있으면(플레이어가 들고 있는 아이템 등) 방과 상관없이 켜 둔다.
+	 */
+	static const TCHAR* RoomBoundTagPrefix() { return TEXT("RoomBound."); }
+
 private:
+	struct FRoomBoundActor
+	{
+		TWeakObjectPtr<AActor> Actor;
+		FName RoomId;
+		bool bEnabled = true;
+		bool bOrigHidden = false;
+		bool bOrigCollision = true;
+		bool bOrigTick = true;
+	};
+
+	/** 레벨 안에서 RoomBound 태그가 달린 액터를 찾아 등록하고 바로 상태를 맞춘다. */
+	void RegisterBoundActors(ULevel* Level);
+	void ApplyBoundActors();
+	TArray<FRoomBoundActor> BoundActors;
+
 	bool AreDesiredRoomsLoaded() const;
 
 	/** 레벨이 월드에 붙은 직후: 그 안의 방 레벨 인스턴스 중 지금 필요 없는 방의 로드 요청을 취소한다. */

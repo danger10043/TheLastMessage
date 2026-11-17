@@ -85,6 +85,9 @@ void ULoadingTransitionSubsystem::OnMapLoaded(UWorld* World)
  const auto* Progress=Saves->GetWorkingProgress();
  bWaitingForSpawnFloor=Saves->GetActiveSlot()>0 && Progress
   && Progress->MapPackage==UWorld::RemovePIEPrefix(World->GetOutermost()->GetName());
+ // 방이 처음부터 올라오지 않으므로, 시작 방의 바닥이 올라올 때까지 플레이어가 떨어지지 않게 붙잡아 둔다(최대 12초).
+ if(const URoomStreamingSubsystem* StartRooms=World->GetSubsystem<URoomStreamingSubsystem>(); StartRooms && StartRooms->IsStartupPhase())
+ {bWaitingForSpawnFloor=true; bRespawnFloorWait=true; RespawnFloorStart=FPlatformTime::Seconds();}
  if(auto* PC=GetGameInstance()->GetFirstLocalPlayerController())
   LockSpawnMovement(Cast<APlayerBase>(PC->GetPawn()));
 }
@@ -181,7 +184,12 @@ bool ULoadingTransitionSubsystem::Tick(float Delta)
  {
   // 맵 로딩 화면이 없었던 경우(에디터 PIE 등): 지금 로딩 화면을 띄운다.
   PreLoad(TEXT("")); Started=Now-1.0;
-  if(bLoading) bArrived=true;
+  if(bLoading)
+  {
+   bArrived=true;
+   // 시작 방의 바닥이 올라올 때까지 플레이어가 떨어지지 않게 붙잡아 둔다(최대 12초).
+   bWaitingForSpawnFloor=true; bRespawnFloorWait=true; RespawnFloorStart=Now;
+  }
  }
  if(!bLoading || !bArrived) return true;
  auto* PC=GetGameInstance()->GetFirstLocalPlayerController(); if(!PC) return true;

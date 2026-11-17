@@ -9,6 +9,10 @@
 #include "LevelInstance/LevelInstanceInterface.h"
 #include "LevelInstance/LevelInstanceSubsystem.h"
 #include "HAL/IConsoleManager.h"
+#include "Engine/GameInstance.h"
+#include "UObject/Package.h"
+#include "Save/ProgressSaveSubsystem.h"
+#include "Save/ProgressSaveGame.h"
 
 DEFINE_LOG_CATEGORY(LogRoomStreaming);
 
@@ -43,6 +47,85 @@ namespace
 	constexpr double StartupGiveUpSeconds = 8.0;
 	/** 시작 단계 정리를 기다리는 최대 시간(초). */
 	constexpr double StartupMaxWaitSeconds = 25.0;
+}
+
+FName URoomStreamingSubsystem::ResolveStartRegion() const
+{
+	const UWorld* World = GetWorld();
+	if (const UGameInstance* GameInstance = World ? World->GetGameInstance() : nullptr)
+	{
+		if (const UProgressSaveSubsystem* Saves = GameInstance->GetSubsystem<UProgressSaveSubsystem>())
+		{
+			const UProgressSaveGame* Progress = Saves->GetWorkingProgress();
+			// 이어하기: 저장된 체크포인트가 이 맵에 있으면 그 리전부터 올린다.
+			if (Saves->GetActiveSlot() > 0 && Progress && !Progress->CheckpointRegionId.IsNone()
+				&& Progress->MapPackage == UWorld::RemovePIEPrefix(World->GetOutermost()->GetName()))
+			{
+				return Progress->CheckpointRegionId;
+			}
+		}
+	}
+	return GetDefault<URoomStreamingSettings>()->StartRegionId;
+}
+
+void URoomStreamingSubsystem::Initialize(FSubsystemCollectionBase& Collection)
+{
+	Super::Initialize(Collection);
+
+	// 방 레벨 인스턴스는 부모 레벨이 붙을 때 로드를 요청하므로, 필요 없는 방은 로드가 시작되기 전에 그 요청을 취소한다.
+	LevelAddedHandle = FWorldDelegates::LevelAddedToWorld.AddUObject(this, &URoomStreamingSubsystem::HandleLevelAdded);
+
+	// 플레이어가 어느 방에 있는지는 방 안의 리전 액터로 알 수 있는데, 방이 올라오기 전에는 그 액터가 없다.
+	// 그래서 시작할 때만 저장된 체크포인트(또는 설정)의 리전으로 올릴 방을 정해 둔다.
+	const FName Start = ResolveStartRegion();
+	TSet<FName> StartRooms;
+	if (!Start.IsNone() && BuildDesiredRooms(Start, StartRooms))
+	{
+		CurrentRegionId = Start;
+		DesiredRooms = MoveTemp(StartRooms);
+		bHasDesired = true;
+		UE_LOG(LogRoomStreaming, Log, TEXT("Start region %s -> rooms %s"), *Start.ToString(),
+			*FString::JoinBy(DesiredRooms, TEXT(", "), [](const FName& Name) { return Name.ToString(); }));
+	}
+	else if (!Start.IsNone())
+	{
+		UE_LOG(LogRoomStreaming, Warning, TEXT("시작 리전 %s이(가) 방/복도 설정에 없습니다. 처음에 모든 방이 올라옵니다."), *Start.ToString());
+	}
+}
+
+void URoomStreamingSubsystem::Deinitialize()
+{
+	FWorldDelegates::LevelAddedToWorld.Remove(LevelAddedHandle);
+	Super::Deinitialize();
+}
+
+void URoomStreamingSubsystem::HandleLevelAdded(ULevel* Level, UWorld* InWorld)
+{
+	// 올릴 방을 아직 모르면(시작 리전이 없을 때) 예전처럼 모두 올라오게 둔다.
+	if (!Level || InWorld != GetWorld() || !bHasDesired) return;
+	ULevelInstanceSubsystem* LevelInstances = InWorld->GetSubsystem<ULevelInstanceSubsystem>();
+	if (!LevelInstances) return;
+
+	TSet<FName> Wanted = DesiredRooms;
+	for (const TPair<FName, int32>& Pin : PinnedRooms) Wanted.Add(Pin.Key);
+
+	const URoomStreamingSettings* Settings = GetDefault<URoomStreamingSettings>();
+	for (AActor* Actor : Level->Actors)
+	{
+		ALevelInstance* Instance = Cast<ALevelInstance>(Actor);
+		if (!Instance) continue;
+		const FName Package(*Instance->GetWorldAsset().GetLongPackageName());
+		for (const FRoomStreamEntry& Room : Settings->Rooms)
+		{
+			if (FName(*Room.Level.GetLongPackageName()) != Package) continue;
+			if (!Wanted.Contains(Room.RoomId))
+			{
+				LevelInstances->RequestUnloadLevelInstance(Instance);
+				UE_LOG(LogRoomStreaming, Verbose, TEXT("Skip initial load of room %s"), *Room.RoomId.ToString());
+			}
+			break;
+		}
+	}
 }
 
 void URoomStreamingSubsystem::OnWorldBeginPlay(UWorld& InWorld)
@@ -113,7 +196,9 @@ void URoomStreamingSubsystem::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 	Accumulated += DeltaTime;
-	if (Accumulated < GetDefault<URoomStreamingSettings>()->UpdateIntervalSeconds) return;
+	// 시작 단계에서는 로딩 화면 뒤라서 더 자주 확인해 빨리 정리한다.
+	const float Interval = bStartupPhase ? 0.1f : GetDefault<URoomStreamingSettings>()->UpdateIntervalSeconds;
+	if (Accumulated < Interval) return;
 	Accumulated = 0.f;
 	Update();
 }

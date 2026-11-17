@@ -12,19 +12,20 @@ namespace
 const TCHAR* const ConfigSection = TEXT("Internationalization");
 const TCHAR* const ConfigKey = TEXT("Culture");
 
-// 순서: 2열 그리드에 왼쪽에서 오른쪽, 위에서 아래로 놓인다. 국기만으로는 언어가 구분되지 않아 항상 이름과 함께 보여 준다.
+// 순서: 2열 그리드에 왼쪽에서 오른쪽, 위에서 아래로 놓인다. 국기는 쓰지 않고 그 언어로 쓴 이름만 보여 준다.
 const FGameLanguage SupportedLanguages[] = {
-	{TEXT("ko"), TEXT("한국어"), TEXT("kr")},
-	{TEXT("en"), TEXT("English"), TEXT("us")},
-	{TEXT("zh-Hans"), TEXT("简体中文"), TEXT("cn")},
-	// 중국 출시 시 대만 국기 표기가 문제될 수 있어 국기 대신 "繁" 배지를 쓴다.
-	{TEXT("zh-Hant"), TEXT("繁體中文"), nullptr},
-	{TEXT("ja"), TEXT("日本語"), TEXT("jp")},
-	{TEXT("ru"), TEXT("Русский"), TEXT("ru")},
-	{TEXT("es-419"), TEXT("Español (Latinoamérica)"), TEXT("mx")},
-	{TEXT("pt-BR"), TEXT("Português (Brasil)"), TEXT("br")},
-	{TEXT("de"), TEXT("Deutsch"), TEXT("de")},
-	{TEXT("fr"), TEXT("Français"), TEXT("fr")},
+	{TEXT("ko"), TEXT("한국어")},
+	{TEXT("en"), TEXT("English")},
+	{TEXT("zh-Hans"), TEXT("简体中文")},
+	{TEXT("zh-Hant"), TEXT("繁體中文")},
+	{TEXT("ja"), TEXT("日本語")},
+	{TEXT("ru"), TEXT("Русский")},
+	{TEXT("es-419"), TEXT("Español (Latinoamérica)")},
+	{TEXT("pt-BR"), TEXT("Português (Brasil)")},
+	{TEXT("de"), TEXT("Deutsch")},
+	{TEXT("fr"), TEXT("Français")},
+	{TEXT("it"), TEXT("Italiano")},
+	{TEXT("tr"), TEXT("Türkçe")},
 };
 
 // 에디터에서 고른 게임 언어(미리보기). 비어 있으면 미리보기를 쓰지 않는 중이다.
@@ -73,13 +74,6 @@ TConstArrayView<FGameLanguage> UGameLanguageSettingsSubsystem::GetSupportedLangu
 FName UGameLanguageSettingsSubsystem::GetLanguageWidgetName(const FGameLanguage& Language)
 {
 	return FName(*(FString(TEXT("Language_")) + FString(Language.Culture).Replace(TEXT("-"), TEXT("_"))));
-}
-
-FString UGameLanguageSettingsSubsystem::GetFlagTexturePath(const FGameLanguage& Language)
-{
-	return Language.FlagCode
-		? FString::Printf(TEXT("/Game/Main/UI/Flags/T_Flag_%s.T_Flag_%s"), Language.FlagCode, Language.FlagCode)
-		: FString();
 }
 
 int32 UGameLanguageSettingsSubsystem::FindSupportedLanguage(const FString& Culture)

@@ -3,6 +3,7 @@
 #include "Save/ProgressSaveSubsystem.h"
 #include "Save/ProgressSaveGame.h"
 #include "Map/RoomStreamingSubsystem.h"
+#include "Framework/CutsceneFreezeSubsystem.h"
 #include "Engine/GameInstance.h"
 #include "Engine/GameViewportClient.h"
 #include "Engine/World.h"
@@ -119,6 +120,10 @@ bool ULoadingTransitionSubsystem::BeginDeath(APlayerBase* Player,float Delay)
 bool ULoadingTransitionSubsystem::Tick(float Delta)
 {
  const double Now=FPlatformTime::Seconds();
+ // 로딩 화면이 떠 있는 동안(맵 로딩·시작 정리·부활 대기)은 플레이어가 조작할 수 없으므로 몬스터를 멈추고 플레이어를 피해에서 보호한다.
+ if(UWorld* FreezeWorld=GetGameInstance()?GetGameInstance()->GetWorld():nullptr)
+  if(UCutsceneFreezeSubsystem* Freeze=FreezeWorld->GetSubsystem<UCutsceneFreezeSubsystem>())
+   Freeze->SetFreezeSource(TEXT("Loading"),bLoading||bRespawnOverlay);
  if(!bLoading && PendingDeathPlayer.IsValid())
  {
   APlayerBase* Pending=PendingDeathPlayer.Get(); PendingDeathPlayer.Reset();

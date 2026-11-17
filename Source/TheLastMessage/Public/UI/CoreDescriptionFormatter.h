@@ -15,4 +15,9 @@ namespace CoreDescriptionFormatter
 	THELASTMESSAGE_API bool IsMaxLevel(const UCoreDataAsset& Data, int32 Level);
 	/** 보유 화면처럼 다음 단계 없이 지금 단계만 보여 줄 때의 문구. 예: "Lv.2 / 5", "Lv.5 / 5 · MAX", "Lv.3" */
 	THELASTMESSAGE_API FText MakeCurrentLevelText(const UCoreDataAsset& Data, int32 Level);
+	/**
+	 * 조작 줄 문구. DA의 CoreUsage에는 "[Space]"처럼 키만 적고, 여기서 "기본 키 : [Space]" 형식으로 만든다.
+	 * 키 매핑은 바꿀 수 있으므로 DA에 적힌 키는 기본값이라는 뜻을 붙인다. CoreUsage가 비어 있으면 빈 문구를 반환한다.
+	 */
+	THELASTMESSAGE_API FText MakeUsageText(const UCoreDataAsset& Data);
 }

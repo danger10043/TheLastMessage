@@ -56,8 +56,8 @@ public:
 	TArray<FCoreDescriptionValueBinding> DescriptionValues;
 
 	/**
-	 * 새 조작이 생기는 코어의 사용법. 예: "[E] 조준한 방향으로 갈고리 발사".
-	 * 카드와 툴팁에서 설명 아래 따로 표시하며, 비워 두면 조작 줄을 숨긴다(스탯형·자동 발동 코어).
+	 * 새 조작이 생기는 코어의 기본 키. 예: "[Space]". 동작 설명은 CoreDescription에 적는다.
+	 * 카드와 툴팁에서 "기본 키 : [Space]" 형식으로 설명 아래 따로 표시하며, 비워 두면 조작 줄을 숨긴다(스탯형·자동 발동 코어).
 	 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Core|Description", meta = (MultiLine = "true"))
 	FText CoreUsage;

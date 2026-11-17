@@ -58,7 +58,7 @@ void UCoreChoiceCardWidget::SetCoreData(UCoreDataAsset* InCoreData, int32 InDisp
 	const FText NameText = bHasCore ? CoreData->CoreName : FText::GetEmpty();
 	const FText DescriptionText = bHasCore ? CoreDescriptionFormatter::MakeDescription(*CoreData, InCurrentLevel) : FText::GetEmpty();
 	const FText LevelText = bHasCore ? CoreDescriptionFormatter::MakeLevelText(*CoreData, InCurrentLevel) : FText::GetEmpty();
-	const FText UsageText = bHasCore ? CoreData->CoreUsage : FText::GetEmpty();
+	const FText UsageText = bHasCore ? CoreDescriptionFormatter::MakeUsageText(*CoreData) : FText::GetEmpty();
 	if (CoreNameText) CoreNameText->SetText(NameText);
 	if (CoreDescriptionText) CoreDescriptionText->SetText(DescriptionText);
 	if (CoreLevelText) CoreLevelText->SetText(LevelText);

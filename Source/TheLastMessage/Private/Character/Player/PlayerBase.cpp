@@ -7,6 +7,7 @@
 #include "Character/Player/GrapplingHookComponent.h"
 #include "Map/AreaMapComponent.h"
 #include "Map/RoomStreamingSubsystem.h"
+#include "Framework/CutsceneFreezeSubsystem.h"
 #include "Engine/StaticMesh.h"
 #include "Character/Player/CombatFeedbackComponent.h"
 #include "AbilitySystemComponent.h"
@@ -1590,6 +1591,8 @@ bool APlayerBase::IsDead() const
 float APlayerBase::TakeDamage(float DamageAmount, const FDamageEvent& DamageEvent, AController* EventInstigator, AActor* DamageCauser)
 {
 	if (!HasAuthority() || IsDead() || !CanBeDamaged() || !FMath::IsFinite(DamageAmount) || DamageAmount <= 0.0f) return 0.0f;
+	// 로딩 화면이나 문 열림 연출처럼 조작할 수 없는 동안에는 피해를 받지 않는다.
+	if (const UCutsceneFreezeSubsystem* Freeze = UCutsceneFreezeSubsystem::Get(this)) if (Freeze->IsFrozen()) return 0.0f;
 	const float AcceptedDamage = Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
 	if (IsDead() || !FMath::IsFinite(AcceptedDamage) || AcceptedDamage <= 0.0f) return 0.0f;
 	// 엔진 기본 피해도 GAS와 같은 IncomingDamage 경로로 전달한다.

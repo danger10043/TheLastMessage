@@ -86,6 +86,9 @@ void AEnemyAIController::StartEnemyAI()
 	}
 
 	GetWorldTimerManager().SetTimer(BlackboardUpdateTimer, this, &AEnemyAIController::UpdateBlackboardTargetInfo, 0.1f, true);
+
+	// 로딩·연출로 멈춘 동안 AI가 (다시) 시작되면 바로 일시정지한다.
+	ControlledEnemy->ApplyFreezeToAI();
 }
 
 void AEnemyAIController::RestartEnemyAI()

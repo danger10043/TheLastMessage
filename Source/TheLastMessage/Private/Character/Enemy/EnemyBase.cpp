@@ -9,6 +9,7 @@
 #include "Character/Player/PlayerBase.h"
 #include "Perception/AIPerceptionComponent.h"
 #include "Framework/ActorPoolSubsystem.h"
+#include "Framework/CutsceneFreezeSubsystem.h"
 #include "TimerManager.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemGlobals.h"
@@ -55,6 +56,12 @@ AEnemyBase::AEnemyBase()
 UAbilitySystemComponent* AEnemyBase::GetAbilitySystemComponent() const
 {
 	return AbilitySystemComponent;
+}
+
+FVector AEnemyBase::GetPawnViewLocation() const
+{
+	// 바닥에 서 있는 몬스터는 액터 위쪽이 월드 위쪽이라 기존과 같다.
+	return GetActorLocation() + GetActorUpVector() * BaseEyeHeight;
 }
 
 void AEnemyBase::PostInitializeComponents()
@@ -111,6 +118,70 @@ void AEnemyBase::BeginPlay()
 	InitializeEnemy();
 
 	OnEnemyDamaged.AddUniqueDynamic(this, &AEnemyBase::HandleDamagedEffect);
+
+	// 로딩·연출로 멈춘 동안 새로 스폰된 몬스터(방 스트리밍)도 같이 멈춘다.
+	if (const UCutsceneFreezeSubsystem* Freeze = UCutsceneFreezeSubsystem::Get(this))
+	{
+		if (Freeze->IsFrozen())
+		{
+			SetCutsceneFrozen(true);
+		}
+	}
+}
+
+void AEnemyBase::SetCutsceneFrozen(bool bFrozen)
+{
+	if (bFrozen == bCutsceneFrozen)
+	{
+		return;
+	}
+
+	if (bFrozen)
+	{
+		if (IsDead() || bInPool)
+		{
+			return;
+		}
+
+		bCutsceneFrozen = true;
+		PreFreezeTimeDilation = CustomTimeDilation;
+		// 0이면 0으로 나누는 코드가 있을 수 있어 아주 작은 값으로 둔다. 애니메이션과 이동이 사실상 멈춘다.
+		CustomTimeDilation = 0.0001f;
+
+		// 진행 중인 공격(충전·발사 대기·예고 레이저)은 취소한다. 풀리면 BT가 다시 시작한다.
+		CancelAttack();
+	}
+	else
+	{
+		bCutsceneFrozen = false;
+		CustomTimeDilation = PreFreezeTimeDilation;
+	}
+
+	ApplyFreezeToAI();
+}
+
+void AEnemyBase::ApplyFreezeToAI()
+{
+	AEnemyAIController* AIC = Cast<AEnemyAIController>(GetController());
+	if (!AIC)
+	{
+		return;
+	}
+
+	if (bCutsceneFrozen)
+	{
+		// 돌진처럼 몬스터가 스스로 AI를 멈춰 둔 상태면 건드리지 않는다(풀 때도 우리가 멈춘 경우만 푼다).
+		if (!AIC->IsAIPaused())
+		{
+			AIC->PauseEnemyAI();
+			bFreezePausedAI = true;
+		}
+	}
+	else if (bFreezePausedAI)
+	{
+		bFreezePausedAI = false;
+		AIC->ResumeEnemyAI();
+	}
 }
 
 void AEnemyBase::InitializeEnemy()
@@ -889,6 +960,14 @@ void AEnemyBase::ReturnToPool()
 
 void AEnemyBase::OnReturnedToPool()
 {
+	// 멈춘 상태로 풀에 들어가면 시간 흐름이 0에 가까운 채로 남으므로 되돌린다. 다시 꺼낼 때 멈춤이 계속되면 그때 다시 건다.
+	if (bCutsceneFrozen)
+	{
+		bCutsceneFrozen = false;
+		CustomTimeDilation = PreFreezeTimeDilation;
+	}
+	bFreezePausedAI = false;
+
 	bInPool = true;
 
 	// 풀에 보관되는 동안 사망 물리가 계속 돌며 아래로 떨어지지 않게 먼저 원래대로 되돌린다.
@@ -922,6 +1001,15 @@ void AEnemyBase::OnAcquiredFromPool()
 {
 	bInPool = false;
 	ResetEnemy();
+
+	// 로딩·연출로 멈춘 동안 풀에서 꺼낸 몬스터도 같이 멈춘다(ResetEnemy가 AI를 다시 시작하므로 그 뒤에 건다).
+	if (const UCutsceneFreezeSubsystem* Freeze = UCutsceneFreezeSubsystem::Get(this))
+	{
+		if (Freeze->IsFrozen())
+		{
+			SetCutsceneFrozen(true);
+		}
+	}
 }
 
 void AEnemyBase::StartDeathPhysics()

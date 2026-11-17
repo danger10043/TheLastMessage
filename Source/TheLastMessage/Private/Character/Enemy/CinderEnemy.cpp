@@ -149,7 +149,9 @@ void ACinderEnemy::ResetCinderState()
 	Movement->GravityScale = 0.f;
 	Movement->SetMovementMode(MOVE_None);
 
-	SnapToSurface();
+	// 못 찾아도 바로 경고하지 않는다. 방이 막 올라온 순간에는 바닥 충돌이 아직 없을 수 있어서 TickCrawl이 잠시 더 찾아본다.
+	bSurfaceFound = SnapToSurface(false);
+	SnapRetryRemaining = bSurfaceFound ? 0.f : SnapRetryDuration;
 }
 
 // ---------------------------------------------------------------------------
@@ -177,8 +179,32 @@ bool ACinderEnemy::TraceSurface(const FVector& Start, const FVector& End, FHitRe
 		ObjectParams.AddObjectTypesToQuery(ECC_WorldDynamic);
 	}
 
-	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(CinderSurface), false, this);
+	// 복합 콜리전(실제 폴리곤)으로 추적한다. 단순 콜리전(박스 등)으로 하면 메시의 오목하게 들어간 부분이 채워져 있어서 몸이 공중에 뜬다.
+	// 에셋에서 Collision Complexity가 Use Simple Collision As Complex로 되어 있으면 단순 콜리전과 같아진다.
+	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(CinderSurface), true, this);
 	return World->LineTraceSingleByObjectType(OutHit, Start, End, ObjectParams, QueryParams);
+}
+
+bool ACinderEnemy::HasBodyClearance(const FVector& Center) const
+{
+	// 구 겹침 검사는 단순 콜리전만 보므로, 오목한 부분이 채워진 메시에서는 늘 막혔다고 나온다.
+	// 대신 몸 중심에서 XZ 평면의 8방향으로 복합 콜리전 선을 쏴서 몸 반지름 안에 지형이 있는지 본다.
+	const float Radius = SurfaceOffset * BodyClearanceScale;
+	static const FVector Directions[8] = {
+		FVector(1.f, 0.f, 0.f), FVector(-1.f, 0.f, 0.f), FVector(0.f, 0.f, 1.f), FVector(0.f, 0.f, -1.f),
+		FVector(0.7071f, 0.f, 0.7071f), FVector(-0.7071f, 0.f, 0.7071f),
+		FVector(0.7071f, 0.f, -0.7071f), FVector(-0.7071f, 0.f, -0.7071f)
+	};
+
+	FHitResult Hit;
+	for (const FVector& Direction : Directions)
+	{
+		if (TraceSurface(Center, Center + Direction * Radius, Hit))
+		{
+			return false;
+		}
+	}
+	return true;
 }
 
 FVector ACinderEnemy::GetTangent(float Sign) const
@@ -187,7 +213,7 @@ FVector ACinderEnemy::GetTangent(float Sign) const
 	return FVector(SurfaceNormal.Z, 0.f, -SurfaceNormal.X) * Sign;
 }
 
-void ACinderEnemy::SnapToSurface()
+bool ACinderEnemy::SnapToSurface(bool bLogIfMissing)
 {
 	const FVector Origin = GetActorLocation();
 	LaneY = Origin.Y;
@@ -221,8 +247,11 @@ void ACinderEnemy::SnapToSurface()
 	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("[Cinder] %s: %.0f 안에서 붙을 표면을 찾지 못했습니다. 스폰 위치를 표면 가까이로 옮기세요."),
-			*GetName(), SpawnSnapDistance);
+		if (bLogIfMissing)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[Cinder] %s: %.0f 안에서 붙을 표면을 찾지 못했습니다. 스폰 위치를 표면 가까이로 옮기세요."),
+				*GetName(), SpawnSnapDistance);
+		}
 		SurfaceNormal = FVector::UpVector;
 		CrawlPosition = Origin;
 	}
@@ -236,6 +265,7 @@ void ACinderEnemy::SnapToSurface()
 
 	// 정찰 기준점도 표면에 붙은 위치로 옮긴다.
 	SetHomeLocation(CrawlPosition);
+	return bFound;
 }
 
 float ACinderEnemy::CrawlStep(float DeltaTime, float Speed)
@@ -284,6 +314,18 @@ float ACinderEnemy::CrawlStep(float DeltaTime, float Speed)
 	}
 
 	NewPosition.Y = LaneY;
+
+	// 몸이 들어갈 수 없는 좁은 틈(얇은 판 사이 등)으로는 가지 않는다. 선 추적만으로는 틈의 폭을 알 수 없다.
+	if (!HasBodyClearance(NewPosition))
+	{
+		// 추격 중에는 목표 쪽 방향을 매 틱 다시 정하므로 뒤집지 않는다(제자리에서 좌우로 떠는 것을 막는다).
+		if (!GetCurrentTarget())
+		{
+			MoveSign = -MoveSign;
+		}
+		return 0.f;
+	}
+
 	CrawlPosition = NewPosition;
 	SurfaceNormal = NewNormal;
 
@@ -370,6 +412,17 @@ void ACinderEnemy::TickCrawl(float DeltaTime)
 {
 	UCharacterMovementComponent* Movement = GetCharacterMovement();
 	float Moved = 0.f;
+
+	// 스폰 때 표면을 못 찾았으면 잠시 동안 다시 찾는다(방이 막 올라와 충돌이 아직 없었을 수 있다). 찾을 때까지는 제자리에 있는다.
+	if (!bSurfaceFound && SnapRetryRemaining > 0.f)
+	{
+		SnapRetryRemaining -= DeltaTime;
+		bSurfaceFound = SnapToSurface(SnapRetryRemaining <= 0.f);
+		if (!bSurfaceFound && SnapRetryRemaining > 0.f)
+		{
+			return;
+		}
+	}
 
 	if (IsAttacking())
 	{

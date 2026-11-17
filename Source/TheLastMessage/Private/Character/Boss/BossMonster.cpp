@@ -832,6 +832,14 @@ void ABossMonster::HandleBossDeath()
         return;
     }
 
+    APawn* DeathTargetPawn = Cast<APawn>(GetCurrentTarget());
+    APlayerController* DeathPC = IsValid(DeathTargetPawn)
+        ? Cast<APlayerController>(DeathTargetPawn->GetController()) : nullptr;
+    if (!IsValid(DeathPC))
+    {
+        DeathPC = UGameplayStatics::GetPlayerController(this, 0);
+    }
+
     // 취소·체력 알림·이벤트 콜백보다 먼저 사망 상태를 확정한다.
     CurrentState = EBossState::Dead;
     bIsDefeated = true;
@@ -928,7 +936,103 @@ void ABossMonster::HandleBossDeath()
     OnBossStateChanged.Broadcast(EBossState::Dead);
     OnBossDied.Broadcast();
 
-    PlayDeathMontage();
+    if (!PlayBossDeathSequence(DeathPC))
+    {
+        PlayDeathMontage();
+    }
+}
+
+bool ABossMonster::PlayBossDeathSequence(APlayerController* InDeathController)
+{
+    if (!HasAuthority() || CurrentState != EBossState::Dead
+        || bIsResettingBoss || IsActorBeingDestroyed()
+        || bDeathSequenceStarted || !IsValid(InDeathController)
+        || InDeathController->GetWorld() != GetWorld()
+        || !IsValid(DeathSequenceActor.Get()))
+    {
+        return false;
+    }
+
+    ALevelSequenceActor* DeathActor = DeathSequenceActor.Get();
+    ULevelSequencePlayer* DeathPlayer = DeathActor->GetSequencePlayer();
+    if (DeathActor->GetWorld() != GetWorld()
+        || !IsValid(DeathPlayer) || !IsValid(DeathPlayer->GetSequence())
+        || DeathPlayer->IsPlaying() || DeathPlayer->IsPaused()
+        || DeathPlayer->GetDuration().AsSeconds() <= 0.0
+        || DeathPlayer->GetPlayRate() <= 0.f)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("보스 처치 시퀀스를 재생할 수 없습니다: %s"),
+            *GetNameSafe(DeathActor));
+        return false;
+    }
+
+    if (USkeletalMeshComponent* BossMesh = GetMesh())
+    {
+        BossMesh->bPauseAnims = false;
+        BossMesh->SetComponentTickEnabled(true);
+        BossMesh->VisibilityBasedAnimTickOption =
+            EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+        if (UAnimInstance* BossAnim = BossMesh->GetAnimInstance())
+        {
+            BossAnim->StopAllMontages(0.f);
+        }
+    }
+
+    DeathPlayer->SetPlaybackPosition(FMovieSceneSequencePlaybackParams(
+        DeathPlayer->GetStartTime().Time, EUpdatePositionMethod::Jump));
+    if (!IsValid(DeathPlayer) || CurrentState != EBossState::Dead
+        || bIsResettingBoss || IsActorBeingDestroyed())
+    {
+        return false;
+    }
+
+    bDeathSequenceStarted = true;
+    ActiveDeathSequencePlayer = DeathPlayer;
+    DeathSequenceController = InDeathController;
+    DeathPlayer->OnFinished.AddUniqueDynamic(
+        this, &ABossMonster::HandleBossDeathSequenceFinished);
+    DeathPlayer->OnStop.AddUniqueDynamic(
+        this, &ABossMonster::HandleBossDeathSequenceFinished);
+
+    if (ASideScrollingPlayerController* DeathPC =
+        Cast<ASideScrollingPlayerController>(InDeathController))
+    {
+        DeathPC->ClientSetBossSequenceInputBlocked(this, true);
+    }
+
+    DeathPlayer->Play();
+    return true;
+}
+
+void ABossMonster::StopBossDeathSequence()
+{
+    ULevelSequencePlayer* DeathPlayer = ActiveDeathSequencePlayer.Get();
+    APlayerController* DeathPC = DeathSequenceController.Get();
+    ActiveDeathSequencePlayer = nullptr;
+    DeathSequenceController.Reset();
+
+    if (IsValid(DeathPlayer))
+    {
+        DeathPlayer->OnFinished.RemoveDynamic(
+            this, &ABossMonster::HandleBossDeathSequenceFinished);
+        DeathPlayer->OnStop.RemoveDynamic(
+            this, &ABossMonster::HandleBossDeathSequenceFinished);
+        if (DeathPlayer->IsPlaying() || DeathPlayer->IsPaused())
+        {
+            DeathPlayer->Stop();
+        }
+    }
+
+    if (ASideScrollingPlayerController* LocalDeathPC =
+        Cast<ASideScrollingPlayerController>(DeathPC))
+    {
+        LocalDeathPC->ClientSetBossSequenceInputBlocked(this, false);
+    }
+}
+
+void ABossMonster::HandleBossDeathSequenceFinished()
+{
+    StopBossDeathSequence();
 }
 
 void ABossMonster::CompleteShieldPuzzle()
@@ -1166,6 +1270,23 @@ bool ABossMonster::TrySkipPhaseCinematic(APlayerController* RequestingController
         || bIsResettingBoss || IsActorBeingDestroyed())
     {
         return false;
+    }
+
+    ULevelSequencePlayer* DeathPlayer = ActiveDeathSequencePlayer.Get();
+    if (CurrentState == EBossState::Dead && IsValid(DeathPlayer)
+        && (DeathPlayer->IsPlaying() || DeathPlayer->IsPaused()))
+    {
+        if (DeathSequenceController.Get() != RequestingController)
+        {
+            return false;
+        }
+
+        DeathPlayer->GoToEndAndStop();
+        if (ActiveDeathSequencePlayer.Get() == DeathPlayer)
+        {
+            StopBossDeathSequence();
+        }
+        return true;
     }
 
     ULevelSequencePlayer* StartPlayer = ActiveLaserStartSequencePlayer.Get();
@@ -1803,6 +1924,7 @@ void ABossMonster::Tick(float DeltaSeconds)
 void ABossMonster::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
     StopPhaseSequence();
+    StopBossDeathSequence();
 
     if (IsValid(AbilitySystemComponent.Get())
         && HealthChangedDelegateHandle.IsValid())

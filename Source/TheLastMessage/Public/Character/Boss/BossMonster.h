@@ -242,6 +242,24 @@ protected:
     UPROPERTY(EditDefaultsOnly, Category = "Boss|Death")
     TObjectPtr<UAnimMontage> DeathMontage;
 
+    UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Boss|Death|Cinematic")
+    TObjectPtr<class ALevelSequenceActor> DeathSequenceActor;
+
+    bool PlayBossDeathSequence(class APlayerController* InDeathController);
+    void StopBossDeathSequence();
+
+    UFUNCTION()
+    void HandleBossDeathSequenceFinished();
+
+    UPROPERTY(Transient)
+    TObjectPtr<class ULevelSequencePlayer> ActiveDeathSequencePlayer;
+
+    UPROPERTY(Transient)
+    TWeakObjectPtr<class APlayerController> DeathSequenceController;
+
+    bool bDeathSequenceStarted = false;
+
+
     virtual void BeginPlay() override;
 
     virtual void PostInitializeComponents() override;

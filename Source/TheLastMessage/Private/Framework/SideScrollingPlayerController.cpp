@@ -4,13 +4,16 @@
 #include "Framework/SideScrollingPlayerController.h"
 #include "EnhancedInputSubsystems.h"
 #include "InputMappingContext.h"
+#include "UI/GameKeySettingsSubsystem.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/PlayerStart.h"
 #include "Character/Player/SideScrollingCharacter.h"
 #include "Engine/LocalPlayer.h"
 #include "Engine/World.h"
 #include "Blueprint/UserWidget.h"
-#include "../../TheLastMessage.h"
+// +수정----
+#include "TheLastMessage.h"
+// +--------
 #include "Widgets/Input/SVirtualJoystick.h"
 #include "EnhancedInputComponent.h"
 #include "Map/AreaMapComponent.h"
@@ -361,9 +364,10 @@ void ASideScrollingPlayerController::SetupInputComponent()
 		// add the input mapping context
 		if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer()))
 		{
+			auto* KeySettings = GetLocalPlayer()->GetSubsystem<UGameKeySettingsSubsystem>();
 			for (UInputMappingContext* CurrentContext : DefaultMappingContexts)
 			{
-				Subsystem->AddMappingContext(CurrentContext, 0);
+				Subsystem->AddMappingContext(KeySettings ? KeySettings->GetGameplayContext(CurrentContext) : CurrentContext, 0);
 			}
 
 			// only add these IMCs if we're not using mobile touch input
@@ -371,7 +375,7 @@ void ASideScrollingPlayerController::SetupInputComponent()
 			{
 				for (UInputMappingContext* CurrentContext : MobileExcludedMappingContexts)
 				{
-					Subsystem->AddMappingContext(CurrentContext, 0);
+					Subsystem->AddMappingContext(KeySettings ? KeySettings->GetGameplayContext(CurrentContext) : CurrentContext, 0);
 				}
 			}
 		}

@@ -1,4 +1,5 @@
 #include "UI/PlayerHUD.h"
+#include "UI/GameVisualSettingsSubsystem.h"
 #include "UI/PlayerStatusWidget.h"
 #include "UI/WeaponChargeWidget.h"
 #include "Character/Boss/BossPuzzleIntroWidget.h"
@@ -174,7 +175,7 @@ void APlayerHUD::DrawDamageVignette()
 		return;
 	}
 	const float Fade = 1.0f - FMath::Clamp((Age - 0.035f) / (Duration - 0.035f), 0.0f, 1.0f);
-	const float Opacity = 0.65f * Fade * Fade;
+	const float Opacity = 0.65f * Fade * Fade * UGameVisualSettingsSubsystem::GetFlashIntensity(GetWorld());
 	// A small vertex-colored mesh gives soft edges without a texture or material asset.
 	constexpr int32 Columns = 48, Rows = 32;
 	FCanvasTriangleItem Item(FVector2D::ZeroVector, FVector2D::ZeroVector, FVector2D::ZeroVector, GWhiteTexture);

@@ -166,6 +166,25 @@ void UStartMenuWidget::NativeConstruct()
 	MENU_CONTROL(SelectionText, UTextBlock);
 	MENU_CONTROL(ConfirmText, UTextBlock); MENU_CONTROL(ConfirmButton, UButton); MENU_CONTROL(CancelButton, UButton);
 #undef MENU_CONTROL
+	// 크레딧 문구는 WBP에 처음 만들 때 넣은 글이 남아 있으므로, 다국어 폰트 고지를 포함한 최신 문구로 바꾼다.
+	if (auto* Notice = Cast<UTextBlock>(WidgetTree->FindWidget(TEXT("FontCreditsText"))))
+	{
+		Notice->SetText(NSLOCTEXT("StartMenu", "ThirdPartyCredits",
+			"사용 글꼴 · SIL Open Font License 1.1\n"
+			"Orbit · © 2022 The Orbit Project Authors\n"
+			"Black Han Sans · © 2015 The Black Han Sans Project Authors\n"
+			"Pretendard, Pretendard JP · © 2021 Kil Hyung-jin\n"
+			"Russo One · © 2011-2012 Jovanny Lemonad\n"
+			"Exo 2 · © 2013 The Exo 2 Project Authors\n"
+			"Dela Gothic One · © 2020 The Dela Gothic Project Authors\n"
+			"Noto Sans JP/SC/TC · © 2014-2021 Adobe\n"
+			"Reserved Font Names: Pretendard, Russo"));
+		Notice->SetAutoWrapText(true);
+		// 줄이 늘어났으므로 크레딧 화면 안에 들어가도록 글자를 조금 줄인다.
+		FSlateFontInfo Font = Notice->GetFont();
+		Font.Size = FMath::Min(Font.Size, 16.f);
+		Notice->SetFont(Font);
+	}
 	SettingsButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("StartSettingsButton")));
 	if (SettingsButton) SettingsButton->OnClicked.AddUniqueDynamic(this, &ThisClass::OpenSettings);
 	if (NewGameButton) NewGameButton->OnClicked.AddUniqueDynamic(this, &UStartMenuWidget::ShowNewGameSlots);

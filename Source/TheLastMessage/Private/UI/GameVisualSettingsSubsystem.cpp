@@ -3,9 +3,14 @@
 #include "Character/Player/PlayerBase.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/Engine.h"
+#include "Engine/GameInstance.h"
+#include "Engine/World.h"
 #include "HAL/IConsoleManager.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Misc/ConfigCacheIni.h"
+#include "Blueprint/WidgetBlueprintLibrary.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Rendering/RenderingCommon.h"
 
 namespace
 {
@@ -41,12 +46,17 @@ void UGameVisualSettingsSubsystem::Initialize(FSubsystemCollectionBase& Collecti
 	ReadCustomColor(TEXT("CustomPlayerColor"), CustomPlayerColor);
 	GConfig->GetBool(VisualSettingsSection, TEXT("MotionBlur"), bMotionBlur, GGameUserSettingsIni);
 	GConfig->GetBool(VisualSettingsSection, TEXT("Bloom"), bBloom, GGameUserSettingsIni);
+	GConfig->GetBool(VisualSettingsSection, TEXT("ReduceFlashes"), bReduceFlashes, GGameUserSettingsIni);
+	GConfig->GetInt(VisualSettingsSection, TEXT("ColorVision"), ColorVision, GGameUserSettingsIni);
+	GConfig->GetFloat(VisualSettingsSection, TEXT("ColorVisionStrength"), ColorVisionStrength, GGameUserSettingsIni);
 	Brightness = FMath::IsFinite(Brightness) ? FMath::Clamp(Brightness, 0.f, 1.f) : 0.5f;
 	OutlineScale = FMath::IsFinite(OutlineScale) ? FMath::Clamp(OutlineScale, 0.f, 2.f) : DefaultOutlineScale;
 	OutlineBrightness = FMath::IsFinite(OutlineBrightness) ? FMath::Clamp(OutlineBrightness, 0.f, 2.f) : DefaultOutlineBrightness;
 	ShakeScale = FMath::IsFinite(ShakeScale) ? FMath::Clamp(ShakeScale, 0.f, 1.f) : 1.f;
 	OutlineColor = FMath::Clamp(OutlineColor, 0, CustomColorIndex);
 	PlayerColor = FMath::Clamp(PlayerColor, 0, CustomColorIndex);
+	ColorVision = FMath::Clamp(ColorVision, 0, ColorVisionTypeCount - 1);
+	ColorVisionStrength = FMath::IsFinite(ColorVisionStrength) ? FMath::Clamp(ColorVisionStrength, 0.f, 1.f) : 1.f;
 	ApplyDisplay();
 }
 
@@ -77,6 +87,22 @@ void UGameVisualSettingsSubsystem::ApplyDisplay() const
 		Blur->Set(bMotionBlur ? 4 : 0, ECVF_SetByGameOverride);
 	if (auto* Bloom = IConsoleManager::Get().FindConsoleVariable(TEXT("r.BloomQuality")))
 		Bloom->Set(bBloom ? 5 : 0, ECVF_SetByGameOverride);
+	// 색각 보정은 게임 창 전체(Slate 렌더러)에 걸리는 후처리다. 커맨드렛이나 서버처럼 화면이 없으면 건너뛴다.
+	if (FSlateApplication::IsInitialized() && !IsRunningCommandlet())
+	{
+		static const EColorVisionDeficiency Types[ColorVisionTypeCount] = {EColorVisionDeficiency::NormalVision,
+			EColorVisionDeficiency::Protanope, EColorVisionDeficiency::Deuteranope, EColorVisionDeficiency::Tritanope};
+		const int32 Type = FMath::Clamp(ColorVision, 0, ColorVisionTypeCount - 1);
+		UWidgetBlueprintLibrary::SetColorVisionDeficiencyType(Types[Type], Type ? ColorVisionStrength : 0.f, Type != 0, false);
+	}
+}
+
+void UGameVisualSettingsSubsystem::Deinitialize()
+{
+	// PIE를 끝낸 뒤 에디터 창에 보정 필터가 남지 않게 끈다.
+	if (FSlateApplication::IsInitialized() && !IsRunningCommandlet() && ColorVision != 0)
+		UWidgetBlueprintLibrary::SetColorVisionDeficiencyType(EColorVisionDeficiency::NormalVision, 0.f, false, false);
+	Super::Deinitialize();
 }
 
 void UGameVisualSettingsSubsystem::ApplyOutline(USkeletalMeshComponent* Mesh) const
@@ -154,6 +180,12 @@ void UGameVisualSettingsSubsystem::ResetAppearance()
 	CustomPlayerColor = FLinearColor::White;
 }
 
+float UGameVisualSettingsSubsystem::GetFlashIntensity(const UWorld* World)
+{
+	const auto* Settings = UGameInstance::GetSubsystem<UGameVisualSettingsSubsystem>(World ? World->GetGameInstance() : nullptr);
+	return Settings && Settings->bReduceFlashes ? 0.25f : 1.f;
+}
+
 void UGameVisualSettingsSubsystem::Save() const
 {
 	GConfig->SetFloat(VisualSettingsSection, TEXT("Brightness"), Brightness, GGameUserSettingsIni);
@@ -166,5 +198,8 @@ void UGameVisualSettingsSubsystem::Save() const
 	GConfig->SetString(VisualSettingsSection, TEXT("CustomPlayerColor"), *CustomPlayerColor.ToFColorSRGB().ToHex(), GGameUserSettingsIni);
 	GConfig->SetBool(VisualSettingsSection, TEXT("MotionBlur"), bMotionBlur, GGameUserSettingsIni);
 	GConfig->SetBool(VisualSettingsSection, TEXT("Bloom"), bBloom, GGameUserSettingsIni);
+	GConfig->SetBool(VisualSettingsSection, TEXT("ReduceFlashes"), bReduceFlashes, GGameUserSettingsIni);
+	GConfig->SetInt(VisualSettingsSection, TEXT("ColorVision"), ColorVision, GGameUserSettingsIni);
+	GConfig->SetFloat(VisualSettingsSection, TEXT("ColorVisionStrength"), ColorVisionStrength, GGameUserSettingsIni);
 	GConfig->Flush(false, GGameUserSettingsIni);
 }

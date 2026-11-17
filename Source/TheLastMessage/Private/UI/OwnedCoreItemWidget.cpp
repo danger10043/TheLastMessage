@@ -30,7 +30,8 @@ void UOwnedCoreItemWidget::SetEntry(const FOwnedCoreEntry& Entry)
 	const bool bUsePips = Data->UpgradeLimitType == ECoreUpgradeLimitType::Custom && Data->MaxLevel <= 12;
 	LevelPips->SetVisibility(bUsePips && Data->MaxLevel > 1 ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 	OverflowLevel->SetVisibility(bUsePips ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
-	OverflowLevel->SetText(FText::FromString(FString::Printf(TEXT("Lv.%d"), Entry.Level)));
+	// 코어 설명(CoreDescriptionFormatter)의 레벨 표기와 같은 번역 키를 쓴다.
+	OverflowLevel->SetText(FText::Format(NSLOCTEXT("CoreDescription", "CurrentLevel", "Lv.{0}"), FText::AsNumber(Entry.Level)));
 	if (bUsePips && Data->MaxLevel > 1)
 	{
 		for (int32 Index = 0; Index < Data->MaxLevel; ++Index)

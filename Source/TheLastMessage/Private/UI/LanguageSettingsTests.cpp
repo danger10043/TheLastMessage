@@ -48,7 +48,7 @@ bool FLanguageSettingsTabTest::RunTest(const FString& Parameters)
 	// 1. 지원 언어와 컬처 맞추기 (Docs/LanguageSettingsPlan.md 1, 3절)
 	using FLanguages = UGameLanguageSettingsSubsystem;
 	const TConstArrayView<FGameLanguage> Languages = FLanguages::GetSupportedLanguages();
-	TestEqual(TEXT("Ten supported languages"), Languages.Num(), 10);
+	TestEqual(TEXT("Twelve supported languages"), Languages.Num(), 12);
 	TestEqual(TEXT("Korean is the source language"), FString(Languages[0].Culture), FString(TEXT("ko")));
 	const auto CultureOf = [&](const TCHAR* Culture)
 	{
@@ -62,9 +62,11 @@ bool FLanguageSettingsTabTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("zh-HK -> zh-Hant"), CultureOf(TEXT("zh-HK")), FString(TEXT("zh-Hant")));
 	TestEqual(TEXT("es-MX -> es-419"), CultureOf(TEXT("es-MX")), FString(TEXT("es-419")));
 	TestEqual(TEXT("pt-PT -> pt-BR"), CultureOf(TEXT("pt-PT")), FString(TEXT("pt-BR")));
-	TestEqual(TEXT("Unsupported culture"), CultureOf(TEXT("it-IT")), FString());
+	TestEqual(TEXT("it-IT -> it"), CultureOf(TEXT("it-IT")), FString(TEXT("it")));
+	TestEqual(TEXT("tr-TR -> tr"), CultureOf(TEXT("tr-TR")), FString(TEXT("tr")));
+	TestEqual(TEXT("Unsupported culture"), CultureOf(TEXT("nl-NL")), FString());
 	TestEqual(TEXT("First run uses a supported system language"), FLanguages::GetStartupLanguage(TEXT("ja-JP")), FString(TEXT("ja")));
-	TestEqual(TEXT("First run falls back to English"), FLanguages::GetStartupLanguage(TEXT("it-IT")), FString(TEXT("en")));
+	TestEqual(TEXT("First run falls back to English"), FLanguages::GetStartupLanguage(TEXT("nl-NL")), FString(TEXT("en")));
 	TestEqual(TEXT("Widget names use underscores"), FLanguages::GetLanguageWidgetName(Languages[2]), FName(TEXT("Language_zh_Hans")));
 
 	// 2. 폰트 Sub-Font Family (5절)
@@ -125,7 +127,7 @@ bool FLanguageSettingsTabTest::RunTest(const FString& Parameters)
 
 		const TConstArrayView<FGameLanguage> Languages = UGameLanguageSettingsSubsystem::GetSupportedLanguages();
 		auto* Grid = Cast<UUniformGridPanel>(Widget->FindSettingsWidget(TEXT("LanguageGrid")));
-		TestTrue(TEXT("Ten buttons in a 2 x 5 grid"), Grid && Grid->GetChildrenCount() == 10);
+		TestTrue(TEXT("Twelve buttons in a 2 x 6 grid"), Grid && Grid->GetChildrenCount() == 12);
 		int32 ButtonCount = 0;
 		for (const FGameLanguage& Language : Languages)
 		{
@@ -136,20 +138,10 @@ bool FLanguageSettingsTabTest::RunTest(const FString& Parameters)
 			++ButtonCount;
 			TestTrue(Name + TEXT(" is focusable for keyboard navigation"), Button->GetIsFocusable());
 			TestEqual(Name + TEXT(" shows the native name"), Label->GetText().ToString(), FString(Language.NativeName));
-			if (Language.FlagCode)
-			{
-				const auto* Flag = Cast<UImage>(Widget->FindSettingsWidget(*(Name + TEXT("_Flag"))));
-				TestTrue(Name + TEXT(" shows its flag"), Flag && Cast<UTexture2D>(Flag->GetBrush().GetResourceObject())
-					&& Flag->GetBrush().GetResourceObject()->GetName() == FString(TEXT("T_Flag_")) + Language.FlagCode);
-			}
-			else
-			{
-				const auto* Badge = Cast<UTextBlock>(Widget->FindSettingsWidget(*(Name + TEXT("_BadgeText"))));
-				TestTrue(Name + TEXT(" shows the 繁 badge instead of a flag"), Badge && Badge->GetText().ToString() == TEXT("繁")
-					&& !Widget->FindSettingsWidget(*(Name + TEXT("_Flag"))));
-			}
+			TestNull(*(Name + TEXT(" has no flag")), Widget->FindSettingsWidget(*(Name + TEXT("_Flag"))));
+			TestNull(*(Name + TEXT(" has no badge")), Widget->FindSettingsWidget(*(Name + TEXT("_Badge"))));
 		}
-		TestEqual(TEXT("All language buttons exist"), ButtonCount, 10);
+		TestEqual(TEXT("All language buttons exist"), ButtonCount, 12);
 
 		// 고르면 바로 바뀌고 저장된다. 테스트가 끝나면 원래 언어와 저장 값을 되돌린다.
 		State->Widget.Reset(Widget);

@@ -35,6 +35,10 @@
 #include "GAS/Abilities/GA_AttackPrimary.h"
 #include "GAS/Abilities/GA_AttackSecondary.h"
 #include "InputCoreTypes.h"
+#include "Engine/LocalPlayer.h"
+#include "UI/GameKeySettingsSubsystem.h"
+#include "Engine/GameViewportClient.h"
+#include "UnrealClient.h"
 #include "GAS/WeaponGameplayTags.h"
 #include "Net/UnrealNetwork.h"
 #include "Animation/AnimInstance.h"
@@ -237,10 +241,89 @@ bool APlayerBase::UpdateAimFromWorldRay(FVector RayOrigin, FVector RayDirection)
 	return SetAimTarget(RayOrigin + RayDirection * Distance);
 }
 
+bool APlayerBase::UpdateGamepadAim(APlayerController& PC)
+{
+	// 한 프레임에 여러 번 불려도(입력 처리 + Tick) 커서는 한 번만 옮긴다.
+	if (GamepadAimFrame == GFrameCounter) return bGamepadAimHandledThisFrame;
+	GamepadAimFrame = GFrameCounter;
+	bGamepadAimHandledThisFrame = false;
+
+	const ULocalPlayer* LocalPlayer = PC.GetLocalPlayer();
+	// 설정의 조작 방식이 키보드·마우스면 패드 조준을 쓰지 않고, 게임패드면 항상 패드로 조준한다.
+	const UGameKeySettingsSubsystem* KeySettings = LocalPlayer ? LocalPlayer->GetSubsystem<UGameKeySettingsSubsystem>() : nullptr;
+	if (KeySettings && !KeySettings->IsUsingGamepad())
+	{
+		bGamepadAimActive = false;
+		return false;
+	}
+	FViewport* Viewport = LocalPlayer && LocalPlayer->ViewportClient ? LocalPlayer->ViewportClient->Viewport : nullptr;
+	if (!Viewport || !Viewport->HasFocus()) return false;
+
+	const FVector2D RightStick(PC.GetInputAnalogKeyState(EKeys::Gamepad_RightX), PC.GetInputAnalogKeyState(EKeys::Gamepad_RightY));
+	const FVector2D LeftStick(PC.GetInputAnalogKeyState(EKeys::Gamepad_LeftX), PC.GetInputAnalogKeyState(EKeys::Gamepad_LeftY));
+	static const FKey GamepadButtons[] = {
+		EKeys::Gamepad_FaceButton_Bottom, EKeys::Gamepad_FaceButton_Right, EKeys::Gamepad_FaceButton_Left,
+		EKeys::Gamepad_FaceButton_Top, EKeys::Gamepad_LeftTrigger, EKeys::Gamepad_RightTrigger,
+		EKeys::Gamepad_LeftShoulder, EKeys::Gamepad_RightShoulder };
+	bool bGamepadUsed = RightStick.Size() >= GamepadAimDeadZone || LeftStick.Size() >= GamepadAimDeadZone;
+	for (const FKey& Key : GamepadButtons) bGamepadUsed |= PC.IsInputKeyDown(Key);
+
+	float MouseX = 0.0f, MouseY = 0.0f;
+	const bool bHasMouse = PC.GetMousePosition(MouseX, MouseY);
+	if (bGamepadUsed || KeySettings)
+	{
+		bGamepadAimActive = true;
+		GamepadCursorMismatchFrames = 0;
+	}
+	else if (bGamepadAimActive && bHasMouse)
+	{
+		// 커서가 패드가 놓은 자리에서 크게 벗어난 채로 몇 프레임 지나면 마우스를 다시 쓰는 것으로 본다.
+		// (커서 위치 갱신이 한 프레임 늦을 수 있어 즉시 판단하지 않는다.)
+		const bool bMoved = FVector2D::Distance(FVector2D(MouseX, MouseY), LastGamepadCursorPosition) > 24.0f;
+		GamepadCursorMismatchFrames = bMoved ? GamepadCursorMismatchFrames + 1 : 0;
+		if (GamepadCursorMismatchFrames >= 3)
+		{
+			bGamepadAimActive = false;
+			GamepadCursorMismatchFrames = 0;
+		}
+	}
+	if (!bGamepadAimActive) return false;
+
+	FVector2D ActorScreen;
+	if (!PC.ProjectWorldLocationToScreen(GetActorLocation(), ActorScreen, true)) return false;
+	const FIntPoint ViewSize = Viewport->GetSizeXY();
+	if (ViewSize.X <= 0 || ViewSize.Y <= 0) return false;
+
+	if (RightStick.Size() >= GamepadAimDeadZone) GamepadAimStick = RightStick.GetSafeNormal();
+	FVector2D ScreenDirection(GamepadAimStick.X, -GamepadAimStick.Y); // 화면 Y는 아래가 +
+	if (RightStick.Size() < GamepadAimDeadZone)
+	{
+		// 스틱이 중립이면 캐릭터가 보는 방향을 조준한다.
+		FVector2D ForwardScreen;
+		if (PC.ProjectWorldLocationToScreen(GetActorLocation() + GetActorForwardVector() * 100.0f, ForwardScreen, true))
+			ScreenDirection = (ForwardScreen - ActorScreen).GetSafeNormal();
+	}
+	if (ScreenDirection.IsNearlyZero()) return false;
+
+	FVector2D Cursor = ActorScreen + ScreenDirection * (ViewSize.Y * GamepadAimScreenRadius);
+	Cursor.X = FMath::Clamp(Cursor.X, 0.0f, ViewSize.X - 1.0f);
+	Cursor.Y = FMath::Clamp(Cursor.Y, 0.0f, ViewSize.Y - 1.0f);
+	PC.SetMouseLocation(FMath::RoundToInt(Cursor.X), FMath::RoundToInt(Cursor.Y));
+	LastGamepadCursorPosition = Cursor;
+
+	// 커서 위치 갱신을 기다리지 않고 같은 화면 좌표로 바로 조준한다.
+	FVector RayOrigin, RayDirection;
+	if (PC.DeprojectScreenPositionToWorld(Cursor.X, Cursor.Y, RayOrigin, RayDirection))
+		UpdateAimFromWorldRay(RayOrigin, RayDirection);
+	bGamepadAimHandledThisFrame = true;
+	return true;
+}
+
 void APlayerBase::UpdateMouseAim()
 {
 	APlayerController* PC = Cast<APlayerController>(GetController());
 	if (!PC || !PC->IsLocalController() || IsDead()) return;
+	if (UpdateGamepadAim(*PC)) return;
 	FVector RayOrigin, RayDirection;
 	if (PC->DeprojectMousePositionToWorld(RayOrigin, RayDirection))
 	{

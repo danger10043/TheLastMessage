@@ -137,6 +137,12 @@ TArray<FText> GetAppearanceColorOptions()
 		NSLOCTEXT("SettingsOptions", "ColorCustom", "사용자 지정")};
 }
 
+// 조작 방식 드롭다운 항목. 순서가 EGameInputDevice(0 키보드·마우스, 1 게임패드)와 같다.
+TArray<FText> GetInputDeviceOptions()
+{
+	return {NSLOCTEXT("SettingsOptions", "InputKeyboardMouse", "키보드·마우스"), NSLOCTEXT("SettingsOptions", "InputGamepad", "게임패드")};
+}
+
 TArray<FString> ToOptionStrings(const TArray<FText>& Options)
 {
 	TArray<FString> Result;
@@ -1435,42 +1441,6 @@ bool UAudioSettingsWidget::AuthorLanguagePage(UWidgetTree* Tree)
 		RowSlot->SetHorizontalAlignment(HAlign_Fill);
 		RowSlot->SetVerticalAlignment(VAlign_Center);
 
-		// 국기(4:3) 또는 "繁" 배지
-		auto* FlagBox = Tree->ConstructWidget<USizeBox>();
-		FlagBox->SetWidthOverride(40.f);
-		FlagBox->SetHeightOverride(30.f);
-		if (Language.FlagCode)
-		{
-			auto* Texture = LoadObject<UTexture2D>(nullptr, *UGameLanguageSettingsSubsystem::GetFlagTexturePath(Language));
-			if (!Texture)
-			{
-				UE_LOG(LogTemp, Error, TEXT("Settings layout: flag texture %s not found."), *UGameLanguageSettingsSubsystem::GetFlagTexturePath(Language));
-				return false;
-			}
-			auto* Flag = Tree->ConstructWidget<UImage>(UImage::StaticClass(), *(Name + TEXT("_Flag")));
-			Flag->SetBrushFromTexture(Texture, false);
-			Flag->SetDesiredSizeOverride(FVector2D(40.f, 30.f));
-			FlagBox->SetContent(Flag);
-		}
-		else
-		{
-			// 중국 출시 시 대만 국기 표기가 문제될 수 있어 국기 대신 국기 크기의 판에 "繁" 글자를 얹는다.
-			auto* Badge = Tree->ConstructWidget<UBorder>(UBorder::StaticClass(), *(Name + TEXT("_Badge")));
-			Badge->SetBrush(FactoryUI::Plate(FLinearColor(0.09f, 0.18f, 0.21f), FactoryUI::Cyan, 3.f));
-			Badge->SetPadding(FMargin(0.f));
-			Badge->SetHorizontalAlignment(HAlign_Center);
-			Badge->SetVerticalAlignment(VAlign_Center);
-			auto* Glyph = MakeSettingsLabel(Tree, FText::AsCultureInvariant(TEXT("繁")), 18);
-			Glyph->Rename(*(Name + TEXT("_BadgeText")), Tree);
-			UseNameFont(Glyph, 18);
-			Glyph->SetRenderTranslation(FVector2D(0.f, -1.f));
-			Badge->SetContent(Glyph);
-			FlagBox->SetContent(Badge);
-		}
-		auto* FlagSlot = Row->AddChildToHorizontalBox(FlagBox);
-		FlagSlot->SetVerticalAlignment(VAlign_Center);
-		FlagSlot->SetPadding(FMargin(0.f, 0.f, 14.f, 0.f));
-
 		// 자국어 이름. 번역 대상이 아니므로 문화권 고정 텍스트로 넣는다(Localization 수집에서 빠진다).
 		auto* Label = MakeSettingsLabel(Tree, FText::AsCultureInvariant(Language.NativeName), 20);
 		Label->Rename(*(Name + TEXT("_Name")), Tree);
@@ -1485,7 +1455,7 @@ bool UAudioSettingsWidget::AuthorLanguagePage(UWidgetTree* Tree)
 		Fit->SetContent(Label);
 		auto* LabelSlot = Row->AddChildToHorizontalBox(Fit);
 		LabelSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-		LabelSlot->SetHorizontalAlignment(HAlign_Left);
+		LabelSlot->SetHorizontalAlignment(HAlign_Center);
 		LabelSlot->SetVerticalAlignment(VAlign_Center);
 
 		auto* GridSlot = Grid->AddChildToUniformGrid(Cell, Index / 2, Index % 2);
@@ -1618,6 +1588,7 @@ void UAudioSettingsWidget::BindSettingsHelp()
 	for (const auto& Entry : KeySelectors)
 		AddHelp(Entry.Key, KeysPage);
 	AddHelp(FindSettingsWidget(TEXT("ResetGameplayKeys")), KeysPage);
+	AddHelp(FindSettingsWidget(TEXT("InputDeviceSetting")), KeysPage);
 	for (const FGameLanguage& Language : UGameLanguageSettingsSubsystem::GetSupportedLanguages())
 		AddHelp(FindSettingsWidget(UGameLanguageSettingsSubsystem::GetLanguageWidgetName(Language)), LanguagePage,
 			GetLanguageHelpText(), false);
@@ -1770,8 +1741,35 @@ void UAudioSettingsWidget::BindKeySelectors()
 		Reset->OnClicked.AddUniqueDynamic(this, &ThisClass::ResetGameplayKeys);
 		FactoryUI::ApplyButtonSounds(Reset, FactoryUI::ESound::Confirm);
 	}
+	BindInputDeviceSetting();
 	RefreshKeySelectors();
 	UpdateSettingsTabs(0);
+}
+
+void UAudioSettingsWidget::BindInputDeviceSetting()
+{
+	auto* Combo = Cast<UComboBoxString>(FindSettingsWidget(TEXT("InputDeviceSetting")));
+	const auto* Settings = ULocalPlayer::GetSubsystem<UGameKeySettingsSubsystem>(GetOwningLocalPlayer());
+	if (!Combo || !Settings) return;
+	Combo->OnGenerateWidgetEvent.BindDynamic(this, &ThisClass::MakeDropdownOption);
+	Combo->ClearOptions();
+	for (const FString& Option : ToOptionStrings(GetInputDeviceOptions())) Combo->AddOption(Option);
+	Combo->SetSelectedIndex(static_cast<int32>(Settings->GetInputDevice()));
+	Combo->OnSelectionChanged.AddUniqueDynamic(this, &ThisClass::SetInputDevice);
+}
+
+void UAudioSettingsWidget::SetInputDevice(FString Value, ESelectInfo::Type Selection)
+{
+	if (Selection == ESelectInfo::Direct) return;
+	const auto* Combo = Cast<UComboBoxString>(FindSettingsWidget(TEXT("InputDeviceSetting")));
+	auto* Settings = ULocalPlayer::GetSubsystem<UGameKeySettingsSubsystem>(GetOwningLocalPlayer());
+	if (!Combo || !Settings) return;
+	const int32 Index = Combo->FindOptionIndex(Value);
+	if (Index < 0 || Index >= GetInputDeviceOptions().Num()) return;
+	Settings->SetInputDevice(static_cast<EGameInputDevice>(Index));
+	if (auto* Status = Cast<UTextBlock>(FindSettingsWidget(TEXT("KeySettingsStatus"))))
+		Status->SetText(FText::GetEmpty());
+	RefreshKeySelectors();
 }
 
 void UAudioSettingsWidget::OnKeySelectionModeChanged()
@@ -1795,8 +1793,27 @@ void UAudioSettingsWidget::OnGameplayKeySelected(FInputChord Chord)
 	CapturingKey.Reset();
 	auto* Settings = ULocalPlayer::GetSubsystem<UGameKeySettingsSubsystem>(GetOwningLocalPlayer());
 	if (!Index || !Settings) return;
+	// Esc로 취소하면 빈 키가 올 수 있다. 그때는 표시만 되돌린다.
+	if (!Chord.Key.IsValid())
+	{
+		RefreshKeySelectors();
+		return;
+	}
+	int32 MappingIndex = *Index;
+	if (Settings->IsUsingGamepad())
+	{
+		// 같은 줄의 게임패드 매핑을 바꾼다. 이동처럼 바꿀 수 없는 줄은 무시한다.
+		const auto Bindings = Settings->GetBindings();
+		const auto* Binding = Bindings.FindByPredicate([Index](const FGameKeyBinding& Row) { return Row.MappingIndex == *Index; });
+		if (!Binding || !Binding->bGamepadEditable || Binding->GamepadMappingIndex == INDEX_NONE)
+		{
+			RefreshKeySelectors();
+			return;
+		}
+		MappingIndex = Binding->GamepadMappingIndex;
+	}
 	FText Error;
-	Settings->TrySetKey(*Index, Chord.Key, Error);
+	Settings->TrySetKey(MappingIndex, Chord.Key, Error);
 	if (auto* Status = Cast<UTextBlock>(FindSettingsWidget(TEXT("KeySettingsStatus"))))
 		Status->SetText(Error);
 	RefreshKeySelectors();
@@ -1807,11 +1824,25 @@ void UAudioSettingsWidget::RefreshKeySelectors()
 	const auto* Settings = ULocalPlayer::GetSubsystem<UGameKeySettingsSubsystem>(GetOwningLocalPlayer());
 	if (!Settings) return;
 	const auto Bindings = Settings->GetBindings();
+	const bool bGamepad = Settings->IsUsingGamepad();
 	TGuardValue<bool> Guard(bRefreshingKeys, true);
 	for (const auto& Entry : KeySelectors)
 	{
 		const auto* Binding = Bindings.FindByPredicate([&Entry](const FGameKeyBinding& Row) { return Row.MappingIndex == Entry.Value; });
-		if (Binding) Entry.Key->SetSelectedKey(FInputChord(Binding->Key));
+		if (!Binding) continue;
+		UInputKeySelector* Selector = Entry.Key;
+		Selector->SetAllowGamepadKeys(bGamepad);
+		if (!bGamepad)
+		{
+			Selector->SetIsEnabled(true);
+			Selector->SetSelectedKey(FInputChord(Binding->Key));
+			continue;
+		}
+		// 엔진의 패드 키 이름 대신 Xbox 표기(A, LB…)를 보여 주려고, 키를 비워 두고 "키 없음" 문구 자리에 버튼 이름을 쓴다.
+		Selector->SetIsEnabled(Binding->bGamepadEditable);
+		Selector->SetNoKeySpecifiedText(Binding->GamepadKey.IsValid()
+			? UGameKeySettingsSubsystem::GetGamepadKeyLabel(Binding->GamepadKey) : NSLOCTEXT("KeySettings", "NoGamepadKey", "-"));
+		Selector->SetSelectedKey(FInputChord());
 	}
 }
 
@@ -2120,6 +2151,8 @@ void UAudioSettingsWidget::HandleCultureChanged()
 	for (const FName Name : {FName(TEXT("WindowModeSetting")), FName(TEXT("ResolutionSetting"))})
 		if (const auto* Combo = Cast<UComboBoxString>(FindSettingsWidget(Name))) PendingSelections.Add(Name, Combo->GetSelectedIndex());
 	BuildVisualControls();
+	BindInputDeviceSetting();
+	RefreshKeySelectors();
 	for (const auto& Pending : PendingSelections)
 		if (auto* Combo = Cast<UComboBoxString>(FindSettingsWidget(Pending.Key)); Combo && Pending.Value >= 0)
 			Combo->SetSelectedIndex(Pending.Value);
@@ -2132,7 +2165,8 @@ UWidget* UAudioSettingsWidget::MakeDropdownOption(FString Option)
 	// 코드는 F_TLM_UI의 글자가 줄 높이보다 아래로 그려지는 것만 보정한다(라벨의 -5 오프셋과 같은 이유).
 	const UComboBoxString* Source = nullptr;
 	for (const TCHAR* Name : {TEXT("WindowModeSetting"), TEXT("ResolutionSetting"), TEXT("FrameLimitSetting"),
-		TEXT("QualityPresetSetting"), TEXT("ColorVisionSetting"), TEXT("OutlineColorSetting"), TEXT("PlayerColorSetting")})
+		TEXT("QualityPresetSetting"), TEXT("ColorVisionSetting"), TEXT("OutlineColorSetting"), TEXT("PlayerColorSetting"),
+		TEXT("InputDeviceSetting")})
 		if (const auto* Combo = Cast<UComboBoxString>(FindSettingsWidget(Name)); Combo && Combo->FindOptionIndex(Option) >= 0)
 		{
 			Source = Combo;

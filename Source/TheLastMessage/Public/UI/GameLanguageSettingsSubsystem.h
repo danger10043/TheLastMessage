@@ -8,10 +8,8 @@ struct FGameLanguage
 {
 	/** 컬처 코드 (예: ko, zh-Hans, es-419) */
 	const TCHAR* Culture;
-	/** 그 언어로 쓴 언어 이름 (예: 한국어, 简体中文) */
+	/** 그 언어로 쓴 언어 이름 (예: 한국어, 简体中文). 언어 설정 화면에는 국기 없이 이 이름만 보여 준다. */
 	const TCHAR* NativeName;
-	/** 국기 텍스처 코드(/Game/Main/UI/Flags/T_Flag_<코드>). nullptr 이면 국기 대신 "繁" 배지를 쓴다(중국어 번체). */
-	const TCHAR* FlagCode;
 };
 
 /**
@@ -32,12 +30,10 @@ public:
 	/** 에디터에서 SetLanguage 로 켠 게임 언어 미리보기를 끄고 원문(ko)으로 돌린다. 게임에서는 아무 일도 하지 않는다. */
 	static void ClearEditorPreview();
 
-	/** 지원 언어 10개. 순서가 언어 설정 화면의 버튼 순서(2열, 왼쪽에서 오른쪽, 위에서 아래)다. 첫 항목(ko)이 원문 언어다. */
+	/** 지원 언어 12개. 순서가 언어 설정 화면의 버튼 순서(2열, 왼쪽에서 오른쪽, 위에서 아래)다. 첫 항목(ko)이 원문 언어다. */
 	static TConstArrayView<FGameLanguage> GetSupportedLanguages();
-	/** 언어 버튼 위젯 이름. 하이픈은 밑줄로 바꾼다 (예: zh-Hans -> Language_zh_Hans). 국기는 <이름>_Flag, 이름은 <이름>_Name. */
+	/** 언어 버튼 위젯 이름. 하이픈은 밑줄로 바꾼다 (예: zh-Hans -> Language_zh_Hans). 이름은 <이름>_Name. */
 	static FName GetLanguageWidgetName(const FGameLanguage& Language);
-	/** 국기 텍스처 경로. 국기가 없으면 빈 문자열. */
-	static FString GetFlagTexturePath(const FGameLanguage& Language);
 	/** 아무 컬처(예: es-MX, zh-TW, en-US)를 지원 언어 목록의 위치로 바꾼다. 맞는 언어가 없으면 INDEX_NONE. */
 	static int32 FindSupportedLanguage(const FString& Culture);
 	/** 현재 게임 언어에 해당하는 지원 언어의 컬처 코드. 맞는 언어가 없으면 빈 문자열. */

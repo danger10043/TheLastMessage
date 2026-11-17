@@ -62,7 +62,8 @@ void ABossAIController::StartBossAI()
 {
     if (!HasAuthority() || !IsValid(ControlledBoss.Get())
         || ControlledBoss.Get() != GetPawn()
-        || ControlledBoss->GetBossState() == EBossState::Dead)
+        || ControlledBoss->GetBossState() == EBossState::Dead
+        || !ControlledBoss->IsBossCombatUnlocked())
     {
         return;
     }

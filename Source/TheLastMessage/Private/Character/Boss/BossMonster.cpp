@@ -106,6 +106,12 @@ void ABossMonster::BeginPlay()
     UpdateEquipmentForPhase(GetBossPhase());
     InitializeBoss();
 
+    if (HasAuthority() && !IsBossCombatUnlocked()
+        && CurrentState != EBossState::Dead)
+    {
+        SetBossState(EBossState::Cinematic);
+    }
+
     if (IsValid(AbilitySystemComponent.Get())
         && CurrentState != EBossState::Dead)
     {
@@ -113,6 +119,35 @@ void ABossMonster::BeginPlay()
             ->GetGameplayAttributeValueChangeDelegate(
                 UBossAttributeSet::GetHealthAttribute())
             .AddUObject(this, &ABossMonster::HandleBossHealthChanged);
+    }
+}
+
+void ABossMonster::StartBossCombatAfterEntrance()
+{
+    if (!HasAuthority() || bEntranceCombatStarted || bIsResettingBoss
+        || CurrentState == EBossState::Dead || IsActorBeingDestroyed())
+    {
+        return;
+    }
+
+    ABossAIController* BossAI = Cast<ABossAIController>(GetController());
+    if (!IsValid(BossAI))
+    {
+        UE_LOG(LogTemp, Error, TEXT("보스 입장 시퀀스 종료: BossAIController를 확인하세요."));
+        return;
+    }
+
+    bEntranceCombatStarted = true;
+    SetBossState(EBossState::Combat);
+    if (CurrentState != EBossState::Combat || IsActorBeingDestroyed())
+    {
+        return;
+    }
+
+    BossAI->StartBossAI();
+    if (UBrainComponent* Brain = BossAI->GetBrainComponent())
+    {
+        Brain->ResumeLogic(TEXT("Boss entrance cinematic finished"));
     }
 }
 
@@ -480,6 +515,11 @@ bool ABossMonster::ResetBoss(bool bRestartAI)
     UpdateBossUI();
     OnBossPhaseChanged.Broadcast(EBossPhase::Phase1);
     OnBossStateChanged.Broadcast(EBossState::Idle);
+
+    if (!IsBossCombatUnlocked())
+    {
+        SetBossState(EBossState::Cinematic);
+    }
 
     if (bRestartAI)
     {

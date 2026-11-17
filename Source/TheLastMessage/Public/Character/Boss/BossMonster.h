@@ -57,6 +57,22 @@ public:
     // 플레이어 사망 후 체크포인트 제자리 복구용. 시작 위치로 되돌린 뒤 ResetBoss(true)를 수행한다.
     bool ResetBossForCheckpoint();
 
+    UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Boss|Entrance")
+    bool bWaitForEntranceCinematic = false;
+
+    UFUNCTION(BlueprintPure, Category = "Boss|Entrance")
+    bool IsBossCombatUnlocked() const
+    {
+        return !bWaitForEntranceCinematic || bEntranceCombatStarted;
+    }
+
+    UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Boss|Entrance")
+    void StartBossCombatAfterEntrance();
+
+    UPROPERTY(Transient)
+    bool bEntranceCombatStarted = false;
+
+
     UPROPERTY(BlueprintReadOnly, Transient, Category = "Boss|GunBurst")
     bool bGunBurstAiming = false;
 

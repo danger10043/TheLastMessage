@@ -70,6 +70,15 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category = "Room Streaming", meta = (ClampMin = "0.05"))
 	float UpdateIntervalSeconds = 0.25f;
 
+	/**
+	 * 새 게임으로 시작할 때 처음 올릴 방의 RegionId. 예: R_03
+	 * 방은 처음부터 올라오지 않고 필요한 방만 올라오는데, 방 리전 액터는 방 안에 있어서 올라오기 전에는 플레이어가 어느 방에 있는지 알 수 없다.
+	 * 그래서 시작할 때만 이 리전과 이어진 방을 먼저 올린다. 이어하기는 저장된 체크포인트의 리전을 쓴다.
+	 * 비워 두면 처음에 모든 방이 올라왔다가 플레이어 주변 방만 남기고 내려간다(느림).
+	 */
+	UPROPERTY(Config, EditAnywhere, Category = "Room Streaming")
+	FName StartRegionId;
+
 	/** 목록에 없는 방은 관리하지 않고 항상 로드된 채로 둔다. */
 	UPROPERTY(Config, EditAnywhere, Category = "Room Streaming")
 	TArray<FRoomStreamEntry> Rooms;

@@ -69,6 +69,17 @@ void ASentryEnemy::ResetEnemy()
 	GetCharacterMovement()->GravityScale = 0.f;
 }
 
+FVector ASentryEnemy::GetPawnViewLocation() const
+{
+	// 기본 눈 위치(월드 위쪽으로 올린 점)는 천장에 거꾸로 달린 포탑에서는 천장 속이고, 벽에 붙은 포탑에서는 벽 속일 수 있다.
+	// 그러면 플레이어까지의 시야 선이 시작부터 막혀 영원히 감지하지 못한다. 총 본 위치에서 시작한다.
+	if (GetMesh() && GetMesh()->DoesSocketExist(AimPivotBoneName))
+	{
+		return GetMesh()->GetSocketLocation(AimPivotBoneName);
+	}
+	return Super::GetPawnViewLocation();
+}
+
 void ASentryEnemy::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);

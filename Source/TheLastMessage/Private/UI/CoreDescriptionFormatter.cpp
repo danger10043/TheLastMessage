@@ -129,4 +129,11 @@ FText CoreDescriptionFormatter::MakeCurrentLevelText(const UCoreDataAsset& Data,
 	return IsMaxLevel(Data, Level) ? FText::Format(LOCTEXT("OwnedMaxLevel", "{0} · MAX"), Stage) : Stage;
 }
 
+FText CoreDescriptionFormatter::MakeUsageText(const UCoreDataAsset& Data)
+{
+	// 조작이 없는 코어(스탯형·자동 발동)는 빈 문구를 돌려줘, 카드와 툴팁이 조작 줄을 접을 수 있게 한다.
+	if (Data.CoreUsage.IsEmpty()) return FText::GetEmpty();
+	return FText::Format(LOCTEXT("DefaultKeyUsage", "기본 키 : {0}"), Data.CoreUsage);
+}
+
 #undef LOCTEXT_NAMESPACE

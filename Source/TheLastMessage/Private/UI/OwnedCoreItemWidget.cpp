@@ -6,6 +6,8 @@
 #include "Components/HorizontalBox.h"
 #include "Components/HorizontalBoxSlot.h"
 #include "Components/Image.h"
+#include "Components/ScaleBox.h"
+#include "Components/SizeBox.h"
 #include "Components/TextBlock.h"
 #include "DataAsset/CoreDataAsset.h"
 #include "Blueprint/WidgetTree.h"
@@ -15,6 +17,14 @@ void UOwnedCoreItemWidget::NativeOnInitialized()
 	Super::NativeOnInitialized();
 	CoreButton->OnClicked.AddDynamic(this, &ThisClass::HandleClicked);
 	DefaultIcon = CoreIcon->GetBrush();
+	// Keep the icon's aspect ratio when the card has less space than its requested size.
+	if (USizeBox* IconSize = Cast<USizeBox>(CoreIcon->GetParent()))
+	{
+		UScaleBox* IconScale = WidgetTree->ConstructWidget<UScaleBox>(UScaleBox::StaticClass(), TEXT("CoreIconScale"));
+		IconScale->SetStretch(EStretch::ScaleToFit);
+		IconSize->SetContent(IconScale);
+		IconScale->SetContent(CoreIcon);
+	}
 	SetSelected(false);
 }
 
@@ -50,7 +60,11 @@ void UOwnedCoreItemWidget::SetEntry(const FOwnedCoreEntry& Entry)
 
 void UOwnedCoreItemWidget::SetSelected(bool bSelected)
 {
-	CoreButton->SetStyle(FactoryUI::Button(bSelected));
+	FButtonStyle Style = FactoryUI::Button(bSelected);
+	// Text-button padding otherwise squeezes this fixed-size icon card horizontally.
+	Style.NormalPadding = FMargin(0);
+	Style.PressedPadding = FMargin(0);
+	CoreButton->SetStyle(Style);
 	CoreButton->SetBackgroundColor(FLinearColor::White);
 	SelectionFrame->SetBrushColor(FLinearColor::Transparent);
 	OverflowLevel->SetColorAndOpacity(bSelected ? FactoryUI::Amber : FactoryUI::Text);

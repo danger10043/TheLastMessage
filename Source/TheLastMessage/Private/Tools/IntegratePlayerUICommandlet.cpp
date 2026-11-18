@@ -825,6 +825,46 @@ bool BuildHUDResourceBars()
 	return CompileSave(Panel);
 }
 
+bool SplitCreditsWidget()
+{
+	const TCHAR* MenuPath = TEXT("/Game/Main/UI/Menu/WBP_StartMenu");
+	const TCHAR* CreditsPath = TEXT("/Game/Main/UI/Menu/WBP_Credits");
+	auto* Menu = LoadObject<UWidgetBlueprint>(nullptr, MenuPath);
+	if (!Menu || !Menu->WidgetTree) return false;
+
+	UWidgetTree* MenuTree = Menu->WidgetTree;
+	auto* Page = MenuTree->FindWidget(TEXT("CreditsPage"));
+	if (Page && Page->IsA<UUserWidget>())
+		return Page->GetClass()->ClassGeneratedBy &&
+			Page->GetClass()->ClassGeneratedBy->GetOutermost()->GetName() == CreditsPath;
+
+	auto* Pages = Cast<UWidgetSwitcher>(MenuTree->FindWidget(TEXT("Pages")));
+	if (!Page || !Pages || Pages->GetChildIndex(Page) == INDEX_NONE) return false;
+	const int32 Index = Pages->GetChildIndex(Page);
+
+	Backup(MenuPath);
+	auto* Credits = Blueprint(CreditsPath, UUserWidget::StaticClass());
+	UStartMenuWidget::UpdateCreditsNotice(MenuTree);
+
+	TArray<UWidget*> Controls;
+	UWidgetTree::ForWidgetAndChildren(Page, [&](UWidget* Control) { Controls.Add(Control); });
+	Pages->RemoveChild(Page);
+	for (UWidget* Control : Controls)
+	{
+		if (!Control->Rename(nullptr, Credits->WidgetTree, REN_DontCreateRedirectors)) return false;
+	}
+	Credits->WidgetTree->RootWidget = Page;
+	SyncWidgetGuids(Credits);
+	if (!Compile(Credits)) return false;
+
+	auto* Embedded = MenuTree->ConstructWidget<UUserWidget>(Credits->GeneratedClass.Get(), TEXT("CreditsPage"));
+	if (!Embedded || !Pages->AddChild(Embedded)) return false;
+	Pages->ShiftChild(Index, Embedded);
+	Embedded->bIsVariable = true;
+	SyncWidgetGuids(Menu);
+	if (!Compile(Menu)) return false;
+	return Save(Credits) && Save(Menu);
+}
 bool BuildMenuScaffold(bool bPreview)
 {
 	const TCHAR* Path = TEXT("/Game/Main/UI/Menu/WBP_StartMenu");
@@ -902,7 +942,7 @@ bool BuildMenuScaffold(bool bPreview)
 	bool bOK = Render(TEXT("Main.png"));
 	CastChecked<UButton>(Panel->WidgetTree->FindWidget(TEXT("CreditsButton")))->OnClicked.Broadcast();
 	bOK = Pages->GetActiveWidget() == Panel->WidgetTree->FindWidget(TEXT("CreditsPage")) && Render(TEXT("Credits.png")) && bOK;
-	CastChecked<UButton>(Panel->WidgetTree->FindWidget(TEXT("CreditsBackButton")))->OnClicked.Broadcast();
+	CastChecked<UButton>(Panel->GetCreditsBackButton())->OnClicked.Broadcast();
 	bOK = Pages->GetActiveWidgetIndex() == 0 && bOK;
 	CastChecked<UButton>(Panel->WidgetTree->FindWidget(TEXT("NewGameButton")))->OnClicked.Broadcast();
 	bOK = Pages->GetActiveWidgetIndex() == 1 && Slot1->GetIsEnabled() && Render(TEXT("NewGameSlots.png")) && bOK;
@@ -1048,6 +1088,8 @@ UIntegratePlayerUICommandlet::UIntegratePlayerUICommandlet()
 int32 UIntegratePlayerUICommandlet::Main(const FString& Params)
 {
 #if WITH_EDITOR
+	if (FParse::Param(*Params, TEXT("SplitCreditsWidget")))
+		return PlayerUIBuild::SplitCreditsWidget() ? 0 : 1;
 	if (FParse::Param(*Params, TEXT("SetupLocalization")))
 	{
 		// Localization Dashboard의 Game 타깃을 설정한다(Docs/LanguageSettingsPlan.md 4절). 대시보드에서 직접 고치는 것과 같다.
@@ -1187,7 +1229,7 @@ int32 UIntegratePlayerUICommandlet::Main(const FString& Params)
 			}
 			// 시작 메뉴, 크레딧, 일시정지 메뉴
 			auto* CreditsButton = Cast<UButton>(Start->WidgetTree->FindWidget(TEXT("CreditsButton")));
-			auto* CreditsBack = Cast<UButton>(Start->WidgetTree->FindWidget(TEXT("CreditsBackButton")));
+			auto* CreditsBack = Start->GetCreditsBackButton();
 			if (CreditsButton && CreditsBack)
 			{
 				CreditsBack->OnClicked.Broadcast();

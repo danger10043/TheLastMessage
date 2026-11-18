@@ -23,6 +23,9 @@ public:
 	virtual void CancelAttack() override;
 	virtual void ResetEnemy() override;
 
+	/** 시야 감지의 눈 위치를 총(조준 본) 위치로 한다. 벽·천장에 달아도 총은 지형 밖에 나와 있다. */
+	virtual FVector GetPawnViewLocation() const override;
+
 	/**
 	 * 타겟을 향한 조준 각도(AimYaw, AimPitch)를 갱신한다.
 	 * 몸통은 회전하지 않고, 애니메이션 블루프린트가 이 값을 총 본(GunHor, GunVert)에 적용한다.

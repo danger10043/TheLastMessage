@@ -19,6 +19,7 @@ class THELASTMESSAGE_API AElectricDoor : public AGimmickBase
 
 public:
     virtual void RefreshRestoredState() override;
+    virtual void RestoreProgress(const FProgressActorState& State) override;
     AElectricDoor();
 
     UFUNCTION(BlueprintCallable, Category = "Gimmick|Door")
@@ -62,6 +63,11 @@ protected:
     UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Gimmick|Door", meta = (MakeEditWidget = true))
     FTransform OpenTransform = FTransform::Identity;
 
+    /** 한 번 개방 신호를 받으면 닫기 신호를 무시하고 열린 상태를 유지한다. */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Door",
+        meta = (DisplayName = "개방 후 열린 상태 유지"))
+    bool bKeepOpenAfterActivation = false;
+
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|Config")
     FDataTableRowHandle DoorConfigRow;
 
@@ -70,5 +76,6 @@ protected:
 
 private:
     bool bTimelineConfigured = false;
+    bool bOpenLatched = false;
 
 };

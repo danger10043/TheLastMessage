@@ -38,6 +38,7 @@
 #include "InputCoreTypes.h"
 #include "Engine/LocalPlayer.h"
 #include "UI/GameKeySettingsSubsystem.h"
+#include "Misc/App.h"
 #include "Engine/GameViewportClient.h"
 #include "UnrealClient.h"
 #include "GAS/WeaponGameplayTags.h"
@@ -295,21 +296,27 @@ bool APlayerBase::UpdateGamepadAim(APlayerController& PC)
 	const FIntPoint ViewSize = Viewport->GetSizeXY();
 	if (ViewSize.X <= 0 || ViewSize.Y <= 0) return false;
 
-	if (RightStick.Size() >= GamepadAimDeadZone) GamepadAimStick = RightStick.GetSafeNormal();
-	// 엔진의 오른쪽 스틱 Y 값을 그대로 화면 Y로 쓴다(부호를 뒤집으면 위아래가 반대로 움직였다).
-	FVector2D ScreenDirection(GamepadAimStick.X, GamepadAimStick.Y);
-	if (GamepadAimStick.IsNearlyZero())
+	FVector2D Cursor = LastGamepadCursorPosition;
+	if (!bGamepadCursorPlaced)
 	{
-		// 스틱을 한 번도 기울이지 않았으면 캐릭터가 보는 방향을 조준한다. 그 뒤로는 스틱을 놓아도 마지막 방향을 유지한다.
+		// 처음에는 캐릭터 앞쪽에 커서를 놓는다.
 		FVector2D ForwardScreen;
-		if (PC.ProjectWorldLocationToScreen(GetActorLocation() + GetActorForwardVector() * 100.0f, ForwardScreen, true))
-			ScreenDirection = (ForwardScreen - ActorScreen).GetSafeNormal();
+		const FVector2D Forward = PC.ProjectWorldLocationToScreen(GetActorLocation() + GetActorForwardVector() * 100.0f, ForwardScreen, true)
+			? (ForwardScreen - ActorScreen).GetSafeNormal() : FVector2D(1.0, 0.0);
+		Cursor = ActorScreen + Forward * (ViewSize.Y * 0.2);
+		bGamepadCursorPlaced = true;
 	}
-	if (ScreenDirection.IsNearlyZero()) return false;
-
-	FVector2D Cursor = ActorScreen + ScreenDirection * (ViewSize.Y * GamepadAimScreenRadius);
-	Cursor.X = FMath::Clamp(Cursor.X, 0.0f, ViewSize.X - 1.0f);
-	Cursor.Y = FMath::Clamp(Cursor.Y, 0.0f, ViewSize.Y - 1.0f);
+	// 오른쪽 스틱으로 커서를 마우스처럼 자유롭게 움직인다. 기울기의 제곱으로 속도를 정해 살짝 기울이면 정밀하게 움직인다.
+	// 엔진의 오른쪽 스틱 Y 값을 그대로 화면 Y로 쓴다(부호를 뒤집으면 위아래가 반대로 움직였다).
+	const float Tilt = RightStick.Size();
+	if (Tilt >= GamepadAimDeadZone)
+	{
+		const float Strength = FMath::Square(FMath::Clamp((Tilt - GamepadAimDeadZone) / (1.0f - GamepadAimDeadZone), 0.0f, 1.0f));
+		const float DeltaSeconds = FMath::Min(static_cast<float>(FApp::GetDeltaTime()), 0.1f);
+		Cursor += RightStick.GetSafeNormal() * (Strength * GamepadCursorSpeed * ViewSize.Y * DeltaSeconds);
+	}
+	Cursor.X = FMath::Clamp(Cursor.X, 0.0, ViewSize.X - 1.0);
+	Cursor.Y = FMath::Clamp(Cursor.Y, 0.0, ViewSize.Y - 1.0);
 	PC.SetMouseLocation(FMath::RoundToInt(Cursor.X), FMath::RoundToInt(Cursor.Y));
 	LastGamepadCursorPosition = Cursor;
 

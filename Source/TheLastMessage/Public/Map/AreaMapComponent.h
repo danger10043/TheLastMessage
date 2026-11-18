@@ -113,8 +113,14 @@ public:
 	void SaveExploration();
 	void LoadExploration();
 	/** CellsToRestore가 nullptr이면 칸 기록이 없는 것으로 보고, 들어가 본 방은 전체가 밝혀진 것으로 처리한다. */
-	void RestoreExploration(const TSet<FName>& RoomsToRestore, const TMap<FName, FProgressRoomFog>* CellsToRestore = nullptr);
+	void RestoreExploration(const TSet<FName>& RoomsToRestore, const TMap<FName, FProgressRoomFog>* CellsToRestore = nullptr,
+		const TMap<FName, FProgressRoomSurfaces>* SurfacesToRestore = nullptr);
 private:
+	/** 방별 지형 기록. 로드된 방은 2초마다 새로 읽고, 내려간 방은 마지막으로 읽은 것을 그대로 쓴다. */
+	TMap<FName, TArray<FBox2D>> RoomSurfaces;
+	void ExportSurfaces(TMap<FName, FProgressRoomSurfaces>& Out) const;
+	void ImportSurfaces(const TMap<FName, FProgressRoomSurfaces>* Source);
+
 	static constexpr int32 MaxFogDimension = 64;
 
 	/** 방 영역을 FogCellSize로 나눈 칸 수 */

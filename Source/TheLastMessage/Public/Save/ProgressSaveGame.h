@@ -28,10 +28,20 @@ struct FProgressRoomFog
 	UPROPERTY(SaveGame, BlueprintReadWrite) TArray<uint8> Bits;
 };
 
+/** 방 하나의 지도 지형. 방이 내려가 있어도 지도에 그릴 수 있게 가 본 방의 지형을 저장한다. 네 값씩(MinX, MinZ, MaxX, MaxZ) 묶어 이어 붙인다. */
+USTRUCT(BlueprintType)
+struct FProgressRoomSurfaces
+{
+	GENERATED_BODY()
+	UPROPERTY(SaveGame, BlueprintReadWrite) TArray<float> Boxes;
+};
+
 USTRUCT(BlueprintType)
 struct FProgressMapState
 {
 	GENERATED_BODY()
+	/** 방 이름 -> 그 방의 지도 지형. 방 레벨이 내려가 있을 때 지도에 쓴다. 없는 방은 로드된 동안에 새로 읽는다. */
+	UPROPERTY(SaveGame, BlueprintReadWrite) TMap<FName, FProgressRoomSurfaces> RoomSurfaces;
 	/** 들어가 본 방. 지도에 방 이름이 표시된다. 칸 기록(RevealedCells)이 없는 방은 방 전체가 밝혀진 것으로 본다(이전 세이브 호환). */
 	UPROPERTY(SaveGame, BlueprintReadWrite) TSet<FName> ExploredRooms;
 	/** 방 이름 -> 그 방에서 시야가 닿은 칸. */

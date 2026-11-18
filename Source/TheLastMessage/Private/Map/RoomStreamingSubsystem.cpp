@@ -195,6 +195,9 @@ void URoomStreamingSubsystem::HandleLevelAdded(ULevel* Level, UWorld* InWorld)
 			if (FName(*Room.Level.GetLongPackageName()) != Package) continue;
 			if (!Wanted.Contains(Room.RoomId))
 			{
+				// 아직 로드가 시작되지 않은 요청만 취소한다(대기열에서 빠질 뿐이라 안전하다).
+				// 이미 읽는 중이거나 올라온 방은 Update가 비동기 로딩이 끝난 뒤에 내린다. 읽는 도중에 끊으면 독립형에서 크래시가 난다.
+				if (LevelInstances->IsLoading(Instance) || LevelInstances->IsLoaded(Instance)) break;
 				LevelInstances->RequestUnloadLevelInstance(Instance);
 				UE_LOG(LogRoomStreaming, Verbose, TEXT("Skip initial load of room %s"), *Room.RoomId.ToString());
 			}
@@ -388,7 +391,9 @@ void URoomStreamingSubsystem::Update()
 		ILevelInstanceInterface* Instance = Found2 ? Cast<ILevelInstanceInterface>(*Found2) : nullptr;
 		if (!Instance) continue; // 부모 레벨이 아직 로드되지 않았거나 이 맵에 없는 방.
 
-		const bool bLoaded = LevelInstances->IsLoaded(Instance) || LevelInstances->IsLoading(Instance);
+		const bool bIsLoading = LevelInstances->IsLoading(Instance);
+		const bool bLoaded = LevelInstances->IsLoaded(Instance) || bIsLoading;
+		if (!bLoaded || Wanted.Contains(Room.RoomId)) UnloadRequestedAt.Remove(Room.RoomId);
 		if (Wanted.Contains(Room.RoomId))
 		{
 			UnloadAfter.Remove(Room.RoomId);
@@ -400,6 +405,16 @@ void URoomStreamingSubsystem::Update()
 		}
 		else if (bLoaded)
 		{
+			// 로드 중인 방에 언로드를 요청하면 패키지가 로드되는 도중에 지워진다(느린 PC·독립형 게임에서 크래시). 다 올라온 뒤에 내린다.
+			if (bIsLoading) continue;
+			// 다른 패키지가 비동기로 읽히는 중에 레벨을 내리면 독립형에서 비동기 로더가 크래시한다(스택: ProcessAsyncLoading).
+			// 로딩이 모두 끝난 뒤에 내린다. 시작 단계에서는 로딩 화면이 그 시간을 가려 준다.
+			if (IsAsyncLoading()) continue;
+			// 한 번 요청한 방은 내려가는 동안 다시 요청하지 않는다. 오래 지나도 안 내려가면 다시 요청한다.
+			if (const double* RequestedAt = UnloadRequestedAt.Find(Room.RoomId))
+			{
+				if (Now - *RequestedAt < 5.0) continue;
+			}
 			// 시작 단계에서는 로딩 화면 뒤에서 처리하므로 대기 없이 바로 내린다.
 			const double Delay = bStartupPhase ? 0.0 : Settings->UnloadDelaySeconds;
 			const double Deadline = UnloadAfter.FindOrAdd(Room.RoomId, Now + Delay);
@@ -407,6 +422,7 @@ void URoomStreamingSubsystem::Update()
 			{
 				UE_LOG(LogRoomStreaming, Log, TEXT("Unload room %s"), *Room.RoomId.ToString());
 				UnloadAfter.Remove(Room.RoomId);
+				UnloadRequestedAt.Add(Room.RoomId, Now);
 				LevelInstances->RequestUnloadLevelInstance(Instance);
 			}
 		}
@@ -515,6 +531,15 @@ bool URoomStreamingSubsystem::IsRoomLoaded(FName RoomId) const
 		return Instance && LevelInstances->IsLoaded(Instance);
 	}
 	return false;
+}
+
+bool URoomStreamingSubsystem::IsRegionStreamedIn(FName RegionId) const
+{
+	for (const FRoomStreamEntry& Room : GetDefault<URoomStreamingSettings>()->Rooms)
+	{
+		if (Room.RegionIds.Contains(RegionId)) return IsRoomLoaded(Room.RoomId);
+	}
+	return true;
 }
 
 void URoomStreamingSubsystem::DumpState() const

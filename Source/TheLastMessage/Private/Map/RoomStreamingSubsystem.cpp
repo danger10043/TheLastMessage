@@ -381,10 +381,23 @@ void URoomStreamingSubsystem::CaptureRoomGimmicks(ILevelInstanceInterface* Insta
 		if (AGimmickBase* Gimmick = Cast<AGimmickBase>(Actor))
 		{
 			Saves->CaptureGimmickForUnload(Gimmick);
+			// 이 시점부터 사라질 때까지 이 기믹들은 상태 변화를 밖으로 알리지 않는다(발판 위 물체가 먼저 사라져 발판이 꺼지고
+			// 그 플래그를 받는 문이 닫히는 것을 막는다). 방이 다시 올라오면 BeginPlay에서 풀린다.
+			Gimmick->SetRoomUnloading(true);
 			++Captured;
 		}
 	}
 	UE_LOG(LogRoomStreaming, Verbose, TEXT("Captured %d gimmick states before unload"), Captured);
+}
+
+void URoomStreamingSubsystem::ReleaseRoomGimmicks(ILevelInstanceInterface* Instance)
+{
+	UWorld* World = GetWorld();
+	ULevelInstanceSubsystem* LevelInstances = World ? World->GetSubsystem<ULevelInstanceSubsystem>() : nullptr;
+	const ULevel* Level = (LevelInstances && Instance) ? LevelInstances->GetLevelInstanceLevel(Instance) : nullptr;
+	if (!Level) return;
+	for (AActor* Actor : Level->Actors)
+		if (AGimmickBase* Gimmick = Cast<AGimmickBase>(Actor)) Gimmick->SetRoomUnloading(false);
 }
 
 void URoomStreamingSubsystem::Update()
@@ -445,7 +458,11 @@ void URoomStreamingSubsystem::Update()
 
 		const bool bIsLoading = LevelInstances->IsLoading(Instance);
 		const bool bLoaded = LevelInstances->IsLoaded(Instance) || bIsLoading;
-		if (!bLoaded || Wanted.Contains(Room.RoomId)) UnloadRequestedAt.Remove(Room.RoomId);
+		if (!bLoaded || Wanted.Contains(Room.RoomId))
+		{
+			// 내리려고 요청했다가 다시 필요해진 방(대기열에서 취소됨): 멈춰 둔 기믹을 풀어 준다.
+			if (UnloadRequestedAt.Remove(Room.RoomId) > 0 && bLoaded) ReleaseRoomGimmicks(Instance);
+		}
 		if (Wanted.Contains(Room.RoomId))
 		{
 			UnloadAfter.Remove(Room.RoomId);

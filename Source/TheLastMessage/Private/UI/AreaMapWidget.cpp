@@ -226,23 +226,39 @@ int32 UAreaMapWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geome
 			FSlateLayoutTransform(FVector2f(Position))), Room.Name, Font, ESlateDrawEffect::None,
 			Room.Id == MapSource->GetCurrentRoomId() ? FactoryUI::Cyan : FactoryUI::Text);
 	}
-	for (TActorIterator<APlayerCheckpoint> It(GetWorld()); It; ++It)
-    {
-        const FVector Location=It->GetActorLocation();
-        const FVector2D WorldPoint(Location.X,Location.Z);
-        // 방문한 체크포인트이거나, 그 자리의 칸이 시야에 들어온 적이 있어야 지도에 보인다.
-        const bool bVisible=It->HasBeenVisited() || MapSource->IsPointRevealed(WorldPoint);
-        if(!bVisible) continue;
-        const FVector2D P=ToMap(WorldPoint,Size);
-        const bool bTravel=It->CanFastTravel();
-        const FLinearColor Color=It->bAllowFastTravel ? (bTravel ? FLinearColor(0.3f,1.f,0.7f):FLinearColor(0.35f,0.4f,0.45f)):FactoryUI::Amber;
-        if(It->bAllowFastTravel)
-        {
-            TArray<FVector2D> Diamond={P+FVector2D(0,-9),P+FVector2D(9,0),P+FVector2D(0,9),P+FVector2D(-9,0),P+FVector2D(0,-9)};
-            FSlateDrawElement::MakeLines(Out,Layer+5,Geometry.ToPaintGeometry(),Diamond,ESlateDrawEffect::None,Color,true,2);
-        }
-        Box(P-FVector2D(3,3),FVector2D(6,6),Color,5);
-    }
+	// 체크포인트 아이콘. 체크포인트가 방 레벨 안에 있으면 방이 내려갈 때 액터가 사라지므로, 액터가 없는 것은 기억해 둔 정보로 그린다.
+	{
+		TSet<FGuid> LiveCheckpointIds;
+		const auto DrawCheckpoint = [&](const FVector2D& WorldPoint, bool bAllowFastTravel, bool bTravel)
+		{
+			const FVector2D P=ToMap(WorldPoint,Size);
+			const FLinearColor Color=bAllowFastTravel ? (bTravel ? FLinearColor(0.3f,1.f,0.7f):FLinearColor(0.35f,0.4f,0.45f)):FactoryUI::Amber;
+			if(bAllowFastTravel)
+			{
+				TArray<FVector2D> Diamond={P+FVector2D(0,-9),P+FVector2D(9,0),P+FVector2D(0,9),P+FVector2D(-9,0),P+FVector2D(0,-9)};
+				FSlateDrawElement::MakeLines(Out,Layer+5,Geometry.ToPaintGeometry(),Diamond,ESlateDrawEffect::None,Color,true,2);
+			}
+			Box(P-FVector2D(3,3),FVector2D(6,6),Color,5);
+		};
+		for (TActorIterator<APlayerCheckpoint> It(GetWorld()); It; ++It)
+		{
+			const FVector Location=It->GetActorLocation();
+			const FVector2D WorldPoint(Location.X,Location.Z);
+			LiveCheckpointIds.Add(It->GetPersistentId());
+			// 방문한 체크포인트이거나, 그 자리의 칸이 시야에 들어온 적이 있어야 지도에 보인다.
+			const bool bVisible=It->HasBeenVisited() || MapSource->IsPointRevealed(WorldPoint);
+			if(!bVisible) continue;
+			DrawCheckpoint(WorldPoint,It->bAllowFastTravel,It->CanFastTravel());
+		}
+		for (const TPair<FGuid, FAreaMapCheckpointMarker>& Pair : MapSource->GetCheckpointMarkers())
+		{
+			if (LiveCheckpointIds.Contains(Pair.Key)) continue;
+			const FAreaMapCheckpointMarker& Marker=Pair.Value;
+			const FVector2D WorldPoint(Marker.Location.X,Marker.Location.Z);
+			if(!Marker.bVisited && !MapSource->IsPointRevealed(WorldPoint)) continue;
+			DrawCheckpoint(WorldPoint,Marker.bAllowFastTravel,Marker.bAllowFastTravel && Marker.bVisited);
+		}
+	}
 	if (const AActor* Player = MapSource->GetOwner())
 	{
 		const FVector2D Position = ToMap(FVector2D(Player->GetActorLocation().X,Player->GetActorLocation().Z),Size);
@@ -291,12 +307,27 @@ FReply UAreaMapWidget::NativeOnMouseButtonUp(const FGeometry& Geometry, const FP
         if(Pointer.X>=36 && Pointer.X<=Size.X-36 && Pointer.Y>=104 && Pointer.Y<=Size.Y-66)
         {
             APlayerCheckpoint* Target=nullptr; double Nearest=14;
+            TSet<FGuid> LiveIds;
             for(TActorIterator<APlayerCheckpoint> It(GetWorld());It;++It)
             {
+                LiveIds.Add(It->GetPersistentId());
                 if(!It->CanFastTravel()) continue;
                 const FVector L=It->GetActorLocation();
                 const double Distance=FVector2D::Distance(Pointer,ToMap(FVector2D(L.X,L.Z),Size));
                 if(Distance<Nearest){Nearest=Distance;Target=*It;}
+            }
+            // 방이 내려가 있어 액터가 없는 체크포인트: 기억해 둔 정보로 방을 먼저 올린 뒤 이동한다.
+            const FAreaMapCheckpointMarker* TargetMarker=nullptr; double NearestMarker=Nearest;
+            for(const TPair<FGuid, FAreaMapCheckpointMarker>& Pair : MapSource->GetCheckpointMarkers())
+            {
+                if(LiveIds.Contains(Pair.Key) || !Pair.Value.bAllowFastTravel || !Pair.Value.bVisited) continue;
+                const double Distance=FVector2D::Distance(Pointer,ToMap(FVector2D(Pair.Value.Location.X,Pair.Value.Location.Z),Size));
+                if(Distance<NearestMarker){NearestMarker=Distance;TargetMarker=&Pair.Value;Target=nullptr;}
+            }
+            if(TargetMarker)
+            {
+                if(MapSource->RequestTravelToMarker(TargetMarker->Id)) CloseMap();
+                else TravelStatus=NSLOCTEXT("AreaMap","TravelFailed","지금은 이동할 수 없습니다. 잠시 후 다시 시도하세요.");
             }
             if(Target)
             {

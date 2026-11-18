@@ -18,6 +18,20 @@ struct FAreaMapRoom
 	FBox2D Bounds = FBox2D(ForceInit);
 	TWeakObjectPtr<UTexture2D> Silhouette;
 	bool bAutomatic = false;
+	/** 리전 액터가 지금 월드에 없어서(방이 내려감) 마지막으로 본 정보를 쓰는 방 */
+	bool bCached = false;
+};
+
+/** 지도에 그리는 체크포인트. 체크포인트 액터가 방 레벨 안에 있으면 방이 내려갈 때 사라지므로, 마지막으로 본 정보를 기억한다. */
+struct FAreaMapCheckpointMarker
+{
+	FGuid Id;
+	/** 지도 아이콘 위치(체크포인트 액터 위치) */
+	FVector Location = FVector::ZeroVector;
+	FVector RespawnLocation = FVector::ZeroVector;
+	FRotator RespawnRotation = FRotator::ZeroRotator;
+	bool bAllowFastTravel = false;
+	bool bVisited = false;
 };
 
 /** 방 하나의 안개 상태. 방을 Columns x Rows 칸으로 나눠 시야가 닿은 칸을 1로 기록한다(칸 번호 = Row * Columns + Column, Row 0이 방의 맨 아래). */
@@ -114,8 +128,30 @@ public:
 	void LoadExploration();
 	/** CellsToRestore가 nullptr이면 칸 기록이 없는 것으로 보고, 들어가 본 방은 전체가 밝혀진 것으로 처리한다. */
 	void RestoreExploration(const TSet<FName>& RoomsToRestore, const TMap<FName, FProgressRoomFog>* CellsToRestore = nullptr,
-		const TMap<FName, FProgressRoomSurfaces>* SurfacesToRestore = nullptr);
+		const TMap<FName, FProgressRoomSurfaces>* SurfacesToRestore = nullptr,
+		const TMap<FName, FProgressRoomRegions>* RegionsToRestore = nullptr,
+		const TMap<FGuid, FProgressCheckpointMarker>* MarkersToRestore = nullptr);
+
+	/** 마지막으로 본 체크포인트 목록(방이 내려가 있어 액터가 없는 것 포함) */
+	const TMap<FGuid, FAreaMapCheckpointMarker>& GetCheckpointMarkers() const { return CheckpointMarkers; }
+	/**
+	 * 체크포인트 액터가 없는(방이 내려간) 곳으로 빠른 이동을 요청한다. 그 방을 먼저 올리고 바닥이 확인되면 이동한다.
+	 * 시작할 수 있으면 true. 실제 이동은 이후 몇 초에 걸쳐 일어난다.
+	 */
+	bool RequestTravelToMarker(const FGuid& MarkerId);
 private:
+	TMap<FGuid, FAreaMapCheckpointMarker> CheckpointMarkers;
+	void ExportMarkers(TMap<FGuid, FProgressCheckpointMarker>& Out) const;
+	void ImportMarkers(const TMap<FGuid, FProgressCheckpointMarker>* Source);
+	FName FindRegionAtPoint(const FVector2D& Point) const;
+	void UpdatePendingTravel(class APlayerBase* Player);
+	FGuid PendingTravelId;
+	FName PendingTravelRegion;
+	double PendingTravelStart = 0.0;
+	/** 지금까지 본 리전(방) 정보. 방 레벨이 내려가면 그 안의 리전 액터도 사라지므로, 마지막으로 본 값을 지도에 쓴다. */
+	TArray<FAreaMapRoom> CachedRooms;
+	void ExportRegions(TMap<FName, FProgressRoomRegions>& Out) const;
+	void ImportRegions(const TMap<FName, FProgressRoomRegions>* Source);
 	/** 방별 지형 기록. 로드된 방은 2초마다 새로 읽고, 내려간 방은 마지막으로 읽은 것을 그대로 쓴다. */
 	TMap<FName, TArray<FBox2D>> RoomSurfaces;
 	void ExportSurfaces(TMap<FName, FProgressRoomSurfaces>& Out) const;

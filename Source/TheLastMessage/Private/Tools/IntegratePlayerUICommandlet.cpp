@@ -3,6 +3,8 @@
 
 #if WITH_EDITOR
 #include "UI/FactoryUIStyle.h"
+#include "UI/AreaMapWidget.h"
+#include "UI/FactoryUIAssetSettings.h"
 #include "UI/FactoryMenuStyle.h"
 #include "Components/ScaleBox.h"
 #include "Components/WrapBox.h"
@@ -825,6 +827,79 @@ bool BuildHUDResourceBars()
 	return CompileSave(Panel);
 }
 
+bool BuildAreaMapWidget()
+{
+	const TCHAR* Path = TEXT("/Game/Main/UI/HUD/WBP_AreaMap");
+	if (LoadObject<UWidgetBlueprint>(nullptr, Path)) return true;
+
+	UWidgetBlueprint* BP = Blueprint(Path, UAreaMapWidget::StaticClass());
+	if (!BP || !BP->WidgetTree) return false;
+	UWidgetTree* Tree = BP->WidgetTree;
+	auto* Root = Tree->ConstructWidget<UCanvasPanel>(UCanvasPanel::StaticClass(), TEXT("MapLayout"));
+	Root->SetVisibility(ESlateVisibility::HitTestInvisible);
+	Tree->RootWidget = Root;
+
+	const auto AddImage = [Tree, Root](FName Name, const FSlateBrush& Brush, const FAnchors& Anchors, const FMargin& Offsets)
+	{
+		auto* Image = Tree->ConstructWidget<UImage>(UImage::StaticClass(), Name);
+		Image->SetBrush(Brush);
+		auto* Slot = Root->AddChildToCanvas(Image);
+		Slot->SetAnchors(Anchors);
+		Slot->SetOffsets(Offsets);
+	};
+	FSlateBrush Fill = *FCoreStyle::Get().GetBrush("WhiteBrush");
+	Fill.TintColor = FLinearColor(0.003f, 0.009f, 0.014f, 0.98f);
+	AddImage(TEXT("Background"), Fill, FAnchors(0, 0, 1, 1), FMargin(0));
+	AddImage(TEXT("Frame"), FactoryUI::Chamfer(FactoryUI::EPlate::Screen), FAnchors(0, 0, 1, 1), FMargin(20, 16));
+	Fill.TintColor = FLinearColor(0.12f, 0.25f, 0.32f);
+	AddImage(TEXT("HeaderDivider"), Fill, FAnchors(0, 0, 1, 0), FMargin(36, 90, 36, 1));
+
+	const auto* Assets = GetDefault<UFactoryUIAssetSettings>();
+	const auto MakeText = [Tree](FName Name, const FText& Text, UFont* Font, int32 Size, FLinearColor Color)
+	{
+		auto* Label = Tree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), Name);
+		Label->SetText(Text);
+		Label->SetFont(Font ? FSlateFontInfo(Font, Size, TEXT("Regular")) : FCoreStyle::GetDefaultFontStyle("Regular", Size));
+		Label->SetColorAndOpacity(FSlateColor(Color));
+		return Label;
+	};
+	auto* Title = MakeText(TEXT("MapTitle"), NSLOCTEXT("AreaMap", "Title", "구역 지도"),
+		Assets->TitleFont.LoadSynchronous(), 28, FactoryUI::Cyan);
+	auto* TitleSlot = Root->AddChildToCanvas(Title);
+	TitleSlot->SetPosition(FVector2D(40, 28));
+	TitleSlot->SetAutoSize(true);
+
+	auto* Legend = Tree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), TEXT("CheckpointLegend"));
+	auto* LegendSlot = Root->AddChildToCanvas(Legend);
+	LegendSlot->SetAnchors(FAnchors(0, 1, 0, 1));
+	LegendSlot->SetPosition(FVector2D(40, -48));
+	LegendSlot->SetAutoSize(true);
+	const auto AddLegendItem = [&](FName Name, const FText& Text, FLinearColor Color, float LeftPadding)
+	{
+		auto* Item = Tree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass(), Name);
+		Legend->AddChildToHorizontalBox(Item)->SetPadding(FMargin(LeftPadding, 0, 0, 0));
+		auto* IconSize = Tree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+		IconSize->SetWidthOverride(8);
+		IconSize->SetHeightOverride(8);
+		auto* Icon = Tree->ConstructWidget<UImage>(UImage::StaticClass());
+		FSlateBrush IconBrush = *FCoreStyle::Get().GetBrush("WhiteBrush");
+		IconBrush.TintColor = Color;
+		Icon->SetBrush(IconBrush);
+		IconSize->AddChild(Icon);
+		auto* IconSlot = Item->AddChildToHorizontalBox(IconSize);
+		IconSlot->SetVerticalAlignment(VAlign_Center);
+		IconSlot->SetPadding(FMargin(0, 0, 6, 0));
+		Item->AddChildToHorizontalBox(MakeText(NAME_None, Text, Assets->BodyFont.LoadSynchronous(), 13,
+			FLinearColor(0.65f, 0.76f, 0.82f)));
+	};
+	AddLegendItem(TEXT("CurrentLocation"), NSLOCTEXT("AreaMap", "LegendCurrent", "현재 위치"), FactoryUI::Cyan, 0);
+	AddLegendItem(TEXT("VisitedCheckpoint"), NSLOCTEXT("AreaMap", "LegendVisited", "방문한 체크포인트"), FactoryUI::Amber, 24);
+	AddLegendItem(TEXT("UnvisitedCheckpoint"), NSLOCTEXT("AreaMap", "LegendUnvisited", "미방문한 체크포인트"),
+		FLinearColor(0.35f, 0.4f, 0.45f), 24);
+	SyncWidgetGuids(BP);
+	return CompileSave(BP);
+}
+
 bool SplitCreditsWidget()
 {
 	const TCHAR* MenuPath = TEXT("/Game/Main/UI/Menu/WBP_StartMenu");
@@ -1088,6 +1163,8 @@ UIntegratePlayerUICommandlet::UIntegratePlayerUICommandlet()
 int32 UIntegratePlayerUICommandlet::Main(const FString& Params)
 {
 #if WITH_EDITOR
+	if (FParse::Param(*Params, TEXT("BuildAreaMapWidget")))
+		return PlayerUIBuild::BuildAreaMapWidget() ? 0 : 1;
 	if (FParse::Param(*Params, TEXT("SplitCreditsWidget")))
 		return PlayerUIBuild::SplitCreditsWidget() ? 0 : 1;
 	if (FParse::Param(*Params, TEXT("SetupLocalization")))

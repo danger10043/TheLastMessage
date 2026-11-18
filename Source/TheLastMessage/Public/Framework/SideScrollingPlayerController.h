@@ -71,6 +71,8 @@ public:
 	/** 구역 지도 화면 클래스 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Area Map", meta=(ToolTip="구역 지도 화면 클래스"))
 	TSubclassOf<UAreaMapWidget> MapWidgetClass;
+public:
+	TSubclassOf<UAreaMapWidget> GetAreaMapWidgetClass() const { return MapWidgetClass; }
 protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	UPROPERTY(Transient) TObjectPtr<UAreaMapWidget> AreaMapWidget;

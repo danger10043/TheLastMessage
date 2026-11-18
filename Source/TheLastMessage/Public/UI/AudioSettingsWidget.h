@@ -41,6 +41,8 @@ public:
 #endif
 	static UAudioSettingsWidget* CreateFor(APlayerController* Player);
 	void FocusFirstControl();
+	/** 키 설정에서 새 키 입력을 기다리는 중이면 true. 바깥 메뉴가 그 키를 가로채지 않게 할 때 쓴다. */
+	bool IsCapturingKey() const;
 	/** 설정 화면과 하위 탭 페이지 WBP(WBP_GraphicsSettings 등)를 모두 뒤져 이름으로 위젯을 찾는다. */
 	UWidget* FindSettingsWidget(FName Name) const;
 	/** 렌더링 해상도를 뺀 품질 그룹이 모두 같은 단계면 그 단계, 섞여 있으면 -1. 해상도는 따로 정하므로 품질 단계 판정에서 뺀다. */
@@ -88,6 +90,9 @@ protected:
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
 	virtual void NativeTick(const FGeometry& Geometry, float DeltaTime) override;
+	/** 포커스가 있는 컨트롤(버튼 제외) 둘레에 청록 테두리를 그린다. 엔진 포커스 점선은 메뉴 전체에서 꺼 두었다. */
+	virtual int32 NativePaint(const FPaintArgs& Args, const FGeometry& AllottedGeometry, const FSlateRect& MyCullingRect,
+		FSlateWindowElementList& OutDrawElements, int32 LayerId, const FWidgetStyle& InWidgetStyle, bool bParentEnabled) const override;
 	virtual FReply NativeOnPreviewKeyDown(const FGeometry& Geometry, const FKeyEvent& Event) override;
 
 private:
@@ -109,6 +114,16 @@ private:
 	void BindKeySelectors();
 	void BindSettingsHelp();
 	void RefreshSettingsHelp();
+	/** 포커스가 있는 설정 줄의 라벨을 청록으로 칠한다. 슬라이더·드롭다운·키 선택기는 자체 포커스 표시가 없어서 패드로 위치를 알 수 없었다. */
+	void UpdateFocusedRowHighlight();
+	TWeakObjectPtr<class UTextBlock> FocusedRowLabel;
+	FSlateColor FocusedRowLabelColor;
+	bool IsUsingGamepad() const;
+	/** NativePaint가 테두리를 그릴 포커스 위젯. Tick에서 정한다. */
+	TWeakPtr<SWidget> FocusFrameTarget;
+	/** 패드 모드에서 여는 사용자 지정 색 창. 열려 있는 동안 설정 화면이 포커스를 되찾지 않는다. */
+	TWeakObjectPtr<class UAppearanceColorPadPicker> PadColorPicker;
+	void OpenPadAppearancePalette(bool bOutline);
 	struct FSettingsHelpEntry
 	{
 		TWeakObjectPtr<UWidget> Row;

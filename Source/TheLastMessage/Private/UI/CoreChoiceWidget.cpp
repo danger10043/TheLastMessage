@@ -1,4 +1,6 @@
 #include "UI/CoreChoiceWidget.h"
+#include "UI/GamepadUIKeys.h"
+#include "HAL/PlatformTime.h"
 
 #include "Blueprint/WidgetBlueprintLibrary.h"
 #include "Character/Player/PlayerBase.h"
@@ -247,6 +249,7 @@ void UCoreChoiceWidget::HandleThirdReroll()
 bool UCoreChoiceWidget::CapturePlayerInput()
 {
 	if (bCapturedInput) return true;
+	GamepadAcceptReadyTime = FPlatformTime::Seconds() + 0.5;
 	if (APlayerController* Player = GetOwningPlayer())
 	{
 		InputOwner = Player;
@@ -341,6 +344,24 @@ FReply UCoreChoiceWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, cons
 	// 확인 키로 버튼이 실행되지 않고 ESC가 다른 입력 경로로 새지 않도록, 자식에게 전달하기 전에 소비한다.
 	const FKey Key = Event.GetKey();
 	if (bClosing || Key == EKeys::SpaceBar || Key == EKeys::Enter || Key == EKeys::Escape) return FReply::Handled();
+	// 패드: 십자키·왼쪽 스틱 좌우로 카드 이동, A로 고르기, X로 그 카드 리롤. B는 닫지 않고 무시한다(선택은 필수).
+	if (const int32 Step = GamepadUI::HorizontalStep(Key))
+	{
+		MoveActiveCard(Step);
+		return FReply::Handled();
+	}
+	if (GamepadUI::IsAccept(Key))
+	{
+		if (!Event.IsRepeat() && FPlatformTime::Seconds() >= GamepadAcceptReadyTime && DisplayedChoices.IsValidIndex(ActiveCardIndex))
+			HandleCardChosen(DisplayedChoices[ActiveCardIndex]);
+		return FReply::Handled();
+	}
+	if (Key == EKeys::Gamepad_FaceButton_Left)
+	{
+		if (!Event.IsRepeat()) HandleReroll(ActiveCardIndex);
+		return FReply::Handled();
+	}
+	if (Key.IsGamepadKey() && !Key.IsAnalog()) return FReply::Handled();
 	return Super::NativeOnPreviewKeyDown(Geometry, Event);
 }
 

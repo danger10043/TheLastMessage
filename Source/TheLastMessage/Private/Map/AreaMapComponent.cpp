@@ -14,6 +14,8 @@
 #include "Engine/World.h"
 #include "CollisionQueryParams.h"
 #include "Components/PrimitiveComponent.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "UI/LoadingTransitionSubsystem.h"
 
 UAreaMapComponent::UAreaMapComponent()
 {
@@ -33,6 +35,7 @@ void UAreaMapComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAct
 	const APlayerBase* Player = Cast<APlayerBase>(GetOwner());
 	if (!Player || !Player->IsLocallyControlled()) return;
 	if (!bLoadedExploration) LoadExploration();
+	if (PendingTravelId.IsValid()) UpdatePendingTravel(Cast<APlayerBase>(GetOwner()));
 	RefreshElapsed += DeltaTime;
 	if (RefreshElapsed >= 2)
 	{
@@ -49,6 +52,7 @@ void UAreaMapComponent::TickComponent(float DeltaTime, ELevelTick TickType, FAct
 void UAreaMapComponent::RefreshLayout()
 {
 	Rooms.Reset(); Surfaces.Reset(); Checkpoints.Reset(); MapBounds.Init();
+	bool bMarkersChanged = false;
 	if (!GetWorld()) return;
 	const double PlaneY = GetOwner() ? GetOwner()->GetActorLocation().Y : 0;
 	for (TActorIterator<AAreaMapRegion> It(GetWorld()); It; ++It)
@@ -59,13 +63,73 @@ void UAreaMapComponent::RefreshLayout()
 		Room.Silhouette = It->MapSilhouette.Get();
 		MapBounds += Room.Bounds;
 	}
+
+	// 방 레벨 안에 있는 리전 액터는 그 방이 내려가면 월드에서 사라진다. 그러면 지도에서 방 자체가 빠지므로,
+	// 마지막으로 본 리전 정보를 기억해 두었다가 액터가 없는 동안 그 정보로 방을 지도에 그린다.
+	bool bRegionsChanged = false;
+	{
+		TSet<FName> LiveIds;
+		for (const FAreaMapRoom& Live : Rooms) LiveIds.Add(Live.Id);
+
+		// 살아 있는 리전이 바뀌었는지(가 본 방만) 확인한다. 바뀌면 세이브에도 반영한다.
+		for (const FName& Id : LiveIds)
+		{
+			if (!IsRoomShown(Id)) continue;
+			int32 OldCount = 0, NewCount = 0;
+			bool bSame = true;
+			for (const FAreaMapRoom& Old : CachedRooms)
+			{
+				if (Old.Id != Id) continue;
+				++OldCount;
+				bool bFound = false;
+				for (const FAreaMapRoom& Live : Rooms)
+					if (Live.Id == Id && Live.Bounds.Min.Equals(Old.Bounds.Min, 0.5) && Live.Bounds.Max.Equals(Old.Bounds.Max, 0.5)) { bFound = true; break; }
+				bSame &= bFound;
+			}
+			for (const FAreaMapRoom& Live : Rooms) if (Live.Id == Id) ++NewCount;
+			if (OldCount != NewCount || !bSame) bRegionsChanged = true;
+		}
+
+		TArray<FAreaMapRoom> Stale;
+		for (const FAreaMapRoom& Old : CachedRooms)
+			if (!LiveIds.Contains(Old.Id)) Stale.Add(Old);
+		CachedRooms = Stale;
+		CachedRooms.Append(Rooms);
+		for (FAreaMapRoom& Old : Stale)
+		{
+			Old.bCached = true;
+			MapBounds += Old.Bounds;
+			Rooms.Add(Old);
+		}
+	}
 	for (TActorIterator<AActor> It(GetWorld()); It; ++It)
 	{
 		AActor* Actor = *It;
 		if (Actor->IsA<APawn>() || Actor->GetOwner() && Actor->GetOwner()->IsA<APawn>()) continue;
 		// 체크포인트 클래스 이름 대신 플레이어 체크포인트 기반 타입으로 식별
-		if (Actor->IsA<APlayerCheckpoint>())
+		if (const APlayerCheckpoint* Checkpoint = Cast<APlayerCheckpoint>(Actor))
+		{
 			Checkpoints.Add(FVector2D(Actor->GetActorLocation().X, Actor->GetActorLocation().Z));
+			// 체크포인트가 방 레벨 안에 있으면 방이 내려갈 때 사라지므로 마지막으로 본 정보를 기억해 둔다.
+			const FGuid MarkerId = Checkpoint->GetPersistentId();
+			if (MarkerId.IsValid() && Checkpoint->RespawnPoint)
+			{
+				FAreaMapCheckpointMarker& Marker = CheckpointMarkers.FindOrAdd(MarkerId);
+				const bool bVisited = Marker.bVisited || Checkpoint->HasBeenVisited();
+				const FVector RespawnLocation = Checkpoint->RespawnPoint->GetComponentLocation();
+				if (Marker.bVisited != bVisited || Marker.bAllowFastTravel != Checkpoint->bAllowFastTravel
+					|| !Marker.RespawnLocation.Equals(RespawnLocation, 1.0) || !Marker.Location.Equals(Actor->GetActorLocation(), 1.0))
+				{
+					if (bVisited) bMarkersChanged = true;
+				}
+				Marker.Id = MarkerId;
+				Marker.Location = Actor->GetActorLocation();
+				Marker.RespawnLocation = RespawnLocation;
+				Marker.RespawnRotation = Checkpoint->RespawnPoint->GetComponentRotation();
+				Marker.bAllowFastTravel = Checkpoint->bAllowFastTravel;
+				Marker.bVisited = bVisited;
+			}
+		}
 		TInlineComponentArray<UStaticMeshComponent*> Meshes(Actor);
 		for (const UStaticMeshComponent* Mesh : Meshes)
 		{
@@ -118,7 +182,7 @@ void UAreaMapComponent::RefreshLayout()
 		for (const FBox2D& Surface : Surfaces)
 			if (Surface.Intersect(Room.Bounds)) List.Add(Surface);
 	}
-	bool bSurfacesChanged = false;
+	bool bSurfacesChanged = bRegionsChanged || bMarkersChanged;
 	for (TPair<FName, TArray<FBox2D>>& Pair : Fresh)
 	{
 		const TArray<FBox2D>* Old = RoomSurfaces.Find(Pair.Key);
@@ -441,12 +505,163 @@ void UAreaMapComponent::ImportSurfaces(const TMap<FName, FProgressRoomSurfaces>*
 	}
 }
 
+void UAreaMapComponent::ExportRegions(TMap<FName, FProgressRoomRegions>& Out) const
+{
+	Out.Reset();
+	for (const FAreaMapRoom& Room : CachedRooms)
+	{
+		// 지도에 그려지는(가 본) 방의 리전만 저장한다.
+		if (Room.bAutomatic || Room.Id.IsNone() || !IsRoomShown(Room.Id)) continue;
+		FProgressRoomRegions& Saved = Out.FindOrAdd(Room.Id);
+		if (Saved.Name.IsEmpty()) Saved.Name = Room.Name;
+		if (Saved.Silhouette.IsNull() && Room.Silhouette.IsValid()) Saved.Silhouette = FSoftObjectPath(Room.Silhouette.Get());
+		Saved.Boxes.Add((float)Room.Bounds.Min.X); Saved.Boxes.Add((float)Room.Bounds.Min.Y);
+		Saved.Boxes.Add((float)Room.Bounds.Max.X); Saved.Boxes.Add((float)Room.Bounds.Max.Y);
+	}
+}
+
+void UAreaMapComponent::ImportRegions(const TMap<FName, FProgressRoomRegions>* Source)
+{
+	CachedRooms.Reset();
+	if (!Source) return;
+	for (const TPair<FName, FProgressRoomRegions>& Pair : *Source)
+	{
+		UTexture2D* Silhouette = Pair.Value.Silhouette.IsNull() ? nullptr : Cast<UTexture2D>(Pair.Value.Silhouette.TryLoad());
+		const TArray<float>& Boxes = Pair.Value.Boxes;
+		for (int32 Index = 0; Index + 3 < Boxes.Num(); Index += 4)
+		{
+			FAreaMapRoom& Room = CachedRooms.AddDefaulted_GetRef();
+			Room.Id = Pair.Key; Room.Name = Pair.Value.Name; Room.Silhouette = Silhouette;
+			Room.Bounds = FBox2D(FVector2D(Boxes[Index], Boxes[Index + 1]), FVector2D(Boxes[Index + 2], Boxes[Index + 3]));
+			Room.bCached = true;
+		}
+	}
+}
+
+void UAreaMapComponent::ExportMarkers(TMap<FGuid, FProgressCheckpointMarker>& Out) const
+{
+	Out.Reset();
+	for (const TPair<FGuid, FAreaMapCheckpointMarker>& Pair : CheckpointMarkers)
+	{
+		// 가 본 체크포인트만 저장한다. 못 가 본 것은 시야에 들어온 뒤에야 지도에 보이고, 그때는 방이 올라와 있다.
+		if (!Pair.Value.bVisited) continue;
+		FProgressCheckpointMarker& Saved = Out.Add(Pair.Key);
+		Saved.Location = Pair.Value.Location;
+		Saved.RespawnLocation = Pair.Value.RespawnLocation;
+		Saved.RespawnRotation = Pair.Value.RespawnRotation;
+		Saved.bAllowFastTravel = Pair.Value.bAllowFastTravel;
+	}
+}
+
+void UAreaMapComponent::ImportMarkers(const TMap<FGuid, FProgressCheckpointMarker>* Source)
+{
+	CheckpointMarkers.Reset();
+	if (!Source) return;
+	for (const TPair<FGuid, FProgressCheckpointMarker>& Pair : *Source)
+	{
+		FAreaMapCheckpointMarker& Marker = CheckpointMarkers.Add(Pair.Key);
+		Marker.Id = Pair.Key;
+		Marker.Location = Pair.Value.Location;
+		Marker.RespawnLocation = Pair.Value.RespawnLocation;
+		Marker.RespawnRotation = Pair.Value.RespawnRotation;
+		Marker.bAllowFastTravel = Pair.Value.bAllowFastTravel;
+		Marker.bVisited = true;
+	}
+}
+
+FName UAreaMapComponent::FindRegionAtPoint(const FVector2D& Point) const
+{
+	FName Best;
+	double BestArea = TNumericLimits<double>::Max();
+	for (const FAreaMapRoom& Room : Rooms)
+	{
+		if (Room.bAutomatic || Room.Id.IsNone() || !Room.Bounds.IsInside(Point)) continue;
+		const double Area = Room.Bounds.GetArea();
+		if (Area < BestArea) { BestArea = Area; Best = Room.Id; }
+	}
+	return Best;
+}
+
+bool UAreaMapComponent::RequestTravelToMarker(const FGuid& MarkerId)
+{
+	APlayerBase* Player = Cast<APlayerBase>(GetOwner());
+	const FAreaMapCheckpointMarker* Marker = CheckpointMarkers.Find(MarkerId);
+	UWorld* World = GetWorld();
+	UGameInstance* Instance = World ? World->GetGameInstance() : nullptr;
+	if (!Marker || !Marker->bAllowFastTravel || !Marker->bVisited || !Player || !Instance || PendingTravelId.IsValid()) return false;
+	if (!Player->HasAuthority() || Player->IsDead() || !Player->IsPlayerControlled() || World->GetNetMode() != NM_Standalone) return false;
+	if (const UProgressSaveSubsystem* Saves = Instance->GetSubsystem<UProgressSaveSubsystem>())
+		if (Saves->IsSaving() || Saves->IsRestoringProgress()) return false;
+	URoomStreamingSubsystem* StreamingRooms = World->GetSubsystem<URoomStreamingSubsystem>();
+	if (!StreamingRooms) return false;
+
+	PendingTravelId = MarkerId;
+	PendingTravelRegion = FindRegionAtPoint(FVector2D(Marker->RespawnLocation.X, Marker->RespawnLocation.Z));
+	PendingTravelStart = World->GetTimeSeconds();
+	Player->CancelWeaponInputsForUI();
+	if (APlayerController* Controller = Cast<APlayerController>(Player->GetController())) Controller->SetIgnoreMoveInput(true);
+	if (ULoadingTransitionSubsystem* Loading = Instance->GetSubsystem<ULoadingTransitionSubsystem>()) Loading->ShowRespawnWait();
+	SetComponentTickInterval(0.05f); // 방이 올라오는 것을 빨리 확인한다.
+	UpdatePendingTravel(Player);
+	return true;
+}
+
+void UAreaMapComponent::UpdatePendingTravel(APlayerBase* Player)
+{
+	UWorld* World = GetWorld();
+	UGameInstance* Instance = World ? World->GetGameInstance() : nullptr;
+	URoomStreamingSubsystem* StreamingRooms = World ? World->GetSubsystem<URoomStreamingSubsystem>() : nullptr;
+	ULoadingTransitionSubsystem* Loading = Instance ? Instance->GetSubsystem<ULoadingTransitionSubsystem>() : nullptr;
+	const FAreaMapCheckpointMarker* Marker = CheckpointMarkers.Find(PendingTravelId);
+
+	auto Cancel = [&]()
+	{
+		PendingTravelId.Invalidate();
+		SetComponentTickInterval(FMath::Max(RevealInterval, 0.05f));
+		if (StreamingRooms) StreamingRooms->ReleaseRegionHold();
+		if (Player) if (APlayerController* Controller = Cast<APlayerController>(Player->GetController())) Controller->ResetIgnoreMoveInput();
+		if (Loading) Loading->FinishRespawnWait(Player);
+	};
+
+	// 25초 안에 방이 올라오지 않거나 플레이어가 죽었으면 포기한다.
+	if (!Marker || !Player || !StreamingRooms || Player->IsDead() || World->GetTimeSeconds() - PendingTravelStart > 25.0)
+	{
+		Cancel();
+		return;
+	}
+	const FVector Gravity = Player->GetCharacterMovement()->GetGravityDirection();
+	if (!StreamingRooms->PrepareRegionForRespawn(PendingTravelRegion, Marker->RespawnLocation, Gravity)) return;
+
+	const FGuid TargetId = PendingTravelId;
+	const FVector TargetLocation = Marker->RespawnLocation;
+	const FRotator TargetRotation = Marker->RespawnRotation;
+	if (!Player->TeleportTo(TargetLocation, TargetRotation))
+	{
+		Cancel();
+		return;
+	}
+	Player->GetCharacterMovement()->StopMovementImmediately();
+	PendingTravelId.Invalidate();
+	SetComponentTickInterval(FMath::Max(RevealInterval, 0.05f));
+	StreamingRooms->ReleaseRegionHold();
+	if (APlayerController* Controller = Cast<APlayerController>(Player->GetController())) Controller->ResetIgnoreMoveInput();
+	if (Loading) Loading->FinishRespawnWait(Player);
+	// 방이 올라와서 체크포인트 액터가 다시 생겼으면 평소 빠른 이동처럼 도착한 곳을 현재 체크포인트로 만든다.
+	for (TActorIterator<APlayerCheckpoint> It(World); It; ++It)
+	{
+		if (It->GetPersistentId() == TargetId) { It->ActivateCheckpoint(Player); break; }
+	}
+}
+
 void UAreaMapComponent::RestoreExploration(const TSet<FName>& RoomsToRestore, const TMap<FName, FProgressRoomFog>* CellsToRestore,
-	const TMap<FName, FProgressRoomSurfaces>* SurfacesToRestore)
+	const TMap<FName, FProgressRoomSurfaces>* SurfacesToRestore, const TMap<FName, FProgressRoomRegions>* RegionsToRestore,
+	const TMap<FGuid, FProgressCheckpointMarker>* MarkersToRestore)
 {
 	ExploredRooms = RoomsToRestore;
 	ImportFog(CellsToRestore);
 	ImportSurfaces(SurfacesToRestore);
+	ImportRegions(RegionsToRestore);
+	ImportMarkers(MarkersToRestore);
 	CurrentRoom = NAME_None;
 	bLoadedExploration = true;
 }
@@ -480,6 +695,8 @@ void UAreaMapComponent::SaveExploration()
 		State.ExploredRooms = ExploredRooms;
 		ExportFog(State.RevealedCells);
 		ExportSurfaces(State.RoomSurfaces);
+		ExportRegions(State.RoomRegions);
+		ExportMarkers(State.CheckpointMarkers);
 	}
 	// Exploration updates memory only; checkpoint/autosave commits the active slot.
 }
@@ -495,5 +712,7 @@ void UAreaMapComponent::LoadExploration()
 		ExploredRooms = Map ? Map->ExploredRooms : TSet<FName>();
 		ImportFog(Map ? &Map->RevealedCells : nullptr);
 		ImportSurfaces(Map ? &Map->RoomSurfaces : nullptr);
+		ImportRegions(Map ? &Map->RoomRegions : nullptr);
+		ImportMarkers(Map ? &Map->CheckpointMarkers : nullptr);
 	}
 }

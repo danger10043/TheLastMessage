@@ -361,6 +361,13 @@ void UStartMenuWidget::ShowError(const FText& Message)
 FReply UStartMenuWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, const FKeyEvent& Event)
 {
 	const FKey Key = Event.GetKey();
+	// 패드 B는 버튼보다 먼저 여기서 받아 Esc와 똑같이 처리한다(버블링 단계까지 오지 않는 경우가 있었다).
+	if (GamepadUI::IsBack(Key))
+	{
+		const FKeyEvent EscapeEvent(EKeys::Escape, Event.GetModifierKeys(), Event.GetUserIndex(), Event.IsRepeat(), 0, 0);
+		NativeOnKeyDown(Geometry, EscapeEvent);
+		return FReply::Handled();
+	}
 	if (Key == EKeys::SpaceBar && Pages && Pages->GetActiveWidget() == WidgetTree->FindWidget(TEXT("CreditsPage")))
 	{
 		bCreditsSpaceHeld = true;
@@ -400,7 +407,7 @@ FReply UStartMenuWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, const
 
 FReply UStartMenuWidget::NativeOnKeyDown(const FGeometry& Geometry, const FKeyEvent& Event)
 {
-	if ((Event.GetKey() == EKeys::Escape || GamepadUI::IsBack(Event.GetKey())) && Pages)
+	if (Event.GetKey() == EKeys::Escape && Pages)
 	{
 		if (bWorking) return FReply::Handled();
 		if (Pages->GetActiveWidgetIndex() == 2) { FactoryUI::PlayUISound(FactoryUI::ESound::Cancel); CancelOverwrite(); return FReply::Handled(); }

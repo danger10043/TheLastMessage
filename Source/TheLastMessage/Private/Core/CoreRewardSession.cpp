@@ -4,6 +4,17 @@
 #include "DataAsset/CoreDataAsset.h"
 #include "Templates/UnrealTemplate.h"
 
+namespace
+{
+	bool HasRewardPrerequisites(const UCoreDataAsset* Data, const UCoreComponent* Core)
+	{
+		// Perfect Guard augments Guard; it cannot function as a standalone reward.
+		static const FName PerfectGuardId(TEXT("Core_PerfectGuard"));
+		static const FName GuardId(TEXT("Core_Guard"));
+		return Data->CoreId != PerfectGuardId || (Core && Core->HasCore(GuardId));
+	}
+}
+
 ECoreRewardStartResult UCoreRewardSession::Start(UCoreComponent* InCore,
 	const TArray<UCoreDataAsset*>& Pool, ECoreCategory Category)
 {
@@ -21,6 +32,7 @@ ECoreRewardStartResult UCoreRewardSession::Start(UCoreComponent* InCore,
 	for (UCoreDataAsset* Data : Pool)
 	{
 		if (!IsValid(Data) || !Data->bIncludeInRandomPool || Data->CoreCategory != Category) continue;
+		if (!HasRewardPrerequisites(Data, InCore)) continue;
 		if (CandidateIds.Contains(Data->CoreId)) continue;
 		CandidateIds.Add(Data->CoreId);
 		++MatchingCount;
@@ -77,6 +89,12 @@ ECoreAcquireResult UCoreRewardSession::SelectCore(FName CoreId)
 		if (IsValid(Data.Get()) && Data->CoreId == CoreId) { Selected = Data.Get(); break; }
 	}
 	if (!Selected) return ECoreAcquireResult::NotOffered;
+	if (!HasRewardPrerequisites(Selected, Core.Get()))
+	{
+		RejectedCoreIds.Add(CoreId);
+		RepairChoices();
+		return ECoreAcquireResult::NotOffered;
+	}
 
 	TGuardValue<bool> ProcessingGuard(bProcessing, true);
 	const ECoreAcquireResult Result = Core->AcquireCore(Selected);
@@ -113,6 +131,7 @@ TArray<UCoreDataAsset*> UCoreRewardSession::GetUnshownCandidates() const
 	for (const TObjectPtr<UCoreDataAsset>& Data : State.CandidatePool)
 	{
 		if (!IsValid(Data.Get()) || Excluded.Contains(Data->CoreId) || RejectedCoreIds.Contains(Data->CoreId)
+			|| !HasRewardPrerequisites(Data.Get(), Core.Get())
 			|| !IsCoreAcquireSuccess(Core->CheckAcquire(Data.Get()))) continue;
 		Excluded.Add(Data->CoreId);
 		Result.Add(Data.Get());
@@ -142,7 +161,8 @@ void UCoreRewardSession::RepairChoices()
 	bool bHasChoice = false;
 	for (TObjectPtr<UCoreDataAsset>& Data : State.Choices)
 	{
-		if (IsValid(Data.Get()) && !RejectedCoreIds.Contains(Data->CoreId))
+		if (IsValid(Data.Get()) && !RejectedCoreIds.Contains(Data->CoreId)
+			&& HasRewardPrerequisites(Data.Get(), Core.Get()))
 		{
 			const ECoreAcquireResult Result = Core->CheckAcquire(Data.Get());
 			if (IsCoreAcquireSuccess(Result) || Result == ECoreAcquireResult::Busy) { bHasChoice = true; continue; }

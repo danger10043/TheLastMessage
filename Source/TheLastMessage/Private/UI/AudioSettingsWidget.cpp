@@ -667,9 +667,11 @@ int32 UAudioSettingsWidget::NativePaint(const FPaintArgs& Args, const FGeometry&
 	const FVector2D Position = AllottedGeometry.AbsoluteToLocal(Focused.GetAbsolutePosition()) - FVector2D(3.0, 3.0);
 	const FVector2D Size = Focused.GetAbsoluteSize() / Scale + FVector2D(6.0, 6.0);
 	if (Size.X <= 6.0 || Size.Y <= 6.0) return Layer;
-	const FSlateRoundedBoxBrush Frame(FLinearColor::Transparent, 4.f, FactoryUI::Cyan, 2.f);
-	FSlateDrawElement::MakeBox(OutDrawElements, Layer + 1,
-		AllottedGeometry.ToPaintGeometry(FVector2f(Size), FSlateLayoutTransform(FVector2f(Position))), &Frame);
+	// 안쪽을 칠하지 않도록 선으로 테두리만 그린다.
+	const TArray<FVector2D> Outline = {
+		Position, Position + FVector2D(Size.X, 0.0), Position + Size, Position + FVector2D(0.0, Size.Y), Position };
+	FSlateDrawElement::MakeLines(OutDrawElements, Layer + 1, AllottedGeometry.ToPaintGeometry(), Outline,
+		ESlateDrawEffect::None, FactoryUI::Cyan, true, 2.f);
 	return Layer + 1;
 }
 

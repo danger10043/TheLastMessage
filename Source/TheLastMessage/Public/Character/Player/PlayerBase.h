@@ -563,16 +563,17 @@ private:
 	// 클라이언트가 취소 요청을 매 프레임 보내지 않도록 마지막 요청 시각을 기억한다.
 	double LastAttackCancelRequestTime = -1.0;
 	void UpdateMouseAim();
-	/** 패드 조준: 오른쪽 스틱(중립이면 보는 방향)으로 커서를 플레이어 주변에 옮긴다. 조준을 처리했으면 true. */
+	/** 패드 조준: 오른쪽 스틱으로 조준 커서를 마우스처럼 화면 어디로든 움직인다. 조준을 처리했으면 true. */
 	bool UpdateGamepadAim(APlayerController& PC);
-	/** 오른쪽 스틱 조준을 시작하는 기울기. */
+	/** 오른쪽 스틱이 이보다 덜 기울면 커서가 움직이지 않는다. */
 	UPROPERTY(EditDefaultsOnly, Category="Player|Input|Gamepad", meta=(ClampMin="0.05", ClampMax="0.9"))
-	float GamepadAimDeadZone = 0.3f;
-	/** 패드 조준 커서와 플레이어 사이 거리(화면 높이 비율). */
-	UPROPERTY(EditDefaultsOnly, Category="Player|Input|Gamepad", meta=(ClampMin="0.05", ClampMax="0.5"))
-	float GamepadAimScreenRadius = 0.22f;
+	float GamepadAimDeadZone = 0.2f;
+	/** 스틱을 끝까지 기울였을 때 커서 속도(초당 화면 높이 배수). 살짝 기울이면 느리게 움직인다. */
+	UPROPERTY(EditDefaultsOnly, Category="Player|Input|Gamepad", meta=(ClampMin="0.1", ClampMax="5.0"))
+	float GamepadCursorSpeed = 1.2f;
 	bool bGamepadAimActive = false;
-	FVector2D GamepadAimStick = FVector2D::ZeroVector;
+	/** 패드 커서를 아직 놓지 않았으면 false. 처음에는 캐릭터 앞쪽에 놓는다. */
+	bool bGamepadCursorPlaced = false;
 	FVector2D LastGamepadCursorPosition = FVector2D::ZeroVector;
 	int32 GamepadCursorMismatchFrames = 0;
 	uint64 GamepadAimFrame = 0;

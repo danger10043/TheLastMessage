@@ -8,12 +8,14 @@
 class UInputMappingContext;
 
 /** 게임 조작에 쓰는 입력 장치. 고른 장치의 키만 게임 조작에 쓰인다(일시정지·컷신 건너뛰기는 둘 다 쓴다). */
-UENUM()
+UENUM(BlueprintType)
 enum class EGameInputDevice : uint8
 {
 	KeyboardMouse,
 	Gamepad
 };
+
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnGameInputDeviceChanged, EGameInputDevice);
 
 struct FGameKeyBinding
 {
@@ -49,9 +51,14 @@ public:
 	bool TrySetKey(int32 MappingIndex, FKey Key, FText& Error);
 	void ResetKeys();
 
+	UFUNCTION(BlueprintPure, Category = "Input Settings")
 	EGameInputDevice GetInputDevice() const { return InputDevice; }
+	UFUNCTION(BlueprintCallable, Category = "Input Settings")
 	void SetInputDevice(EGameInputDevice Device);
+	UFUNCTION(BlueprintPure, Category = "Input Settings")
 	bool IsUsingGamepad() const { return InputDevice == EGameInputDevice::Gamepad; }
+
+	FOnGameInputDeviceChanged OnInputDeviceChanged;
 
 	/** Xbox 표기 버튼 이름(A, LB, 십자키 ↑ 등). 패드 키가 아니면 엔진 표시 이름. */
 	static FText GetGamepadKeyLabel(const FKey& Key);

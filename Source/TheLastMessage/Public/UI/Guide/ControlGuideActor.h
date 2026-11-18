@@ -14,6 +14,8 @@ class UMediaTexture;
 class UMaterialInterface;
 class UMaterialInstanceDynamic;
 class UControlGuideWidget;
+class UGameKeySettingsSubsystem;
+enum class EGameInputDevice : uint8;
 
 /** 맵에 배치하는 조작법 안내 액터 */
 UCLASS()
@@ -48,6 +50,14 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Control Guide|Video")
 	TMap<EControlGuideType, TSoftObjectPtr<UMediaSource>> GuideMediaSources;
 
+	/** 게임패드용 통합 그림 또는 미디어 텍스처. 입력 장치 설정에 따라 전환한다. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Control Guide|Gamepad")
+	TMap<EControlGuideType, TObjectPtr<UTexture>> GamepadGuideTextures;
+
+	/** 게임패드용 미디어 텍스처와 함께 재생할 영상 소스. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Control Guide|Gamepad")
+	TMap<EControlGuideType, TSoftObjectPtr<UMediaSource>> GamepadGuideMediaSources;
+
 	/** 예전 무기 장착 안내 설정과의 호환용 소스. 종류별 소스가 있으면 그 값을 우선한다. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, AdvancedDisplay, Category = "Control Guide|Video")
 	TSoftObjectPtr<UMediaSource> WeaponEquipMediaSource;
@@ -57,7 +67,12 @@ protected:
 	TObjectPtr<UMaterialInterface> GuideVideoMaterial;
 
 private:
-	void PlayGuideVideo(UControlGuideWidget* GuideWidget, UMediaTexture* TextureTemplate);
+	void RefreshGuide();
+	void HandleInputDeviceChanged(EGameInputDevice Device);
+	void StopGuideVideo();
+	void PlayGuideVideo(UControlGuideWidget* GuideWidget, UMediaTexture* TextureTemplate, bool bGamepad);
+
+	TWeakObjectPtr<UGameKeySettingsSubsystem> InputSettings;
 
 	UFUNCTION()
 	void HandleMediaOpened(FString OpenedUrl);

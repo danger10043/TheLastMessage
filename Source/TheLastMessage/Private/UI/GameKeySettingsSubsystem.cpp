@@ -285,6 +285,7 @@ void UGameKeySettingsSubsystem::SetInputDevice(EGameInputDevice Device)
 		Device == EGameInputDevice::Gamepad ? TEXT("Gamepad") : TEXT("KeyboardMouse"), GGameUserSettingsIni);
 	GConfig->Flush(false, GGameUserSettingsIni);
 	ApplyKeys();
+	OnInputDeviceChanged.Broadcast(InputDevice);
 }
 
 void UGameKeySettingsSubsystem::ApplyKeys()

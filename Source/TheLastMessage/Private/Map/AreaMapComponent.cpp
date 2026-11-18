@@ -2,6 +2,8 @@
 #include "Save/ProgressSaveSubsystem.h"
 #include "Engine/GameInstance.h"
 #include "Map/AreaMapRegion.h"
+#include "Map/RoomStreamingSubsystem.h"
+#include "Engine/Texture2D.h"
 #include "Components/StaticMeshComponent.h"
 #include "Character/Player/PlayerBase.h"
 #include "EngineUtils.h"
@@ -102,6 +104,41 @@ void UAreaMapComponent::RefreshLayout()
 			Room.bAutomatic = true;
 		}
 	}
+
+	// 방 레벨이 내려가면 그 방의 지형도 월드에서 사라진다. 로드된 방은 방금 읽은 지형으로 기록을 갱신하고,
+	// 내려간 방은 마지막으로 읽어 둔 지형을 그대로 지도에 쓴다.
+	const URoomStreamingSubsystem* Streaming = GetWorld()->GetSubsystem<URoomStreamingSubsystem>();
+	TMap<FName, TArray<FBox2D>> Fresh;
+	TSet<FName> UnloadedRooms;
+	for (const FAreaMapRoom& Room : Rooms)
+	{
+		if (Room.bAutomatic) continue;
+		if (Streaming && !Streaming->IsRegionStreamedIn(Room.Id)) { UnloadedRooms.Add(Room.Id); continue; }
+		TArray<FBox2D>& List = Fresh.FindOrAdd(Room.Id);
+		for (const FBox2D& Surface : Surfaces)
+			if (Surface.Intersect(Room.Bounds)) List.Add(Surface);
+	}
+	bool bSurfacesChanged = false;
+	for (TPair<FName, TArray<FBox2D>>& Pair : Fresh)
+	{
+		const TArray<FBox2D>* Old = RoomSurfaces.Find(Pair.Key);
+		// 읽은 지형이 하나도 없으면(막 올라온 직후 등) 기존 기록을 지우지 않는다.
+		if (Pair.Value.IsEmpty()) continue;
+		bool bSame = Old && Old->Num() == Pair.Value.Num();
+		for (int32 Index = 0; bSame && Index < Pair.Value.Num(); ++Index)
+			bSame = (*Old)[Index].Min.Equals((Pair.Value)[Index].Min, 0.5) && (*Old)[Index].Max.Equals((Pair.Value)[Index].Max, 0.5);
+		if (bSame) continue;
+		RoomSurfaces.Add(Pair.Key, MoveTemp(Pair.Value));
+		if (IsRoomShown(Pair.Key)) bSurfacesChanged = true;
+	}
+	for (const FName& Id : UnloadedRooms)
+	{
+		const TArray<FBox2D>* Cached = RoomSurfaces.Find(Id);
+		if (!Cached) continue;
+		for (const FBox2D& Surface : *Cached) { Surfaces.Add(Surface); MapBounds += Surface; }
+	}
+	// 가 본 방의 지형이 바뀌었으면 세이브에도 반영해서, 이어 하기 직후 내려가 있는 방도 지도에 그려지게 한다.
+	if (bSurfacesChanged && bLoadedExploration && bPersistExploration) SaveExploration();
 }
 
 bool UAreaMapComponent::ExploreAt(const FVector& Location)
@@ -219,9 +256,13 @@ bool UAreaMapComponent::RevealFromView(const FVector& Location)
 	// 반경 안의 칸 중심이 시야 안(벽까지의 거리 이내)이면 그 칸을 밝힌다.
 	const FBox2D ViewBox(Origin - FVector2D(Radius, Radius), Origin + FVector2D(Radius, Radius));
 	bool bChanged = false;
+	const URoomStreamingSubsystem* Streaming = World->GetSubsystem<URoomStreamingSubsystem>();
 	for (const FAreaMapRoom& Room : Rooms)
 	{
 		if (!Room.Bounds.Intersect(ViewBox)) continue;
+
+		// 내려간 방에는 벽이 없어서 레이가 그대로 지나가 버린다. 안 가 본 방이 지도에 찍히지 않도록, 올라와 있지 않은 방은 밝히지 않는다.
+		if (Streaming && !Room.bAutomatic && !Room.Bounds.IsInside(Origin) && !Streaming->IsRegionStreamedIn(Room.Id)) continue;
 
 		FAreaMapFog* RoomFog = Fog.Find(Room.Id);
 		// 칸 기록이 없는데 들어가 본 방은 이전 세이브의 전체 탐사 방이다. 이미 다 밝혀져 있다.
@@ -370,10 +411,42 @@ void UAreaMapComponent::ImportFog(const TMap<FName, FProgressRoomFog>* Source)
 	}
 }
 
-void UAreaMapComponent::RestoreExploration(const TSet<FName>& RoomsToRestore, const TMap<FName, FProgressRoomFog>* CellsToRestore)
+void UAreaMapComponent::ExportSurfaces(TMap<FName, FProgressRoomSurfaces>& Out) const
+{
+	Out.Reset();
+	for (const TPair<FName, TArray<FBox2D>>& Pair : RoomSurfaces)
+	{
+		// 지도에 그려지는(가 본) 방의 지형만 저장한다.
+		if (Pair.Value.IsEmpty() || !IsRoomShown(Pair.Key)) continue;
+		FProgressRoomSurfaces& Saved = Out.Add(Pair.Key);
+		Saved.Boxes.Reserve(Pair.Value.Num() * 4);
+		for (const FBox2D& Box : Pair.Value)
+		{
+			Saved.Boxes.Add((float)Box.Min.X); Saved.Boxes.Add((float)Box.Min.Y);
+			Saved.Boxes.Add((float)Box.Max.X); Saved.Boxes.Add((float)Box.Max.Y);
+		}
+	}
+}
+
+void UAreaMapComponent::ImportSurfaces(const TMap<FName, FProgressRoomSurfaces>* Source)
+{
+	RoomSurfaces.Reset();
+	if (!Source) return;
+	for (const TPair<FName, FProgressRoomSurfaces>& Pair : *Source)
+	{
+		TArray<FBox2D>& List = RoomSurfaces.Add(Pair.Key);
+		const TArray<float>& Boxes = Pair.Value.Boxes;
+		for (int32 Index = 0; Index + 3 < Boxes.Num(); Index += 4)
+			List.Add(FBox2D(FVector2D(Boxes[Index], Boxes[Index + 1]), FVector2D(Boxes[Index + 2], Boxes[Index + 3])));
+	}
+}
+
+void UAreaMapComponent::RestoreExploration(const TSet<FName>& RoomsToRestore, const TMap<FName, FProgressRoomFog>* CellsToRestore,
+	const TMap<FName, FProgressRoomSurfaces>* SurfacesToRestore)
 {
 	ExploredRooms = RoomsToRestore;
 	ImportFog(CellsToRestore);
+	ImportSurfaces(SurfacesToRestore);
 	CurrentRoom = NAME_None;
 	bLoadedExploration = true;
 }
@@ -406,6 +479,7 @@ void UAreaMapComponent::SaveExploration()
 		FProgressMapState& State = Save->Maps.FindOrAdd(FName(*UGameplayStatics::GetCurrentLevelName(this, true)));
 		State.ExploredRooms = ExploredRooms;
 		ExportFog(State.RevealedCells);
+		ExportSurfaces(State.RoomSurfaces);
 	}
 	// Exploration updates memory only; checkpoint/autosave commits the active slot.
 }
@@ -420,5 +494,6 @@ void UAreaMapComponent::LoadExploration()
 		const FProgressMapState* Map = Save->Maps.Find(FName(*UGameplayStatics::GetCurrentLevelName(this, true)));
 		ExploredRooms = Map ? Map->ExploredRooms : TSet<FName>();
 		ImportFog(Map ? &Map->RevealedCells : nullptr);
+		ImportSurfaces(Map ? &Map->RoomSurfaces : nullptr);
 	}
 }

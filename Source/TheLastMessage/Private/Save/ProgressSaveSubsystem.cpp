@@ -84,6 +84,7 @@ bool UProgressSaveSubsystem::StartNewGame(int32 SlotId, bool bOverwriteExisting)
 {
 	if (ActiveSlot || bSaving || SlotId < 1 || SlotId > 3 || (HasSave(SlotId) && !bOverwriteExisting)) return false;
 	PendingGimmickRestores.Reset();
+	UnloadedGimmickStates.Reset(); // 슬롯을 새로 시작·재개·다시 읽으면 그 이후에 쌓인 방 상태는 버린다.
 	WorkingProgress = NewObject<UProgressSaveGame>(this);
 	if (UCorePickupStateSubsystem* Pickups = GetGameInstance()->GetSubsystem<UCorePickupStateSubsystem>())
 		Pickups->ResetPickupStates();
@@ -103,6 +104,7 @@ bool UProgressSaveSubsystem::ContinueGame(int32 SlotId)
 	UProgressSaveGame* Loaded = ReadSlot(SlotId);
 	if (!Loaded) return false;
 	PendingGimmickRestores.Reset();
+	UnloadedGimmickStates.Reset(); // 슬롯을 새로 시작·재개·다시 읽으면 그 이후에 쌓인 방 상태는 버린다.
 	WorkingProgress = Loaded;
 	// Restore before travelling: pickups query this registry before their Blueprint BeginPlay.
 	if (UCorePickupStateSubsystem* Pickups = GetGameInstance()->GetSubsystem<UCorePickupStateSubsystem>())
@@ -122,6 +124,7 @@ bool UProgressSaveSubsystem::EndSession()
 	PendingCheckpointSnapshot = nullptr;
 	bRestorePending = false;
 	PendingGimmickRestores.Reset();
+	UnloadedGimmickStates.Reset(); // 슬롯을 새로 시작·재개·다시 읽으면 그 이후에 쌓인 방 상태는 버린다.
 	WorkingProgress = nullptr;
 	if (UCorePickupStateSubsystem* Pickups = GetGameInstance()->GetSubsystem<UCorePickupStateSubsystem>())
 		Pickups->ResetPickupStates();
@@ -139,6 +142,7 @@ bool UProgressSaveSubsystem::ReloadActiveProgress()
 	UProgressSaveGame* Loaded = ReadSlot(ActiveSlot);
 	if (!Loaded || !Loaded->CheckpointId.IsValid()) return false;
 	PendingGimmickRestores.Reset();
+	UnloadedGimmickStates.Reset(); // 슬롯을 새로 시작·재개·다시 읽으면 그 이후에 쌓인 방 상태는 버린다.
 	WorkingProgress = Loaded;
 	// Replace unsaved pickups too, so death/reload rolls back to the checkpoint snapshot.
 	if (UCorePickupStateSubsystem* Pickups = GetGameInstance()->GetSubsystem<UCorePickupStateSubsystem>())
@@ -229,6 +233,16 @@ bool UProgressSaveSubsystem::SaveCheckpoint(APlayerBase* Player, APlayerCheckpoi
 		}
 		CapturedIds.Add(Id);
 		Map.Actors.Add(Id, It->CaptureProgress());
+	}
+	// 내려가 있는 방의 기믹은 방이 내려갈 때 저장해 둔 상태를 체크포인트 기록에 합친다.
+	{
+		const FName CurrentMapName(*UGameplayStatics::GetCurrentLevelName(Player, true));
+		if (TMap<FGuid, FProgressActorState>* Unloaded = UnloadedGimmickStates.Find(CurrentMapName))
+		{
+			for (const TPair<FGuid, FProgressActorState>& Pair : *Unloaded)
+				if (!CapturedIds.Contains(Pair.Key)) Map.Actors.Add(Pair.Key, Pair.Value);
+			UnloadedGimmickStates.Remove(CurrentMapName);
+		}
 	}
 	Map.VisitedCheckpoints.Add(Snapshot->CheckpointId);
 	for (TActorIterator<APlayerCheckpoint> It(Player->GetWorld()); It; ++It)
@@ -325,9 +339,16 @@ bool UProgressSaveSubsystem::SaveActiveProgress()
 	return true;
 }
 
+void UProgressSaveSubsystem::CaptureGimmickForUnload(AGimmickBase* Gimmick)
+{
+    if (!IsValid(Gimmick) || !Gimmick->ShouldPersist() || !Gimmick->HasAuthority() || bRestoringGimmicks) return;
+    const FName MapName(*UGameplayStatics::GetCurrentLevelName(Gimmick, true));
+    UnloadedGimmickStates.FindOrAdd(MapName).Add(Gimmick->GetPersistentId(), Gimmick->CaptureProgress());
+}
+
 void UProgressSaveSubsystem::QueueGimmickRestore(AGimmickBase* Gimmick)
 {
-    if (!IsValid(Gimmick) || !Gimmick->ShouldPersist() || !WorkingProgress) return;
+    if (!IsValid(Gimmick) || !Gimmick->ShouldPersist() || (!WorkingProgress && UnloadedGimmickStates.IsEmpty())) return;
     PendingGimmickRestores.AddUnique(TWeakObjectPtr<AGimmickBase>(Gimmick));
     // Every actor in this load wave finishes its derived BeginPlay before either restore pass.
     Gimmick->GetWorld()->GetTimerManager().SetTimerForNextTick(this, &UProgressSaveSubsystem::RestoreQueuedGimmicks);
@@ -337,7 +358,7 @@ void UProgressSaveSubsystem::RestoreQueuedGimmicks()
 {
     TArray<TWeakObjectPtr<AGimmickBase>> Pending = MoveTemp(PendingGimmickRestores);
     PendingGimmickRestores.Reset();
-    if (!WorkingProgress) return;
+    if (!WorkingProgress && UnloadedGimmickStates.IsEmpty()) return;
 	TGuardValue<bool> RestoreGuard(bRestoringGimmicks, true);
     Pending.StableSort([](const TWeakObjectPtr<AGimmickBase>& A, const TWeakObjectPtr<AGimmickBase>& B)
     {
@@ -350,9 +371,16 @@ void UProgressSaveSubsystem::RestoreQueuedGimmicks()
         AGimmickBase* Actor = Weak.Get();
         if (!IsValid(Actor)) continue;
         const FName MapName(*UGameplayStatics::GetCurrentLevelName(Actor, true));
-        const FProgressMapState* Map = WorkingProgress->Maps.Find(MapName);
-        const FProgressActorState* State = Map ? Map->Actors.Find(Actor->GetPersistentId()) : nullptr;
+        // 방이 내려가기 직전에 저장해 둔 상태가 있으면 체크포인트 기록보다 먼저 쓴다(다시 올라온 방이 떠날 때 그대로 보이게).
+        TMap<FGuid, FProgressActorState>* Unloaded = UnloadedGimmickStates.Find(MapName);
+        const FProgressActorState* State = Unloaded ? Unloaded->Find(Actor->GetPersistentId()) : nullptr;
+        if (!State)
+        {
+            const FProgressMapState* Map = WorkingProgress ? WorkingProgress->Maps.Find(MapName) : nullptr;
+            State = Map ? Map->Actors.Find(Actor->GetPersistentId()) : nullptr;
+        }
         if (State && State->State == TEXT("GimmickV1")) Records.Add(Actor, *State);
+        if (Unloaded) Unloaded->Remove(Actor->GetPersistentId());
     }
     for (const TWeakObjectPtr<AGimmickBase>& Weak : Pending)
         if (Weak.IsValid()) if (const FProgressActorState* State = Records.Find(Weak.Get())) Weak->RestoreProgress(*State);

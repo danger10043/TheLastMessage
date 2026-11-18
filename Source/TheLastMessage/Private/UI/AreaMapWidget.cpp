@@ -153,7 +153,7 @@ int32 UAreaMapWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geome
 	// 방이 겹쳐 있으면 다른 방에서 이미 밝혀진 자리는 가리지 않는다.
 	auto DrawFog = [&](const FAreaMapRoom& Room)
 	{
-		const FAreaMapFog* RoomFog = MapSource->FindFog(Room.Id);
+		const FAreaMapFog* RoomFog = MapSource->FindFog(Room.FogKey);
 		if (!RoomFog || RoomFog->Columns < 1 || RoomFog->Rows < 1) return;
 		const FVector2D RoomSize = Room.Bounds.GetSize();
 		const double CellW = RoomSize.X / RoomFog->Columns, CellH = RoomSize.Y / RoomFog->Rows;
@@ -178,7 +178,7 @@ int32 UAreaMapWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geome
 	};
 	for (const FAreaMapRoom& Room : Rooms)
 	{
-		if (!MapSource->IsRoomShown(Room.Id)) continue;
+		if (!MapSource->IsRoomShown(Room)) continue;
 		const FVector2D Min = ToMap(FVector2D(Room.Bounds.Min.X,Room.Bounds.Max.Y),Size);
 		const FVector2D Max = ToMap(FVector2D(Room.Bounds.Max.X,Room.Bounds.Min.Y),Size);
 		if (UTexture2D* Silhouette = Room.Silhouette.Get())
@@ -206,7 +206,7 @@ int32 UAreaMapWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geome
 		Out.PopClip();
 	}
 	for (const FAreaMapRoom& Room : Rooms)
-		if (MapSource->IsRoomShown(Room.Id)) DrawFog(Room);
+		if (MapSource->IsRoomShown(Room)) DrawFog(Room);
 	const auto Measure = FSlateApplication::Get().GetRenderer()->GetFontMeasureService();
 	// 같은 ID의 region이 여러 조각이어도 이름은 한 번만 표시한다. 가장 큰 조각의 중앙에 둔다.
 	TMap<FName, int32> LabelRoomIndex;

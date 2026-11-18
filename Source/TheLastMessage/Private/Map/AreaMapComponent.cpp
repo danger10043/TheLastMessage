@@ -102,6 +102,7 @@ void UAreaMapComponent::RefreshLayout()
 			Rooms.Add(Old);
 		}
 	}
+	AssignFogKeys();
 	for (TActorIterator<AActor> It(GetWorld()); It; ++It)
 	{
 		AActor* Actor = *It;
@@ -166,6 +167,7 @@ void UAreaMapComponent::RefreshLayout()
 			Room.Id = FName(*FString::Printf(TEXT("Auto_%d_%d"),X,Y));
 			Room.Name = NSLOCTEXT("AreaMap", "UnknownArea", "미지의 구역"); Room.Bounds = Bounds;
 			Room.bAutomatic = true;
+			Room.FogKey = Room.Id;
 		}
 	}
 
@@ -240,7 +242,8 @@ bool UAreaMapComponent::ExploreAt(const FVector& Location)
 		}
 	}
 	CurrentRoom = Best ? Best->Id : NAME_None;
-	if (Best && !ExploredRooms.Contains(Best->Id)) { MarkRoomExplored(*Best); bChanged=true; }
+	// 같은 Id의 다른 조각만 본 경우에도 이 조각의 안개를 새로 시작한다(칸 기록이 없는 옛 세이브 방은 그대로 전체 탐사로 둔다).
+	if (Best && (!ExploredRooms.Contains(Best->Id) || (!Fog.Contains(Best->FogKey) && HasAnyFogForId(Best->Id)))) { MarkRoomExplored(*Best); bChanged=true; }
 	if (bChanged && bPersistExploration) SaveExploration();
 	return bChanged;
 }
@@ -253,9 +256,54 @@ void UAreaMapComponent::ComputeFogGrid(const FBox2D& Bounds, int32& OutColumns, 
 	OutRows = FMath::Clamp(FMath::CeilToInt(Size.Y / Cell), 1, MaxFogDimension);
 }
 
+void UAreaMapComponent::AssignFogKeys()
+{
+	TMap<FName, int32> Pieces;
+	for (const FAreaMapRoom& Room : Rooms)
+		if (!Room.bAutomatic) ++Pieces.FindOrAdd(Room.Id);
+
+	for (FAreaMapRoom& Room : Rooms)
+	{
+		if (Room.bAutomatic || Pieces.FindRef(Room.Id) <= 1)
+		{
+			Room.FogKey = Room.Id;
+			continue;
+		}
+		// 조각의 왼쪽 아래 모서리(100cm 단위)로 이름을 만든다. 같은 Id의 조각은 서로 다른 자리에 있다.
+		Room.FogKey = FName(*FString::Printf(TEXT("%s|%d_%d"), *Room.Id.ToString(),
+			FMath::RoundToInt(Room.Bounds.Min.X / 100.0), FMath::RoundToInt(Room.Bounds.Min.Y / 100.0)));
+	}
+
+	// 예전에는 같은 Id의 조각들이 칸 배열 하나를 같이 썼다. 조각마다 크기가 달라서 한 조각에서 본 칸이 다른 조각의 같은 번호 칸으로
+	// 번져 엉뚱한 곳이 밝혀졌으므로, 그렇게 저장된 기록은 버리고 조각별로 다시 밝힌다.
+	bool bPurged = false;
+	for (const TPair<FName, int32>& Pair : Pieces)
+	{
+		if (Pair.Value > 1 && Fog.Remove(Pair.Key) > 0)
+		{
+			ExploredRooms.Remove(Pair.Key);
+			bPurged = true;
+		}
+	}
+	if (bPurged && bLoadedExploration && bPersistExploration) SaveExploration();
+}
+
+bool UAreaMapComponent::HasAnyFogForId(FName Id) const
+{
+	if (Fog.Contains(Id)) return true;
+	for (const FAreaMapRoom& Room : Rooms)
+		if (Room.Id == Id && Fog.Contains(Room.FogKey)) return true;
+	return false;
+}
+
+bool UAreaMapComponent::IsLegacyFullyRevealed(const FAreaMapRoom& Room) const
+{
+	return ExploredRooms.Contains(Room.Id) && !HasAnyFogForId(Room.Id);
+}
+
 FAreaMapFog& UAreaMapComponent::CreateFog(const FAreaMapRoom& Room)
 {
-	FAreaMapFog& Created = Fog.FindOrAdd(Room.Id);
+	FAreaMapFog& Created = Fog.FindOrAdd(Room.FogKey.IsNone() ? Room.Id : Room.FogKey);
 	ComputeFogGrid(Room.Bounds, Created.Columns, Created.Rows);
 	Created.Cells.Init(0, Created.Columns * Created.Rows);
 	Created.Revealed = 0;
@@ -266,7 +314,7 @@ void UAreaMapComponent::MarkRoomExplored(const FAreaMapRoom& Room)
 {
 	ExploredRooms.Add(Room.Id);
 	// 새로 들어간 방은 안개가 낀 채로 시작한다. 칸 기록이 없는 방은 이전 세이브의 "전체 탐사"로 취급되기 때문에 여기서 만들어 둔다.
-	if (!Fog.Contains(Room.Id)) CreateFog(Room);
+	if (!Fog.Contains(Room.FogKey.IsNone() ? Room.Id : Room.FogKey)) CreateFog(Room);
 }
 
 bool UAreaMapComponent::RevealFromView(const FVector& Location)
@@ -328,9 +376,9 @@ bool UAreaMapComponent::RevealFromView(const FVector& Location)
 		// 내려간 방에는 벽이 없어서 레이가 그대로 지나가 버린다. 안 가 본 방이 지도에 찍히지 않도록, 올라와 있지 않은 방은 밝히지 않는다.
 		if (Streaming && !Room.bAutomatic && !Room.Bounds.IsInside(Origin) && !Streaming->IsRegionStreamedIn(Room.Id)) continue;
 
-		FAreaMapFog* RoomFog = Fog.Find(Room.Id);
+		FAreaMapFog* RoomFog = Fog.Find(Room.FogKey);
 		// 칸 기록이 없는데 들어가 본 방은 이전 세이브의 전체 탐사 방이다. 이미 다 밝혀져 있다.
-		if (!RoomFog && ExploredRooms.Contains(Room.Id)) continue;
+		if (!RoomFog && IsLegacyFullyRevealed(Room)) continue;
 
 		int32 Columns = 0, Rows = 0;
 		if (RoomFog) { Columns = RoomFog->Columns; Rows = RoomFog->Rows; }
@@ -390,10 +438,10 @@ bool UAreaMapComponent::IsPointRevealed(const FVector2D& WorldPoint) const
 	for (const FAreaMapRoom& Room : Rooms)
 	{
 		if (!Room.Bounds.IsInside(WorldPoint)) continue;
-		const FAreaMapFog* RoomFog = Fog.Find(Room.Id);
+		const FAreaMapFog* RoomFog = Fog.Find(Room.FogKey);
 		if (!RoomFog)
 		{
-			if (ExploredRooms.Contains(Room.Id)) return true; // 이전 세이브: 방 전체가 밝혀져 있다.
+			if (IsLegacyFullyRevealed(Room)) return true; // 이전 세이브: 방 전체가 밝혀져 있다.
 			continue;
 		}
 		const FVector2D Size = Room.Bounds.GetSize();
@@ -408,18 +456,33 @@ bool UAreaMapComponent::IsPointRevealed(const FVector2D& WorldPoint) const
 bool UAreaMapComponent::IsRoomShown(FName Id) const
 {
 	if (ExploredRooms.Contains(Id)) return true;
-	const FAreaMapFog* RoomFog = Fog.Find(Id);
-	return RoomFog && RoomFog->Revealed > 0;
+	// 조각이 여럿인 Id는 안개 기록이 "Id|x_z" 이름으로 나뉘어 있다. 어느 조각이든 밝혀진 칸이 있으면 본 방이다.
+	const FString Prefix = Id.ToString() + TEXT("|");
+	for (const TPair<FName, FAreaMapFog>& Pair : Fog)
+	{
+		if (Pair.Value.Revealed <= 0) continue;
+		if (Pair.Key == Id || Pair.Key.ToString().StartsWith(Prefix)) return true;
+	}
+	return false;
+}
+
+bool UAreaMapComponent::IsRoomShown(const FAreaMapRoom& Room) const
+{
+	if (const FAreaMapFog* RoomFog = Fog.Find(Room.FogKey)) return RoomFog->Revealed > 0;
+	// 이 조각에 칸 기록이 없다. 칸 기록이 없는 옛 세이브의 방이면 전체가 밝혀진 것으로 보고, 같은 Id의 다른 조각에만 기록이 있으면 아직 못 본 조각이다.
+	return IsLegacyFullyRevealed(Room);
 }
 
 void UAreaMapComponent::RevealRoom(FName Id)
 {
-	const FAreaMapRoom* Room = Rooms.FindByPredicate([Id](const FAreaMapRoom& Candidate) { return Candidate.Id == Id; });
-	if (!Room) return;
-	FAreaMapFog* RoomFog = Fog.Find(Id);
-	if (!RoomFog) RoomFog = &CreateFog(*Room);
-	for (uint8& Cell : RoomFog->Cells) Cell = 1;
-	RoomFog->Revealed = RoomFog->Cells.Num();
+	for (const FAreaMapRoom& Room : Rooms)
+	{
+		if (Room.Id != Id) continue;
+		FAreaMapFog* RoomFog = Fog.Find(Room.FogKey);
+		if (!RoomFog) RoomFog = &CreateFog(Room);
+		for (uint8& Cell : RoomFog->Cells) Cell = 1;
+		RoomFog->Revealed = RoomFog->Cells.Num();
+	}
 }
 
 float UAreaMapComponent::GetExplorationPercent() const
@@ -427,12 +490,12 @@ float UAreaMapComponent::GetExplorationPercent() const
 	double Total = 0.0, Seen = 0.0;
 	for (const FAreaMapRoom& Room : Rooms)
 	{
-		const FAreaMapFog* RoomFog = Fog.Find(Room.Id);
+		const FAreaMapFog* RoomFog = Fog.Find(Room.FogKey);
 		int32 Columns = 0, Rows = 0;
 		ComputeFogGrid(Room.Bounds, Columns, Rows);
 		const double Cells = (double)Columns * Rows;
 		Total += Cells;
-		if (!RoomFog) { if (ExploredRooms.Contains(Room.Id)) Seen += Cells; }
+		if (!RoomFog) { if (IsLegacyFullyRevealed(Room)) Seen += Cells; }
 		else if (RoomFog->Cells.Num() > 0) Seen += Cells * RoomFog->Revealed / RoomFog->Cells.Num();
 	}
 	return Total > 0.0 ? (float)(Seen / Total * 100.0) : 0.f;

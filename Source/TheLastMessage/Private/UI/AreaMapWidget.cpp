@@ -335,44 +335,53 @@ FReply UAreaMapWidget::NativeOnAnalogValueChanged(const FGeometry& Geometry, con
 	return FReply::Handled();
 }
 
+void UAreaMapWidget::TryFastTravelAt(FVector2D Pointer, FVector2D Size, double Radius)
+{
+	if (!MapSource || Pointer.X<36 || Pointer.X>Size.X-36 || Pointer.Y<104 || Pointer.Y>Size.Y-66) return;
+	APlayerCheckpoint* Target=nullptr; double Nearest=Radius;
+	TSet<FGuid> LiveIds;
+	for(TActorIterator<APlayerCheckpoint> It(GetWorld());It;++It)
+	{
+		LiveIds.Add(It->GetPersistentId());
+		if(!It->CanFastTravel()) continue;
+		const FVector L=It->GetActorLocation();
+		const double Distance=FVector2D::Distance(Pointer,ToMap(FVector2D(L.X,L.Z),Size));
+		if(Distance<Nearest){Nearest=Distance;Target=*It;}
+	}
+	// 방이 내려가 있어 액터가 없는 체크포인트: 기억해 둔 정보로 방을 먼저 올린 뒤 이동한다.
+	const FAreaMapCheckpointMarker* TargetMarker=nullptr; double NearestMarker=Nearest;
+	for(const TPair<FGuid, FAreaMapCheckpointMarker>& Pair : MapSource->GetCheckpointMarkers())
+	{
+		if(LiveIds.Contains(Pair.Key) || !Pair.Value.bAllowFastTravel || !Pair.Value.bVisited) continue;
+		const double Distance=FVector2D::Distance(Pointer,ToMap(FVector2D(Pair.Value.Location.X,Pair.Value.Location.Z),Size));
+		if(Distance<NearestMarker){NearestMarker=Distance;TargetMarker=&Pair.Value;Target=nullptr;}
+	}
+	if(TargetMarker)
+	{
+		if(MapSource->RequestTravelToMarker(TargetMarker->Id)) CloseMap();
+		else TravelStatus=NSLOCTEXT("AreaMap","TravelFailed","지금은 이동할 수 없습니다. 잠시 후 다시 시도하세요.");
+		return;
+	}
+	if(!Target) return;
+	if(Target->FastTravel(Cast<APlayerBase>(ObservedPawn.Get()))) CloseMap();
+	else TravelStatus=NSLOCTEXT("AreaMap","TravelFailed","지금은 이동할 수 없습니다. 잠시 후 다시 시도하세요.");
+}
+
+FReply UAreaMapWidget::NativeOnMouseButtonDown(const FGeometry& Geometry, const FPointerEvent& Event)
+{
+	if (Event.GetEffectingButton()==EKeys::LeftMouseButton || Event.GetEffectingButton()==EKeys::RightMouseButton)
+	{
+		PressPosition=Geometry.AbsoluteToLocal(Event.GetScreenSpacePosition()); bTravelClick=Event.GetEffectingButton()==EKeys::LeftMouseButton;
+		bDragging=true; return FReply::Handled().CaptureMouse(TakeWidget());
+	}
+	return FReply::Handled();
+}
+
 FReply UAreaMapWidget::NativeOnMouseButtonUp(const FGeometry& Geometry, const FPointerEvent& Event)
 {
 	const FVector2D Pointer=Geometry.AbsoluteToLocal(Event.GetScreenSpacePosition());
-    if(bDragging && bTravelClick && Event.GetEffectingButton()==EKeys::LeftMouseButton && FVector2D::Distance(Pointer,PressPosition)<5 && MapSource)
-    {
-        const FVector2D Size=Geometry.GetLocalSize();
-        if(Pointer.X>=36 && Pointer.X<=Size.X-36 && Pointer.Y>=104 && Pointer.Y<=Size.Y-66)
-        {
-            APlayerCheckpoint* Target=nullptr; double Nearest=14;
-            TSet<FGuid> LiveIds;
-            for(TActorIterator<APlayerCheckpoint> It(GetWorld());It;++It)
-            {
-                LiveIds.Add(It->GetPersistentId());
-                if(!It->CanFastTravel()) continue;
-                const FVector L=It->GetActorLocation();
-                const double Distance=FVector2D::Distance(Pointer,ToMap(FVector2D(L.X,L.Z),Size));
-                if(Distance<Nearest){Nearest=Distance;Target=*It;}
-            }
-            // 방이 내려가 있어 액터가 없는 체크포인트: 기억해 둔 정보로 방을 먼저 올린 뒤 이동한다.
-            const FAreaMapCheckpointMarker* TargetMarker=nullptr; double NearestMarker=Nearest;
-            for(const TPair<FGuid, FAreaMapCheckpointMarker>& Pair : MapSource->GetCheckpointMarkers())
-            {
-                if(LiveIds.Contains(Pair.Key) || !Pair.Value.bAllowFastTravel || !Pair.Value.bVisited) continue;
-                const double Distance=FVector2D::Distance(Pointer,ToMap(FVector2D(Pair.Value.Location.X,Pair.Value.Location.Z),Size));
-                if(Distance<NearestMarker){NearestMarker=Distance;TargetMarker=&Pair.Value;Target=nullptr;}
-            }
-            if(TargetMarker)
-            {
-                if(MapSource->RequestTravelToMarker(TargetMarker->Id)) CloseMap();
-                else TravelStatus=NSLOCTEXT("AreaMap","TravelFailed","지금은 이동할 수 없습니다. 잠시 후 다시 시도하세요.");
-            }
-            if(Target)
-            {
-                if(Target->FastTravel(Cast<APlayerBase>(ObservedPawn.Get()))) CloseMap();
-                else TravelStatus=NSLOCTEXT("AreaMap","TravelFailed","지금은 이동할 수 없습니다. 잠시 후 다시 시도하세요.");
-            }
-        }
-    }
+    if(bDragging && bTravelClick && Event.GetEffectingButton()==EKeys::LeftMouseButton && FVector2D::Distance(Pointer,PressPosition)<5)
+        TryFastTravelAt(Pointer, Geometry.GetLocalSize(), 14);
     bDragging=false; bTravelClick=false; return FReply::Handled().ReleaseMouseCapture();
 }
 

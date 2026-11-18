@@ -48,9 +48,12 @@ void ABombDestructibleObstacle::DestroyObstacle()
     // 장애물을 숨기기 전에 메시 중심 위치와 회전을 구한다.
     const bool bHasMesh = IsValid(ObstacleMesh.Get());
 
-    const FVector EffectLocation = bHasMesh ? ObstacleMesh->Bounds.Origin : GetActorLocation();
+    const FVector BaseLocation = bHasMesh ? ObstacleMesh->Bounds.Origin : GetActorLocation();
+    const FQuat BaseRotation = bHasMesh ? ObstacleMesh->GetComponentQuat() : GetActorQuat();
 
-    const FRotator EffectRotation = bHasMesh ? ObstacleMesh->GetComponentRotation() : GetActorRotation();
+    // 메시 중심에서 메시 방향 기준으로 보정값만큼 옮긴다.
+    const FVector EffectLocation = BaseLocation + BaseRotation.RotateVector(DestructionEffectLocationOffset);
+    const FRotator EffectRotation = (BaseRotation * DestructionEffectRotationOffset.Quaternion()).Rotator();
 
     // +추가----
     PlayGimmickOneShot(DestructionSound.Get(), ObstacleMesh.Get());

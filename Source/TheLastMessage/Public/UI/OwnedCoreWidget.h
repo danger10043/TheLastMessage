@@ -66,6 +66,8 @@ private:
 	void SetActiveCategory(ECoreCategory Category);
 	void RefreshCores(bool bChooseInitialCategory = false);
 	void SelectCore(FName CoreId);
+	/** 현재 분류 안에서 선택을 앞뒤로 옮긴다(패드 십자키). 끝에서는 반대쪽 끝으로 돈다. */
+	void MoveSelection(int32 Offset);
 	void RefreshStats();
 	UPROPERTY(Transient) TWeakObjectPtr<UCoreComponent> CoreSource;
 	UPROPERTY(Transient) TWeakObjectPtr<UAbilitySystemComponent> AttributeSource;

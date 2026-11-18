@@ -50,6 +50,12 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Room Streaming")
 	bool IsRoomLoaded(FName RoomId) const;
 
+	/**
+	 * 리전이 속한 방이 로드되어 있는가. 어느 방에도 속하지 않은 리전(복도 등)은 항상 true.
+	 * 내려간 방에는 벽이 없어서 시야 레이가 그대로 지나가므로, 지도 안개를 밝힐 때 이 값으로 걸러낸다.
+	 */
+	bool IsRegionStreamedIn(FName RegionId) const;
+
 	/** 현재 리전, 필요한 방, 로드 상태를 로그로 출력한다(콘솔: Rooms.Dump). */
 	void DumpState() const;
 
@@ -123,4 +129,6 @@ private:
 	TMap<FName, int32> PinnedRooms;
 	/** 방 번호 -> 이 시각(월드 시간) 이후에 내려도 된다. */
 	TMap<FName, double> UnloadAfter;
+	/** 방 번호 -> 언로드를 요청한 시각(월드 시간). 내려가는 동안 같은 요청을 반복하지 않기 위해 쓴다. */
+	TMap<FName, double> UnloadRequestedAt;
 };

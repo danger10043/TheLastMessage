@@ -1,9 +1,12 @@
 #include "UI/Guide/ControlGuideActor.h"
 #include "UI/Guide/ControlGuideWidget.h"
+#include "UI/GameKeySettingsSubsystem.h"
 
 #include "Components/SceneComponent.h"
 #include "Components/WidgetComponent.h"
 #include "Engine/Texture2D.h"
+#include "Engine/GameInstance.h"
+#include "Engine/LocalPlayer.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
 #include "MediaPlayer.h"
@@ -68,6 +71,31 @@ void AControlGuideActor::BeginPlay()
 	GuideWidgetComponent->SetWidgetClass(UControlGuideWidget::StaticClass());
 	GuideWidgetComponent->InitWidget();
 
+	if (UGameInstance* GameInstance = GetGameInstance())
+	{
+		if (ULocalPlayer* LocalPlayer = GameInstance->GetFirstGamePlayer())
+		{
+			InputSettings = LocalPlayer->GetSubsystem<UGameKeySettingsSubsystem>();
+			if (InputSettings.IsValid())
+			{
+				InputSettings->OnInputDeviceChanged.AddUObject(this, &AControlGuideActor::HandleInputDeviceChanged);
+			}
+		}
+	}
+	RefreshGuide();
+}
+
+void AControlGuideActor::HandleInputDeviceChanged(EGameInputDevice Device)
+{
+	RefreshGuide();
+}
+
+void AControlGuideActor::RefreshGuide()
+{
+	StopGuideVideo();
+	const bool bGamepad = InputSettings.IsValid() && InputSettings->IsUsingGamepad();
+	const auto& Textures = bGamepad ? GamepadGuideTextures : GuideTextures;
+
 	// 생성된 위젯을 조작법 안내 위젯으로 가져온다.
 	UControlGuideWidget* GuideWidget =
 		Cast<UControlGuideWidget>(
@@ -78,11 +106,11 @@ void AControlGuideActor::BeginPlay()
 		// 이 안내판에서 선택한 안내 종류를 전달한다.
 		GuideWidget->SetGuideType(GuideType);
 
-		const TObjectPtr<UTexture>* FoundTexture = GuideTextures.Find(GuideType);
+		const TObjectPtr<UTexture>* FoundTexture = Textures.Find(GuideType);
 		UTexture* Texture = FoundTexture ? FoundTexture->Get() : nullptr;
 		if (UMediaTexture* MediaTexture = Cast<UMediaTexture>(Texture))
 		{
-			PlayGuideVideo(GuideWidget, MediaTexture);
+			PlayGuideVideo(GuideWidget, MediaTexture, bGamepad);
 		}
 		else
 		{
@@ -91,11 +119,12 @@ void AControlGuideActor::BeginPlay()
 	}
 }
 
-void AControlGuideActor::PlayGuideVideo(UControlGuideWidget* GuideWidget, UMediaTexture* TextureTemplate)
+void AControlGuideActor::PlayGuideVideo(UControlGuideWidget* GuideWidget, UMediaTexture* TextureTemplate, bool bGamepad)
 {
-	const TSoftObjectPtr<UMediaSource>* ConfiguredSource = GuideMediaSources.Find(GuideType);
+	const auto& Sources = bGamepad ? GamepadGuideMediaSources : GuideMediaSources;
+	const TSoftObjectPtr<UMediaSource>* ConfiguredSource = Sources.Find(GuideType);
 	UMediaSource* MediaSource = ConfiguredSource ? ConfiguredSource->LoadSynchronous() : nullptr;
-	if (!MediaSource && GuideType == EControlGuideType::WeaponEquip)
+	if (!MediaSource && !bGamepad && GuideType == EControlGuideType::WeaponEquip)
 	{
 		MediaSource = WeaponEquipMediaSource.LoadSynchronous();
 	}
@@ -112,7 +141,8 @@ void AControlGuideActor::PlayGuideVideo(UControlGuideWidget* GuideWidget, UMedia
 	GuideMediaPlayer->OnMediaOpened.AddDynamic(this, &AControlGuideActor::HandleMediaOpened);
 	GuideMediaPlayer->OnMediaOpenFailed.AddDynamic(this, &AControlGuideActor::HandleMediaOpenFailed);
 
-	GuideMediaTexture = DuplicateObject<UMediaTexture>(TextureTemplate, this);
+	GuideMediaTexture = DuplicateObject<UMediaTexture>(TextureTemplate, this,
+		MakeUniqueObjectName(this, UMediaTexture::StaticClass(), TextureTemplate->GetFName()));
 	GuideMediaTexture->NewStyleOutput = true;
 	GuideMediaTexture->AutoClear = true;
 	GuideMediaTexture->ClearColor = FLinearColor::Transparent;
@@ -149,6 +179,17 @@ void AControlGuideActor::HandleMediaOpenFailed(FString FailedUrl)
 
 void AControlGuideActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (InputSettings.IsValid())
+	{
+		InputSettings->OnInputDeviceChanged.RemoveAll(this);
+	}
+	InputSettings.Reset();
+	StopGuideVideo();
+	Super::EndPlay(EndPlayReason);
+}
+
+void AControlGuideActor::StopGuideVideo()
+{
 	if (GuideMediaPlayer)
 	{
 		GuideMediaPlayer->OnMediaOpened.RemoveAll(this);
@@ -159,5 +200,7 @@ void AControlGuideActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	{
 		GuideMediaTexture->SetMediaPlayer(nullptr);
 	}
-	Super::EndPlay(EndPlayReason);
+	GuideMediaMaterial = nullptr;
+	GuideMediaTexture = nullptr;
+	GuideMediaPlayer = nullptr;
 }

@@ -27,6 +27,13 @@ public:
 	UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category="Cinematic") bool bSkipOnLoad = false;
 	UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category="Cinematic") TArray<TObjectPtr<AActor>> CleanupActors;
 	UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category="Cinematic") TObjectPtr<ABossMonster> Boss;
+
+	UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "Cinematic|Boss Entrance")
+	bool bStartBossCombatOnCompletion = false;
+
+	UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "Cinematic")
+	bool bHidePlayerDuringCinematic = true;
+
 	UFUNCTION(BlueprintCallable, Category="Cinematic") bool RequestPlay();
 	UFUNCTION(BlueprintCallable, Category="Cinematic") void SkipCinematic(APlayerController* RequestingController);
 	UFUNCTION(BlueprintPure, Category="Cinematic") bool IsPlaying() const { return bPresenting; }

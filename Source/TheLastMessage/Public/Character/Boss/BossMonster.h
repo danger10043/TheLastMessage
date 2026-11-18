@@ -22,6 +22,7 @@ class UAnimMontage;
 class ALaserEmitter;
 class ALaserReceiver;
 class ALaserReflector;
+class APointLight;
 class UMaterialInterface;
 struct FOnAttributeChangeData;
 class UNiagaraSystem;
@@ -55,6 +56,22 @@ public:
 
     // 플레이어 사망 후 체크포인트 제자리 복구용. 시작 위치로 되돌린 뒤 ResetBoss(true)를 수행한다.
     bool ResetBossForCheckpoint();
+
+    UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Boss|Entrance")
+    bool bWaitForEntranceCinematic = false;
+
+    UFUNCTION(BlueprintPure, Category = "Boss|Entrance")
+    bool IsBossCombatUnlocked() const
+    {
+        return !bWaitForEntranceCinematic || bEntranceCombatStarted;
+    }
+
+    UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Boss|Entrance")
+    void StartBossCombatAfterEntrance();
+
+    UPROPERTY(Transient)
+    bool bEntranceCombatStarted = false;
+
 
     UPROPERTY(BlueprintReadOnly, Transient, Category = "Boss|GunBurst")
     bool bGunBurstAiming = false;
@@ -117,7 +134,44 @@ public:
 
     void StartShieldPuzzle(EBossPuzzleType PuzzleType);
 
-    void StopLaserPuzzle();
+    void StopLaserPuzzle(bool bHideActors = true);
+
+
+    UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Boss|Puzzle|Laser|Cinematic")
+    TObjectPtr<class ALevelSequenceActor> LaserPuzzleStartSequenceActor;
+
+    UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Boss|Puzzle|Laser|Cinematic")
+    TObjectPtr<class ALevelSequenceActor> LaserPuzzleClearSequenceActor;
+
+    UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Boss|Puzzle|Laser|Cinematic")
+    TObjectPtr<AActor> LaserPuzzlePlayerMarker;
+
+    UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Boss|Puzzle|Laser|Cinematic")
+    TObjectPtr<AActor> LaserPuzzleBossMarker;
+
+    UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Boss|Puzzle|Laser|Cinematic")
+    void TeleportActorsForLaserPuzzleSequence();
+
+    void PlayLaserPuzzleStartSequence();
+
+    UPROPERTY(Transient)
+    TObjectPtr<class ULevelSequencePlayer> ActiveLaserStartSequencePlayer;
+
+    UPROPERTY(Transient)
+    TWeakObjectPtr<ACharacter> LaserSequencePlayerCharacter;
+
+    bool bLaserSequenceTeleportApplied = false;
+    bool bLaserClearSequencePlaying = false;
+
+    void SetBossSequenceInputBlocked(bool bBlocked);
+    void StopLaserPuzzleStartSequence();
+
+    UFUNCTION()
+    void HandleLaserPuzzleStartSequenceFinished();
+
+    UPROPERTY(Transient)
+    TWeakObjectPtr<class ASideScrollingPlayerController> SequenceInputController;
+
 
     UFUNCTION(BlueprintCallable, Category = "Boss|Puzzle")
     void CompleteShieldPuzzle();
@@ -174,7 +228,7 @@ protected:
     UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Boss|Phase|Cinematic")
     TObjectPtr<class ALevelSequenceActor> Phase30SequenceActor;
 
-    void PlayPhaseSequence(EBossPuzzleType PuzzleType);
+    void PlayPhaseSequence(EBossPuzzleType PuzzleType, bool bPlayLaserClearSequence = true);
     void StopPhaseSequence();
 
     UFUNCTION()
@@ -187,6 +241,24 @@ protected:
 
     UPROPERTY(EditDefaultsOnly, Category = "Boss|Death")
     TObjectPtr<UAnimMontage> DeathMontage;
+
+    UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Boss|Death|Cinematic")
+    TObjectPtr<class ALevelSequenceActor> DeathSequenceActor;
+
+    bool PlayBossDeathSequence(class APlayerController* InDeathController);
+    void StopBossDeathSequence();
+
+    UFUNCTION()
+    void HandleBossDeathSequenceFinished();
+
+    UPROPERTY(Transient)
+    TObjectPtr<class ULevelSequencePlayer> ActiveDeathSequencePlayer;
+
+    UPROPERTY(Transient)
+    TWeakObjectPtr<class APlayerController> DeathSequenceController;
+
+    bool bDeathSequenceStarted = false;
+
 
     virtual void BeginPlay() override;
 
@@ -206,6 +278,9 @@ protected:
 
     UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Boss|Puzzle|Laser")
     TArray<TObjectPtr<ALaserReflector>> LaserReflectors;
+
+    UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Boss|Puzzle|Laser")
+    TArray<TObjectPtr<APointLight>> LaserPuzzlePointLights;
 
     bool bLaserPuzzleActive = false;
 

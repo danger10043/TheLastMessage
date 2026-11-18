@@ -3,6 +3,7 @@
 #include "UI/AreaMapWidget.h"
 #include "Character/Player/PlayerBase.h"
 #include "Editor.h"
+#include "Framework/SideScrollingPlayerController.h"
 #include "Engine/World.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "Slate/WidgetRenderer.h"
@@ -32,11 +33,12 @@ void PreviewAreaMap()
 	UAreaMapComponent* Map=Player->FindComponentByClass<UAreaMapComponent>();
 	Map->bPersistExploration=false;Map->RefreshLayout();
 	if (Map->GetRooms().IsEmpty()) {Player->Destroy();return;}
-	UAreaMapWidget* Widget=NewObject<UAreaMapWidget>(World);
+	UAreaMapWidget* Widget=NewObject<UAreaMapWidget>(World, GetDefault<ASideScrollingPlayerController>()->GetAreaMapWidgetClass());
 	Widget->Initialize();Widget->SetMapSource(Map);Widget->SetVisibility(ESlateVisibility::Visible);
 	FWidgetRenderer Renderer(false,false);
 	for (int32 Pass=0;Pass<2;++Pass)
 	{
+		Widget->SetFullPreview(Pass == 1);
 		const int32 Count=Pass==0 ? FMath::Min(3,Map->GetRooms().Num()) : Map->GetRooms().Num();
 		for (int32 Index=0;Index<Count;++Index)
 		{

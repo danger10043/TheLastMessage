@@ -1,4 +1,6 @@
 #include "UI/AreaMapWidget.h"
+#include "UI/GamepadUIKeys.h"
+#include "UI/GameKeySettingsSubsystem.h"
 #include "UI/FactoryCursor.h"
 #include "UI/FactoryUIStyle.h"
 #include "UI/FactoryUIAssetSettings.h"
@@ -81,6 +83,16 @@ void UAreaMapWidget::NativeTick(const FGeometry& Geometry, float DeltaTime)
 {
 	Super::NativeTick(Geometry, DeltaTime);
 	if (!bCapturedInput) return;
+	LastMapSize = Geometry.GetLocalSize();
+	// 왼쪽 스틱: 보고 싶은 쪽으로 기울이면 그쪽이 화면 가운데로 온다.
+	if (!GamepadPan.IsNearlyZero()) Pan -= FVector2D(GamepadPan.X, -GamepadPan.Y) * 700.f * DeltaTime;
+	// RT 확대, LT 축소. 화면 가운데를 기준으로 키운다.
+	if (const float ZoomInput = GamepadZoomIn - GamepadZoomOut; !FMath::IsNearlyZero(ZoomInput))
+	{
+		const float Previous = Zoom;
+		Zoom = FMath::Clamp(Zoom * FMath::Pow(2.f, ZoomInput * DeltaTime * 1.5f), 1.0f, 6.0f);
+		Pan *= Zoom / Previous;
+	}
 	const APlayerBase* Player = Cast<APlayerBase>(ObservedPawn.Get());
 	if (!Player || Player->IsDead() || !InputOwner.IsValid() || InputOwner->GetPawn() != Player) CloseMap();
 }
@@ -268,33 +280,58 @@ int32 UAreaMapWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geome
 		TArray<FVector2D> Arrow = {Position+FVector2D(Direction*8,-4), Position+FVector2D(Direction*12,0), Position+FVector2D(Direction*8,4)};
 		FSlateDrawElement::MakeLines(Out,Layer+7,Geometry.ToPaintGeometry(),Arrow,ESlateDrawEffect::None,Cyan,true,2);
 	}
+	if (IsUsingGamepad())
+	{
+		// 패드 A가 고르는 화면 가운데 십자선.
+		const FVector2D Center = Size*0.5+FVector2D(0,8);
+		const FLinearColor Mark(1.f,1.f,1.f,0.7f);
+		Box(Center-FVector2D(12,1),FVector2D(9,2),Mark,8); Box(Center+FVector2D(3,-1),FVector2D(9,2),Mark,8);
+		Box(Center-FVector2D(1,12),FVector2D(2,9),Mark,8); Box(Center+FVector2D(-1,3),FVector2D(2,9),Mark,8);
+	}
 	Out.PopClip();
-	Text(NSLOCTEXT("AreaMap","Legend","● 현재 위치   ■ 일반   ◇ 초록: 빠른 이동(클릭) / 회색: 미방문"),FVector2D(40,Size.Y-67),13,FLinearColor(0.65f,0.76f,0.82f));
+	Text(IsUsingGamepad()
+		? NSLOCTEXT("AreaMap","LegendGamepad","● 현재 위치   ◇ 초록: 빠른 이동(십자선 + A)   왼쪽 스틱 이동 · LT/RT 축소/확대 · Y 내 위치 · B 닫기")
+		: NSLOCTEXT("AreaMap","Legend","● 현재 위치   ■ 일반   ◇ 초록: 빠른 이동(클릭) / 회색: 미방문"),FVector2D(40,Size.Y-67),13,FLinearColor(0.65f,0.76f,0.82f));
 	return Layer+9;
 }
 
 FReply UAreaMapWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, const FKeyEvent& Event)
 {
-	if (Event.GetKey()==EKeys::Escape || ToggleKeys.Contains(Event.GetKey()))
+	if (Event.GetKey()==EKeys::Escape || GamepadUI::IsBack(Event.GetKey()) || ToggleKeys.Contains(Event.GetKey()))
 	{
 		if (!Event.IsRepeat()) CloseMap();
 		return FReply::Handled();
 	}
-	if (Event.GetKey()==EKeys::F && MapSource && MapSource->GetOwner())
-	{
-		const FVector Location = MapSource->GetOwner()->GetActorLocation();
-		Pan -= ToMap(FVector2D(Location.X,Location.Z),Geometry.GetLocalSize()) - (Geometry.GetLocalSize()*0.5+FVector2D(0,8));
-	}
+	if (Event.GetKey()==EKeys::F || Event.GetKey()==EKeys::Gamepad_FaceButton_Top) CenterOnPlayer(Geometry.GetLocalSize());
+	// 패드 A: 화면 가운데 십자선에 가장 가까운 빠른 이동 지점으로 이동한다.
+	if (GamepadUI::IsAccept(Event.GetKey()) && !Event.IsRepeat())
+		TryFastTravelAt(Geometry.GetLocalSize()*0.5+FVector2D(0,8), Geometry.GetLocalSize(), 40);
 	return FReply::Handled();
 }
 
-FReply UAreaMapWidget::NativeOnMouseButtonDown(const FGeometry& Geometry, const FPointerEvent& Event)
+void UAreaMapWidget::CenterOnPlayer(FVector2D Size)
 {
-	if (Event.GetEffectingButton()==EKeys::LeftMouseButton || Event.GetEffectingButton()==EKeys::RightMouseButton)
-	{
-		PressPosition=Geometry.AbsoluteToLocal(Event.GetScreenSpacePosition()); bTravelClick=Event.GetEffectingButton()==EKeys::LeftMouseButton;
-		bDragging=true; return FReply::Handled().CaptureMouse(TakeWidget());
-	}
+	if (!MapSource || !MapSource->GetOwner()) return;
+	const FVector Location = MapSource->GetOwner()->GetActorLocation();
+	Pan -= ToMap(FVector2D(Location.X,Location.Z),Size) - (Size*0.5+FVector2D(0,8));
+}
+
+bool UAreaMapWidget::IsUsingGamepad() const
+{
+	const auto* Settings = ULocalPlayer::GetSubsystem<UGameKeySettingsSubsystem>(GetOwningLocalPlayer());
+	return Settings && Settings->IsUsingGamepad();
+}
+
+FReply UAreaMapWidget::NativeOnAnalogValueChanged(const FGeometry& Geometry, const FAnalogInputEvent& Event)
+{
+	const FKey Key = Event.GetKey();
+	// 작은 흔들림은 무시한다.
+	const float Value = FMath::Abs(Event.GetAnalogValue()) < 0.2f ? 0.f : Event.GetAnalogValue();
+	if (Key == EKeys::Gamepad_LeftX) GamepadPan.X = Value;
+	else if (Key == EKeys::Gamepad_LeftY) GamepadPan.Y = Value;
+	else if (Key == EKeys::Gamepad_RightTriggerAxis) GamepadZoomIn = Value;
+	else if (Key == EKeys::Gamepad_LeftTriggerAxis) GamepadZoomOut = Value;
+	else return Super::NativeOnAnalogValueChanged(Geometry, Event);
 	return FReply::Handled();
 }
 

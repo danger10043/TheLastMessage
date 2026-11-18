@@ -1,4 +1,5 @@
 #include "UI/OwnedCoreWidget.h"
+#include "UI/GamepadUIKeys.h"
 #include "UI/FactoryUIStyle.h"
 
 #include "AbilitySystemComponent.h"
@@ -174,6 +175,17 @@ void UOwnedCoreWidget::SelectCore(FName CoreId)
 	if (NextScroll) NextScroll->ScrollToStart();
 }
 
+void UOwnedCoreWidget::MoveSelection(int32 Offset)
+{
+	TArray<FName> Ids;
+	for (const FOwnedCoreEntry& Entry : Entries)
+		if (Entry.CoreData && Entry.CoreData->CoreCategory == ActiveCategory) Ids.Add(Entry.CoreData->CoreId);
+	if (Ids.IsEmpty()) return;
+	const int32 Current = Ids.IndexOfByKey(SelectedByCategory.FindRef(ActiveCategory));
+	const int32 Next = Current == INDEX_NONE ? 0 : (Current + Offset + Ids.Num()) % Ids.Num();
+	SelectCore(Ids[Next]);
+}
+
 void UOwnedCoreWidget::HandleCoreChanged(FName CoreId, int32 OldLevel, int32 NewLevel)
 {
 	RefreshCores();
@@ -221,13 +233,28 @@ void UOwnedCoreWidget::Close()
 FReply UOwnedCoreWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, const FKeyEvent& Event)
 {
 	const FKey Key = Event.GetKey();
-	if (Key == EKeys::Escape || Key == ToggleKey)
+	if (Key == EKeys::Escape || GamepadUI::IsBack(Key) || Key == ToggleKey)
 	{
 		if (!Event.IsRepeat())
 		{
 			FactoryUI::PlayUISound(FactoryUI::ESound::Cancel);
 			Close();
 		}
+		return FReply::Handled();
+	}
+	// 패드: LB/RB 분류 탭, 십자키·왼쪽 스틱으로 코어 선택.
+	if (const int32 Step = GamepadUI::ShoulderStep(Key))
+	{
+		if (!Event.IsRepeat())
+		{
+			FactoryUI::PlayUISound(FactoryUI::ESound::Click);
+			SetActiveCategory(ActiveCategory == ECoreCategory::Ability ? ECoreCategory::Stat : ECoreCategory::Ability);
+		}
+		return FReply::Handled();
+	}
+	if (const int32 Step = GamepadUI::HorizontalStep(Key) + GamepadUI::VerticalStep(Key))
+	{
+		MoveSelection(Step);
 		return FReply::Handled();
 	}
 	if (Key == EKeys::SpaceBar || Key == EKeys::Enter || Key == EKeys::Tab

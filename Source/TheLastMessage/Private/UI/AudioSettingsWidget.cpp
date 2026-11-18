@@ -1,4 +1,6 @@
 #include "UI/AudioSettingsWidget.h"
+#include "UI/GamepadUIKeys.h"
+#include "UI/AppearanceColorPadPicker.h"
 // +수정----
 #include "UI/AppearanceColorComboBox.h"
 // +--------
@@ -479,6 +481,47 @@ void UAudioSettingsWidget::NativeConstruct()
 	}
 }
 
+bool UAudioSettingsWidget::IsUsingGamepad() const
+{
+	const auto* Settings = ULocalPlayer::GetSubsystem<UGameKeySettingsSubsystem>(GetOwningLocalPlayer());
+	return Settings && Settings->IsUsingGamepad();
+}
+
+void UAudioSettingsWidget::UpdateFocusedRowHighlight()
+{
+	const auto* Pages = Cast<UWidgetSwitcher>(FindSettingsWidget(TEXT("SettingsTabPages")));
+	const int32 PageIndex = Pages ? Pages->GetActiveWidgetIndex() : INDEX_NONE;
+	UTextBlock* Label = nullptr;
+	for (const FSettingsHelpEntry& Help : SettingsHelpEntries)
+	{
+		UWidget* Row = Help.Row.Get();
+		if (Help.PageIndex != PageIndex || !Row || !(Row->HasAnyUserFocus() || Row->HasFocusedDescendants())) continue;
+		// 버튼은 FactoryMenuStyle이 이미 강조하므로 라벨을 칠하지 않는다.
+		bool bFocusedButton = false;
+		UWidgetTree::ForWidgetAndChildren(Row, [&](UWidget* Widget)
+		{
+			if (Widget->IsA<UButton>() && Widget->HasAnyUserFocus()) bFocusedButton = true;
+			if (!Label) Label = Cast<UTextBlock>(Widget);
+		});
+		if (bFocusedButton) Label = nullptr;
+		break;
+	}
+	if (FocusedRowLabel.Get() == Label) return;
+	if (UTextBlock* Previous = FocusedRowLabel.Get()) Previous->SetColorAndOpacity(FocusedRowLabelColor);
+	FocusedRowLabel = Label;
+	if (Label)
+	{
+		FocusedRowLabelColor = Label->GetColorAndOpacity();
+		Label->SetColorAndOpacity(FactoryUI::Cyan);
+	}
+}
+
+bool UAudioSettingsWidget::IsCapturingKey() const
+{
+	const auto* Selector = CapturingKey.Get();
+	return Selector && Selector->GetIsSelectingKey();
+}
+
 void UAudioSettingsWidget::FocusFirstControl()
 {
 	ForceLayoutPrepass();
@@ -536,10 +579,26 @@ void UAudioSettingsWidget::NativeDestruct()
 FReply UAudioSettingsWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, const FKeyEvent& Event)
 {
 	if (IsNestedSettingsPage()) return Super::NativeOnPreviewKeyDown(Geometry, Event);
-	if (const auto* Selector = CapturingKey.Get(); Selector && Selector->GetIsSelectingKey())
-		return Super::NativeOnPreviewKeyDown(Geometry, Event);
+	if (IsCapturingKey()) return Super::NativeOnPreviewKeyDown(Geometry, Event);
+	// 드롭다운 목록이 열려 있으면 패드 버튼은 목록이 먼저 받는다(B로 목록 닫기 등).
+	const bool bMenuOpen = FSlateApplication::Get().AnyMenusVisible();
+	if (const int32 Step = GamepadUI::ShoulderStep(Event.GetKey()); Step != 0 && !bMenuOpen)
+	{
+		// LB/RB로 탭을 넘긴다. 끝에서는 반대쪽 끝으로 돈다.
+		if (!Event.IsRepeat())
+			if (const auto* Pages = Cast<UWidgetSwitcher>(FindSettingsWidget(TEXT("SettingsTabPages"))))
+			{
+				const int32 Count = FMath::Min<int32>(Pages->GetNumWidgets(), UE_ARRAY_COUNT(SettingsTabs));
+				if (Count > 0)
+				{
+					FactoryUI::PlayUISound(FactoryUI::ESound::Hover);
+					ShowSettingsTab((Pages->GetActiveWidgetIndex() + Step + Count) % Count);
+				}
+			}
+		return FReply::Handled();
+	}
 	const auto* Inputs = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetOwningLocalPlayer());
-	if (Event.GetKey() == EKeys::Escape
+	if (Event.GetKey() == EKeys::Escape || (GamepadUI::IsBack(Event.GetKey()) && !bMenuOpen)
 		|| (Inputs && PauseInputAction && Inputs->QueryKeysMappedToAction(PauseInputAction).Contains(Event.GetKey())))
 	{
 		if (Event.IsRepeat()) return FReply::Handled();
@@ -555,6 +614,25 @@ void UAudioSettingsWidget::NativeTick(const FGeometry& Geometry, float DeltaTime
 	Super::NativeTick(Geometry, DeltaTime);
 	if (IsNestedSettingsPage()) return;
 	const auto UpdateFocus = [this] { ForEachSettingsTree([](UWidgetTree* Tree) { FactoryMenuStyle::UpdateFocus(Tree); }); };
+	// 패드 조작 중 포커스를 잃으면(마우스로 빈 곳을 누른 경우 등) 버튼이 아무 데도 닿지 않으므로 첫 항목으로 되돌린다.
+	if (IsUsingGamepad() && !PadColorPicker.IsValid() && !HasAnyUserFocus() && !HasFocusedDescendants()
+		&& FSlateApplication::IsInitialized() && !FSlateApplication::Get().AnyMenusVisible())
+		FocusFirstControl();
+	UpdateFocusedRowHighlight();
+	// 버튼은 FactoryMenuStyle이 강조하므로, 버튼이 아닌 컨트롤에 포커스가 있을 때만 테두리를 그린다.
+	FocusFrameTarget.Reset();
+	if (IsUsingGamepad() && FSlateApplication::IsInitialized() && HasFocusedDescendants())
+	{
+		bool bButtonFocused = false;
+		ForEachSettingsTree([&bButtonFocused](UWidgetTree* Tree)
+		{
+			Tree->ForEachWidget([&bButtonFocused](UWidget* Widget)
+			{
+				if (!bButtonFocused && Widget->IsA<UButton>() && Widget->HasAnyUserFocus()) bButtonFocused = true;
+			});
+		});
+		if (!bButtonFocused) FocusFrameTarget = FSlateApplication::Get().GetUserFocusedWidget(0);
+	}
 	RefreshSettingsHelp();
 	if (ScreenConfirmation.IsValid())
 	{
@@ -576,6 +654,25 @@ void UAudioSettingsWidget::NativeTick(const FGeometry& Geometry, float DeltaTime
 		}
 	}
 	UpdateFocus();
+}
+
+int32 UAudioSettingsWidget::NativePaint(const FPaintArgs& Args, const FGeometry& AllottedGeometry, const FSlateRect& MyCullingRect,
+	FSlateWindowElementList& OutDrawElements, int32 LayerId, const FWidgetStyle& InWidgetStyle, bool bParentEnabled) const
+{
+	const int32 Layer = Super::NativePaint(Args, AllottedGeometry, MyCullingRect, OutDrawElements, LayerId, InWidgetStyle, bParentEnabled);
+	const TSharedPtr<SWidget> Target = FocusFrameTarget.Pin();
+	if (!Target.IsValid() || Target == GetCachedWidget()) return Layer;
+	const FGeometry& Focused = Target->GetPaintSpaceGeometry();
+	const float Scale = FMath::Max(AllottedGeometry.Scale, UE_SMALL_NUMBER);
+	const FVector2D Position = AllottedGeometry.AbsoluteToLocal(Focused.GetAbsolutePosition()) - FVector2D(3.0, 3.0);
+	const FVector2D Size = Focused.GetAbsoluteSize() / Scale + FVector2D(6.0, 6.0);
+	if (Size.X <= 6.0 || Size.Y <= 6.0) return Layer;
+	// 안쪽을 칠하지 않도록 선으로 테두리만 그린다.
+	const TArray<FVector2D> Outline = {
+		Position, Position + FVector2D(Size.X, 0.0), Position + Size, Position + FVector2D(0.0, Size.Y), Position };
+	FSlateDrawElement::MakeLines(OutDrawElements, Layer + 1, AllottedGeometry.ToPaintGeometry(), Outline,
+		ESlateDrawEffect::None, FactoryUI::Cyan, true, 2.f);
+	return Layer + 1;
 }
 
 void UAudioSettingsWidget::RefreshVolumeValues()
@@ -1606,11 +1703,19 @@ void UAudioSettingsWidget::RefreshSettingsHelp()
 
 	const int32 PageIndex = Pages->GetActiveWidgetIndex();
 	const FVector2D CursorPosition = FSlateApplication::Get().GetCursorPos();
-	const auto* Entry = SettingsHelpEntries.FindByPredicate([&](const FSettingsHelpEntry& Help)
+	const auto IsFocusedRow = [PageIndex](const FSettingsHelpEntry& Help)
+	{
+		const auto* Row = Help.Row.Get();
+		return Help.PageIndex == PageIndex && Row && (Row->HasAnyUserFocus() || Row->HasFocusedDescendants());
+	};
+	// 패드면 포커스가 있는 줄, 아니면 마우스가 올라간 줄의 도움말을 보여 준다(마우스가 줄 밖이면 포커스 줄).
+	const FSettingsHelpEntry* Entry = IsUsingGamepad() ? SettingsHelpEntries.FindByPredicate(IsFocusedRow) : nullptr;
+	if (!Entry) Entry = SettingsHelpEntries.FindByPredicate([&](const FSettingsHelpEntry& Help)
 	{
 		const auto* Row = Help.Row.Get();
 		return Help.PageIndex == PageIndex && Row && Row->GetCachedGeometry().IsUnderLocation(CursorPosition);
 	});
+	if (!Entry) Entry = SettingsHelpEntries.FindByPredicate(IsFocusedRow);
 	if (Entry)
 	{
 		FText HelpText = Entry->Text;
@@ -2325,6 +2430,12 @@ void UAudioSettingsWidget::OpenAppearancePalette(bool bOutline)
 {
 	const auto* Visual = UGameInstance::GetSubsystem<UGameVisualSettingsSubsystem>(GetGameInstance());
 	if (!Visual) return;
+	// 엔진 색상표는 마우스 전용이라 게임패드 모드에서는 패드용 창을 연다.
+	if (IsUsingGamepad())
+	{
+		OpenPadAppearancePalette(bOutline);
+		return;
+	}
 	const FLinearColor InitialColor = bOutline ? Visual->CustomOutlineColor : Visual->CustomPlayerColor;
 	FColorPickerArgs Args(InitialColor,
 		FOnLinearColorValueChanged::CreateWeakLambda(this, [this, bOutline](FLinearColor Color)
@@ -2344,6 +2455,45 @@ void UAudioSettingsWidget::OpenAppearancePalette(bool bOutline)
 	Args.bClampValue = true;
 	Args.OnColorPickerCancelled.BindLambda([](FLinearColor) {});
 	OpenColorPicker(Args);
+}
+
+void UAudioSettingsWidget::OpenPadAppearancePalette(bool bOutline)
+{
+	auto* Visual = UGameInstance::GetSubsystem<UGameVisualSettingsSubsystem>(GetGameInstance());
+	if (!Visual || PadColorPicker.IsValid()) return;
+	auto* Picker = CreateWidget<UAppearanceColorPadPicker>(this, UAppearanceColorPadPicker::StaticClass());
+	if (!Picker) return;
+	// 취소하면 열기 전 값으로 되돌린다. 움직이는 동안에는 외형 미리보기에 바로 반영한다.
+	const FLinearColor PreviousColor = bOutline ? Visual->CustomOutlineColor : Visual->CustomPlayerColor;
+	const int32 PreviousIndex = bOutline ? Visual->OutlineColor : Visual->PlayerColor;
+	const FName ComboName = bOutline ? TEXT("OutlineColorSetting") : TEXT("PlayerColorSetting");
+	const auto Apply = [this, bOutline, ComboName](FLinearColor Color, int32 Index)
+	{
+		auto* Settings = UGameInstance::GetSubsystem<UGameVisualSettingsSubsystem>(GetGameInstance());
+		if (!Settings) return;
+		(bOutline ? Settings->CustomOutlineColor : Settings->CustomPlayerColor) = Color.GetClamped();
+		(bOutline ? Settings->OutlineColor : Settings->PlayerColor) = Index;
+		if (auto* Combo = Cast<UComboBoxString>(FindSettingsWidget(ComboName)))
+		{
+			TGuardValue<bool> Guard(bSynchronizingAppearanceControls, true);
+			Combo->SetSelectedIndex(Index);
+		}
+		UpdateVisuals();
+	};
+	Picker->Setup(bOutline ? NSLOCTEXT("PadColorPicker", "OutlineTitle", "외곽선 색 직접 고르기")
+		: NSLOCTEXT("PadColorPicker", "PlayerTitle", "본체 색 직접 고르기"), PreviousColor);
+	Picker->OnColorChanged.BindWeakLambda(this, [Apply](FLinearColor Color)
+	{
+		Apply(Color, UGameVisualSettingsSubsystem::CustomColorIndex);
+	});
+	Picker->OnClosed.BindWeakLambda(this, [this, Apply, PreviousColor, PreviousIndex, ComboName](bool bAccepted, FLinearColor Color)
+	{
+		if (bAccepted) Apply(Color, UGameVisualSettingsSubsystem::CustomColorIndex);
+		else Apply(PreviousColor, PreviousIndex);
+		if (UWidget* Combo = FindSettingsWidget(ComboName)) Combo->SetKeyboardFocus();
+	});
+	PadColorPicker = Picker;
+	Picker->AddToViewport(1000);
 }
 
 void UAudioSettingsWidget::SetBloom(bool bValue)

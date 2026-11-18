@@ -24,6 +24,7 @@ protected:
 	virtual FReply NativeOnMouseButtonUp(const FGeometry& Geometry, const FPointerEvent& Event) override;
 	virtual FReply NativeOnMouseMove(const FGeometry& Geometry, const FPointerEvent& Event) override;
 	virtual FReply NativeOnMouseWheel(const FGeometry& Geometry, const FPointerEvent& Event) override;
+	virtual FReply NativeOnAnalogValueChanged(const FGeometry& Geometry, const FAnalogInputEvent& Event) override;
 	virtual void NativeTick(const FGeometry& Geometry, float DeltaTime) override;
 	virtual void NativeDestruct() override;
 private:
@@ -32,6 +33,16 @@ private:
 	void RestoreInput();
 	float GetMapScale(FVector2D Size) const;
 	FVector2D ToMap(FVector2D World, FVector2D Size) const;
+	/** 화면 좌표 근처(Radius 픽셀 안)의 빠른 이동 지점으로 이동한다. 마우스 클릭과 패드 A(화면 가운데)가 함께 쓴다. */
+	void TryFastTravelAt(FVector2D Pointer, FVector2D Size, double Radius);
+	/** 지도 가운데로 플레이어 위치를 옮긴다(F / 패드 Y). */
+	void CenterOnPlayer(FVector2D Size);
+	bool IsUsingGamepad() const;
+	/** 패드 아날로그 입력: 왼쪽 스틱(이동), 트리거(확대·축소). 일시정지 중이라 Slate 이벤트로 받아 Tick에서 적용한다. */
+	FVector2D GamepadPan = FVector2D::ZeroVector;
+	float GamepadZoomIn = 0.f;
+	float GamepadZoomOut = 0.f;
+	FVector2D LastMapSize = FVector2D::ZeroVector;
 	UPROPERTY(Transient) TObjectPtr<UAreaMapComponent> MapSource;
 	TWeakObjectPtr<APlayerController> InputOwner;
 	TWeakObjectPtr<APawn> ObservedPawn;

@@ -208,7 +208,11 @@ bool ULoadingTransitionSubsystem::Tick(float Delta)
   Movement->ComputeFloorDist(Player->GetActorLocation(), SpawnFloorDistance, SpawnFloorDistance,
    Floor, Player->GetCapsuleComponent()->GetScaledCapsuleRadius());
   // 부활 뒤 바닥 확인은 12초까지만 기다리고, 그래도 없으면 플레이어를 풀어 준다(영원히 갇히지 않게).
-  const bool bGiveUpRespawnFloor=bRespawnFloorWait && Now-RespawnFloorStart>=12.0;
+  // 방이 아직 올라오는 중이면(독립형·느린 PC에서는 큰 Area 레벨에만 10초 넘게 걸린다) 12초가 지나도 계속 기다린다.
+  // 로딩이 3초 넘게 멈춰 있는데도 바닥이 없을 때만 포기하고, 어떤 경우에도 120초를 넘기지 않는다.
+  const double FloorWaited=Now-RespawnFloorStart;
+  const URoomStreamingSubsystem* FloorRooms=GetGameInstance()->GetWorld()?GetGameInstance()->GetWorld()->GetSubsystem<URoomStreamingSubsystem>():nullptr;
+  const bool bGiveUpRespawnFloor=bRespawnFloorWait && (FloorWaited>=120.0 || (FloorWaited>=12.0 && (!FloorRooms || FloorRooms->GetPipelineIdleSeconds()>=3.0)));
   if(!Floor.IsWalkableFloor() && !bGiveUpRespawnFloor)
   {
    if(!bLoggedMissingSpawnFloor && Now-Started>=15.0)

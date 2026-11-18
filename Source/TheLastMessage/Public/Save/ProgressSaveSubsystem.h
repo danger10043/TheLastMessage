@@ -38,6 +38,12 @@ public:
 	bool RestorePlayerIfPending(APlayerBase* Player);
 	bool RestoreCheckpointInPlace(APlayerBase* Player);
 	void QueueGimmickRestore(class AGimmickBase* Gimmick);
+	/**
+	 * 방 레벨이 내려가기 직전에 그 방 기믹의 현재 상태를 세션 메모리에 저장한다(체크포인트 파일과는 별개).
+	 * 같은 방이 다시 올라오면 체크포인트 기록보다 이 상태를 먼저 쓴다. 체크포인트를 저장하면 파일에 합쳐지고,
+	 * 슬롯을 다시 읽거나(사망·이어하기) 새로 시작하면 버려진다.
+	 */
+	void CaptureGimmickForUnload(class AGimmickBase* Gimmick);
 	bool IsRestoringGimmicks() const { return bRestoringGimmicks; }
 	void ApplyCheckpointState(APlayerCheckpoint* Checkpoint) const;
 	bool IsRestoringProgress() const { return bRestorePending || bRestoring; }
@@ -79,6 +85,8 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UProgressSaveGame> PendingCheckpointSnapshot;
 	void WriteCheckpointSnapshot(UProgressSaveGame* Snapshot);
 	TArray<TWeakObjectPtr<class AGimmickBase>> PendingGimmickRestores;
+	/** 맵 이름 -> 기믹 고유 ID -> 방이 내려가기 직전의 상태 */
+	TMap<FName, TMap<FGuid, FProgressActorState>> UnloadedGimmickStates;
 	void RestoreQueuedGimmicks();
 	bool bRestoringGimmicks = false;
 };

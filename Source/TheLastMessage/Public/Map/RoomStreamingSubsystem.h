@@ -46,6 +46,11 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Room Streaming")
 	FName GetCurrentRegionId() const { return CurrentRegionId; }
 
+	/** 비동기 로딩, 레벨 인스턴스 로드, 월드에 붙이는 중인 레벨 중 하나라도 진행 중인가. */
+	bool IsPipelineBusy() const;
+	/** 위 로딩이 모두 멈춘 채로 지난 시간(초). 진행 중이면 0. */
+	double GetPipelineIdleSeconds() const;
+
 	/** 방 번호(예: 08)의 레벨 인스턴스가 로드되어 있는가. 목록에 없는 방이면 false. */
 	UFUNCTION(BlueprintPure, Category = "Room Streaming")
 	bool IsRoomLoaded(FName RoomId) const;
@@ -100,6 +105,9 @@ private:
 
 	bool AreDesiredRoomsLoaded() const;
 
+	/** 방 레벨을 내리기 직전에 그 안의 기믹 상태를 저장한다. 같은 방이 다시 올라오면 닫힌 문 등이 떠날 때 모습으로 복원된다. */
+	void CaptureRoomGimmicks(class ILevelInstanceInterface* Instance);
+
 	/** 레벨이 월드에 붙은 직후: 그 안의 방 레벨 인스턴스 중 지금 필요 없는 방의 로드 요청을 취소한다. */
 	void HandleLevelAdded(ULevel* Level, UWorld* World);
 	FDelegateHandle LevelAddedHandle;
@@ -131,4 +139,6 @@ private:
 	TMap<FName, double> UnloadAfter;
 	/** 방 번호 -> 언로드를 요청한 시각(월드 시간). 내려가는 동안 같은 요청을 반복하지 않기 위해 쓴다. */
 	TMap<FName, double> UnloadRequestedAt;
+	/** 로딩·월드 붙이기가 모두 멈춘 상태가 시작된 실시간. 진행 중이면 -1. */
+	double PipelineIdleSince = -1.0;
 };

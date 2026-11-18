@@ -13,6 +13,7 @@
 #include "UObject/Package.h"
 #include "Save/ProgressSaveSubsystem.h"
 #include "Save/ProgressSaveGame.h"
+#include "Gimmick/GimmickBase.h"
 
 DEFINE_LOG_CATEGORY(LogRoomStreaming);
 
@@ -45,8 +46,11 @@ namespace
 {
 	/** 시작 단계에서 리전이나 방을 못 찾았을 때 포기하는 시간(초). */
 	constexpr double StartupGiveUpSeconds = 8.0;
-	/** 시작 단계 정리를 기다리는 최대 시간(초). */
-	constexpr double StartupMaxWaitSeconds = 25.0;
+	/**
+	 * 시작 단계 정리를 기다리는 최대 시간(초). 독립형·느린 PC에서는 큰 Area 레벨이 올라오는 데만 10초 넘게 걸린다.
+	 * 너무 일찍 포기하면 방이 올라오기 전에 로딩 화면이 걷혀 플레이어가 빈 곳으로 떨어진다.
+	 */
+	constexpr double StartupMaxWaitSeconds = 120.0;
 }
 
 FName URoomStreamingSubsystem::ResolveStartRegion() const
@@ -219,6 +223,24 @@ void URoomStreamingSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	StartupBeginTime = FPlatformTime::Seconds();
 }
 
+bool URoomStreamingSubsystem::IsPipelineBusy() const
+{
+	UWorld* World = GetWorld();
+	ULevelInstanceSubsystem* LevelInstances = World ? World->GetSubsystem<ULevelInstanceSubsystem>() : nullptr;
+	if (!World || !LevelInstances) return false;
+	if (IsAsyncLoading() || World->IsVisibilityRequestPending()) return true;
+	for (TActorIterator<ALevelInstance> It(World); It; ++It)
+	{
+		if (LevelInstances->IsLoading(*It)) return true;
+	}
+	return false;
+}
+
+double URoomStreamingSubsystem::GetPipelineIdleSeconds() const
+{
+	return PipelineIdleSince < 0.0 ? 0.0 : FPlatformTime::Seconds() - PipelineIdleSince;
+}
+
 bool URoomStreamingSubsystem::IsStartupSettled() const
 {
 	if (!bStartupPhase) return true;
@@ -251,7 +273,8 @@ bool URoomStreamingSubsystem::IsStartupSettled() const
 		if (!Instance)
 		{
 			// 필요한 방의 부모 레벨이 아직 안 올라왔을 수 있다. 잠시 기다린 뒤 이 맵에 없는 방으로 본다.
-			if (Wanted.Contains(Room.RoomId) && Elapsed < StartupGiveUpSeconds) return false;
+			// 단, 다른 레벨이 아직 올라오는 중이면(부모 Area 레벨이 느리게 올라오는 중일 수 있다) 계속 기다린다.
+			if (Wanted.Contains(Room.RoomId) && (Elapsed < StartupGiveUpSeconds || IsPipelineBusy())) return false;
 			continue;
 		}
 		bFoundAny = true;
@@ -343,6 +366,27 @@ void URoomStreamingSubsystem::BuildLevelInstanceIndex(TMap<FName, ALevelInstance
 	}
 }
 
+void URoomStreamingSubsystem::CaptureRoomGimmicks(ILevelInstanceInterface* Instance)
+{
+	UWorld* World = GetWorld();
+	ULevelInstanceSubsystem* LevelInstances = World ? World->GetSubsystem<ULevelInstanceSubsystem>() : nullptr;
+	UGameInstance* GameInstance = World ? World->GetGameInstance() : nullptr;
+	UProgressSaveSubsystem* Saves = GameInstance ? GameInstance->GetSubsystem<UProgressSaveSubsystem>() : nullptr;
+	if (!LevelInstances || !Saves || !Instance) return;
+	const ULevel* Level = LevelInstances->GetLevelInstanceLevel(Instance);
+	if (!Level) return;
+	int32 Captured = 0;
+	for (AActor* Actor : Level->Actors)
+	{
+		if (AGimmickBase* Gimmick = Cast<AGimmickBase>(Actor))
+		{
+			Saves->CaptureGimmickForUnload(Gimmick);
+			++Captured;
+		}
+	}
+	UE_LOG(LogRoomStreaming, Verbose, TEXT("Captured %d gimmick states before unload"), Captured);
+}
+
 void URoomStreamingSubsystem::Update()
 {
 	UWorld* World = GetWorld();
@@ -385,6 +429,14 @@ void URoomStreamingSubsystem::Update()
 	BuildLevelInstanceIndex(Index);
 	const double Now = World->GetTimeSeconds();
 
+	// 로드 중이거나 월드에 붙는 중인 레벨이 있을 때 다른 방을 내리면 독립형에서 비동기 로더가 크래시한다(스택: ProcessAsyncLoading).
+	// 비동기 로딩, 레벨 인스턴스 로드, 월드에 붙이는 중인 레벨이 모두 없는 상태가 1초 이어졌을 때만 내린다.
+	const bool bPipelineIdle = !IsPipelineBusy();
+	const double RealNow = FPlatformTime::Seconds();
+	if (!bPipelineIdle) PipelineIdleSince = -1.0;
+	else if (PipelineIdleSince < 0.0) PipelineIdleSince = RealNow;
+	const bool bPipelineStable = PipelineIdleSince >= 0.0 && RealNow - PipelineIdleSince >= 1.0;
+
 	for (const FRoomStreamEntry& Room : Settings->Rooms)
 	{
 		ALevelInstance** Found2 = Index.Find(FName(*Room.Level.GetLongPackageName()));
@@ -407,9 +459,8 @@ void URoomStreamingSubsystem::Update()
 		{
 			// 로드 중인 방에 언로드를 요청하면 패키지가 로드되는 도중에 지워진다(느린 PC·독립형 게임에서 크래시). 다 올라온 뒤에 내린다.
 			if (bIsLoading) continue;
-			// 다른 패키지가 비동기로 읽히는 중에 레벨을 내리면 독립형에서 비동기 로더가 크래시한다(스택: ProcessAsyncLoading).
-			// 로딩이 모두 끝난 뒤에 내린다. 시작 단계에서는 로딩 화면이 그 시간을 가려 준다.
-			if (IsAsyncLoading()) continue;
+			// 다른 곳에서 로딩·월드 붙이기가 진행 중이면 기다린다. 시작 단계에서는 로딩 화면이 그 시간을 가려 준다.
+			if (!bPipelineStable) continue;
 			// 한 번 요청한 방은 내려가는 동안 다시 요청하지 않는다. 오래 지나도 안 내려가면 다시 요청한다.
 			if (const double* RequestedAt = UnloadRequestedAt.Find(Room.RoomId))
 			{
@@ -422,6 +473,7 @@ void URoomStreamingSubsystem::Update()
 			{
 				UE_LOG(LogRoomStreaming, Log, TEXT("Unload room %s"), *Room.RoomId.ToString());
 				UnloadAfter.Remove(Room.RoomId);
+				CaptureRoomGimmicks(Instance);
 				UnloadRequestedAt.Add(Room.RoomId, Now);
 				LevelInstances->RequestUnloadLevelInstance(Instance);
 			}

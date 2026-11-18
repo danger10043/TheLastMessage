@@ -52,6 +52,14 @@ protected:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|BombObstacle|Effects", meta = (ClampMin = "0.01"))
     FVector DestructionEffectScale = FVector::OneVector;
 
+    // 파괴 이펙트 위치 보정 (메시 중심 기준, 메시 회전 방향을 따르는 로컬 좌표, cm)
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|BombObstacle|Effects")
+    FVector DestructionEffectLocationOffset = FVector::ZeroVector;
+
+    // 파괴 이펙트 회전 보정
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Gimmick|BombObstacle|Effects")
+    FRotator DestructionEffectRotationOffset = FRotator::ZeroRotator;
+
     // 중복 파괴 방지
     UPROPERTY(Transient, VisibleInstanceOnly, BlueprintReadOnly, Category = "Gimmick|BombObstacle")
     bool bIsDestroyed = false;

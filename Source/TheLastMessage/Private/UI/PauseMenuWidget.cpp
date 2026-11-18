@@ -1,4 +1,7 @@
 #include "UI/PauseMenuWidget.h"
+#include "UI/GamepadUIKeys.h"
+#include "UI/GameKeySettingsSubsystem.h"
+#include "Framework/Application/SlateApplication.h"
 #include "UI/AudioSettingsWidget.h"
 #include "UI/FactoryMenuStyle.h"
 #include "UI/FactoryUIStyle.h"
@@ -156,7 +159,11 @@ FReply UPauseMenuWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, const
 	const APlayerController* PC = GetOwningPlayer();
 	const ULocalPlayer* Local = PC ? PC->GetLocalPlayer() : nullptr;
 	const UEnhancedInputLocalPlayerSubsystem* Inputs = Local ? Local->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>() : nullptr;
-	if (Inputs && PauseInputAction && Inputs->QueryKeysMappedToAction(PauseInputAction).Contains(Event.GetKey()))
+	// 설정의 키 입력 대기 중이면 누른 버튼을 그대로 넘긴다(B나 Menu도 새 키로 지정할 수 있게).
+	if (SettingsScreen && SettingsScreen->IsCapturingKey()) return Super::NativeOnPreviewKeyDown(Geometry, Event);
+	// 패드 B는 일시정지 키와 같게 처리한다. 드롭다운이 열려 있으면 드롭다운이 먼저 닫히도록 넘긴다.
+	const bool bGamepadBack = GamepadUI::IsBack(Event.GetKey()) && !FSlateApplication::Get().AnyMenusVisible();
+	if (bGamepadBack || (Inputs && PauseInputAction && Inputs->QueryKeysMappedToAction(PauseInputAction).Contains(Event.GetKey())))
 	{
 		if (!Event.IsRepeat() && !bWorking)
 		{
@@ -172,7 +179,8 @@ FReply UPauseMenuWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, const
 		Back();
 		return FReply::Handled();
 	}
-	if (Key == EKeys::Up || Key == EKeys::Down || Key == EKeys::Left || Key == EKeys::Right || Key == EKeys::Tab)
+	if (Key == EKeys::Up || Key == EKeys::Down || Key == EKeys::Left || Key == EKeys::Right || Key == EKeys::Tab
+		|| GamepadUI::VerticalStep(Key) != 0 || GamepadUI::HorizontalStep(Key) != 0)
 		bNavigationKeyPending = true;
 	return Super::NativeOnPreviewKeyDown(Geometry, Event);
 }
@@ -180,6 +188,10 @@ FReply UPauseMenuWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, const
 void UPauseMenuWidget::NativeTick(const FGeometry& Geometry, float DeltaTime)
 {
 	Super::NativeTick(Geometry, DeltaTime);
+	// 패드 조작 중 포커스를 잃으면 다시 메뉴로 가져온다(첫 페이지는 NativeOnFocusReceived가 재개 버튼으로 옮긴다).
+	if (!SettingsScreen && !bWorking && !HasAnyUserFocus() && !HasFocusedDescendants())
+		if (const auto* Settings = ULocalPlayer::GetSubsystem<UGameKeySettingsSubsystem>(GetOwningLocalPlayer()); Settings && Settings->IsUsingGamepad())
+			SetKeyboardFocus();
 	FactoryMenuStyle::UpdateFocus(WidgetTree);
 	// Arrow keys move focus through Slate navigation, so compare the focused button after the key.
 	UWidget* Focused = nullptr;

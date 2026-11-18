@@ -1,4 +1,7 @@
 #include "UI/StartMenuWidget.h"
+#include "UI/GamepadUIKeys.h"
+#include "UI/GameKeySettingsSubsystem.h"
+#include "Engine/LocalPlayer.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/Border.h"
 #include "Components/Button.h"
@@ -363,7 +366,7 @@ FReply UStartMenuWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, const
 		bCreditsSpaceHeld = true;
 		return FReply::Handled();
 	}
-	if (Pages && (Key == EKeys::Up || Key == EKeys::Down))
+	if (Pages && (Key == EKeys::Up || Key == EKeys::Down || GamepadUI::VerticalStep(Key) != 0))
 	{
 		if (bWorking) return FReply::Handled();
 		TArray<UButton*> Buttons;
@@ -378,7 +381,7 @@ FReply UStartMenuWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, const
 		int32 Current = INDEX_NONE;
 		for (int32 Index = 0; Index < Buttons.Num(); ++Index)
 			if (Buttons[Index] && Buttons[Index]->HasAnyUserFocus()) { Current = Index; break; }
-		const int32 Direction = Key == EKeys::Down ? 1 : -1;
+		const int32 Direction = (Key == EKeys::Down || GamepadUI::VerticalStep(Key) > 0) ? 1 : -1;
 		if (Current == INDEX_NONE) Current = Direction > 0 ? Buttons.Num() - 1 : 0;
 		for (int32 Step = 1; Step <= Buttons.Num(); ++Step)
 		{
@@ -397,7 +400,7 @@ FReply UStartMenuWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, const
 
 FReply UStartMenuWidget::NativeOnKeyDown(const FGeometry& Geometry, const FKeyEvent& Event)
 {
-	if (Event.GetKey() == EKeys::Escape && Pages)
+	if ((Event.GetKey() == EKeys::Escape || GamepadUI::IsBack(Event.GetKey())) && Pages)
 	{
 		if (bWorking) return FReply::Handled();
 		if (Pages->GetActiveWidgetIndex() == 2) { FactoryUI::PlayUISound(FactoryUI::ESound::Cancel); CancelOverwrite(); return FReply::Handled(); }
@@ -421,6 +424,21 @@ void UStartMenuWidget::NativeTick(const FGeometry& Geometry, float DeltaTime)
 {
 	Super::NativeTick(Geometry, DeltaTime);
 	FactoryMenuStyle::UpdateFocus(WidgetTree);
+	// 패드 조작 중 포커스를 잃으면 지금 페이지의 첫 버튼으로 되돌린다.
+	if (!SettingsScreen && !bWorking && Pages && !HasAnyUserFocus() && !HasFocusedDescendants())
+		if (const auto* Settings = ULocalPlayer::GetSubsystem<UGameKeySettingsSubsystem>(GetOwningLocalPlayer()); Settings && Settings->IsUsingGamepad())
+		{
+			UButton* First = nullptr;
+			switch (Pages->GetActiveWidgetIndex())
+			{
+			case 0: First = NewGameButton; break;
+			case 1: First = Slot1Button; break;
+			case 2: First = CancelButton; break;
+			case 3: First = CreditsBackButton; break;
+			default: break;
+			}
+			if (First) First->SetKeyboardFocus();
+		}
 
 	auto* Credits = Cast<UUserWidget>(Pages ? Pages->GetActiveWidget() : nullptr);
 	if (!Credits || Credits->GetFName() != TEXT("CreditsPage"))

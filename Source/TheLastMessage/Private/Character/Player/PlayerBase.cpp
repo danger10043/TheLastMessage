@@ -296,10 +296,11 @@ bool APlayerBase::UpdateGamepadAim(APlayerController& PC)
 	if (ViewSize.X <= 0 || ViewSize.Y <= 0) return false;
 
 	if (RightStick.Size() >= GamepadAimDeadZone) GamepadAimStick = RightStick.GetSafeNormal();
-	FVector2D ScreenDirection(GamepadAimStick.X, -GamepadAimStick.Y); // 화면 Y는 아래가 +
-	if (RightStick.Size() < GamepadAimDeadZone)
+	// 엔진의 오른쪽 스틱 Y 값을 그대로 화면 Y로 쓴다(부호를 뒤집으면 위아래가 반대로 움직였다).
+	FVector2D ScreenDirection(GamepadAimStick.X, GamepadAimStick.Y);
+	if (GamepadAimStick.IsNearlyZero())
 	{
-		// 스틱이 중립이면 캐릭터가 보는 방향을 조준한다.
+		// 스틱을 한 번도 기울이지 않았으면 캐릭터가 보는 방향을 조준한다. 그 뒤로는 스틱을 놓아도 마지막 방향을 유지한다.
 		FVector2D ForwardScreen;
 		if (PC.ProjectWorldLocationToScreen(GetActorLocation() + GetActorForwardVector() * 100.0f, ForwardScreen, true))
 			ScreenDirection = (ForwardScreen - ActorScreen).GetSafeNormal();

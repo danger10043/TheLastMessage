@@ -3,7 +3,7 @@
 #include "CoreMinimal.h"
 #include "ControlGuideTypes.generated.h"
 
-/** 안내판에서 표시할 조작법의 종류 */
+/** 안내판에서 표시할 조작법과 기믹 설명의 종류 */
 UENUM(BlueprintType)
 enum class EControlGuideType : uint8
 {
@@ -17,5 +17,8 @@ enum class EControlGuideType : uint8
 	Interact     UMETA(DisplayName = "상호작용"),
 	WeaponEquip  UMETA(DisplayName = "무기 장착"),
 	// 기존에 저장된 안내 종류의 숫자 값을 유지하도록 새 종류는 끝에 추가한다.
-	RifleChargeAttack UMETA(DisplayName = "차징 공격 / 라이플")
+	RifleChargeAttack UMETA(DisplayName = "차징 공격 / 라이플"),
+	LaserReflector UMETA(DisplayName = "기믹 / 레이저 반사판"),
+	Cheolbongi UMETA(DisplayName = "기믹 / 철붕이 (데미지 발판)"),
+	FuseSocket UMETA(DisplayName = "기믹 / 퓨즈 소켓")
 };

@@ -10,6 +10,10 @@
 #include "Engine/GameInstance.h"
 #include "Engine/GameViewportClient.h"
 #include "Engine/World.h"
+#include "Engine/LevelStreaming.h"
+#include "EngineUtils.h"
+#include "LevelSequenceActor.h"
+#include "LevelSequencePlayer.h"
 #include "Kismet/GameplayStatics.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Camera/CameraComponent.h"
@@ -143,6 +147,66 @@ bool ULoadingTransitionSubsystem::BeginDeath(APlayerBase* Player,float Delay)
  else if(auto* Camera=Player->FindComponentByClass<UCameraComponent>()) OriginalArm=Camera->GetRelativeLocation().Y;
  return true;
 }
+
+void ULoadingTransitionSubsystem::TickPrologue(UWorld* World, double Now)
+{
+    if (!bLoading || !bArrived) return;
+
+    if (bFading)
+    {
+        if (Now - ReadyAt >= 0.5)
+        {
+            RemoveOverlay();
+            bLoading = false;
+        }
+        return;
+    }
+
+    if (APlayerController* PC = GetGameInstance()->GetFirstLocalPlayerController();
+        PC && PC->GetHUD())
+    {
+        for (TActorIterator<ALevelSequenceActor> It(World); It; ++It)
+        {
+            if (!It->ActorHasTag(TEXT("PrologueSequence")) || !It->HasActorBegunPlay()) continue;
+            ULevelSequencePlayer* Player = It->GetSequencePlayer();
+            if (!Player || !Player->GetSequence()) continue;
+
+            const bool bLevelVisible = World->GetStreamingLevels().ContainsByPredicate(
+                [&It](const ULevelStreaming* Level)
+                {
+                    return Level && Level->GetLoadedLevel() == It->GetLevel() && Level->IsLevelVisible();
+                });
+            if (!bLevelVisible) continue;
+
+            if (URoomStreamingSubsystem* Rooms = World->GetSubsystem<URoomStreamingSubsystem>())
+                Rooms->EndStartupPhase();
+            Player->OnFinished.AddUniqueDynamic(this, &ThisClass::FinishPrologue);
+            RemoveOverlay();
+            bLoading = false;
+            Player->Play();
+            return;
+        }
+    }
+
+    if (Now - Started >= 120.0)
+    {
+        UE_LOG(LogTemp, Error, TEXT("Prologue sequence did not become ready; opening the saved start map."));
+        bArrived = false;
+        FinishPrologue();
+    }
+}
+
+void ULoadingTransitionSubsystem::FinishPrologue()
+{
+    UWorld* World = GetGameInstance()->GetWorld();
+    if (!World || UWorld::RemovePIEPrefix(World->GetOutermost()->GetName()) != TEXT("/Game/Main/Maps/LV_Prologue")) return;
+
+    const UProgressSaveSubsystem* Saves = GetGameInstance()->GetSubsystem<UProgressSaveSubsystem>();
+    const UProgressSaveGame* Progress = Saves->GetWorkingProgress();
+    if (Saves->GetActiveSlot() > 0 && Progress)
+        UGameplayStatics::OpenLevel(this, FName(*Progress->MapPackage));
+}
+
 bool ULoadingTransitionSubsystem::Tick(float Delta)
 {
  const double Now=FPlatformTime::Seconds();
@@ -202,6 +266,11 @@ bool ULoadingTransitionSubsystem::Tick(float Delta)
  // 방 스트리밍 시작 단계: 맵이 처음 열리면 모든 방이 한꺼번에 올라와 있어서, 필요 없는 방을 내리는 동안 렉이 생긴다.
  // 그 정리가 끝날 때까지 로딩 화면을 유지한다.
  UWorld* GameWorld=GetGameInstance()->GetWorld();
+ if (GameWorld && UWorld::RemovePIEPrefix(GameWorld->GetOutermost()->GetName()) == TEXT("/Game/Main/Maps/LV_Prologue"))
+ {
+     TickPrologue(GameWorld, Now);
+     return true;
+ }
  URoomStreamingSubsystem* StartupRooms=GameWorld?GameWorld->GetSubsystem<URoomStreamingSubsystem>():nullptr;
  if(StartupRooms && StartupRooms->IsStartupPhase() && !bLoading && !bDeath)
  {

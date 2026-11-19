@@ -69,9 +69,14 @@ void AStartMenuHUD::SelectSlot(int32 SlotId, bool bNewGame)
 	if (bNewGame)
 	{
 		const FString Package = NewGameMap.ToSoftObjectPath().GetLongPackageName();
+		const FString ProloguePackage = PrologueMap.ToSoftObjectPath().GetLongPackageName();
 		if (!FPackageName::DoesPackageExist(Package))
 		{
 			Menu->ShowError(NSLOCTEXT("StartMenu", "MissingMap", "게임 맵을 찾을 수 없습니다.")); return;
+		}
+		if (ProloguePackage.IsEmpty() || !FPackageName::DoesPackageExist(ProloguePackage))
+		{
+			Menu->ShowError(NSLOCTEXT("StartMenu", "MissingPrologueMap", "프롤로그 맵을 찾을 수 없습니다.")); return;
 		}
 		// A newly appeared file must be presented and confirmed before replacement.
 		if (Saves->HasSave(SlotId) && !SlotExists[SlotId - 1])
@@ -104,7 +109,12 @@ void AStartMenuHUD::SelectSlot(int32 SlotId, bool bNewGame)
 void AStartMenuHUD::InitialSaveFinished(bool bSuccess)
 {
 	if (!bStartingGame) return;
-	if (bSuccess) { TravelToProgress(); return; }
+	if (bSuccess)
+	{
+		const FString ProloguePackage = PrologueMap.ToSoftObjectPath().GetLongPackageName();
+		UGameplayStatics::OpenLevel(this, FName(*ProloguePackage));
+		return;
+	}
 	bStartingGame = false;
 	GetGameInstance()->GetSubsystem<UProgressSaveSubsystem>()->EndSession();
 	RefreshSlots();

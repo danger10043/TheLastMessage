@@ -19,6 +19,7 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category="Menu") TSubclassOf<UStartMenuWidget> MenuClass;
 	UPROPERTY(Transient, BlueprintReadOnly, Category="Menu") TObjectPtr<UStartMenuWidget> Menu;
 	UPROPERTY(EditDefaultsOnly, Category="Menu") TSoftObjectPtr<UWorld> NewGameMap;
+	UPROPERTY(EditDefaultsOnly, Category = "Menu") TSoftObjectPtr<UWorld> PrologueMap;
 private:
 	void RefreshSlots();
 	void TravelToProgress();

@@ -39,6 +39,12 @@ public:
 #if WITH_EDITOR
 	virtual void PostEditImport() override;
 #endif
+	/**
+	 * 이 기믹이 있는 방 레벨이 내려가는 중이면 true. 내려가는 동안에는 기믹이 사라지면서 생기는 상태 변화
+	 * (발판 위 물체가 먼저 사라져 발판이 꺼지는 것 등)를 밖으로 알리지 않는다. 알리면 월드 플래그가 꺼지고
+	 * 연결된 문이 닫혀서, 방이 다시 올라올 때 복원해도 문이 닫힌 채로 남는다. 다시 올라오면(BeginPlay) 풀린다.
+	 */
+	void SetRoomUnloading(bool bUnloading) { bRoomUnloading = bUnloading; }
 	UFUNCTION(BlueprintPure, Category="Gimmick|Save") FGuid GetPersistentId() const { return PersistentId; }
 	bool ShouldPersist() const { return bPersistState && PersistentId.IsValid(); }
 	virtual FProgressActorState CaptureProgress() const;
@@ -57,6 +63,7 @@ protected:
 	void OnCheckpointStateRestored();
 
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category="Gimmick|Save") FGuid PersistentId;
+	bool bRoomUnloading = false;
 private:
 	void EnsurePersistentId();
 public:

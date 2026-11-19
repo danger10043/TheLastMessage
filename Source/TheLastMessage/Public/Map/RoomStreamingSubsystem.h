@@ -107,6 +107,8 @@ private:
 
 	/** 방 레벨을 내리기 직전에 그 안의 기믹 상태를 저장한다. 같은 방이 다시 올라오면 닫힌 문 등이 떠날 때 모습으로 복원된다. */
 	void CaptureRoomGimmicks(class ILevelInstanceInterface* Instance);
+	/** 내리려다 취소된 방의 기믹이 상태 변화를 다시 알리게 한다. */
+	void ReleaseRoomGimmicks(class ILevelInstanceInterface* Instance);
 
 	/** 레벨이 월드에 붙은 직후: 그 안의 방 레벨 인스턴스 중 지금 필요 없는 방의 로드 요청을 취소한다. */
 	void HandleLevelAdded(ULevel* Level, UWorld* World);

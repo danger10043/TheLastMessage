@@ -1,6 +1,5 @@
 #include "UI/AreaMapWidget.h"
 #include "UI/GamepadUIKeys.h"
-#include "UI/GameKeySettingsSubsystem.h"
 #include "UI/FactoryCursor.h"
 #include "UI/FactoryUIStyle.h"
 #include "UI/FactoryUIAssetSettings.h"
@@ -29,7 +28,7 @@ bool UAreaMapWidget::OpenMap(UAreaMapComponent* Source, const UInputAction* Acti
 	const auto* Assets = GetDefault<UFactoryUIAssetSettings>();
 	MapFont = Assets->BodyFont.LoadSynchronous();
 	MapTitleFont = Assets->TitleFont.LoadSynchronous();
-	MapSource = Source; TravelStatus=FText::GetEmpty();
+	MapSource = Source;
 	Source->LoadExploration(); Source->RefreshLayout(); Source->ExploreAt(PC->GetPawn()->GetActorLocation());
 	Source->RevealFromView(PC->GetPawn()->GetActorLocation());
 	InputOwner = PC; ObservedPawn = PC->GetPawn();
@@ -129,20 +128,21 @@ int32 UAreaMapWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geome
 			ESlateDrawEffect::None,Color);
 	};
 	const FLinearColor Cyan = FactoryUI::Cyan;
-	Box(FVector2D::ZeroVector,Size,FLinearColor(0.003f,0.009f,0.014f,0.98f),1);
-	const FSlateBrush Frame = FactoryUI::Chamfer(FactoryUI::EPlate::Screen);
-	FSlateDrawElement::MakeBox(Out, Layer+2, Geometry.ToPaintGeometry(
-		FVector2f(FMath::Max(1.0, Size.X-40), FMath::Max(1.0, Size.Y-32)),
-		FSlateLayoutTransform(FVector2f(20,16))), &Frame, ESlateDrawEffect::None);
-	Box(FVector2D(36,90),FVector2D(FMath::Max(1.0,Size.X-72),1),FLinearColor(0.12f,0.25f,0.32f),2);
-	Text(NSLOCTEXT("AreaMap","Title","구역 지도"),FVector2D(40,28),28,Cyan,true);
-	Text(NSLOCTEXT("AreaMap","Controls","휠: 확대  |  드래그: 이동  |  F: 현재 위치  |  지도 키 / ESC: 닫기"),FVector2D(40,Size.Y-42),13,FLinearColor(0.65f,0.76f,0.82f));
+	if (!GetRootWidget())
+	{
+		Box(FVector2D::ZeroVector,Size,FLinearColor(0.003f,0.009f,0.014f,0.98f),1);
+		const FSlateBrush Frame = FactoryUI::Chamfer(FactoryUI::EPlate::Screen);
+		FSlateDrawElement::MakeBox(Out, Layer+2, Geometry.ToPaintGeometry(
+			FVector2f(FMath::Max(1.0, Size.X-40), FMath::Max(1.0, Size.Y-32)),
+			FSlateLayoutTransform(FVector2f(20,16))), &Frame, ESlateDrawEffect::None);
+		Box(FVector2D(36,90),FVector2D(FMath::Max(1.0,Size.X-72),1),FLinearColor(0.12f,0.25f,0.32f),2);
+		Text(NSLOCTEXT("AreaMap","Title","구역 지도"),FVector2D(40,28),28,Cyan,true);
+	}
 	if (!MapSource || !MapSource->GetMapBounds().bIsValid)
 	{
 		Text(NSLOCTEXT("AreaMap","Empty","표시할 지형이 없습니다"),Size*0.5-FVector2D(90,0),18,FLinearColor::White);
 		return Layer+9;
 	}
-	if(!TravelStatus.IsEmpty()) Text(TravelStatus,FVector2D(280,66),14,FLinearColor(1.f,0.7f,0.3f));
 	Text(MapSource->GetCurrentRoomName(),FVector2D(40,66),14,FLinearColor(0.7f,0.8f,0.87f),true);
 	Text(FText::Format(NSLOCTEXT("AreaMap","Progress","탐사율  {0}%"),FMath::FloorToInt(MapSource->GetExplorationPercent())),
 		FVector2D(FMath::Max(40.0,Size.X-240),40),16,FLinearColor::White);
@@ -153,7 +153,7 @@ int32 UAreaMapWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geome
 	// 방이 겹쳐 있으면 다른 방에서 이미 밝혀진 자리는 가리지 않는다.
 	auto DrawFog = [&](const FAreaMapRoom& Room)
 	{
-		const FAreaMapFog* RoomFog = MapSource->FindFog(Room.Id);
+		const FAreaMapFog* RoomFog = MapSource->FindFog(Room.FogKey);
 		if (!RoomFog || RoomFog->Columns < 1 || RoomFog->Rows < 1) return;
 		const FVector2D RoomSize = Room.Bounds.GetSize();
 		const double CellW = RoomSize.X / RoomFog->Columns, CellH = RoomSize.Y / RoomFog->Rows;
@@ -178,7 +178,7 @@ int32 UAreaMapWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geome
 	};
 	for (const FAreaMapRoom& Room : Rooms)
 	{
-		if (!MapSource->IsRoomShown(Room.Id)) continue;
+		if (!MapSource->IsRoomShown(Room)) continue;
 		const FVector2D Min = ToMap(FVector2D(Room.Bounds.Min.X,Room.Bounds.Max.Y),Size);
 		const FVector2D Max = ToMap(FVector2D(Room.Bounds.Max.X,Room.Bounds.Min.Y),Size);
 		if (UTexture2D* Silhouette = Room.Silhouette.Get())
@@ -206,14 +206,14 @@ int32 UAreaMapWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geome
 		Out.PopClip();
 	}
 	for (const FAreaMapRoom& Room : Rooms)
-		if (MapSource->IsRoomShown(Room.Id)) DrawFog(Room);
+		if (MapSource->IsRoomShown(Room)) DrawFog(Room);
 	const auto Measure = FSlateApplication::Get().GetRenderer()->GetFontMeasureService();
 	// 같은 ID의 region이 여러 조각이어도 이름은 한 번만 표시한다. 가장 큰 조각의 중앙에 둔다.
 	TMap<FName, int32> LabelRoomIndex;
 	for (int32 Index = 0; Index < Rooms.Num(); ++Index)
 	{
 		const FAreaMapRoom& Room = Rooms[Index];
-		if (Room.bAutomatic || Room.Name.IsEmpty() || !MapSource->IsExplored(Room.Id)) continue;
+		if (Room.bAutomatic || Room.Name.IsEmpty() || (!bFullPreview && !MapSource->IsExplored(Room.Id))) continue;
 		int32& Chosen = LabelRoomIndex.FindOrAdd(Room.Id, Index);
 		if (Room.Bounds.GetArea() > Rooms[Chosen].Bounds.GetArea()) Chosen = Index;
 	}
@@ -229,7 +229,8 @@ int32 UAreaMapWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geome
 		if (LabelSize.X > AvailableWidth)
 		{
 			Font.Size = FMath::FloorToFloat(Font.Size * AvailableWidth / LabelSize.X);
-			if (Font.Size < 9) continue;
+			if (!bFullPreview && Font.Size < 9) continue;
+			Font.Size = FMath::Max(9.0f, Font.Size);
 			LabelSize = Measure->Measure(Room.Name, Font);
 		}
 		const FVector2D Position = Center - LabelSize * 0.5;
@@ -238,18 +239,14 @@ int32 UAreaMapWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geome
 			FSlateLayoutTransform(FVector2f(Position))), Room.Name, Font, ESlateDrawEffect::None,
 			Room.Id == MapSource->GetCurrentRoomId() ? FactoryUI::Cyan : FactoryUI::Text);
 	}
+	const FLinearColor UnvisitedColor(0.35f, 0.4f, 0.45f);
 	// 체크포인트 아이콘. 체크포인트가 방 레벨 안에 있으면 방이 내려갈 때 액터가 사라지므로, 액터가 없는 것은 기억해 둔 정보로 그린다.
 	{
 		TSet<FGuid> LiveCheckpointIds;
-		const auto DrawCheckpoint = [&](const FVector2D& WorldPoint, bool bAllowFastTravel, bool bTravel)
+		const auto DrawCheckpoint = [&](const FVector2D& WorldPoint, bool bVisited)
 		{
 			const FVector2D P=ToMap(WorldPoint,Size);
-			const FLinearColor Color=bAllowFastTravel ? (bTravel ? FLinearColor(0.3f,1.f,0.7f):FLinearColor(0.35f,0.4f,0.45f)):FactoryUI::Amber;
-			if(bAllowFastTravel)
-			{
-				TArray<FVector2D> Diamond={P+FVector2D(0,-9),P+FVector2D(9,0),P+FVector2D(0,9),P+FVector2D(-9,0),P+FVector2D(0,-9)};
-				FSlateDrawElement::MakeLines(Out,Layer+5,Geometry.ToPaintGeometry(),Diamond,ESlateDrawEffect::None,Color,true,2);
-			}
+			const FLinearColor Color = bFullPreview || bVisited ? FactoryUI::Amber : UnvisitedColor;
 			Box(P-FVector2D(3,3),FVector2D(6,6),Color,5);
 		};
 		for (TActorIterator<APlayerCheckpoint> It(GetWorld()); It; ++It)
@@ -258,17 +255,17 @@ int32 UAreaMapWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geome
 			const FVector2D WorldPoint(Location.X,Location.Z);
 			LiveCheckpointIds.Add(It->GetPersistentId());
 			// 방문한 체크포인트이거나, 그 자리의 칸이 시야에 들어온 적이 있어야 지도에 보인다.
-			const bool bVisible=It->HasBeenVisited() || MapSource->IsPointRevealed(WorldPoint);
+			const bool bVisible=bFullPreview || It->HasBeenVisited() || MapSource->IsPointRevealed(WorldPoint);
 			if(!bVisible) continue;
-			DrawCheckpoint(WorldPoint,It->bAllowFastTravel,It->CanFastTravel());
+			DrawCheckpoint(WorldPoint,It->HasBeenVisited());
 		}
 		for (const TPair<FGuid, FAreaMapCheckpointMarker>& Pair : MapSource->GetCheckpointMarkers())
 		{
 			if (LiveCheckpointIds.Contains(Pair.Key)) continue;
 			const FAreaMapCheckpointMarker& Marker=Pair.Value;
 			const FVector2D WorldPoint(Marker.Location.X,Marker.Location.Z);
-			if(!Marker.bVisited && !MapSource->IsPointRevealed(WorldPoint)) continue;
-			DrawCheckpoint(WorldPoint,Marker.bAllowFastTravel,Marker.bAllowFastTravel && Marker.bVisited);
+			if(!bFullPreview && !Marker.bVisited && !MapSource->IsPointRevealed(WorldPoint)) continue;
+			DrawCheckpoint(WorldPoint,Marker.bVisited);
 		}
 	}
 	if (const AActor* Player = MapSource->GetOwner())
@@ -280,18 +277,29 @@ int32 UAreaMapWidget::NativePaint(const FPaintArgs& Args, const FGeometry& Geome
 		TArray<FVector2D> Arrow = {Position+FVector2D(Direction*8,-4), Position+FVector2D(Direction*12,0), Position+FVector2D(Direction*8,4)};
 		FSlateDrawElement::MakeLines(Out,Layer+7,Geometry.ToPaintGeometry(),Arrow,ESlateDrawEffect::None,Cyan,true,2);
 	}
-	if (IsUsingGamepad())
-	{
-		// 패드 A가 고르는 화면 가운데 십자선.
-		const FVector2D Center = Size*0.5+FVector2D(0,8);
-		const FLinearColor Mark(1.f,1.f,1.f,0.7f);
-		Box(Center-FVector2D(12,1),FVector2D(9,2),Mark,8); Box(Center+FVector2D(3,-1),FVector2D(9,2),Mark,8);
-		Box(Center-FVector2D(1,12),FVector2D(2,9),Mark,8); Box(Center+FVector2D(-1,3),FVector2D(2,9),Mark,8);
-	}
 	Out.PopClip();
-	Text(IsUsingGamepad()
-		? NSLOCTEXT("AreaMap","LegendGamepad","● 현재 위치   ◇ 초록: 빠른 이동(십자선 + A)   왼쪽 스틱 이동 · LT/RT 축소/확대 · Y 내 위치 · B 닫기")
-		: NSLOCTEXT("AreaMap","Legend","● 현재 위치   ■ 일반   ◇ 초록: 빠른 이동(클릭) / 회색: 미방문"),FVector2D(40,Size.Y-67),13,FLinearColor(0.65f,0.76f,0.82f));
+	if (!GetRootWidget())
+	{
+		constexpr int32 LegendFontSize = 13;
+		constexpr double ItemGap = 24;
+		constexpr double IconSize = 8;
+		constexpr double IconGap = 6;
+		const double LegendY = Size.Y - 48;
+		const FLinearColor LegendText(0.65f, 0.76f, 0.82f);
+		const FSlateFontInfo LegendFont = MapFont ? FSlateFontInfo(MapFont.Get(), LegendFontSize, TEXT("Regular"))
+			: FCoreStyle::GetDefaultFontStyle("Regular", LegendFontSize);
+		double LegendX = 40;
+		const auto DrawLegendItem = [&](const FText& Label, const FLinearColor& Color)
+		{
+			Box(FVector2D(LegendX, LegendY + 5), FVector2D(IconSize, IconSize), Color, 8);
+			LegendX += IconSize + IconGap;
+			Text(Label, FVector2D(LegendX, LegendY), LegendFontSize, LegendText);
+			LegendX += Measure->Measure(Label, LegendFont).X + ItemGap;
+		};
+		DrawLegendItem(NSLOCTEXT("AreaMap", "LegendCurrent", "현재 위치"), Cyan);
+		DrawLegendItem(NSLOCTEXT("AreaMap", "LegendVisited", "방문한 체크포인트"), FactoryUI::Amber);
+		DrawLegendItem(NSLOCTEXT("AreaMap", "LegendUnvisited", "미방문한 체크포인트"), UnvisitedColor);
+	}
 	return Layer+9;
 }
 
@@ -303,9 +311,6 @@ FReply UAreaMapWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, const F
 		return FReply::Handled();
 	}
 	if (Event.GetKey()==EKeys::F || Event.GetKey()==EKeys::Gamepad_FaceButton_Top) CenterOnPlayer(Geometry.GetLocalSize());
-	// 패드 A: 화면 가운데 십자선에 가장 가까운 빠른 이동 지점으로 이동한다.
-	if (GamepadUI::IsAccept(Event.GetKey()) && !Event.IsRepeat())
-		TryFastTravelAt(Geometry.GetLocalSize()*0.5+FVector2D(0,8), Geometry.GetLocalSize(), 40);
 	return FReply::Handled();
 }
 
@@ -314,12 +319,6 @@ void UAreaMapWidget::CenterOnPlayer(FVector2D Size)
 	if (!MapSource || !MapSource->GetOwner()) return;
 	const FVector Location = MapSource->GetOwner()->GetActorLocation();
 	Pan -= ToMap(FVector2D(Location.X,Location.Z),Size) - (Size*0.5+FVector2D(0,8));
-}
-
-bool UAreaMapWidget::IsUsingGamepad() const
-{
-	const auto* Settings = ULocalPlayer::GetSubsystem<UGameKeySettingsSubsystem>(GetOwningLocalPlayer());
-	return Settings && Settings->IsUsingGamepad();
 }
 
 FReply UAreaMapWidget::NativeOnAnalogValueChanged(const FGeometry& Geometry, const FAnalogInputEvent& Event)
@@ -335,43 +334,10 @@ FReply UAreaMapWidget::NativeOnAnalogValueChanged(const FGeometry& Geometry, con
 	return FReply::Handled();
 }
 
-void UAreaMapWidget::TryFastTravelAt(FVector2D Pointer, FVector2D Size, double Radius)
-{
-	if (!MapSource || Pointer.X<36 || Pointer.X>Size.X-36 || Pointer.Y<104 || Pointer.Y>Size.Y-66) return;
-	APlayerCheckpoint* Target=nullptr; double Nearest=Radius;
-	TSet<FGuid> LiveIds;
-	for(TActorIterator<APlayerCheckpoint> It(GetWorld());It;++It)
-	{
-		LiveIds.Add(It->GetPersistentId());
-		if(!It->CanFastTravel()) continue;
-		const FVector L=It->GetActorLocation();
-		const double Distance=FVector2D::Distance(Pointer,ToMap(FVector2D(L.X,L.Z),Size));
-		if(Distance<Nearest){Nearest=Distance;Target=*It;}
-	}
-	// 방이 내려가 있어 액터가 없는 체크포인트: 기억해 둔 정보로 방을 먼저 올린 뒤 이동한다.
-	const FAreaMapCheckpointMarker* TargetMarker=nullptr; double NearestMarker=Nearest;
-	for(const TPair<FGuid, FAreaMapCheckpointMarker>& Pair : MapSource->GetCheckpointMarkers())
-	{
-		if(LiveIds.Contains(Pair.Key) || !Pair.Value.bAllowFastTravel || !Pair.Value.bVisited) continue;
-		const double Distance=FVector2D::Distance(Pointer,ToMap(FVector2D(Pair.Value.Location.X,Pair.Value.Location.Z),Size));
-		if(Distance<NearestMarker){NearestMarker=Distance;TargetMarker=&Pair.Value;Target=nullptr;}
-	}
-	if(TargetMarker)
-	{
-		if(MapSource->RequestTravelToMarker(TargetMarker->Id)) CloseMap();
-		else TravelStatus=NSLOCTEXT("AreaMap","TravelFailed","지금은 이동할 수 없습니다. 잠시 후 다시 시도하세요.");
-		return;
-	}
-	if(!Target) return;
-	if(Target->FastTravel(Cast<APlayerBase>(ObservedPawn.Get()))) CloseMap();
-	else TravelStatus=NSLOCTEXT("AreaMap","TravelFailed","지금은 이동할 수 없습니다. 잠시 후 다시 시도하세요.");
-}
-
 FReply UAreaMapWidget::NativeOnMouseButtonDown(const FGeometry& Geometry, const FPointerEvent& Event)
 {
 	if (Event.GetEffectingButton()==EKeys::LeftMouseButton || Event.GetEffectingButton()==EKeys::RightMouseButton)
 	{
-		PressPosition=Geometry.AbsoluteToLocal(Event.GetScreenSpacePosition()); bTravelClick=Event.GetEffectingButton()==EKeys::LeftMouseButton;
 		bDragging=true; return FReply::Handled().CaptureMouse(TakeWidget());
 	}
 	return FReply::Handled();
@@ -379,15 +345,12 @@ FReply UAreaMapWidget::NativeOnMouseButtonDown(const FGeometry& Geometry, const 
 
 FReply UAreaMapWidget::NativeOnMouseButtonUp(const FGeometry& Geometry, const FPointerEvent& Event)
 {
-	const FVector2D Pointer=Geometry.AbsoluteToLocal(Event.GetScreenSpacePosition());
-    if(bDragging && bTravelClick && Event.GetEffectingButton()==EKeys::LeftMouseButton && FVector2D::Distance(Pointer,PressPosition)<5)
-        TryFastTravelAt(Pointer, Geometry.GetLocalSize(), 14);
-    bDragging=false; bTravelClick=false; return FReply::Handled().ReleaseMouseCapture();
+	bDragging = false;
+	return FReply::Handled().ReleaseMouseCapture();
 }
 
 FReply UAreaMapWidget::NativeOnMouseMove(const FGeometry& Geometry, const FPointerEvent& Event)
 {
-	if(bDragging && FVector2D::Distance(Geometry.AbsoluteToLocal(Event.GetScreenSpacePosition()),PressPosition)>=5) bTravelClick=false;
 	if (bDragging) Pan += Geometry.AbsoluteToLocal(Event.GetScreenSpacePosition()) - Geometry.AbsoluteToLocal(Event.GetLastScreenSpacePosition());
 	return FReply::Handled();
 }

@@ -11,6 +11,7 @@
 #include "Engine/LocalPlayer.h"
 #include "Engine/World.h"
 #include "Blueprint/UserWidget.h"
+#include "UObject/ConstructorHelpers.h"
 // +수정----
 #include "TheLastMessage.h"
 // +--------
@@ -83,7 +84,13 @@ namespace
 
 ASideScrollingPlayerController::ASideScrollingPlayerController()
 {
+	const TCHAR* MapWidgetPackage = TEXT("/Game/Main/UI/HUD/WBP_AreaMap");
 	MapWidgetClass = UAreaMapWidget::StaticClass();
+	if (FPackageName::DoesPackageExist(MapWidgetPackage))
+	{
+		static ConstructorHelpers::FClassFinder<UAreaMapWidget> MapWidget(TEXT("/Game/Main/UI/HUD/WBP_AreaMap"));
+		if (MapWidget.Succeeded()) MapWidgetClass = MapWidget.Class;
+	}
 }
 
 void ASideScrollingPlayerController::ClientShowLaserPuzzleIntroWidget_Implementation()

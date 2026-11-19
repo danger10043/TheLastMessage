@@ -78,6 +78,15 @@ void AEnemyAIController::StartEnemyAI()
 		RunBehaviorTree(BehaviorTreeAsset);
 	}
 
+	// 이전에 일시정지된 채 남은 BT가 있으면 해제한다(연출 정지가 필요하면 아래 ApplyFreezeToAI가 다시 건다).
+	if (UBrainComponent* Brain = GetBrainComponent())
+	{
+		if (Brain->IsPaused())
+		{
+			Brain->ResumeLogic(TEXT("EnemyStartUnpause"));
+		}
+	}
+
 	if (UBlackboardComponent* BB = GetBlackboardComponent())
 	{
 		BB->SetValueAsVector(EnemyBB::HomeLocation, ControlledEnemy->GetHomeLocation());
@@ -161,6 +170,12 @@ void AEnemyAIController::StopEnemyAI()
 
 	if (UBrainComponent* Brain = GetBrainComponent())
 	{
+		// BT의 일시정지 플래그는 StopLogic/RunBehaviorTree로 풀리지 않는다. 일시정지(공격 중·연출 정지)인 채로 멈추면
+		// 풀에서 다시 꺼냈을 때 BT가 영구히 멈춘 채 나와 감지도 이동도 하지 않으므로, 멈추기 전에 반드시 해제한다.
+		if (Brain->IsPaused())
+		{
+			Brain->ResumeLogic(TEXT("EnemyStopUnpause"));
+		}
 		Brain->StopLogic(TEXT("EnemyDead"));
 	}
 }

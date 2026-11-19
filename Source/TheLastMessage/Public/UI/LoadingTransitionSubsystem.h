@@ -18,6 +18,8 @@ public:
 private:
  void PreLoad(const FString& Map);
  void OnMapLoaded(UWorld* World);
+ void TickPrologue(UWorld* World, double Now);
+ UFUNCTION() void FinishPrologue();
  bool Tick(float Delta);
  FDelegateHandle PreHandle, PostHandle;
  FTSTicker::FDelegateHandle TickHandle;

@@ -54,6 +54,25 @@ void AEnemyProjectile::BeginPlay()
 
 	CollisionComponent->OnComponentBeginOverlap.AddUniqueDynamic(this, &AEnemyProjectile::OnCollisionBeginOverlap);
 	CollisionComponent->OnComponentHit.AddUniqueDynamic(this, &AEnemyProjectile::OnCollisionHit);
+
+	MakeNotWalkable(); // BP에서 추가한 컴포넌트까지 포함해야 하므로 BeginPlay에서 한다.
+}
+
+void AEnemyProjectile::MakeNotWalkable()
+{
+	TInlineComponentArray<UPrimitiveComponent*> Primitives(this);
+	for (UPrimitiveComponent* Primitive : Primitives)
+	{
+		// 어떤 표면이든 바닥으로 인정하지 않고, 위에 올라서거나 기준(Base)이 되는 것도 막는다.
+		Primitive->SetWalkableSlopeOverride(FWalkableSlopeOverride(WalkableSlope_Unwalkable, 0.f));
+		Primitive->CanCharacterStepUpOn = ECB_No;
+
+		// 피해를 주는 충돌 구체(겹침)만 폰에 반응하고, 나머지 컴포넌트는 폰과 아예 부딪히지 않는다.
+		if (Primitive != CollisionComponent)
+		{
+			Primitive->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
+		}
+	}
 }
 
 void AEnemyProjectile::InitializeProjectile(AEnemyBase* InSource, float InDamage)

@@ -141,6 +141,7 @@ void UBossAttributeSet::PostGameplayEffectExecute(const FGameplayEffectModCallba
         if (Category.GetTagName() == FName(TEXT("Damage.Category.Player.Ranged"))
             && Boss->IsRangedImmune())
         {
+            Boss->NotifyRangedShieldHit();
             return;
         }
 

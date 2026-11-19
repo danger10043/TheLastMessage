@@ -7,6 +7,75 @@
 #include "InputModifiers.h"
 #include "Misc/ConfigCacheIni.h"
 #include "UI/OwnedCoreViewerSubsystem.h"
+#include "Framework/Application/IInputProcessor.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Framework/Application/SlateUser.h"
+
+class UGameKeySettingsSubsystem::FLastInputProcessor final : public IInputProcessor
+{
+public:
+	explicit FLastInputProcessor(UGameKeySettingsSubsystem* InSettings)
+		: Settings(InSettings) {}
+
+	void Tick(const float, FSlateApplication&, TSharedRef<ICursor>) override {}
+
+	bool HandleKeyDownEvent(FSlateApplication&, const FKeyEvent& Event) override
+	{
+		if (!Event.IsRepeat())
+		{
+			Record(Event, Event.GetKey().IsGamepadKey()
+				? EGameInputDevice::Gamepad : EGameInputDevice::KeyboardMouse);
+		}
+		return false;
+	}
+
+	bool HandleMouseButtonDownEvent(FSlateApplication&, const FPointerEvent& Event) override
+	{
+		if (!Event.IsTouchEvent())
+		{
+			Record(Event, EGameInputDevice::KeyboardMouse);
+		}
+		return false;
+	}
+
+	bool HandleAnalogInputEvent(FSlateApplication&, const FAnalogInputEvent& Event) override
+	{
+		if (Event.GetKey().IsGamepadKey() && FMath::Abs(Event.GetAnalogValue()) >= 0.25f)
+		{
+			Record(Event, EGameInputDevice::Gamepad);
+		}
+		return false;
+	}
+
+private:
+	void Record(const FInputEvent& Event, EGameInputDevice Device)
+	{
+		UGameKeySettingsSubsystem* Owner = Settings.Get();
+		ULocalPlayer* LocalPlayer = Owner ? Owner->GetLocalPlayer() : nullptr;
+		const TSharedPtr<FSlateUser> User = LocalPlayer ? LocalPlayer->GetSlateUser() : nullptr;
+		if (!User || Event.GetUserIndex() != static_cast<uint32>(User->GetUserIndex())
+			|| Owner->LastUsedInputDevice == Device)
+		{
+			return;
+		}
+
+		Owner->LastUsedInputDevice = Device;
+		Owner->OnLastUsedInputDeviceChanged.Broadcast(Device);
+	}
+
+	TWeakObjectPtr<UGameKeySettingsSubsystem> Settings;
+};
+
+void UGameKeySettingsSubsystem::Deinitialize()
+{
+	if (LastInputProcessor && FSlateApplication::IsInitialized())
+	{
+		FSlateApplication::Get().UnregisterInputPreProcessor(LastInputProcessor);
+	}
+	LastInputProcessor.Reset();
+	Super::Deinitialize();
+}
+
 
 namespace
 {
@@ -108,6 +177,14 @@ void UGameKeySettingsSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	FString Device;
 	if (GConfig->GetString(InputSettingsSection, InputDeviceKey, Device, GGameUserSettingsIni))
 		InputDevice = Device == TEXT("Gamepad") ? EGameInputDevice::Gamepad : EGameInputDevice::KeyboardMouse;
+
+	LastUsedInputDevice = InputDevice;
+	if (FSlateApplication::IsInitialized())
+	{
+		LastInputProcessor = MakeShared<FLastInputProcessor>(this);
+		FSlateApplication::Get().RegisterInputPreProcessor(
+			LastInputProcessor, EInputPreProcessorType::PreGame);
+	}
 }
 
 const UInputMappingContext* UGameKeySettingsSubsystem::GetDefaultContext()

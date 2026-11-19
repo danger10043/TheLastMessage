@@ -41,6 +41,9 @@ protected:
     UPROPERTY(EditAnywhere, Category = "Boss|RockThrow")
     TSubclassOf<UGA_BossRockThrow> RockThrowAbilityClass;
 
+    UPROPERTY(EditAnywhere, Category = "Boss|Move")
+    TArray<TSubclassOf<class UGameplayAbility>> AttackAbilitiesToCheckWhileMoving;
+
 private:
     void HandleMoveFinished(FAIRequestID RequestID, const FPathFollowingResult& Result);
     void HandleAbilityEnded(const FAbilityEndedData& Data);
@@ -54,6 +57,7 @@ private:
     FDelegateHandle MoveDelegate;
     FDelegateHandle AbilityDelegate;
     EBossPhase LockedPhase = EBossPhase::Phase1;
+    float AttackCheckElapsed = 0.f;
     bool bMoving = false;
     bool bMoveFinished = false;
     bool bMoveFailed = false;

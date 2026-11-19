@@ -181,6 +181,7 @@ void ULoadingTransitionSubsystem::TickPrologue(UWorld* World, double Now)
             if (URoomStreamingSubsystem* Rooms = World->GetSubsystem<URoomStreamingSubsystem>())
                 Rooms->EndStartupPhase();
             Player->OnFinished.AddUniqueDynamic(this, &ThisClass::FinishPrologue);
+            Player->OnStop.AddUniqueDynamic(this, &ThisClass::FinishPrologue);
             RemoveOverlay();
             bLoading = false;
             Player->Play();

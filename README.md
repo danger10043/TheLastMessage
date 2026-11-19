@@ -1,10 +1,20 @@
 # The Last Message
 
+![Unreal Engine 5.8](https://img.shields.io/badge/Unreal_Engine-5.8-0E1128?logo=unrealengine)
+![C++](https://img.shields.io/badge/C%2B%2B-00599C?logo=cplusplus)
+![Blueprint](https://img.shields.io/badge/Blueprint-146EF5)
+![Windows](https://img.shields.io/badge/Windows-PC-0078D4)
+[![Latest release](https://img.shields.io/badge/Release-Latest-2EA44F)](https://github.com/danger10043/TheLastMessage/releases/latest)
+
+![The Last Message 게임 로고](Content/ReadmeMedia/title.png)
+
 **폐쇄된 로봇 공장과 연구시설을 탐사하는 싱글 플레이 2.5D 메트로배니아 액션 게임**
 
 공장 통로와 실험 구역을 오가며 로봇과 싸우고, 시설에 남은 장치를 조작해 다음 구역으로 향하는 길을 엽니다. 탐사와 전투에서 획득한 무기와 코어를 활용해 전투 방식을 바꾸고, 구역 지도에서 현재 위치와 체크포인트 방문 상태를 확인할 수 있습니다.
 
-<!-- 대표 이미지는 제목 아래에, 게임플레이 스크린샷은 주요 시스템 아래에 추가 -->
+## 다운로드
+
+[GitHub 최신 릴리스](https://github.com/danger10043/TheLastMessage/releases/latest)의 **Assets**에서 배포 파일을 확인할 수 있습니다.
 
 ## 주요 시스템
 
@@ -15,6 +25,16 @@
 | 공장 퍼즐 | 반사판으로 레이저 경로를 바꾸고, 퓨즈를 운반해 회로를 연결하거나 발판과 스위치를 조작합니다. |
 | 보스전 | 보스의 페이즈에 따라 달라지는 공격 패턴과 실드 기믹에 대응합니다. |
 | 지도와 체크포인트 | 지도에 현재 위치와 체크포인트 방문 여부를 표시합니다. 체크포인트에서 진행 상황을 저장하고 재시작 시 복원합니다. |
+
+## 게임플레이 화면
+
+### 전투 HUD와 레이저 반사 기믹
+
+![공장 내부의 레이저 반사판과 플레이어 전투 HUD](Content/ReadmeMedia/battle.png)
+
+### 구역 지도
+
+![탐사율 100% 상태의 구역 지도와 체크포인트 범례](Content/ReadmeMedia/area-map.png)
 
 ## 기술 구성
 

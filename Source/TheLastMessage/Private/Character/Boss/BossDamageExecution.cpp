@@ -82,15 +82,6 @@ void UBossDamageExecution::Execute_Implementation(
         UE_LOG(LogTemp, Warning, TEXT("BossDamageExecution - 피해 분류는 정확히 하나여야 합니다."));
         return;
     }
-    if (bPlayerRanged)
-    {
-        if (Boss->IsRangedImmune())
-        {
-            UE_LOG(LogTemp, Verbose, TEXT("BossDamageExecution - 플레이어 원거리 피해 면역입니다."));
-            return;
-        }
-    }
-
     const FGameplayTag DamageTag = FGameplayTag::RequestGameplayTag(
         FName(TEXT("Data.Damage")), false);
     if (!DamageTag.IsValid())
@@ -107,6 +98,13 @@ void UBossDamageExecution::Execute_Implementation(
     if (FinalDamage <= 0.f)
     {
         UE_LOG(LogTemp, Warning, TEXT("BossDamageExecution - 양수 피해량이 전달되지 않았습니다."));
+        return;
+    }
+
+    if (bPlayerRanged && Boss->IsRangedImmune())
+    {
+        Boss->NotifyRangedShieldHit();
+        UE_LOG(LogTemp, Verbose, TEXT("BossDamageExecution - 플레이어 원거리 피해 면역입니다."));
         return;
     }
     if (!TargetASC->GetSet<UBossAttributeSet>())

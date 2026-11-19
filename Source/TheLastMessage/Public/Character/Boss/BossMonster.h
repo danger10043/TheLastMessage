@@ -55,7 +55,7 @@ public:
     bool ResetBoss(bool bRestartAI = false);
 
     // 플레이어 사망 후 체크포인트 제자리 복구용. 시작 위치로 되돌린 뒤 ResetBoss(true)를 수행한다.
-    bool ResetBossForCheckpoint();
+    bool ResetBossForCheckpoint(bool bResetEntranceGate = false);
 
     UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Boss|Entrance")
     bool bWaitForEntranceCinematic = false;

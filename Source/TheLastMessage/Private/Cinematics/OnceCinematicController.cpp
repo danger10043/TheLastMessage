@@ -32,6 +32,48 @@ void AOnceCinematicController::BeginPlay()
 	if (bPlayOnBeginPlay || TriggerActor) GetWorldTimerManager().SetTimerForNextTick(this, &AOnceCinematicController::TryAutoPlay);
 }
 
+namespace
+{
+	bool ShouldSkipCinematic(const UProgressSaveSubsystem* Saves, FName Map, FName Id,
+		bool bSkipOnLoad, bool bReplayOnDeathCheckpoint)
+	{
+		if (!Saves) return false;
+		if (bReplayOnDeathCheckpoint && Saves->IsDeathCheckpointRetry(Map))
+		{
+			return Saves->HasPlayedCinematicOnRetry(Id);
+		}
+		return (bSkipOnLoad && Saves->IsLoadedMap(Map)) || Saves->HasPlayedCinematic(Map, Id);
+	}
+}
+
+ABossMonster* AOnceCinematicController::GetBossForDeathRetry() const
+{
+	return bReplayOnDeathCheckpoint && bStartBossCombatOnCompletion ? Boss.Get() : nullptr;
+}
+
+bool AOnceCinematicController::ResetForDeathCheckpoint()
+{
+	ABossMonster* RetryBoss = GetBossForDeathRetry();
+	if (!HasAuthority() || !IsValid(RetryBoss)) return false;
+
+	GetWorldTimerManager().ClearTimer(StartupTimer);
+	if (ULevelSequencePlayer* Sequence = IsValid(SequenceActor)
+		? SequenceActor->GetSequencePlayer() : nullptr)
+	{
+		Sequence->OnFinished.RemoveDynamic(this, &AOnceCinematicController::SequenceEnded);
+		Sequence->OnStop.RemoveDynamic(this, &AOnceCinematicController::SequenceEnded);
+		if (Sequence->IsPlaying() || Sequence->IsPaused()) Sequence->Stop();
+	}
+
+	RestorePresentation();
+	if (!RetryBoss->ResetBossForCheckpoint(true)) return false;
+	RetryBoss->SetBossUIVisible(false);
+	bConsumed = false;
+	StartupAttempts = 0;
+	GetWorldTimerManager().SetTimerForNextTick(this, &AOnceCinematicController::TryAutoPlay);
+	return true;
+}
+
 void AOnceCinematicController::TryAutoPlay()
 {
 	if (bConsumed) return;
@@ -48,8 +90,7 @@ void AOnceCinematicController::TryAutoPlay()
 		}
 
 		const FName Map(*UGameplayStatics::GetCurrentLevelName(this, true));
-		if (Saves && ((bSkipOnLoad && Saves->IsLoadedMap(Map))
-			|| Saves->HasPlayedCinematic(Map, CinematicId)))
+		if (ShouldSkipCinematic(Saves, Map, CinematicId, bSkipOnLoad, bReplayOnDeathCheckpoint))
 		{
 			bConsumed = true;
 			Saves->MarkCinematicPlayed(Map, CinematicId);
@@ -78,7 +119,7 @@ bool AOnceCinematicController::RequestPlay()
 	if (!HasAuthority() || bConsumed || CinematicId.IsNone()) return false;
 	UProgressSaveSubsystem* Saves = GetGameInstance() ? GetGameInstance()->GetSubsystem<UProgressSaveSubsystem>() : nullptr;
 	const FName Map(*UGameplayStatics::GetCurrentLevelName(this, true));
-	if (Saves && ((bSkipOnLoad && Saves->IsLoadedMap(Map)) || Saves->HasPlayedCinematic(Map, CinematicId)))
+	if (ShouldSkipCinematic(Saves, Map, CinematicId, bSkipOnLoad, bReplayOnDeathCheckpoint))
 	{
 		bConsumed = true;
 		Saves->MarkCinematicPlayed(Map, CinematicId);
@@ -99,7 +140,14 @@ bool AOnceCinematicController::RequestPlay()
 	// Defer until the save system has restored the player, so a scene cannot race the load teleport.
 	if (Saves && Saves->IsRestoringProgress()) return false;
 	bConsumed = true;
-	if (Saves) Saves->MarkCinematicPlayed(Map, CinematicId);
+	if (Saves)
+	{
+		if (bReplayOnDeathCheckpoint && Saves->IsDeathCheckpointRetry(Map))
+		{
+			Saves->MarkCinematicPlayedOnRetry(CinematicId);
+		}
+		Saves->MarkCinematicPlayed(Map, CinematicId);
+	}
 	Player = Pawn; Controller = PC; PlayerHUD = Cast<APlayerHUD>(PC->GetHUD());
 	bPreviousHidden = Pawn->IsHidden(); bPreviousInput = Pawn->InputEnabled();
 	bPreviousHUD = PlayerHUD.IsValid() ? PlayerHUD->bShowHUD : true;
@@ -117,6 +165,11 @@ bool AOnceCinematicController::RequestPlay()
 		}
 	}
 	if (Boss) Boss->SetBossUIVisible(false);
+	if (bReplayOnDeathCheckpoint)
+	{
+		Sequence->SetPlaybackPosition(FMovieSceneSequencePlaybackParams(
+			Sequence->GetStartTime().Time, EUpdatePositionMethod::Jump));
+	}
 	Sequence->OnFinished.AddUniqueDynamic(this, &AOnceCinematicController::SequenceEnded);
 	Sequence->OnStop.AddUniqueDynamic(this, &AOnceCinematicController::SequenceEnded);
 	Sequence->Play();

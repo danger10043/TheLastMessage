@@ -2,6 +2,7 @@
 #include "Core/CorePickup.h"
 #include "Weapon/WeaponPickup.h"
 #include "Character/Boss/BossMonster.h"
+#include "Cinematics/OnceCinematicController.h"
 #include "Projectile/ProjectileBase.h"
 #include "Async/Async.h"
 #include "UObject/Package.h"
@@ -133,10 +134,12 @@ bool UProgressSaveSubsystem::EndSession()
 	bLoadedSession = false;
 	LoadedMap = NAME_None;
 	ActiveSlot = 0;
+	bDeathCheckpointReload = false;
+	RetryPlayedCinematics.Reset();
 	return true;
 }
 
-bool UProgressSaveSubsystem::ReloadActiveProgress()
+bool UProgressSaveSubsystem::ReloadActiveProgress(bool bFromDeath)
 {
 	if (IsSaving() || ActiveSlot < 1 || ActiveSlot > 3) return false;
 	UProgressSaveGame* Loaded = ReadSlot(ActiveSlot);
@@ -152,6 +155,8 @@ bool UProgressSaveSubsystem::ReloadActiveProgress()
 		Flags->RestoreFlags(Loaded->WorldFlags);
 	bLoadedSession = true;
 	LoadedMap = FName(*FPackageName::GetShortName(Loaded->MapPackage));
+	bDeathCheckpointReload = bFromDeath;
+	RetryPlayedCinematics.Reset();
 	bRestorePending = true;
 	return true;
 }
@@ -400,7 +405,7 @@ bool UProgressSaveSubsystem::RestoreCheckpointInPlace(APlayerBase* Player)
  const FProgressMapState* Map = Disk->Maps.Find(FName(*UGameplayStatics::GetCurrentLevelName(Player,true)));
  for (TActorIterator<AGimmickBase> It(Player->GetWorld()); It; ++It)
   if (It->ShouldPersist() && (!Map || !Map->Actors.Contains(It->GetPersistentId()))) return false;
- if (!ReloadActiveProgress()) return false;
+ if (!ReloadActiveProgress(true)) return false;
  return RestoreLoadedCheckpointInPlace(Player);
 }
 
@@ -414,8 +419,21 @@ bool UProgressSaveSubsystem::RestoreLoadedCheckpointInPlace(APlayerBase* Player)
  for (TActorIterator<AGimmickBase> It(Player->GetWorld()); It; ++It) QueueGimmickRestore(*It);
  RestoreQueuedGimmicks();
  // Reset after gimmicks so boss-owned puzzle gimmicks end hidden. The player is still dead, so the AI cannot retarget yet.
+ TSet<ABossMonster*> ResetBosses;
+ if (bDeathCheckpointReload)
+ {
+	 for (TActorIterator<AOnceCinematicController> It(Player->GetWorld()); It; ++It)
+	 {
+		 ABossMonster* Boss = It->GetBossForDeathRetry();
+		 if (!IsValid(Boss)) continue;
+		 if (!It->ResetForDeathCheckpoint()) return false;
+		 ResetBosses.Add(Boss);
+	 }
+ }
+
  for (TActorIterator<ABossMonster> It(Player->GetWorld()); It; ++It)
-  if (It->GetBossState() != EBossState::Idle && !It->ResetBossForCheckpoint()) return false;
+	 if (!ResetBosses.Contains(*It) && It->GetBossState() != EBossState::Idle
+		 && !It->ResetBossForCheckpoint()) return false;
  if (!Player->RespawnAtCheckpoint() || !RestorePlayerIfPending(Player)) return false;
  for (TActorIterator<ACorePickup> It(Player->GetWorld()); It; ++It)
   It->RestoreCheckpointConsumption(WorkingProgress->CorePickupStates.FindRef(It->GetPickupId()));

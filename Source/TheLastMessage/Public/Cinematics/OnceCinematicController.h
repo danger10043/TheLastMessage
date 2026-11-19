@@ -31,6 +31,12 @@ public:
 	UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "Cinematic|Boss Entrance")
 	bool bStartBossCombatOnCompletion = false;
 
+	UPROPERTY(EditInstanceOnly, Category = "Cinematic|Boss Entrance")
+	bool bReplayOnDeathCheckpoint = false;
+
+	ABossMonster* GetBossForDeathRetry() const;
+	bool ResetForDeathCheckpoint();
+
 	UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "Cinematic")
 	bool bHidePlayerDuringCinematic = true;
 

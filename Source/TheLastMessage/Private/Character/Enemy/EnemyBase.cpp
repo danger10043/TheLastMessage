@@ -327,6 +327,24 @@ void AEnemyBase::Landed(const FHitResult& Hit)
 	}
 }
 
+void AEnemyBase::BaseChange()
+{
+	Super::BaseChange();
+
+	// 투사체 같은 움직이는 물체를 밟고 서면 그것과 함께 끌려간다. 생기면 어떤 물체인지 남긴다.
+	if (const UPrimitiveComponent* Base = GetMovementBase())
+	{
+		if (const AActor* BaseOwner = Base->GetOwner())
+		{
+			if (BaseOwner->IsA<AEnemyProjectile>() || BaseOwner->IsA<AEnemyBase>())
+			{
+				UE_LOG(LogTemp, Warning, TEXT("[Enemy] %s 이(가) %s 위에 올라섰습니다(컴포넌트 %s)."),
+					*GetName(), *BaseOwner->GetName(), *Base->GetName());
+			}
+		}
+	}
+}
+
 float AEnemyBase::ModifyIncomingDamage(float Damage, const FGameplayEffectSpec& Spec) const
 {
 	if (RangedDamageMultiplier < 1.f)

@@ -3,11 +3,9 @@
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
 #include "Core/GameCoreTypes.h"
-#include "GameplayEffectTypes.h"
 #include "InputCoreTypes.h"
 #include "OwnedCoreWidget.generated.h"
 
-class UAbilitySystemComponent;
 class UButton;
 class UCoreComponent;
 class UImage;
@@ -23,8 +21,8 @@ class THELASTMESSAGE_API UOwnedCoreWidget : public UUserWidget
 {
 	GENERATED_BODY()
 public:
-	bool SetSources(UCoreComponent* Core, UAbilitySystemComponent* ASC, FKey InToggleKey);
-	/** 화면 표시 실패나 종료 시 획득·스탯 알림 구독을 해제한다. 여러 번 호출해도 안전하다. */
+	bool SetSources(UCoreComponent* Core, FKey InToggleKey);
+	/** 화면 표시 실패나 종료 시 획득 알림 구독을 해제한다. 여러 번 호출해도 안전하다. */
 	void ReleaseSources();
 	FSimpleMulticastDelegate OnClosed;
 
@@ -51,12 +49,6 @@ protected:
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UScrollBox> EffectScroll;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UScrollBox> NextScroll;
 	UPROPERTY(meta = (BindWidget)) TObjectPtr<UButton> CloseButton;
-	UPROPERTY(meta = (BindWidget)) TObjectPtr<UTextBlock> MaxHealthValue;
-	UPROPERTY(meta = (BindWidget)) TObjectPtr<UTextBlock> CriticalChanceValue;
-	UPROPERTY(meta = (BindWidget)) TObjectPtr<UTextBlock> MaxEnergyValue;
-	UPROPERTY(meta = (BindWidget)) TObjectPtr<UTextBlock> MoveSpeedValue;
-	UPROPERTY(meta = (BindWidget)) TObjectPtr<UTextBlock> DamageDealtValue;
-	UPROPERTY(meta = (BindWidget)) TObjectPtr<UTextBlock> DamageTakenValue;
 
 private:
 	UFUNCTION() void Close();
@@ -68,13 +60,10 @@ private:
 	void SelectCore(FName CoreId);
 	/** 현재 분류 안에서 선택을 앞뒤로 옮긴다(패드 십자키). 끝에서는 반대쪽 끝으로 돈다. */
 	void MoveSelection(int32 Offset);
-	void RefreshStats();
 	UPROPERTY(Transient) TWeakObjectPtr<UCoreComponent> CoreSource;
-	UPROPERTY(Transient) TWeakObjectPtr<UAbilitySystemComponent> AttributeSource;
 	UPROPERTY(Transient) TArray<FOwnedCoreEntry> Entries;
 	UPROPERTY(Transient) TArray<TObjectPtr<UOwnedCoreItemWidget>> Items;
 	TMap<ECoreCategory, FName> SelectedByCategory;
-	TMap<FGameplayAttribute, FDelegateHandle> AttributeSubscriptions;
 	ECoreCategory ActiveCategory = ECoreCategory::Ability;
 	FKey ToggleKey;
 	FSlateBrush DefaultIcon;

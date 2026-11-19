@@ -16,6 +16,10 @@
 
 [GitHub 최신 릴리스](https://github.com/danger10043/TheLastMessage/releases/latest)의 **Assets**에서 배포 파일을 확인할 수 있습니다.
 
+## 조작 방법
+
+![키보드·마우스 및 게임패드 조작 안내](Content/ReadmeMedia/controls.png)
+
 ## 주요 시스템
 
 | 시스템 | 게임플레이 |

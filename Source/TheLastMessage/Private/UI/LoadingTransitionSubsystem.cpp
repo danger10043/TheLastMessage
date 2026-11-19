@@ -259,7 +259,7 @@ bool ULoadingTransitionSubsystem::Tick(float Delta)
     if(Rooms){bWaitingForSpawnFloor=true; bRespawnFloorWait=true; RespawnFloorStart=Now; LockSpawnMovement(Player);}
     if(PC && PC->PlayerCameraManager) PC->PlayerCameraManager->SetManualCameraFade(0,FLinearColor::Black,false);
    }
-   else if(Saves->ReloadActiveProgress()) {bRespawnOverlay=false; UGameplayStatics::OpenLevel(GetGameInstance(),FName(*Saves->GetWorkingProgress()->MapPackage));}
+   else if (Saves->ReloadActiveProgress(true)) { bRespawnOverlay = false; UGameplayStatics::OpenLevel(GetGameInstance(), FName(*Saves->GetWorkingProgress()->MapPackage)); }
    else {bRespawnOverlay=false; RemoveOverlay(); bLoading=false; if(PC) if(auto* Camera=Cast<ASideScrollingCameraManager>(PC->PlayerCameraManager)) Camera->CurrentZoom=OriginalZoom; if(PC && PC->PlayerCameraManager) PC->PlayerCameraManager->SetManualCameraFade(0,FLinearColor::Black,false); if(auto* Arm=Player->FindComponentByClass<USpringArmComponent>()) Arm->TargetArmLength=OriginalArm; Player->RespawnAtCheckpoint(); UE_LOG(LogTemp,Error,TEXT("Checkpoint load failed; used in-memory respawn"));}
    return true;
   }
@@ -272,6 +272,7 @@ bool ULoadingTransitionSubsystem::Tick(float Delta)
      TickPrologue(GameWorld, Now);
      return true;
  }
+
  URoomStreamingSubsystem* StartupRooms=GameWorld?GameWorld->GetSubsystem<URoomStreamingSubsystem>():nullptr;
  if(StartupRooms && StartupRooms->IsStartupPhase() && !bLoading && !bDeath)
  {

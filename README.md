@@ -6,7 +6,7 @@
 ![Windows](https://img.shields.io/badge/Windows-PC-0078D4)
 [![Latest release](https://img.shields.io/badge/Release-Latest-2EA44F)](https://github.com/danger10043/TheLastMessage/releases/latest)
 
-![The Last Message 게임 로고](ReadmeMedia/title.png)
+![The Last Message 게임 로고](Content/ReadmeMedia/title.png)
 
 **폐쇄된 로봇 공장과 연구시설을 탐사하는 싱글 플레이 2.5D 메트로배니아 액션 게임**
 
@@ -30,11 +30,11 @@
 
 ### 전투 HUD와 레이저 반사 기믹
 
-![공장 내부의 레이저 반사판과 플레이어 전투 HUD](ReadmeMedia/battle.png)
+![공장 내부의 레이저 반사판과 플레이어 전투 HUD](Content/ReadmeMedia/battle.png)
 
 ### 구역 지도
 
-![탐사율 100% 상태의 구역 지도와 체크포인트 범례](ReadmeMedia/area-map.png)
+![탐사율 100% 상태의 구역 지도와 체크포인트 범례](Content/ReadmeMedia/area-map.png)
 
 ## 기술 구성
 

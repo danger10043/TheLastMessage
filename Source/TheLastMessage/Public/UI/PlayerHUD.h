@@ -65,7 +65,9 @@ private:
 	void DrawDamageVignette();
 	double DamageVignetteStartTime = -1.0;
 	TWeakObjectPtr<APawn> DamageVignettePawn;
-	UPROPERTY() TObjectPtr<UFont> RoomTitleFont;
+	UPROPERTY(EditDefaultsOnly, Category="Player UI") TSubclassOf<class UUserWidget> RoomTitleClass;
+ UPROPERTY(Transient) TObjectPtr<class UUserWidget> RoomTitleWidget;
+ UPROPERTY(Transient) TObjectPtr<class UWidgetAnimation> RoomTitleAnimation;
 	TWeakObjectPtr<APawn> RoomTitlePawn;
 	FName AnnouncedRoom;
 	double RoomTitleEndTime = 0.0;

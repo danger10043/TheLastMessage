@@ -17,6 +17,8 @@ enum class EGameInputDevice : uint8
 
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnGameInputDeviceChanged, EGameInputDevice);
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnLastUsedInputDeviceChanged, EGameInputDevice, Device);
+
 struct FGameKeyBinding
 {
 	/** 키보드·마우스 매핑 인덱스. 코어 창은 CoreViewerIndex. */
@@ -60,10 +62,22 @@ public:
 
 	FOnGameInputDeviceChanged OnInputDeviceChanged;
 
+	UFUNCTION(BlueprintPure, Category = "Input Device")
+	EGameInputDevice GetLastUsedInputDevice() const { return LastUsedInputDevice; }
+
+	UPROPERTY(BlueprintAssignable, Category = "Input Device")
+	FOnLastUsedInputDeviceChanged OnLastUsedInputDeviceChanged;
+
+	virtual void Deinitialize() override;
+
 	/** Xbox 표기 버튼 이름(A, LB, 십자키 ↑ 등). 패드 키가 아니면 엔진 표시 이름. */
 	static FText GetGamepadKeyLabel(const FKey& Key);
 
 private:
+	class FLastInputProcessor;
+	TSharedPtr<FLastInputProcessor> LastInputProcessor;
+	EGameInputDevice LastUsedInputDevice = EGameInputDevice::KeyboardMouse;
+
 	void ApplyKeys();
 	FKey GetEffectiveKey(int32 MappingIndex) const;
 	static const UInputMappingContext* GetDefaultContext();

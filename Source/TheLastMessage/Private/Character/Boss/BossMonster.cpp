@@ -29,6 +29,8 @@
 #include "GameFramework/Pawn.h"
 #include "TimerManager.h"
 #include "Materials/MaterialInterface.h"
+#include "Curves/CurveFloat.h"
+#include "NiagaraComponent.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
 #include "Kismet/GameplayStatics.h"
@@ -667,6 +669,96 @@ void ABossMonster::SetRangedImmunity(bool bEnabled)
 
     bIsRangedImmune = bEnabled;
     AbilitySystemComponent->SetLooseGameplayTagCount(RangedTag, bEnabled ? 1 : 0);
+    UpdateRangeShield(0.f);
+}
+
+namespace
+{
+    const FName RangeShieldAlphaParameter(TEXT("User.Alpha"));
+    const FName RangeShieldBlockParameter(TEXT("User.Block"));
+}
+
+void ABossMonster::NotifyRangedShieldHit()
+{
+    if (!bIsRangedImmune || GetBossPhase() != EBossPhase::Phase3
+        || CurrentState == EBossState::Dead || CurrentState == EBossState::Cinematic)
+    {
+        return;
+    }
+
+    if (HasAuthority() && IsValid(RangedShieldHitSound.Get()))
+    {
+        MulticastGunBurstSound(RangedShieldHitSound.Get(), GetActorLocation());
+    }
+
+    if (!IsValid(RangeShieldComponent.Get()) || RangeShieldBlockDuration <= 0.f)
+    {
+        return;
+    }
+
+    RangeShieldBlockElapsed = 0.f;
+    bRangeShieldBlockActive = true;
+    RangeShieldComponent->SetVariableFloat(RangeShieldBlockParameter, 0.f);
+}
+
+void ABossMonster::UpdateRangeShield(float DeltaSeconds)
+{
+    if (!bIsRangedImmune || CurrentState == EBossState::Dead
+        || GetBossPhase() != EBossPhase::Phase3)
+    {
+        if (IsValid(RangeShieldComponent.Get()))
+        {
+            RangeShieldComponent->DestroyComponent();
+        }
+        RangeShieldComponent = nullptr;
+        bRangeShieldBlockActive = false;
+        return;
+    }
+
+    if (!IsValid(RangeShieldComponent.Get()))
+    {
+        if (GetNetMode() == NM_DedicatedServer || !IsValid(RangeShieldSystem.Get()))
+        {
+            return;
+        }
+
+        RangeShieldComponent = UNiagaraFunctionLibrary::SpawnSystemAttached(
+            RangeShieldSystem.Get(), GetMesh(), TEXT("pelvis"),
+            FVector::ZeroVector, FRotator::ZeroRotator, EAttachLocation::SnapToTarget,
+            false, false, ENCPoolMethod::None, false);
+        if (!IsValid(RangeShieldComponent.Get()))
+        {
+            return;
+        }
+
+        RangeShieldAlphaElapsed = 0.f;
+        bRangeShieldBlockActive = false;
+        RangeShieldComponent->SetVariableFloat(
+            RangeShieldAlphaParameter, RangeShieldAlphaDuration > 0.f ? 0.f : 1.f);
+        RangeShieldComponent->SetVariableFloat(RangeShieldBlockParameter, 0.f);
+        RangeShieldComponent->Activate(true);
+        return;
+    }
+
+    if (RangeShieldAlphaElapsed < RangeShieldAlphaDuration)
+    {
+        RangeShieldAlphaElapsed += DeltaSeconds;
+        const float T = FMath::Min(RangeShieldAlphaElapsed / RangeShieldAlphaDuration, 1.f);
+        const float Alpha = T < 1.f && RangeShieldAlphaCurve
+            ? FMath::Clamp(RangeShieldAlphaCurve->GetFloatValue(T), 0.f, 1.f) : T;
+        RangeShieldComponent->SetVariableFloat(RangeShieldAlphaParameter, Alpha);
+    }
+
+    if (bRangeShieldBlockActive)
+    {
+        RangeShieldBlockElapsed += DeltaSeconds;
+        const float T = FMath::Min(RangeShieldBlockElapsed / RangeShieldBlockDuration, 1.f);
+        bRangeShieldBlockActive = T < 1.f;
+        const float Block = RangeShieldBlockCurve
+            ? RangeShieldBlockCurve->GetFloatValue(T) : 4.f * T * (1.f - T);
+        RangeShieldComponent->SetVariableFloat(
+            RangeShieldBlockParameter, bRangeShieldBlockActive ? FMath::Clamp(Block, 0.f, 1.f) : 0.f);
+    }
 }
 
 float ABossMonster::GetDamageHealthFloorRatio() const
@@ -1888,6 +1980,7 @@ void ABossMonster::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
 
+    UpdateRangeShield(DeltaSeconds);
     CheckLaserPuzzleCompletion();
     UpdateBossUI();
 
@@ -2269,6 +2362,12 @@ void ABossMonster::HandleBossHealthChanged(
         return;
     }
 
+    if (HasAuthority() && !bIsResettingBoss && !bInitializationInProgress
+        && IsValid(HitSound.Get()))
+    {
+        MulticastGunBurstSound(HitSound.Get(), GetActorLocation());
+    }
+ 
     if (IsValid(HitEffect.Get()) && GetWorld())
     {
         UNiagaraFunctionLibrary::SpawnSystemAtLocation(

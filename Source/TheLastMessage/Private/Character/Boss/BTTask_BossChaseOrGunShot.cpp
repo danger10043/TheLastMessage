@@ -5,6 +5,7 @@
 #include "Character/Boss/GA_BossRockThrow.h"
 #include "AIController.h"
 #include "AbilitySystemComponent.h"
+#include "Abilities/GameplayAbility.h"
 #include "Navigation/PathFollowingComponent.h"
 #include "BehaviorTree/BehaviorTreeComponent.h"
 #include "BehaviorTree/BlackboardComponent.h"
@@ -26,6 +27,7 @@ EBTNodeResult::Type UBTTask_BossChaseOrGunShot::ExecuteTask(
     bMoveFinished = false;
     bMoveFailed = false;
     bMoveSucceeded = false;
+    AttackCheckElapsed = 0.f;
     bAbilityEnded = false;
     bAbilityCancelled = false;
     AAIController* AI = OwnerComp.GetAIOwner();
@@ -102,6 +104,38 @@ void UBTTask_BossChaseOrGunShot::TickTask(
     {
         if (!bMoveFinished)
         {
+            AttackCheckElapsed += DeltaSeconds;
+            if (AttackCheckElapsed >= 1.f)
+            {
+                AttackCheckElapsed = FMath::Fmod(AttackCheckElapsed, 1.f);
+                UAbilitySystemComponent* ASC = Boss->GetAbilitySystemComponent();
+                if (IsValid(ASC) && ASC->AbilityActorInfo.IsValid())
+                {
+                    const bool bAttackReady = AttackAbilitiesToCheckWhileMoving.ContainsByPredicate(
+                        [ASC](const TSubclassOf<UGameplayAbility>& AbilityClass)
+                        {
+                            const FGameplayAbilitySpec* Spec = AbilityClass
+                                ? ASC->FindAbilitySpecFromClass(AbilityClass) : nullptr;
+                            if (!Spec || Spec->IsActive())
+                            {
+                                return false;
+                            }
+
+                            const UGameplayAbility* Ability = Spec->GetPrimaryInstance();
+                            if (!Ability)
+                            {
+                                Ability = Spec->Ability.Get();
+                            }
+                            return IsValid(Ability)
+                                && Ability->CanActivateAbility(Spec->Handle, ASC->AbilityActorInfo.Get());
+                        });
+                    if (bAttackReady)
+                    {
+                        FinishLatentTask(OwnerComp, EBTNodeResult::Succeeded);
+                        return;
+                    }
+                }
+            }
             if (UBlackboardComponent* BB = OwnerComp.GetBlackboardComponent();
                 BB && BB->GetValueAsBool(TEXT("bIsInAttackRange")))
                 FinishLatentTask(OwnerComp, EBTNodeResult::Succeeded);

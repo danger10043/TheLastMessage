@@ -189,6 +189,7 @@ public:
     void SetRangedImmunity(bool bEnabled);
 
     bool IsRangedImmune();
+    void NotifyRangedShieldHit();
 
     UFUNCTION(BlueprintCallable, Category = "Boss|Lifecycle")
     void HandleBossDeath();
@@ -366,6 +367,36 @@ private:
 
     UPROPERTY(EditDefaultsOnly, Category = "Boss|HitEffect")
     TObjectPtr<UNiagaraSystem> HitEffect;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|HitEffect")
+    TObjectPtr<USoundBase> HitSound;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|HitEffect")
+    TObjectPtr<USoundBase> RangedShieldHitSound;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|RangeShield")
+    TObjectPtr<UNiagaraSystem> RangeShieldSystem;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|RangeShield", meta = (ClampMin = "0.0"))
+    float RangeShieldAlphaDuration = 0.5f;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|RangeShield")
+    TObjectPtr<class UCurveFloat> RangeShieldAlphaCurve;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|RangeShield", meta = (ClampMin = "0.0"))
+    float RangeShieldBlockDuration = 0.25f;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Boss|RangeShield")
+    TObjectPtr<class UCurveFloat> RangeShieldBlockCurve;
+
+    UPROPERTY(Transient)
+    TObjectPtr<class UNiagaraComponent> RangeShieldComponent;
+
+    void UpdateRangeShield(float DeltaSeconds);
+
+    float RangeShieldAlphaElapsed = 0.f;
+    float RangeShieldBlockElapsed = 0.f;
+    bool bRangeShieldBlockActive = false;
 
     UPROPERTY(EditDefaultsOnly, Category = "Boss|HitFlash")
     TObjectPtr<UMaterialInterface> HitFlashMaterial;

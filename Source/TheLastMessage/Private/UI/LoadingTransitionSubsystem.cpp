@@ -1,4 +1,7 @@
 #include "UI/LoadingTransitionSubsystem.h"
+#include "Blueprint/UserWidget.h"
+#include "Components/Widget.h"
+#include "UObject/ConstructorHelpers.h"
 #include "Character/Player/PlayerBase.h"
 #include "Save/ProgressSaveSubsystem.h"
 #include "Save/ProgressSaveGame.h"
@@ -24,6 +27,11 @@
 #include "Styling/CoreStyle.h"
 #include "UObject/UObjectGlobals.h"
 #include "UObject/Package.h"
+ULoadingTransitionSubsystem::ULoadingTransitionSubsystem()
+{
+ static ConstructorHelpers::FClassFinder<UUserWidget> ScreenBP(TEXT("/Game/Main/UI/WBP_LoadingScreen"));
+ LoadingScreenClass=ScreenBP.Class;
+}
 void ULoadingTransitionSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
  Super::Initialize(Collection);
@@ -37,13 +45,13 @@ void ULoadingTransitionSubsystem::Deinitialize()
  FCoreUObjectDelegates::PreLoadMap.Remove(PreHandle);
  FCoreUObjectDelegates::PostLoadMapWithWorld.Remove(PostHandle);
  FTSTicker::GetCoreTicker().RemoveTicker(TickHandle);
- if(Overlay && GetGameInstance()->GetGameViewportClient()) GetGameInstance()->GetGameViewportClient()->RemoveViewportWidgetContent(Overlay.ToSharedRef());
- Overlay.Reset(); Super::Deinitialize();
+ RemoveOverlay(); Super::Deinitialize();
 }
 void ULoadingTransitionSubsystem::RemoveOverlay()
 {
  if(Overlay && GetGameInstance()->GetGameViewportClient()) GetGameInstance()->GetGameViewportClient()->RemoveViewportWidgetContent(Overlay.ToSharedRef());
  Overlay.Reset();
+ LoadingScreen=nullptr;
 }
 void ULoadingTransitionSubsystem::ShowRespawnWait()
 {
@@ -68,12 +76,27 @@ void ULoadingTransitionSubsystem::PreLoad(const FString& Map)
  Started=FPlatformTime::Seconds(); ReadyAt=IndicatorAt=0; bLoading=true; bArrived=bFading=false;
  bWaitingForSpawnFloor=bLoggedMissingSpawnFloor=false; bRespawnFloorWait=false;
  LockedSpawnPlayer.Reset();
+ LoadingScreen=LoadingScreenClass ? CreateWidget<UUserWidget>(GetGameInstance(),LoadingScreenClass) : nullptr;
+ if(LoadingScreen)
+ {
+  TSharedRef<SWidget> Content=LoadingScreen->TakeWidget();
+  // Slate attributes continue updating while synchronous travel blocks UMG ticks.
+  if(UWidget* Indicator=LoadingScreen->GetWidgetFromName(TEXT("LoadingIndicator")))
+   Indicator->TakeWidget()->SetVisibility(TAttribute<EVisibility>::CreateLambda([this]()
+   { return !bFading && FPlatformTime::Seconds()-Started>=1 ? EVisibility::HitTestInvisible:EVisibility::Hidden; }));
+  Overlay=SNew(SBorder).Padding(0).BorderImage(FCoreStyle::Get().GetBrush("NoBrush"))
+   .ColorAndOpacity_Lambda([this](){return FLinearColor(1,1,1,bFading ? 1.f-FMath::Clamp(float((FPlatformTime::Seconds()-ReadyAt)/0.5),0.f,1.f):1.f);})[Content];
+ }
+ else
+ {
  Overlay=SNew(SBorder).BorderImage(FCoreStyle::Get().GetBrush("WhiteBrush"))
  .BorderBackgroundColor_Lambda([this](){return FLinearColor(0,0,0,bFading ? 1.f-FMath::Clamp(float((FPlatformTime::Seconds()-ReadyAt)/0.5),0.f,1.f):1.f);})
  [SNew(SOverlay)+SOverlay::Slot().HAlign(HAlign_Right).VAlign(VAlign_Bottom).Padding(40)
  [SNew(SBox).Visibility_Lambda([this](){return !bFading && FPlatformTime::Seconds()-Started>=1 ? EVisibility::HitTestInvisible:EVisibility::Hidden;})
  [SNew(SHorizontalBox)+SHorizontalBox::Slot().AutoWidth().Padding(10,0)[SNew(SThrobber)]
  +SHorizontalBox::Slot().AutoWidth()[SNew(STextBlock).Text(NSLOCTEXT("Loading","Loading","불러오는 중…"))]]]];
+ }
+
  if(GetGameInstance()->GetGameViewportClient()) GetGameInstance()->GetGameViewportClient()->AddViewportWidgetContent(Overlay.ToSharedRef(),10000);
  if(!Map.IsEmpty() && IsMoviePlayerEnabled()) {FLoadingScreenAttributes Screen; Screen.bAutoCompleteWhenLoadingCompletes=true; Screen.WidgetLoadingScreen=Overlay; GetMoviePlayer()->SetupLoadingScreen(Screen);}
 }
@@ -235,8 +258,7 @@ bool ULoadingTransitionSubsystem::Tick(float Delta)
  if(!bFading && (!IndicatorAt || Now-IndicatorAt>=0.3)){bFading=true;ReadyAt=Now;}
  if(bFading && Now-ReadyAt>=0.5)
  {
-  if(Overlay && GetGameInstance()->GetGameViewportClient()) GetGameInstance()->GetGameViewportClient()->RemoveViewportWidgetContent(Overlay.ToSharedRef());
-  Overlay.Reset();bLoading=false; if(PC->GetPawn()) PC->GetPawn()->EnableInput(PC); PC->ResetIgnoreMoveInput();PC->ResetIgnoreLookInput();
+  RemoveOverlay();bLoading=false; if(PC->GetPawn()) PC->GetPawn()->EnableInput(PC); PC->ResetIgnoreMoveInput();PC->ResetIgnoreLookInput();
  }
  return true;
 }

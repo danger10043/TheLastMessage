@@ -72,7 +72,7 @@ bool UOwnedCoreViewerSubsystem::OpenViewer()
 	if (!Class || Class->HasAnyClassFlags(CLASS_Abstract)) return false;
 	UOwnedCoreWidget* Screen = CreateWidget<UOwnedCoreWidget>(Controller, Class);
 	const auto* Settings = GetLocalPlayer()->GetSubsystem<UGameKeySettingsSubsystem>();
-	if (!Screen || !Screen->SetSources(Core, ASC, Settings ? Settings->GetCoreViewerKey() : ToggleKey)) return false;
+	if (!Screen || !Screen->SetSources(Core, Settings ? Settings->GetCoreViewerKey() : ToggleKey)) return false;
 	Viewer = Screen;
 	bOwnsPause = Controller->SetPause(true, FCanUnpause::CreateUObject(this, &ThisClass::CanUnpause));
 	if (!bOwnsPause) { Screen->ReleaseSources(); Viewer = nullptr; return false; }

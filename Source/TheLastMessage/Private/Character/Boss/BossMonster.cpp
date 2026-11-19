@@ -537,7 +537,7 @@ bool ABossMonster::ResetBoss(bool bRestartAI)
     return true;
 }
 
-bool ABossMonster::ResetBossForCheckpoint()
+bool ABossMonster::ResetBossForCheckpoint(bool bResetEntranceGate)
 {
     if (!HasAuthority() || InitialTransform.ContainsNaN())
     {
@@ -552,7 +552,18 @@ bool ABossMonster::ResetBossForCheckpoint()
         return false;
     }
 
-    return ResetBoss(true);
+    if (bResetEntranceGate)
+    {
+        bEntranceCombatStarted = false;
+    }
+
+    if (!ResetBoss(!bResetEntranceGate))
+    {
+        return false;
+    }
+
+    bIsDefeated = false;
+    return true;
 }
 
 FBossMissileConfig ABossMonster::GetMissileConfig(EBossPhase Phase)

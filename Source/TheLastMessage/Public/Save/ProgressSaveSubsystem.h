@@ -29,7 +29,7 @@ public:
 	UFUNCTION(BlueprintPure, Category="Save") FProgressSlotInfo GetSlotInfo(int32 SlotId) const;
 	UFUNCTION(BlueprintCallable, Category="Save") bool ContinueGame(int32 SlotId);
 	/** Re-read the current slot without permitting a slot switch; failure preserves the session. */
-	UFUNCTION(BlueprintCallable, Category="Save") bool ReloadActiveProgress();
+	UFUNCTION(BlueprintCallable, Category = "Save") bool ReloadActiveProgress(bool bFromDeath = false);
 	/** Explicitly return to menu before selecting another playthrough. Fails during a write. */
 	UFUNCTION(BlueprintCallable, Category="Save") bool EndSession();
 	/** Both checkpoint and autosave must call this, after updating the checkpoint snapshot. */
@@ -50,6 +50,9 @@ public:
 	bool IsLoadedSession() const { return bLoadedSession; }
 	bool IsLoadedMap(FName Map) const { return bLoadedSession && LoadedMap == Map; }
 	bool HasPlayedCinematic(FName Map, FName Cinematic) const;
+	bool IsDeathCheckpointRetry(FName Map) const { return bDeathCheckpointReload && IsLoadedMap(Map); }
+	bool HasPlayedCinematicOnRetry(FName Id) const { return RetryPlayedCinematics.Contains(Id); }
+	void MarkCinematicPlayedOnRetry(FName Id) { RetryPlayedCinematics.Add(Id); }
 	bool MarkCinematicPlayed(FName Map, FName Cinematic);
 	UFUNCTION(BlueprintPure, Category="Save") int32 GetActiveSlot() const { return ActiveSlot; }
 	UFUNCTION(BlueprintPure, Category="Save") bool IsSaving() const { return bSaving || PendingCheckpointSnapshot != nullptr || bCinematicHistoryDirty; }
@@ -81,6 +84,8 @@ private:
 	bool bRestoring = false;
 	bool bLoadedSession = false;
 	FName LoadedMap;
+	bool bDeathCheckpointReload = false;
+	TSet<FName> RetryPlayedCinematics;
 	bool bCinematicHistoryDirty = false;
 	UPROPERTY(Transient) TObjectPtr<UProgressSaveGame> PendingCheckpointSnapshot;
 	void WriteCheckpointSnapshot(UProgressSaveGame* Snapshot);

@@ -61,9 +61,11 @@ void UGameLanguageSettingsSubsystem::Deinitialize()
 
 void UGameLanguageSettingsSubsystem::ClearEditorPreview()
 {
+#if WITH_EDITOR
 	if (!GIsEditor || EditorPreviewCulture.IsEmpty()) return;
 	EditorPreviewCulture.Reset();
 	FTextLocalizationManager::Get().DisableGameLocalizationPreview();
+#endif
 }
 
 TConstArrayView<FGameLanguage> UGameLanguageSettingsSubsystem::GetSupportedLanguages()
@@ -112,6 +114,7 @@ bool UGameLanguageSettingsSubsystem::SetLanguage(const FString& Culture)
 {
 	const int32 Index = FindExact(Culture);
 	if (Index == INDEX_NONE) return false;
+#if WITH_EDITOR
 	if (GIsEditor)
 	{
 		// 에디터 화면 언어는 그대로 두고 게임 문구만 바꾼다. 원문(ko)을 고르면 미리보기를 끈다.
@@ -119,7 +122,9 @@ bool UGameLanguageSettingsSubsystem::SetLanguage(const FString& Culture)
 		EditorPreviewCulture = SupportedLanguages[Index].Culture;
 		FTextLocalizationManager::Get().EnableGameLocalizationPreview(EditorPreviewCulture);
 	}
-	else if (!FInternationalization::Get().SetCurrentCulture(SupportedLanguages[Index].Culture))
+	else
+#endif
+	if (!FInternationalization::Get().SetCurrentCulture(SupportedLanguages[Index].Culture))
 	{
 		return false;
 	}

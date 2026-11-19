@@ -43,23 +43,23 @@ AControlGuideActor::AControlGuideActor()
 	GuideWidgetComponent->SetGenerateOverlapEvents(false);
 
 	static ConstructorHelpers::FObjectFinder<UMediaTexture> PipeTexture(
-		TEXT("/Game/Main/UI/Guide/MT_ControlGuide_Pipe.MT_ControlGuide_Pipe"));
+		TEXT("/Game/Main/UI/Guide/Video/Keyboard/MT_ControlGuide_Pipe.MT_ControlGuide_Pipe"));
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> PipeMaterial(
-		TEXT("/Game/Main/UI/Guide/M_UI_ControlGuide_Pipe.M_UI_ControlGuide_Pipe"));
+		TEXT("/Game/Main/UI/Guide/Video/Keyboard/M_UI_ControlGuide_Pipe.M_UI_ControlGuide_Pipe"));
 	if (PipeTexture.Succeeded())
 	{
 		GuideTextures.Add(EControlGuideType::WeaponEquip, PipeTexture.Object);
 	}
 	// ImgMedia 모듈보다 먼저 실행될 수 있는 생성자에서는 소스를 로드하지 않는다.
 	WeaponEquipMediaSource = TSoftObjectPtr<UMediaSource>(FSoftObjectPath(
-		TEXT("/Game/Main/UI/Guide/IMS_ControlGuide_Pipe_Playback.IMS_ControlGuide_Pipe_Playback")));
+		TEXT("/Game/Main/UI/Guide/Video/Keyboard/IMS_ControlGuide_Pipe_Playback.IMS_ControlGuide_Pipe_Playback")));
 	GuideMediaSources.Add(EControlGuideType::WeaponEquip, WeaponEquipMediaSource);
 	GuideMediaSources.Add(EControlGuideType::PushPull, TSoftObjectPtr<UMediaSource>(FSoftObjectPath(
-		TEXT("/Game/Main/UI/Guide/IMS_ControlGuide_PushPull.IMS_ControlGuide_PushPull"))));
+		TEXT("/Game/Main/UI/Guide/Video/Keyboard/IMS_ControlGuide_PushPull.IMS_ControlGuide_PushPull"))));
 	GuideMediaSources.Add(EControlGuideType::ChargeAttack, TSoftObjectPtr<UMediaSource>(FSoftObjectPath(
-		TEXT("/Game/Main/UI/Guide/IMS_ControlGuide_ChargeHammer.IMS_ControlGuide_ChargeHammer"))));
+		TEXT("/Game/Main/UI/Guide/Video/Keyboard/IMS_ControlGuide_ChargeHammer.IMS_ControlGuide_ChargeHammer"))));
 	GuideMediaSources.Add(EControlGuideType::RifleChargeAttack, TSoftObjectPtr<UMediaSource>(FSoftObjectPath(
-		TEXT("/Game/Main/UI/Guide/IMS_ControlGuide_ChargeRifle.IMS_ControlGuide_ChargeRifle"))));
+		TEXT("/Game/Main/UI/Guide/Video/Keyboard/IMS_ControlGuide_ChargeRifle.IMS_ControlGuide_ChargeRifle"))));
 	GuideVideoMaterial = PipeMaterial.Object;
 }
 

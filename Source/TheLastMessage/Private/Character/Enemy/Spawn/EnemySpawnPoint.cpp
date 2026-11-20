@@ -1,5 +1,6 @@
 #include "Character/Enemy/Spawn/EnemySpawnPoint.h"
 #include "Character/Enemy/Spawn/EnemySpawnSubsystem.h"
+#include "Character/Enemy/SentryEnemy.h"
 #include "Framework/ActorPoolSubsystem.h"
 #include "Components/ArrowComponent.h"
 #include "Components/BoxComponent.h"
@@ -164,8 +165,16 @@ void AEnemySpawnPoint::BuildSlots()
 		const FEnemySpawnEntry& Entry = Entries[EntryIndices[Index]];
 
 		const float SlotStart = -SpawnRangeX + SlotWidth * Index;
-		const float OffsetX = FMath::FRandRange(SlotStart + Margin, SlotStart + SlotWidth - Margin);
-		const float OffsetZ = SpawnRangeZ > 0.f ? FMath::FRandRange(-SpawnRangeZ, SpawnRangeZ) : 0.f;
+		float OffsetX = FMath::FRandRange(SlotStart + Margin, SlotStart + SlotWidth - Margin);
+		float OffsetZ = SpawnRangeZ > 0.f ? FMath::FRandRange(-SpawnRangeZ, SpawnRangeZ) : 0.f;
+
+		// 센트리는 벽·천장에 붙여 두는 고정 포탑이라, 범위 안에서 무작위로 흩으면 벽 속이나 허공에 스폰된다.
+		// 스폰 포인트를 둔 자리 그대로 스폰한다.
+		if (Entry.EnemyClass->IsChildOf(ASentryEnemy::StaticClass()))
+		{
+			OffsetX = 0.f;
+			OffsetZ = 0.f;
+		}
 
 		FSpawnSlot& Slot = Slots.AddDefaulted_GetRef();
 		Slot.EnemyClass = Entry.EnemyClass;

@@ -1365,6 +1365,7 @@ void ABossMonster::PlayPhaseSequence(
     UE_LOG(LogTemp, Log, TEXT("Boss phase sequence started: %s"),
         *GetNameSafe(SequenceActor));
     SetBossSequenceInputBlocked(true);
+    Player->SetPlaybackPosition(FMovieSceneSequencePlaybackParams(FFrameTime(0), EUpdatePositionMethod::Jump));
     Player->Play();
 }
 

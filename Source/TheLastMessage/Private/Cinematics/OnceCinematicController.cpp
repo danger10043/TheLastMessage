@@ -165,11 +165,8 @@ bool AOnceCinematicController::RequestPlay()
 		}
 	}
 	if (Boss) Boss->SetBossUIVisible(false);
-	if (bReplayOnDeathCheckpoint)
-	{
-		Sequence->SetPlaybackPosition(FMovieSceneSequencePlaybackParams(
-			Sequence->GetStartTime().Time, EUpdatePositionMethod::Jump));
-	}
+	Sequence->SetPlaybackPosition(FMovieSceneSequencePlaybackParams(
+		Sequence->GetStartTime().Time, EUpdatePositionMethod::Jump));
 	Sequence->OnFinished.AddUniqueDynamic(this, &AOnceCinematicController::SequenceEnded);
 	Sequence->OnStop.AddUniqueDynamic(this, &AOnceCinematicController::SequenceEnded);
 	Sequence->Play();

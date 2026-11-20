@@ -22,6 +22,11 @@ public:
     // 회로로 전달되면 장착 상태로 전환
     virtual void OnTransferred() override;
 
+    // +추가----
+    // 체크포인트 복원 시 퓨즈의 장착·상호작용 상태 초기화
+    virtual void RestoreProgress(const FProgressActorState& State) override;
+    // +--------
+
     UFUNCTION(BlueprintPure, Category = "Gimmick|Fuse")
     bool IsInstalled() const
     {

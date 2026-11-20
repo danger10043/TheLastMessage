@@ -22,6 +22,8 @@ public:
 	static void BuildDefaultLayout(UWidgetTree* Tree);
 	static bool AddConfirmationLayout(UWidgetTree* Tree);
 	static bool AddCreditsLayout(UWidgetTree* Tree);
+	static void UpdateCreditsNotice(UWidgetTree* Tree);
+	UButton* GetCreditsBackButton() const { return CreditsBackButton; }
 	UFUNCTION(BlueprintCallable, Category="Menu") void ShowMainMenu();
 	UFUNCTION(BlueprintCallable, Category="Menu") void ShowNewGameSlots();
 	UFUNCTION(BlueprintCallable, Category="Menu") void ShowLoadGameSlots();
@@ -36,13 +38,14 @@ protected:
 	virtual void NativeConstruct() override;
 	virtual void NativeTick(const FGeometry& Geometry, float DeltaTime) override;
 	virtual FReply NativeOnKeyDown(const FGeometry& Geometry, const FKeyEvent& Event) override;
+	virtual FReply NativeOnKeyUp(const FGeometry& Geometry, const FKeyEvent& Event) override;
 	virtual FReply NativeOnPreviewKeyDown(const FGeometry& Geometry, const FKeyEvent& Event) override;
 	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UWidgetSwitcher> Pages;
 	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UButton> NewGameButton;
 	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UButton> LoadGameButton;
 	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UButton> ExitButton;
 	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UButton> CreditsButton;
-	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UButton> CreditsBackButton;
+	UPROPERTY(Transient) TObjectPtr<UButton> CreditsBackButton;
 	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UButton> Slot1Button;
 	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UButton> Slot2Button;
 	UPROPERTY(meta=(BindWidgetOptional)) TObjectPtr<UButton> Slot3Button;
@@ -71,6 +74,7 @@ private:
 	UFUNCTION() void CancelOverwrite();
 	bool bNewGame = true;
 	bool bWorking = false;
+	bool bCreditsSpaceHeld = false;
 	int32 PendingSlot = 0;
 	bool Occupied[3] = {false, false, false};
 	bool Loadable[3] = {false, false, false};

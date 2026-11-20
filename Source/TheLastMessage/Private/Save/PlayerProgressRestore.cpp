@@ -87,7 +87,7 @@ bool APlayerBase::RestoreCheckpointProgress(const UProgressSaveGame* Save)
 	if (AreaMapComponent)
 	{
 		const FProgressMapState* Map = Save->Maps.Find(FName(*UGameplayStatics::GetCurrentLevelName(this, true)));
-		AreaMapComponent->RestoreExploration(Map ? Map->ExploredRooms : TSet<FName>(), Map ? &Map->RevealedCells : nullptr);
+		AreaMapComponent->RestoreExploration(Map ? Map->ExploredRooms : TSet<FName>(), Map ? &Map->RevealedCells : nullptr, Map ? &Map->RoomSurfaces : nullptr, Map ? &Map->RoomRegions : nullptr, Map ? &Map->CheckpointMarkers : nullptr);
 	}
 	ForceNetUpdate();
 	return true;

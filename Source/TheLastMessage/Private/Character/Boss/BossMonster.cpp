@@ -22,10 +22,15 @@
 #include "Gimmick/Laser/LaserReceiver.h"
 #include "Gimmick/Laser/LaserReflector.h"
 #include "Engine/World.h"
+#include "Engine/PointLight.h"
+#include "Components/LightComponent.h"
 #include "GameFramework/PlayerController.h"
+#include "Framework/SideScrollingPlayerController.h"
 #include "GameFramework/Pawn.h"
 #include "TimerManager.h"
 #include "Materials/MaterialInterface.h"
+#include "Curves/CurveFloat.h"
+#include "NiagaraComponent.h"
 #include "NiagaraFunctionLibrary.h"
 #include "NiagaraSystem.h"
 #include "Kismet/GameplayStatics.h"
@@ -103,6 +108,12 @@ void ABossMonster::BeginPlay()
     UpdateEquipmentForPhase(GetBossPhase());
     InitializeBoss();
 
+    if (HasAuthority() && !IsBossCombatUnlocked()
+        && CurrentState != EBossState::Dead)
+    {
+        SetBossState(EBossState::Cinematic);
+    }
+
     if (IsValid(AbilitySystemComponent.Get())
         && CurrentState != EBossState::Dead)
     {
@@ -110,6 +121,35 @@ void ABossMonster::BeginPlay()
             ->GetGameplayAttributeValueChangeDelegate(
                 UBossAttributeSet::GetHealthAttribute())
             .AddUObject(this, &ABossMonster::HandleBossHealthChanged);
+    }
+}
+
+void ABossMonster::StartBossCombatAfterEntrance()
+{
+    if (!HasAuthority() || bEntranceCombatStarted || bIsResettingBoss
+        || CurrentState == EBossState::Dead || IsActorBeingDestroyed())
+    {
+        return;
+    }
+
+    ABossAIController* BossAI = Cast<ABossAIController>(GetController());
+    if (!IsValid(BossAI))
+    {
+        UE_LOG(LogTemp, Error, TEXT("보스 입장 시퀀스 종료: BossAIController를 확인하세요."));
+        return;
+    }
+
+    bEntranceCombatStarted = true;
+    SetBossState(EBossState::Combat);
+    if (CurrentState != EBossState::Combat || IsActorBeingDestroyed())
+    {
+        return;
+    }
+
+    BossAI->StartBossAI();
+    if (UBrainComponent* Brain = BossAI->GetBrainComponent())
+    {
+        Brain->ResumeLogic(TEXT("Boss entrance cinematic finished"));
     }
 }
 
@@ -478,6 +518,11 @@ bool ABossMonster::ResetBoss(bool bRestartAI)
     OnBossPhaseChanged.Broadcast(EBossPhase::Phase1);
     OnBossStateChanged.Broadcast(EBossState::Idle);
 
+    if (!IsBossCombatUnlocked())
+    {
+        SetBossState(EBossState::Cinematic);
+    }
+
     if (bRestartAI)
     {
         AI->StartBossAI();
@@ -492,7 +537,7 @@ bool ABossMonster::ResetBoss(bool bRestartAI)
     return true;
 }
 
-bool ABossMonster::ResetBossForCheckpoint()
+bool ABossMonster::ResetBossForCheckpoint(bool bResetEntranceGate)
 {
     if (!HasAuthority() || InitialTransform.ContainsNaN())
     {
@@ -507,7 +552,18 @@ bool ABossMonster::ResetBossForCheckpoint()
         return false;
     }
 
-    return ResetBoss(true);
+    if (bResetEntranceGate)
+    {
+        bEntranceCombatStarted = false;
+    }
+
+    if (!ResetBoss(!bResetEntranceGate))
+    {
+        return false;
+    }
+
+    bIsDefeated = false;
+    return true;
 }
 
 FBossMissileConfig ABossMonster::GetMissileConfig(EBossPhase Phase)
@@ -624,6 +680,96 @@ void ABossMonster::SetRangedImmunity(bool bEnabled)
 
     bIsRangedImmune = bEnabled;
     AbilitySystemComponent->SetLooseGameplayTagCount(RangedTag, bEnabled ? 1 : 0);
+    UpdateRangeShield(0.f);
+}
+
+namespace
+{
+    const FName RangeShieldAlphaParameter(TEXT("User.Alpha"));
+    const FName RangeShieldBlockParameter(TEXT("User.Block"));
+}
+
+void ABossMonster::NotifyRangedShieldHit()
+{
+    if (!bIsRangedImmune || GetBossPhase() != EBossPhase::Phase3
+        || CurrentState == EBossState::Dead || CurrentState == EBossState::Cinematic)
+    {
+        return;
+    }
+
+    if (HasAuthority() && IsValid(RangedShieldHitSound.Get()))
+    {
+        MulticastGunBurstSound(RangedShieldHitSound.Get(), GetActorLocation());
+    }
+
+    if (!IsValid(RangeShieldComponent.Get()) || RangeShieldBlockDuration <= 0.f)
+    {
+        return;
+    }
+
+    RangeShieldBlockElapsed = 0.f;
+    bRangeShieldBlockActive = true;
+    RangeShieldComponent->SetVariableFloat(RangeShieldBlockParameter, 0.f);
+}
+
+void ABossMonster::UpdateRangeShield(float DeltaSeconds)
+{
+    if (!bIsRangedImmune || CurrentState == EBossState::Dead
+        || GetBossPhase() != EBossPhase::Phase3)
+    {
+        if (IsValid(RangeShieldComponent.Get()))
+        {
+            RangeShieldComponent->DestroyComponent();
+        }
+        RangeShieldComponent = nullptr;
+        bRangeShieldBlockActive = false;
+        return;
+    }
+
+    if (!IsValid(RangeShieldComponent.Get()))
+    {
+        if (GetNetMode() == NM_DedicatedServer || !IsValid(RangeShieldSystem.Get()))
+        {
+            return;
+        }
+
+        RangeShieldComponent = UNiagaraFunctionLibrary::SpawnSystemAttached(
+            RangeShieldSystem.Get(), GetMesh(), TEXT("pelvis"),
+            FVector::ZeroVector, FRotator::ZeroRotator, EAttachLocation::SnapToTarget,
+            false, false, ENCPoolMethod::None, false);
+        if (!IsValid(RangeShieldComponent.Get()))
+        {
+            return;
+        }
+
+        RangeShieldAlphaElapsed = 0.f;
+        bRangeShieldBlockActive = false;
+        RangeShieldComponent->SetVariableFloat(
+            RangeShieldAlphaParameter, RangeShieldAlphaDuration > 0.f ? 0.f : 1.f);
+        RangeShieldComponent->SetVariableFloat(RangeShieldBlockParameter, 0.f);
+        RangeShieldComponent->Activate(true);
+        return;
+    }
+
+    if (RangeShieldAlphaElapsed < RangeShieldAlphaDuration)
+    {
+        RangeShieldAlphaElapsed += DeltaSeconds;
+        const float T = FMath::Min(RangeShieldAlphaElapsed / RangeShieldAlphaDuration, 1.f);
+        const float Alpha = T < 1.f && RangeShieldAlphaCurve
+            ? FMath::Clamp(RangeShieldAlphaCurve->GetFloatValue(T), 0.f, 1.f) : T;
+        RangeShieldComponent->SetVariableFloat(RangeShieldAlphaParameter, Alpha);
+    }
+
+    if (bRangeShieldBlockActive)
+    {
+        RangeShieldBlockElapsed += DeltaSeconds;
+        const float T = FMath::Min(RangeShieldBlockElapsed / RangeShieldBlockDuration, 1.f);
+        bRangeShieldBlockActive = T < 1.f;
+        const float Block = RangeShieldBlockCurve
+            ? RangeShieldBlockCurve->GetFloatValue(T) : 4.f * T * (1.f - T);
+        RangeShieldComponent->SetVariableFloat(
+            RangeShieldBlockParameter, bRangeShieldBlockActive ? FMath::Clamp(Block, 0.f, 1.f) : 0.f);
+    }
 }
 
 float ABossMonster::GetDamageHealthFloorRatio() const
@@ -753,7 +899,27 @@ void ABossMonster::StartShieldPuzzle(EBossPuzzleType PuzzleType)
 
     OnBossPuzzleStarted.Broadcast(PuzzleType);
 
-    // 레이저 장치 활성화와 코어 생성은 퍼즐 구현 단계에서 연결한다.
+
+    if (PuzzleType == EBossPuzzleType::LaserPuzzle
+        && bLaserPuzzleActive && CurrentState == EBossState::ShieldPuzzle
+        && !bIsResettingBoss && !IsActorBeingDestroyed())
+    {
+        PlayLaserPuzzleStartSequence();
+    }
+
+    if (PuzzleType == EBossPuzzleType::CorePuzzle
+        && CurrentState == EBossState::ShieldPuzzle
+        && IsValid(ShieldComponent.Get()) && ShieldComponent->IsShieldActive()
+        && !bIsResettingBoss && !IsActorBeingDestroyed())
+    {
+        APawn* PlayerPawn = Cast<APawn>(GetCurrentTarget());
+        ASideScrollingPlayerController* PC = IsValid(PlayerPawn)
+            ? Cast<ASideScrollingPlayerController>(PlayerPawn->GetController()) : nullptr;
+        if (IsValid(PC))
+        {
+            PC->ClientShowCorePuzzleIntroWidget();
+        }
+    }
 }
 
 void ABossMonster::HandleBossDeath()
@@ -767,6 +933,14 @@ void ABossMonster::HandleBossDeath()
     {
         UE_LOG(LogTemp, Verbose, TEXT("BossMonster::HandleBossDeath - 이미 사망 처리되었습니다."));
         return;
+    }
+
+    APawn* DeathTargetPawn = Cast<APawn>(GetCurrentTarget());
+    APlayerController* DeathPC = IsValid(DeathTargetPawn)
+        ? Cast<APlayerController>(DeathTargetPawn->GetController()) : nullptr;
+    if (!IsValid(DeathPC))
+    {
+        DeathPC = UGameplayStatics::GetPlayerController(this, 0);
     }
 
     // 취소·체력 알림·이벤트 콜백보다 먼저 사망 상태를 확정한다.
@@ -865,7 +1039,105 @@ void ABossMonster::HandleBossDeath()
     OnBossStateChanged.Broadcast(EBossState::Dead);
     OnBossDied.Broadcast();
 
-    PlayDeathMontage();
+    if (!PlayBossDeathSequence(DeathPC))
+    {
+        PlayDeathMontage();
+    }
+}
+
+bool ABossMonster::PlayBossDeathSequence(APlayerController* InDeathController)
+{
+    if (!HasAuthority() || CurrentState != EBossState::Dead
+        || bIsResettingBoss || IsActorBeingDestroyed()
+        || bDeathSequenceStarted || !IsValid(InDeathController)
+        || InDeathController->GetWorld() != GetWorld()
+        || !IsValid(DeathSequenceActor.Get()))
+    {
+        return false;
+    }
+
+    ALevelSequenceActor* DeathActor = DeathSequenceActor.Get();
+    ULevelSequencePlayer* DeathPlayer = DeathActor->GetSequencePlayer();
+    if (DeathActor->GetWorld() != GetWorld()
+        || !IsValid(DeathPlayer) || !IsValid(DeathPlayer->GetSequence())
+        || DeathPlayer->IsPlaying() || DeathPlayer->IsPaused()
+        || DeathPlayer->GetDuration().AsSeconds() <= 0.0
+        || DeathPlayer->GetPlayRate() <= 0.f)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("보스 처치 시퀀스를 재생할 수 없습니다: %s"),
+            *GetNameSafe(DeathActor));
+        return false;
+    }
+
+    if (USkeletalMeshComponent* BossMesh = GetMesh())
+    {
+        BossMesh->bPauseAnims = false;
+        BossMesh->SetComponentTickEnabled(true);
+        BossMesh->VisibilityBasedAnimTickOption =
+            EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+        if (UAnimInstance* BossAnim = BossMesh->GetAnimInstance())
+        {
+            BossAnim->StopAllMontages(0.f);
+        }
+    }
+
+    DeathPlayer->SetPlaybackPosition(FMovieSceneSequencePlaybackParams(
+        DeathPlayer->GetStartTime().Time, EUpdatePositionMethod::Jump));
+    if (!IsValid(DeathPlayer) || CurrentState != EBossState::Dead
+        || bIsResettingBoss || IsActorBeingDestroyed())
+    {
+        return false;
+    }
+
+    bDeathSequenceStarted = true;
+    ActiveDeathSequencePlayer = DeathPlayer;
+    DeathSequenceController = InDeathController;
+    DeathPlayer->OnFinished.AddUniqueDynamic(
+        this, &ABossMonster::HandleBossDeathSequenceFinished);
+    DeathPlayer->OnStop.AddUniqueDynamic(
+        this, &ABossMonster::HandleBossDeathSequenceFinished);
+
+    if (ASideScrollingPlayerController* DeathPC =
+        Cast<ASideScrollingPlayerController>(InDeathController))
+    {
+        DeathPC->ClientSetBossSequenceInputBlocked(this, true);
+        DeathPC->ClientSetBossDeathUIHidden(true);
+    }
+
+    DeathPlayer->Play();
+    return true;
+}
+
+void ABossMonster::StopBossDeathSequence()
+{
+    ULevelSequencePlayer* DeathPlayer = ActiveDeathSequencePlayer.Get();
+    APlayerController* DeathPC = DeathSequenceController.Get();
+    ActiveDeathSequencePlayer = nullptr;
+    DeathSequenceController.Reset();
+
+    if (IsValid(DeathPlayer))
+    {
+        DeathPlayer->OnFinished.RemoveDynamic(
+            this, &ABossMonster::HandleBossDeathSequenceFinished);
+        DeathPlayer->OnStop.RemoveDynamic(
+            this, &ABossMonster::HandleBossDeathSequenceFinished);
+        if (DeathPlayer->IsPlaying() || DeathPlayer->IsPaused())
+        {
+            DeathPlayer->Stop();
+        }
+    }
+
+    if (ASideScrollingPlayerController* LocalDeathPC =
+        Cast<ASideScrollingPlayerController>(DeathPC))
+    {
+        LocalDeathPC->ClientSetBossSequenceInputBlocked(this, false);
+        LocalDeathPC->ClientSetBossDeathUIHidden(false);
+    }
+}
+
+void ABossMonster::HandleBossDeathSequenceFinished()
+{
+    StopBossDeathSequence();
 }
 
 void ABossMonster::CompleteShieldPuzzle()
@@ -928,7 +1200,7 @@ void ABossMonster::CompleteShieldPuzzle()
         UE_LOG(LogTemp, Warning, TEXT("BossMonster::CompleteShieldPuzzle - 시네마틱 대기 상태로 진입하지 못했습니다."));
         return;
     }
-    ShieldComponent->DeactivateShield();
+    ShieldComponent->DeactivateShield(PuzzleType != EBossPuzzleType::LaserPuzzle);
     if (IsValid(CorePuzzleComponent.Get()))
     {
         CorePuzzleComponent->EndCorePuzzle();
@@ -1011,7 +1283,8 @@ void ABossMonster::StartPhaseCinematic(EBossPhase NextPhase)
     // 실제 Sequence 종료 이벤트에서 FinishPhaseCinematic을 호출하도록 연결한다.
 }
 
-void ABossMonster::PlayPhaseSequence(EBossPuzzleType PuzzleType)
+void ABossMonster::PlayPhaseSequence(
+    EBossPuzzleType PuzzleType, bool bPlayLaserClearSequence)
 {
     if (!HasAuthority() || CurrentState != EBossState::Cinematic
         || bPhaseSequencePlaying)
@@ -1023,13 +1296,27 @@ void ABossMonster::PlayPhaseSequence(EBossPuzzleType PuzzleType)
     switch (PuzzleType)
     {
     case EBossPuzzleType::LaserPuzzle:
-        SequenceActor = Phase70SequenceActor.Get();
+        SequenceActor = bPlayLaserClearSequence
+            && IsValid(LaserPuzzleClearSequenceActor.Get())
+            ? LaserPuzzleClearSequenceActor.Get()
+            : Phase70SequenceActor.Get();
         break;
     case EBossPuzzleType::CorePuzzle:
         SequenceActor = Phase30SequenceActor.Get();
         break;
     default:
         break;
+    }
+
+    const bool bIsLaserClearSequence =
+        PuzzleType == EBossPuzzleType::LaserPuzzle
+        && bPlayLaserClearSequence
+        && IsValid(SequenceActor)
+        && SequenceActor == LaserPuzzleClearSequenceActor.Get();
+
+    if (PuzzleType == EBossPuzzleType::LaserPuzzle && !bIsLaserClearSequence)
+    {
+        StopLaserPuzzle();
     }
 
     ULevelSequencePlayer* Player = IsValid(SequenceActor)
@@ -1041,7 +1328,15 @@ void ABossMonster::PlayPhaseSequence(EBossPuzzleType PuzzleType)
         UE_LOG(LogTemp, Warning,
             TEXT("Boss phase sequence is unavailable or already in use: %s"),
             *GetNameSafe(SequenceActor));
-        FinishPhaseCinematic();
+
+        if (bIsLaserClearSequence)
+        {
+            PlayPhaseSequence(PuzzleType, false);
+        }
+        else
+        {
+            FinishPhaseCinematic();
+        }
         return;
     }
 
@@ -1061,6 +1356,7 @@ void ABossMonster::PlayPhaseSequence(EBossPuzzleType PuzzleType)
 
     ActivePhaseSequencePlayer = Player;
     bPhaseSequencePlaying = true;
+    bLaserClearSequencePlaying = bIsLaserClearSequence;
     Player->OnFinished.AddUniqueDynamic(
         this, &ABossMonster::HandlePhaseSequenceFinished);
     Player->OnStop.AddUniqueDynamic(
@@ -1068,24 +1364,62 @@ void ABossMonster::PlayPhaseSequence(EBossPuzzleType PuzzleType)
 
     UE_LOG(LogTemp, Log, TEXT("Boss phase sequence started: %s"),
         *GetNameSafe(SequenceActor));
+    SetBossSequenceInputBlocked(true);
     Player->Play();
 }
 
 bool ABossMonster::TrySkipPhaseCinematic(APlayerController* RequestingController)
 {
-    ULevelSequencePlayer* Player = ActivePhaseSequencePlayer.Get();
     if (!HasAuthority() || !IsValid(RequestingController)
         || RequestingController->GetWorld() != GetWorld()
-        || CurrentState != EBossState::Cinematic
-        || !bPhaseSequencePlaying || bIsResettingBoss
-        || IsActorBeingDestroyed() || !IsValid(Player))
+        || bIsResettingBoss || IsActorBeingDestroyed())
+    {
+        return false;
+    }
+
+    ULevelSequencePlayer* DeathPlayer = ActiveDeathSequencePlayer.Get();
+    if (CurrentState == EBossState::Dead && IsValid(DeathPlayer)
+        && (DeathPlayer->IsPlaying() || DeathPlayer->IsPaused()))
+    {
+        if (DeathSequenceController.Get() != RequestingController)
+        {
+            return false;
+        }
+
+        DeathPlayer->GoToEndAndStop();
+        if (ActiveDeathSequencePlayer.Get() == DeathPlayer)
+        {
+            StopBossDeathSequence();
+        }
+        return true;
+    }
+
+    ULevelSequencePlayer* StartPlayer = ActiveLaserStartSequencePlayer.Get();
+    if (CurrentState == EBossState::ShieldPuzzle && IsValid(StartPlayer)
+        && (StartPlayer->IsPlaying() || StartPlayer->IsPaused()))
+    {
+        if (SequenceInputController.Get() != RequestingController)
+        {
+            return false;
+        }
+
+        StartPlayer->GoToEndAndStop();
+        if (ActiveLaserStartSequencePlayer.Get() == StartPlayer)
+        {
+            HandleLaserPuzzleStartSequenceFinished();
+        }
+        return true;
+    }
+
+    ULevelSequencePlayer* Player = ActivePhaseSequencePlayer.Get();
+    if (CurrentState != EBossState::Cinematic
+        || !bPhaseSequencePlaying || !IsValid(Player))
     {
         return false;
     }
 
     Player->GoToEndAndStop();
 
-    // OnStop에서 이미 처리했다면 다시 완료하지 않는다.
     if (!IsActorBeingDestroyed() && bPhaseSequencePlaying
         && ActivePhaseSequencePlayer.Get() == Player)
     {
@@ -1101,11 +1435,18 @@ void ABossMonster::HandlePhaseSequenceFinished()
         return;
     }
 
+    const bool bContinueToPhase70 = bLaserClearSequencePlaying;
     StopPhaseSequence();
 
     if (HasAuthority() && CurrentState == EBossState::Cinematic
         && !IsActorBeingDestroyed())
     {
+        if (bContinueToPhase70)
+        {
+            PlayPhaseSequence(EBossPuzzleType::LaserPuzzle, false);
+            return;
+        }
+
         UE_LOG(LogTemp, Log, TEXT("Boss phase sequence ended."));
         FinishPhaseCinematic();
     }
@@ -1113,9 +1454,11 @@ void ABossMonster::HandlePhaseSequenceFinished()
 
 void ABossMonster::StopPhaseSequence()
 {
+    const bool bWasLaserClearSequence = bLaserClearSequencePlaying;
     ULevelSequencePlayer* Player = ActivePhaseSequencePlayer.Get();
     ActivePhaseSequencePlayer = nullptr;
     bPhaseSequencePlaying = false;
+    bLaserClearSequencePlaying = false;
 
     if (IsValid(Player))
     {
@@ -1128,6 +1471,176 @@ void ABossMonster::StopPhaseSequence()
         {
             Player->Stop();
         }
+    }
+
+    if (bWasLaserClearSequence)
+    {
+        StopLaserPuzzle();
+    }
+
+    ULevelSequencePlayer* StartPlayer = ActiveLaserStartSequencePlayer.Get();
+    if (!IsValid(StartPlayer) || (!StartPlayer->IsPlaying() && !StartPlayer->IsPaused()))
+    {
+        SetBossSequenceInputBlocked(false);
+    }
+}
+
+
+void ABossMonster::SetBossSequenceInputBlocked(bool bBlocked)
+{
+    if (!HasAuthority())
+    {
+        return;
+    }
+
+    ASideScrollingPlayerController* PC = SequenceInputController.Get();
+    if (!IsValid(PC) && bBlocked)
+    {
+        APawn* PlayerPawn = Cast<APawn>(GetCurrentTarget());
+        PC = IsValid(PlayerPawn)
+            ? Cast<ASideScrollingPlayerController>(PlayerPawn->GetController()) : nullptr;
+    }
+    if (IsValid(PC))
+    {
+        PC->ClientSetBossSequenceInputBlocked(this, bBlocked);
+    }
+    SequenceInputController = bBlocked ? PC : nullptr;
+}
+
+void ABossMonster::StopLaserPuzzleStartSequence()
+{
+    ULevelSequencePlayer* Player = ActiveLaserStartSequencePlayer.Get();
+    ActiveLaserStartSequencePlayer = nullptr;
+    LaserSequencePlayerCharacter.Reset();
+    bLaserSequenceTeleportApplied = false;
+
+    if (IsValid(Player))
+    {
+        Player->OnFinished.RemoveDynamic(
+            this, &ABossMonster::HandleLaserPuzzleStartSequenceFinished);
+        Player->OnStop.RemoveDynamic(
+            this, &ABossMonster::HandleLaserPuzzleStartSequenceFinished);
+        if (Player->IsPlaying() || Player->IsPaused())
+        {
+            Player->Stop();
+        }
+    }
+
+    if (!bPhaseSequencePlaying)
+    {
+        SetBossSequenceInputBlocked(false);
+    }
+}
+
+void ABossMonster::HandleLaserPuzzleStartSequenceFinished()
+{
+    ASideScrollingPlayerController* PC = SequenceInputController.Get();
+    const bool bShouldShowIntro = HasAuthority()
+        && IsValid(ActiveLaserStartSequencePlayer.Get())
+        && bLaserPuzzleActive
+        && CurrentState == EBossState::ShieldPuzzle
+        && !bIsResettingBoss
+        && !IsActorBeingDestroyed();
+
+    StopLaserPuzzleStartSequence();
+
+    if (bShouldShowIntro && IsValid(PC)
+        && bLaserPuzzleActive && CurrentState == EBossState::ShieldPuzzle
+        && !bIsResettingBoss && !IsActorBeingDestroyed())
+    {
+        PC->ClientShowLaserPuzzleIntroWidget();
+    }
+}
+
+void ABossMonster::PlayLaserPuzzleStartSequence()
+{
+    if (!HasAuthority() || !bLaserPuzzleActive
+        || CurrentState != EBossState::ShieldPuzzle
+        || bIsResettingBoss || IsActorBeingDestroyed())
+    {
+        return;
+    }
+
+    ALevelSequenceActor* SequenceActor = LaserPuzzleStartSequenceActor.Get();
+    ULevelSequencePlayer* Player = IsValid(SequenceActor)
+        ? SequenceActor->GetSequencePlayer() : nullptr;
+    if (!IsValid(Player) || !IsValid(Player->GetSequence())
+        || Player->IsPlaying() || Player->IsPaused()
+        || SequenceActor->GetWorld() != GetWorld()
+        || SequenceActor == LaserPuzzleClearSequenceActor.Get()
+        || SequenceActor == Phase70SequenceActor.Get()
+        || SequenceActor == Phase30SequenceActor.Get())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("레이저 시작 시퀀스가 없거나 사용 중이거나 다른 시퀀스와 중복 지정되었습니다."));
+        return;
+    }
+
+    Player->SetPlaybackPosition(FMovieSceneSequencePlaybackParams(
+        Player->GetStartTime().Time, EUpdatePositionMethod::Jump));
+    if (!bLaserPuzzleActive || CurrentState != EBossState::ShieldPuzzle
+        || bIsResettingBoss || IsActorBeingDestroyed())
+    {
+        return;
+    }
+
+    LaserSequencePlayerCharacter = Cast<ACharacter>(GetCurrentTarget());
+    bLaserSequenceTeleportApplied = false;
+    ActiveLaserStartSequencePlayer = Player;
+    Player->OnFinished.AddUniqueDynamic(
+        this, &ABossMonster::HandleLaserPuzzleStartSequenceFinished);
+    Player->OnStop.AddUniqueDynamic(
+        this, &ABossMonster::HandleLaserPuzzleStartSequenceFinished);
+    SetBossSequenceInputBlocked(true);
+    Player->Play();
+}
+
+void ABossMonster::TeleportActorsForLaserPuzzleSequence()
+{
+    ULevelSequencePlayer* Player = ActiveLaserStartSequencePlayer.Get();
+    if (!HasAuthority() || !bLaserPuzzleActive
+        || CurrentState != EBossState::ShieldPuzzle
+        || bIsResettingBoss || IsActorBeingDestroyed()
+        || bLaserSequenceTeleportApplied
+        || !IsValid(Player) || !Player->IsPlaying())
+    {
+        return;
+    }
+
+    ACharacter* PlayerCharacter = LaserSequencePlayerCharacter.Get();
+    AActor* PlayerMarker = LaserPuzzlePlayerMarker.Get();
+    AActor* BossMarker = LaserPuzzleBossMarker.Get();
+    if (!IsValid(PlayerCharacter) || !IsValid(PlayerMarker)
+        || !IsValid(BossMarker) || PlayerCharacter == this
+        || PlayerCharacter->GetWorld() != GetWorld()
+        || PlayerMarker->GetWorld() != GetWorld()
+        || BossMarker->GetWorld() != GetWorld())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("레이저 시퀀스의 플레이어 또는 위치 마커를 확인하세요."));
+        return;
+    }
+
+    bLaserSequenceTeleportApplied = true;
+    if (UCharacterMovementComponent* Movement = PlayerCharacter->GetCharacterMovement())
+    {
+        Movement->StopMovementImmediately();
+    }
+    if (AController* BossController = GetController())
+    {
+        BossController->StopMovement();
+    }
+    if (UCharacterMovementComponent* Movement = GetCharacterMovement())
+    {
+        Movement->StopMovementImmediately();
+    }
+
+    const bool bPlayerMoved = PlayerCharacter->TeleportTo(
+        PlayerMarker->GetActorLocation(), PlayerCharacter->GetActorRotation(), false, false);
+    const bool bBossMoved = TeleportTo(
+        BossMarker->GetActorLocation(), GetActorRotation(), false, false);
+    if (!bPlayerMoved || !bBossMoved)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("레이저 시퀀스 위치 이동 실패: 플레이어=%d 보스=%d. 마커 주변 충돌을 확인하세요."),
+            bPlayerMoved, bBossMoved);
     }
 }
 
@@ -1478,6 +1991,7 @@ void ABossMonster::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
 
+    UpdateRangeShield(DeltaSeconds);
     CheckLaserPuzzleCompletion();
     UpdateBossUI();
 
@@ -1516,6 +2030,7 @@ void ABossMonster::Tick(float DeltaSeconds)
 void ABossMonster::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
     StopPhaseSequence();
+    StopBossDeathSequence();
 
     if (IsValid(AbilitySystemComponent.Get())
         && HealthChangedDelegateHandle.IsValid())
@@ -1624,6 +2139,20 @@ bool ABossMonster::StartLaserPuzzle()
             Actor->SetGimmickEnabled(true);
         };
 
+    for (APointLight* PointLight : LaserPuzzlePointLights)
+    {
+        if (!IsValid(PointLight))
+        {
+            continue;
+        }
+
+        PointLight->SetActorHiddenInGame(false);
+        if (ULightComponent* LightComponent = PointLight->GetLightComponent())
+        {
+            LightComponent->SetHiddenInGame(false);
+            LightComponent->SetVisibility(true);
+        }
+    }
     for (ALaserReceiver* Receiver : LaserReceivers)
     {
         EnableActor(Receiver);
@@ -1649,11 +2178,32 @@ bool ABossMonster::StartLaserPuzzle()
     return bLaserPuzzleActive && CurrentState == EBossState::ShieldPuzzle;
 }
 
-void ABossMonster::StopLaserPuzzle()
+void ABossMonster::StopLaserPuzzle(bool bHideActors)
 {
     bLaserPuzzleActive = false;
+    StopLaserPuzzleStartSequence();
 
-    const auto DisableActor = [](AGimmickBase* Actor)
+    if (!bHideActors)
+    {
+        return;
+    }
+
+    for (APointLight* PointLight : LaserPuzzlePointLights)
+    {
+        if (!IsValid(PointLight) || !bHideActors)
+        {
+            continue;
+        }
+
+        if (ULightComponent* LightComponent = PointLight->GetLightComponent())
+        {
+            LightComponent->SetVisibility(false);
+            LightComponent->SetHiddenInGame(true);
+        }
+        PointLight->SetActorHiddenInGame(true);
+    }
+
+    const auto DisableActor = [bHideActors](AGimmickBase* Actor)
         {
             if (!IsValid(Actor))
             {
@@ -1662,7 +2212,7 @@ void ABossMonster::StopLaserPuzzle()
 
             Actor->SetGimmickEnabled(false);
             Actor->SetActorEnableCollision(false);
-            Actor->SetActorHiddenInGame(true);
+            Actor->SetActorHiddenInGame(bHideActors);
         };
 
     // 발신기를 먼저 꺼서 빔과 수신기 접촉을 즉시 정리한다.
@@ -1823,6 +2373,12 @@ void ABossMonster::HandleBossHealthChanged(
         return;
     }
 
+    if (HasAuthority() && !bIsResettingBoss && !bInitializationInProgress
+        && IsValid(HitSound.Get()))
+    {
+        MulticastGunBurstSound(HitSound.Get(), GetActorLocation());
+    }
+ 
     if (IsValid(HitEffect.Get()) && GetWorld())
     {
         UNiagaraFunctionLibrary::SpawnSystemAtLocation(

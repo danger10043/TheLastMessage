@@ -3,15 +3,33 @@
 #include "Character/Player/PlayerBase.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/Engine.h"
+#include "Engine/GameInstance.h"
+#include "Engine/World.h"
 #include "HAL/IConsoleManager.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Misc/ConfigCacheIni.h"
+#include "Blueprint/WidgetBlueprintLibrary.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Rendering/RenderingCommon.h"
 
 namespace
 {
 constexpr TCHAR VisualSettingsSection[] = TEXT("TheLastMessage.Visual");
-const FLinearColor OutlineColors[] = {FLinearColor::White, FLinearColor(0.10f, 0.85f, 1.0f),
+const FLinearColor AppearanceColors[] = {FLinearColor::White, FLinearColor(0.10f, 0.85f, 1.0f),
 	FLinearColor(1.0f, 0.56f, 0.08f), FLinearColor(1.0f, 0.28f, 0.63f), FLinearColor(0.30f, 1.0f, 0.35f)};
+
+void ReadCustomColor(const TCHAR* Key, FLinearColor& Color)
+{
+	FString Hex;
+	if (GConfig->GetString(VisualSettingsSection, Key, Hex, GGameUserSettingsIni) && Hex.Len() == 8)
+		Color = FLinearColor::FromSRGBColor(FColor::FromHex(Hex));
+}
+
+UMaterialInterface* LoadPlayerTintMaterial()
+{
+	return LoadObject<UMaterialInterface>(nullptr,
+		TEXT("/Game/Test_Jihong/PlayerAppearance/MI_Robbie_PlayerColor.MI_Robbie_PlayerColor"));
+}
 }
 
 void UGameVisualSettingsSubsystem::Initialize(FSubsystemCollectionBase& Collection)
@@ -20,24 +38,32 @@ void UGameVisualSettingsSubsystem::Initialize(FSubsystemCollectionBase& Collecti
 	if (IsRunningDedicatedServer()) return;
 	GConfig->GetFloat(VisualSettingsSection, TEXT("Brightness"), Brightness, GGameUserSettingsIni);
 	GConfig->GetFloat(VisualSettingsSection, TEXT("OutlineScale"), OutlineScale, GGameUserSettingsIni);
+	GConfig->GetFloat(VisualSettingsSection, TEXT("OutlineBrightness"), OutlineBrightness, GGameUserSettingsIni);
 	GConfig->GetFloat(VisualSettingsSection, TEXT("ShakeScale"), ShakeScale, GGameUserSettingsIni);
 	GConfig->GetInt(VisualSettingsSection, TEXT("OutlineColor"), OutlineColor, GGameUserSettingsIni);
-	FString CustomHex;
-	if (GConfig->GetString(VisualSettingsSection, TEXT("CustomOutlineColor"), CustomHex, GGameUserSettingsIni) && CustomHex.Len() == 8)
-		CustomOutlineColor = FLinearColor::FromSRGBColor(FColor::FromHex(CustomHex));
+	GConfig->GetInt(VisualSettingsSection, TEXT("PlayerColor"), PlayerColor, GGameUserSettingsIni);
+	ReadCustomColor(TEXT("CustomOutlineColor"), CustomOutlineColor);
+	ReadCustomColor(TEXT("CustomPlayerColor"), CustomPlayerColor);
 	GConfig->GetBool(VisualSettingsSection, TEXT("MotionBlur"), bMotionBlur, GGameUserSettingsIni);
 	GConfig->GetBool(VisualSettingsSection, TEXT("Bloom"), bBloom, GGameUserSettingsIni);
+	GConfig->GetBool(VisualSettingsSection, TEXT("ReduceFlashes"), bReduceFlashes, GGameUserSettingsIni);
+	GConfig->GetInt(VisualSettingsSection, TEXT("ColorVision"), ColorVision, GGameUserSettingsIni);
+	GConfig->GetFloat(VisualSettingsSection, TEXT("ColorVisionStrength"), ColorVisionStrength, GGameUserSettingsIni);
 	Brightness = FMath::IsFinite(Brightness) ? FMath::Clamp(Brightness, 0.f, 1.f) : 0.5f;
-	OutlineScale = FMath::IsFinite(OutlineScale) ? FMath::Clamp(OutlineScale, 0.f, 2.f) : 1.f;
+	OutlineScale = FMath::IsFinite(OutlineScale) ? FMath::Clamp(OutlineScale, 0.f, 2.f) : DefaultOutlineScale;
+	OutlineBrightness = FMath::IsFinite(OutlineBrightness) ? FMath::Clamp(OutlineBrightness, 0.f, 2.f) : DefaultOutlineBrightness;
 	ShakeScale = FMath::IsFinite(ShakeScale) ? FMath::Clamp(ShakeScale, 0.f, 1.f) : 1.f;
 	OutlineColor = FMath::Clamp(OutlineColor, 0, CustomColorIndex);
+	PlayerColor = FMath::Clamp(PlayerColor, 0, CustomColorIndex);
+	ColorVision = FMath::Clamp(ColorVision, 0, ColorVisionTypeCount - 1);
+	ColorVisionStrength = FMath::IsFinite(ColorVisionStrength) ? FMath::Clamp(ColorVisionStrength, 0.f, 1.f) : 1.f;
 	ApplyDisplay();
 }
 
 FLinearColor UGameVisualSettingsSubsystem::GetOutlineColor(const APlayerBase* Player) const
 {
 	if (OutlineColor == CustomColorIndex) return CustomOutlineColor;
-	if (OutlineColor > 0) return OutlineColors[OutlineColor - 1];
+	if (OutlineColor > 0) return AppearanceColors[OutlineColor - 1];
 	const UMaterialInterface* Source = Player && Player->GetMesh() ? Player->GetMesh()->GetOverlayMaterial() : nullptr;
 	if (const auto* Dynamic = Cast<UMaterialInstanceDynamic>(Source)) Source = Dynamic->Parent.Get();
 	if (!Source)
@@ -47,6 +73,13 @@ FLinearColor UGameVisualSettingsSubsystem::GetOutlineColor(const APlayerBase* Pl
 	return Color;
 }
 
+FLinearColor UGameVisualSettingsSubsystem::GetPlayerColor() const
+{
+	if (PlayerColor == CustomColorIndex) return CustomPlayerColor;
+	if (PlayerColor > 0) return AppearanceColors[PlayerColor - 1];
+	return FLinearColor(0.5f, 0.5f, 0.5f);
+}
+
 void UGameVisualSettingsSubsystem::ApplyDisplay() const
 {
 	if (GEngine) GEngine->DisplayGamma = FMath::Lerp(1.7f, 2.7f, Brightness);
@@ -54,12 +87,27 @@ void UGameVisualSettingsSubsystem::ApplyDisplay() const
 		Blur->Set(bMotionBlur ? 4 : 0, ECVF_SetByGameOverride);
 	if (auto* Bloom = IConsoleManager::Get().FindConsoleVariable(TEXT("r.BloomQuality")))
 		Bloom->Set(bBloom ? 5 : 0, ECVF_SetByGameOverride);
+	// 색각 보정은 게임 창 전체(Slate 렌더러)에 걸리는 후처리다. 커맨드렛이나 서버처럼 화면이 없으면 건너뛴다.
+	if (FSlateApplication::IsInitialized() && !IsRunningCommandlet())
+	{
+		static const EColorVisionDeficiency Types[ColorVisionTypeCount] = {EColorVisionDeficiency::NormalVision,
+			EColorVisionDeficiency::Protanope, EColorVisionDeficiency::Deuteranope, EColorVisionDeficiency::Tritanope};
+		const int32 Type = FMath::Clamp(ColorVision, 0, ColorVisionTypeCount - 1);
+		UWidgetBlueprintLibrary::SetColorVisionDeficiencyType(Types[Type], Type ? ColorVisionStrength : 0.f, Type != 0, false);
+	}
 }
 
-void UGameVisualSettingsSubsystem::ApplyOutline(APlayerBase* Player) const
+void UGameVisualSettingsSubsystem::Deinitialize()
 {
-	if (!Player || !Player->GetMesh()) return;
-	auto* Mesh = Player->GetMesh();
+	// PIE를 끝낸 뒤 에디터 창에 보정 필터가 남지 않게 끈다.
+	if (FSlateApplication::IsInitialized() && !IsRunningCommandlet() && ColorVision != 0)
+		UWidgetBlueprintLibrary::SetColorVisionDeficiencyType(EColorVisionDeficiency::NormalVision, 0.f, false, false);
+	Super::Deinitialize();
+}
+
+void UGameVisualSettingsSubsystem::ApplyOutline(USkeletalMeshComponent* Mesh) const
+{
+	if (!Mesh) return;
 	auto* Overlay = Mesh->GetOverlayMaterial();
 	if (!Overlay) return;
 	auto* Dynamic = Cast<UMaterialInstanceDynamic>(Overlay);
@@ -70,21 +118,88 @@ void UGameVisualSettingsSubsystem::ApplyOutline(APlayerBase* Player) const
 		|| !Source->GetVectorParameterValue(FMaterialParameterInfo(TEXT("Outline Color")), Color)) return;
 	if (!Dynamic)
 	{
+		if (OutlineScale == 1.f && OutlineBrightness == 1.f && OutlineColor == 0) return;
 		Dynamic = UMaterialInstanceDynamic::Create(Source, Mesh);
+		if (!Dynamic) return;
 		Mesh->SetOverlayMaterial(Dynamic);
 	}
 	Dynamic->SetScalarParameterValue(TEXT("Outline Width"), Width * OutlineScale);
-	Dynamic->SetVectorParameterValue(TEXT("Outline Color"), OutlineColor == 0 ? Color : GetOutlineColor(Player));
+	if (OutlineColor != 0) Color = GetOutlineColor(nullptr);
+	const FLinearColor Emission(Color.R * OutlineBrightness, Color.G * OutlineBrightness, Color.B * OutlineBrightness, Color.A);
+	Dynamic->SetVectorParameterValue(TEXT("Outline Color"), Emission);
+}
+
+UMaterialInstanceDynamic* UGameVisualSettingsSubsystem::CreateOrUpdateBodyTint(USkeletalMeshComponent* Mesh,
+	UMaterialInterface* TintMaterial, const FLinearColor& Color)
+{
+	auto* Dynamic = Cast<UMaterialInstanceDynamic>(Mesh->GetMaterial(0));
+	if (!Dynamic || Dynamic->Parent != TintMaterial)
+		Dynamic = UMaterialInstanceDynamic::Create(TintMaterial, Mesh);
+	if (!Dynamic) return nullptr;
+	Dynamic->SetVectorParameterValue(TEXT("Color_1"), Color);
+	Dynamic->SetVectorParameterValue(TEXT("Color_2"), Color);
+	Dynamic->SetScalarParameterValue(TEXT("Color_1 strength"), 1.f);
+	Dynamic->SetScalarParameterValue(TEXT("Color_2 strength"), 0.7f);
+	return Dynamic;
+}
+
+void UGameVisualSettingsSubsystem::ApplyPreviewAppearance(USkeletalMeshComponent* Mesh, UMaterialInterface* DefaultBodyMaterial) const
+{
+	if (!Mesh) return;
+	ApplyOutline(Mesh);
+	UMaterialInterface* Body = DefaultBodyMaterial;
+	if (PlayerColor != 0)
+	{
+		if (auto* TintMaterial = LoadPlayerTintMaterial())
+		{
+			if (auto* Tint = CreateOrUpdateBodyTint(Mesh, TintMaterial, GetPlayerColor())) Body = Tint;
+		}
+	}
+	if (Mesh->GetMaterial(0) != Body) Mesh->SetMaterial(0, Body);
+}
+
+void UGameVisualSettingsSubsystem::ApplyAppearance(APlayerBase* Player) const
+{
+	if (!Player || IsRunningDedicatedServer()) return;
+	ApplyOutline(Player->GetMesh());
+	if (PlayerColor == 0)
+	{
+		Player->SetAppearanceTint(nullptr, FLinearColor::White);
+		return;
+	}
+	if (auto* TintMaterial = LoadPlayerTintMaterial()) Player->SetAppearanceTint(TintMaterial, GetPlayerColor());
+}
+
+void UGameVisualSettingsSubsystem::ResetAppearance()
+{
+	OutlineScale = DefaultOutlineScale;
+	OutlineBrightness = DefaultOutlineBrightness;
+	OutlineColor = 0;
+	PlayerColor = 0;
+	CustomOutlineColor = FLinearColor::White;
+	CustomPlayerColor = FLinearColor::White;
+}
+
+float UGameVisualSettingsSubsystem::GetFlashIntensity(const UWorld* World)
+{
+	const auto* Settings = UGameInstance::GetSubsystem<UGameVisualSettingsSubsystem>(World ? World->GetGameInstance() : nullptr);
+	return Settings && Settings->bReduceFlashes ? 0.25f : 1.f;
 }
 
 void UGameVisualSettingsSubsystem::Save() const
 {
 	GConfig->SetFloat(VisualSettingsSection, TEXT("Brightness"), Brightness, GGameUserSettingsIni);
 	GConfig->SetFloat(VisualSettingsSection, TEXT("OutlineScale"), OutlineScale, GGameUserSettingsIni);
+	GConfig->SetFloat(VisualSettingsSection, TEXT("OutlineBrightness"), OutlineBrightness, GGameUserSettingsIni);
 	GConfig->SetFloat(VisualSettingsSection, TEXT("ShakeScale"), ShakeScale, GGameUserSettingsIni);
 	GConfig->SetInt(VisualSettingsSection, TEXT("OutlineColor"), OutlineColor, GGameUserSettingsIni);
+	GConfig->SetInt(VisualSettingsSection, TEXT("PlayerColor"), PlayerColor, GGameUserSettingsIni);
 	GConfig->SetString(VisualSettingsSection, TEXT("CustomOutlineColor"), *CustomOutlineColor.ToFColorSRGB().ToHex(), GGameUserSettingsIni);
+	GConfig->SetString(VisualSettingsSection, TEXT("CustomPlayerColor"), *CustomPlayerColor.ToFColorSRGB().ToHex(), GGameUserSettingsIni);
 	GConfig->SetBool(VisualSettingsSection, TEXT("MotionBlur"), bMotionBlur, GGameUserSettingsIni);
 	GConfig->SetBool(VisualSettingsSection, TEXT("Bloom"), bBloom, GGameUserSettingsIni);
+	GConfig->SetBool(VisualSettingsSection, TEXT("ReduceFlashes"), bReduceFlashes, GGameUserSettingsIni);
+	GConfig->SetInt(VisualSettingsSection, TEXT("ColorVision"), ColorVision, GGameUserSettingsIni);
+	GConfig->SetFloat(VisualSettingsSection, TEXT("ColorVisionStrength"), ColorVisionStrength, GGameUserSettingsIni);
 	GConfig->Flush(false, GGameUserSettingsIni);
 }

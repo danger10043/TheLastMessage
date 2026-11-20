@@ -9,6 +9,11 @@
 #include "LevelInstance/LevelInstanceInterface.h"
 #include "LevelInstance/LevelInstanceSubsystem.h"
 #include "HAL/IConsoleManager.h"
+#include "Engine/GameInstance.h"
+#include "UObject/Package.h"
+#include "Save/ProgressSaveSubsystem.h"
+#include "Save/ProgressSaveGame.h"
+#include "Gimmick/GimmickBase.h"
 
 DEFINE_LOG_CATEGORY(LogRoomStreaming);
 
@@ -37,6 +42,254 @@ bool URoomStreamingSubsystem::DoesSupportWorldType(const EWorldType::Type WorldT
 	return WorldType == EWorldType::Game || WorldType == EWorldType::PIE;
 }
 
+namespace
+{
+	/** 시작 단계에서 리전이나 방을 못 찾았을 때 포기하는 시간(초). */
+	constexpr double StartupGiveUpSeconds = 8.0;
+	/**
+	 * 시작 단계 정리를 기다리는 최대 시간(초). 독립형·느린 PC에서는 큰 Area 레벨이 올라오는 데만 10초 넘게 걸린다.
+	 * 너무 일찍 포기하면 방이 올라오기 전에 로딩 화면이 걷혀 플레이어가 빈 곳으로 떨어진다.
+	 */
+	constexpr double StartupMaxWaitSeconds = 120.0;
+}
+
+FName URoomStreamingSubsystem::ResolveStartRegion() const
+{
+	const UWorld* World = GetWorld();
+	if (const UGameInstance* GameInstance = World ? World->GetGameInstance() : nullptr)
+	{
+		if (const UProgressSaveSubsystem* Saves = GameInstance->GetSubsystem<UProgressSaveSubsystem>())
+		{
+			const UProgressSaveGame* Progress = Saves->GetWorkingProgress();
+			// 이어하기: 저장된 체크포인트가 이 맵에 있으면 그 리전부터 올린다.
+			if (Saves->GetActiveSlot() > 0 && Progress && !Progress->CheckpointRegionId.IsNone()
+				&& Progress->MapPackage == UWorld::RemovePIEPrefix(World->GetOutermost()->GetName()))
+			{
+				return Progress->CheckpointRegionId;
+			}
+		}
+	}
+	return GetDefault<URoomStreamingSettings>()->StartRegionId;
+}
+
+void URoomStreamingSubsystem::Initialize(FSubsystemCollectionBase& Collection)
+{
+	Super::Initialize(Collection);
+
+	// 방 레벨 인스턴스는 부모 레벨이 붙을 때 로드를 요청하므로, 필요 없는 방은 로드가 시작되기 전에 그 요청을 취소한다.
+	LevelAddedHandle = FWorldDelegates::LevelAddedToWorld.AddUObject(this, &URoomStreamingSubsystem::HandleLevelAdded);
+
+	// 플레이어가 어느 방에 있는지는 방 안의 리전 액터로 알 수 있는데, 방이 올라오기 전에는 그 액터가 없다.
+	// 그래서 시작할 때만 저장된 체크포인트(또는 설정)의 리전으로 올릴 방을 정해 둔다.
+	const FName Start = ResolveStartRegion();
+	TSet<FName> StartRooms;
+	if (!Start.IsNone() && BuildDesiredRooms(Start, StartRooms))
+	{
+		CurrentRegionId = Start;
+		DesiredRooms = MoveTemp(StartRooms);
+		bHasDesired = true;
+		UE_LOG(LogRoomStreaming, Log, TEXT("Start region %s -> rooms %s"), *Start.ToString(),
+			*FString::JoinBy(DesiredRooms, TEXT(", "), [](const FName& Name) { return Name.ToString(); }));
+	}
+	else if (!Start.IsNone())
+	{
+		UE_LOG(LogRoomStreaming, Warning, TEXT("시작 리전 %s이(가) 방/복도 설정에 없습니다. 처음에 모든 방이 올라옵니다."), *Start.ToString());
+	}
+}
+
+void URoomStreamingSubsystem::Deinitialize()
+{
+	FWorldDelegates::LevelAddedToWorld.Remove(LevelAddedHandle);
+	Super::Deinitialize();
+}
+
+void URoomStreamingSubsystem::RegisterBoundActors(ULevel* Level)
+{
+	if (!Level) return;
+	const FString Prefix = RoomBoundTagPrefix();
+	bool bAdded = false;
+	for (AActor* Actor : Level->Actors)
+	{
+		if (!Actor) continue;
+		FName RoomId;
+		for (const FName& Tag : Actor->Tags)
+		{
+			const FString TagString = Tag.ToString();
+			if (TagString.StartsWith(Prefix))
+			{
+				RoomId = FName(*TagString.Mid(Prefix.Len()));
+				break;
+			}
+		}
+		if (RoomId.IsNone()) continue;
+		if (BoundActors.ContainsByPredicate([Actor](const FRoomBoundActor& B) { return B.Actor.Get() == Actor; })) continue;
+
+		FRoomBoundActor& Bound = BoundActors.AddDefaulted_GetRef();
+		Bound.Actor = Actor;
+		Bound.RoomId = RoomId;
+		Bound.bOrigHidden = Actor->IsHidden();
+		Bound.bOrigCollision = Actor->GetActorEnableCollision();
+		Bound.bOrigTick = Actor->IsActorTickEnabled();
+		bAdded = true;
+	}
+	if (bAdded) ApplyBoundActors();
+}
+
+void URoomStreamingSubsystem::ApplyBoundActors()
+{
+	if (BoundActors.IsEmpty()) return;
+	UWorld* World = GetWorld();
+	ULevelInstanceSubsystem* LevelInstances = World ? World->GetSubsystem<ULevelInstanceSubsystem>() : nullptr;
+	if (!LevelInstances) return;
+
+	TMap<FName, ALevelInstance*> Index;
+	BuildLevelInstanceIndex(Index);
+	TMap<FName, bool> RoomLoaded;
+	for (const FRoomStreamEntry& Room : GetDefault<URoomStreamingSettings>()->Rooms)
+	{
+		ALevelInstance** Found = Index.Find(FName(*Room.Level.GetLongPackageName()));
+		const ILevelInstanceInterface* Instance = Found ? Cast<ILevelInstanceInterface>(*Found) : nullptr;
+		RoomLoaded.Add(Room.RoomId, Instance && LevelInstances->IsLoaded(Instance));
+	}
+
+	for (int32 i = BoundActors.Num() - 1; i >= 0; --i)
+	{
+		FRoomBoundActor& Bound = BoundActors[i];
+		AActor* Actor = Bound.Actor.Get();
+		if (!Actor || Actor->IsActorBeingDestroyed())
+		{
+			BoundActors.RemoveAtSwap(i);
+			continue;
+		}
+
+		// 설정에 없는 방은 관리하지 않으므로 그대로 둔다. 다른 액터에 붙어 있으면(들고 있는 아이템) 방과 상관없이 켠다.
+		const bool* bLoaded = RoomLoaded.Find(Bound.RoomId);
+		const bool bWantEnabled = !bLoaded || *bLoaded || Actor->GetAttachParentActor() != nullptr;
+		if (Bound.bEnabled == bWantEnabled) continue;
+		Bound.bEnabled = bWantEnabled;
+
+		Actor->SetActorHiddenInGame(bWantEnabled ? Bound.bOrigHidden : true);
+		Actor->SetActorEnableCollision(bWantEnabled ? Bound.bOrigCollision : false);
+		Actor->SetActorTickEnabled(bWantEnabled ? Bound.bOrigTick : false);
+		UE_LOG(LogRoomStreaming, Verbose, TEXT("Room-bound %s (room %s): %s"), *Actor->GetName(), *Bound.RoomId.ToString(),
+			bWantEnabled ? TEXT("enabled") : TEXT("disabled"));
+	}
+}
+
+void URoomStreamingSubsystem::HandleLevelAdded(ULevel* Level, UWorld* InWorld)
+{
+	if (Level && InWorld == GetWorld()) RegisterBoundActors(Level);
+
+	// 올릴 방을 아직 모르면(시작 리전이 없을 때) 예전처럼 모두 올라오게 둔다.
+	if (!Level || InWorld != GetWorld() || !bHasDesired) return;
+	ULevelInstanceSubsystem* LevelInstances = InWorld->GetSubsystem<ULevelInstanceSubsystem>();
+	if (!LevelInstances) return;
+
+	TSet<FName> Wanted = DesiredRooms;
+	for (const TPair<FName, int32>& Pin : PinnedRooms) Wanted.Add(Pin.Key);
+
+	const URoomStreamingSettings* Settings = GetDefault<URoomStreamingSettings>();
+	for (AActor* Actor : Level->Actors)
+	{
+		ALevelInstance* Instance = Cast<ALevelInstance>(Actor);
+		if (!Instance) continue;
+		const FName Package(*Instance->GetWorldAsset().GetLongPackageName());
+		for (const FRoomStreamEntry& Room : Settings->Rooms)
+		{
+			if (FName(*Room.Level.GetLongPackageName()) != Package) continue;
+			if (!Wanted.Contains(Room.RoomId))
+			{
+				// 아직 로드가 시작되지 않은 요청만 취소한다(대기열에서 빠질 뿐이라 안전하다).
+				// 이미 읽는 중이거나 올라온 방은 Update가 비동기 로딩이 끝난 뒤에 내린다. 읽는 도중에 끊으면 독립형에서 크래시가 난다.
+				if (LevelInstances->IsLoading(Instance) || LevelInstances->IsLoaded(Instance)) break;
+				LevelInstances->RequestUnloadLevelInstance(Instance);
+				UE_LOG(LogRoomStreaming, Verbose, TEXT("Skip initial load of room %s"), *Room.RoomId.ToString());
+			}
+			break;
+		}
+	}
+}
+
+void URoomStreamingSubsystem::OnWorldBeginPlay(UWorld& InWorld)
+{
+	Super::OnWorldBeginPlay(InWorld);
+	// 이미 붙어 있는 레벨(LV_Main 등)의 방 종속 액터를 등록한다. 나중에 붙는 레벨은 HandleLevelAdded가 등록한다.
+	for (ULevel* Level : InWorld.GetLevels()) RegisterBoundActors(Level);
+	if (GetDefault<URoomStreamingSettings>()->Rooms.IsEmpty()) return;
+	// 레벨 인스턴스가 없는 맵(메인 메뉴 등)에서는 정리할 것이 없다.
+	TActorIterator<ALevelInstance> It(&InWorld);
+	if (!It) return;
+	bStartupPhase = true;
+	StartupBeginTime = FPlatformTime::Seconds();
+}
+
+bool URoomStreamingSubsystem::IsPipelineBusy() const
+{
+	UWorld* World = GetWorld();
+	ULevelInstanceSubsystem* LevelInstances = World ? World->GetSubsystem<ULevelInstanceSubsystem>() : nullptr;
+	if (!World || !LevelInstances) return false;
+	if (IsAsyncLoading() || World->IsVisibilityRequestPending()) return true;
+	for (TActorIterator<ALevelInstance> It(World); It; ++It)
+	{
+		if (LevelInstances->IsLoading(*It)) return true;
+	}
+	return false;
+}
+
+double URoomStreamingSubsystem::GetPipelineIdleSeconds() const
+{
+	return PipelineIdleSince < 0.0 ? 0.0 : FPlatformTime::Seconds() - PipelineIdleSince;
+}
+
+bool URoomStreamingSubsystem::IsStartupSettled() const
+{
+	if (!bStartupPhase) return true;
+	const double Elapsed = FPlatformTime::Seconds() - StartupBeginTime;
+	if (Elapsed >= StartupMaxWaitSeconds) return true;
+
+	UWorld* World = GetWorld();
+	ULevelInstanceSubsystem* LevelInstances = World ? World->GetSubsystem<ULevelInstanceSubsystem>() : nullptr;
+	if (!LevelInstances) return true;
+
+	// 플레이어가 있는 리전이 아직 반영되지 않았으면(체크포인트 복원 직후 등) 기다린다.
+	const FName Region = FindRegionAtPlayer();
+	if (!Region.IsNone() && Region != CurrentRegionId)
+	{
+		TSet<FName> Unused;
+		if (BuildDesiredRooms(Region, Unused)) return false;
+	}
+	if (!bHasDesired) return Elapsed >= StartupGiveUpSeconds;
+
+	TSet<FName> Wanted = DesiredRooms;
+	for (const TPair<FName, int32>& Pin : PinnedRooms) Wanted.Add(Pin.Key);
+
+	TMap<FName, ALevelInstance*> Index;
+	BuildLevelInstanceIndex(Index);
+	bool bFoundAny = false;
+	for (const FRoomStreamEntry& Room : GetDefault<URoomStreamingSettings>()->Rooms)
+	{
+		ALevelInstance** Found = Index.Find(FName(*Room.Level.GetLongPackageName()));
+		const ILevelInstanceInterface* Instance = Found ? Cast<ILevelInstanceInterface>(*Found) : nullptr;
+		if (!Instance)
+		{
+			// 필요한 방의 부모 레벨이 아직 안 올라왔을 수 있다. 잠시 기다린 뒤 이 맵에 없는 방으로 본다.
+			// 단, 다른 레벨이 아직 올라오는 중이면(부모 Area 레벨이 느리게 올라오는 중일 수 있다) 계속 기다린다.
+			if (Wanted.Contains(Room.RoomId) && (Elapsed < StartupGiveUpSeconds || IsPipelineBusy())) return false;
+			continue;
+		}
+		bFoundAny = true;
+		if (Wanted.Contains(Room.RoomId))
+		{
+			if (!LevelInstances->IsLoaded(Instance)) return false;
+		}
+		else if (LevelInstances->IsLoaded(Instance) || LevelInstances->IsLoading(Instance))
+		{
+			return false; // 아직 내려가는 중이다.
+		}
+	}
+	return bFoundAny || Elapsed >= StartupGiveUpSeconds;
+}
+
 TStatId URoomStreamingSubsystem::GetStatId() const
 {
 	RETURN_QUICK_DECLARE_CYCLE_STAT(URoomStreamingSubsystem, STATGROUP_Tickables);
@@ -46,7 +299,9 @@ void URoomStreamingSubsystem::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 	Accumulated += DeltaTime;
-	if (Accumulated < GetDefault<URoomStreamingSettings>()->UpdateIntervalSeconds) return;
+	// 시작 단계에서는 로딩 화면 뒤라서 더 자주 확인해 빨리 정리한다.
+	const float Interval = bStartupPhase ? 0.1f : GetDefault<URoomStreamingSettings>()->UpdateIntervalSeconds;
+	if (Accumulated < Interval) return;
 	Accumulated = 0.f;
 	Update();
 }
@@ -111,11 +366,47 @@ void URoomStreamingSubsystem::BuildLevelInstanceIndex(TMap<FName, ALevelInstance
 	}
 }
 
+void URoomStreamingSubsystem::CaptureRoomGimmicks(ILevelInstanceInterface* Instance)
+{
+	UWorld* World = GetWorld();
+	ULevelInstanceSubsystem* LevelInstances = World ? World->GetSubsystem<ULevelInstanceSubsystem>() : nullptr;
+	UGameInstance* GameInstance = World ? World->GetGameInstance() : nullptr;
+	UProgressSaveSubsystem* Saves = GameInstance ? GameInstance->GetSubsystem<UProgressSaveSubsystem>() : nullptr;
+	if (!LevelInstances || !Saves || !Instance) return;
+	const ULevel* Level = LevelInstances->GetLevelInstanceLevel(Instance);
+	if (!Level) return;
+	int32 Captured = 0;
+	for (AActor* Actor : Level->Actors)
+	{
+		if (AGimmickBase* Gimmick = Cast<AGimmickBase>(Actor))
+		{
+			Saves->CaptureGimmickForUnload(Gimmick);
+			// 이 시점부터 사라질 때까지 이 기믹들은 상태 변화를 밖으로 알리지 않는다(발판 위 물체가 먼저 사라져 발판이 꺼지고
+			// 그 플래그를 받는 문이 닫히는 것을 막는다). 방이 다시 올라오면 BeginPlay에서 풀린다.
+			Gimmick->SetRoomUnloading(true);
+			++Captured;
+		}
+	}
+	UE_LOG(LogRoomStreaming, Verbose, TEXT("Captured %d gimmick states before unload"), Captured);
+}
+
+void URoomStreamingSubsystem::ReleaseRoomGimmicks(ILevelInstanceInterface* Instance)
+{
+	UWorld* World = GetWorld();
+	ULevelInstanceSubsystem* LevelInstances = World ? World->GetSubsystem<ULevelInstanceSubsystem>() : nullptr;
+	const ULevel* Level = (LevelInstances && Instance) ? LevelInstances->GetLevelInstanceLevel(Instance) : nullptr;
+	if (!Level) return;
+	for (AActor* Actor : Level->Actors)
+		if (AGimmickBase* Gimmick = Cast<AGimmickBase>(Actor)) Gimmick->SetRoomUnloading(false);
+}
+
 void URoomStreamingSubsystem::Update()
 {
 	UWorld* World = GetWorld();
 	ULevelInstanceSubsystem* LevelInstances = World ? World->GetSubsystem<ULevelInstanceSubsystem>() : nullptr;
 	if (!LevelInstances) return;
+
+	ApplyBoundActors();
 
 	// 부활 대기 중이면 플레이어 위치 대신 고정된 리전을 따른다. 어느 리전에도 없으면(점프 중, 복도 리전이 아직 없는 구간) 마지막 상태를 유지한다.
 	FName Found;
@@ -151,13 +442,27 @@ void URoomStreamingSubsystem::Update()
 	BuildLevelInstanceIndex(Index);
 	const double Now = World->GetTimeSeconds();
 
+	// 로드 중이거나 월드에 붙는 중인 레벨이 있을 때 다른 방을 내리면 독립형에서 비동기 로더가 크래시한다(스택: ProcessAsyncLoading).
+	// 비동기 로딩, 레벨 인스턴스 로드, 월드에 붙이는 중인 레벨이 모두 없는 상태가 1초 이어졌을 때만 내린다.
+	const bool bPipelineIdle = !IsPipelineBusy();
+	const double RealNow = FPlatformTime::Seconds();
+	if (!bPipelineIdle) PipelineIdleSince = -1.0;
+	else if (PipelineIdleSince < 0.0) PipelineIdleSince = RealNow;
+	const bool bPipelineStable = PipelineIdleSince >= 0.0 && RealNow - PipelineIdleSince >= 1.0;
+
 	for (const FRoomStreamEntry& Room : Settings->Rooms)
 	{
 		ALevelInstance** Found2 = Index.Find(FName(*Room.Level.GetLongPackageName()));
 		ILevelInstanceInterface* Instance = Found2 ? Cast<ILevelInstanceInterface>(*Found2) : nullptr;
 		if (!Instance) continue; // 부모 레벨이 아직 로드되지 않았거나 이 맵에 없는 방.
 
-		const bool bLoaded = LevelInstances->IsLoaded(Instance) || LevelInstances->IsLoading(Instance);
+		const bool bIsLoading = LevelInstances->IsLoading(Instance);
+		const bool bLoaded = LevelInstances->IsLoaded(Instance) || bIsLoading;
+		if (!bLoaded || Wanted.Contains(Room.RoomId))
+		{
+			// 내리려고 요청했다가 다시 필요해진 방(대기열에서 취소됨): 멈춰 둔 기믹을 풀어 준다.
+			if (UnloadRequestedAt.Remove(Room.RoomId) > 0 && bLoaded) ReleaseRoomGimmicks(Instance);
+		}
 		if (Wanted.Contains(Room.RoomId))
 		{
 			UnloadAfter.Remove(Room.RoomId);
@@ -169,15 +474,24 @@ void URoomStreamingSubsystem::Update()
 		}
 		else if (bLoaded)
 		{
-			const double* Deadline = UnloadAfter.Find(Room.RoomId);
-			if (!Deadline)
+			// 로드 중인 방에 언로드를 요청하면 패키지가 로드되는 도중에 지워진다(느린 PC·독립형 게임에서 크래시). 다 올라온 뒤에 내린다.
+			if (bIsLoading) continue;
+			// 다른 곳에서 로딩·월드 붙이기가 진행 중이면 기다린다. 시작 단계에서는 로딩 화면이 그 시간을 가려 준다.
+			if (!bPipelineStable) continue;
+			// 한 번 요청한 방은 내려가는 동안 다시 요청하지 않는다. 오래 지나도 안 내려가면 다시 요청한다.
+			if (const double* RequestedAt = UnloadRequestedAt.Find(Room.RoomId))
 			{
-				UnloadAfter.Add(Room.RoomId, Now + Settings->UnloadDelaySeconds);
+				if (Now - *RequestedAt < 5.0) continue;
 			}
-			else if (Now >= *Deadline)
+			// 시작 단계에서는 로딩 화면 뒤에서 처리하므로 대기 없이 바로 내린다.
+			const double Delay = bStartupPhase ? 0.0 : Settings->UnloadDelaySeconds;
+			const double Deadline = UnloadAfter.FindOrAdd(Room.RoomId, Now + Delay);
+			if (Now >= Deadline)
 			{
 				UE_LOG(LogRoomStreaming, Log, TEXT("Unload room %s"), *Room.RoomId.ToString());
 				UnloadAfter.Remove(Room.RoomId);
+				CaptureRoomGimmicks(Instance);
+				UnloadRequestedAt.Add(Room.RoomId, Now);
 				LevelInstances->RequestUnloadLevelInstance(Instance);
 			}
 		}
@@ -286,6 +600,15 @@ bool URoomStreamingSubsystem::IsRoomLoaded(FName RoomId) const
 		return Instance && LevelInstances->IsLoaded(Instance);
 	}
 	return false;
+}
+
+bool URoomStreamingSubsystem::IsRegionStreamedIn(FName RegionId) const
+{
+	for (const FRoomStreamEntry& Room : GetDefault<URoomStreamingSettings>()->Rooms)
+	{
+		if (Room.RegionIds.Contains(RegionId)) return IsRoomLoaded(Room.RoomId);
+	}
+	return true;
 }
 
 void URoomStreamingSubsystem::DumpState() const

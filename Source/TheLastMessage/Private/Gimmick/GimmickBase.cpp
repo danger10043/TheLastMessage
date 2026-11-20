@@ -60,6 +60,12 @@ void AGimmickBase::PerformInteraction(ACharacter* Player)
 
 void AGimmickBase::ApplyActiveState(bool bNewActive)
 {
+	// 방 레벨이 내려가는 중에는 상태 변화를 밖으로 알리지 않는다(SetRoomUnloading 참고).
+	if (bRoomUnloading)
+	{
+		return;
+	}
+
 	// 같은 상태의 반복 처리 방지
 	if (bIsActive == bNewActive)
 	{
@@ -131,6 +137,7 @@ bool AGimmickBase::ApplyConfigOverride(FName ConfigSlot, const FDataTableRowHand
 void AGimmickBase::BeginPlay()
 {
 	Super::BeginPlay();
+	bRoomUnloading = false; // 내려가던 방이 다시 올라온 경우(객체 재사용 포함)
 	if (HasAuthority() && bPersistState && GetGameInstance())
 	{
 		if (!PersistentId.IsValid() && HasAnyFlags(RF_WasLoaded))

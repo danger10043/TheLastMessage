@@ -1,7 +1,7 @@
 #include "UI/OwnedCoreWidget.h"
+#include "UI/GamepadUIKeys.h"
 #include "UI/FactoryUIStyle.h"
 
-#include "AbilitySystemComponent.h"
 #include "Components/Border.h"
 #include "Components/Button.h"
 #include "Components/Image.h"
@@ -11,8 +11,6 @@
 #include "Components/WrapBox.h"
 #include "Core/CoreComponent.h"
 #include "DataAsset/CoreDataAsset.h"
-#include "GAS/CombatAttributeSet.h"
-#include "GAS/WeaponSlotAttributeSet.h"
 #include "UI/CoreDescriptionFormatter.h"
 #include "UI/OwnedCoreItemWidget.h"
 
@@ -57,27 +55,15 @@ void UOwnedCoreWidget::NativeOnInitialized()
 	NextEffect->SetColorAndOpacity(FactoryUI::Amber);
 }
 
-bool UOwnedCoreWidget::SetSources(UCoreComponent* Core, UAbilitySystemComponent* ASC, FKey InToggleKey)
+bool UOwnedCoreWidget::SetSources(UCoreComponent* Core, FKey InToggleKey)
 {
-	if (!IsValid(Core) || !IsValid(ASC) || !ItemWidgetClass || ItemWidgetClass->HasAnyClassFlags(CLASS_Abstract)) return false;
+	if (!IsValid(Core) || !ItemWidgetClass || ItemWidgetClass->HasAnyClassFlags(CLASS_Abstract)) return false;
 	ReleaseSources();
 	CoreSource = Core;
-	AttributeSource = ASC;
 	ToggleKey = InToggleKey;
 	SelectedByCategory.Reset();
 	Core->OnCoreChanged.AddDynamic(this, &ThisClass::HandleCoreChanged);
-	const TArray<FGameplayAttribute> Attributes = {
-		UCombatAttributeSet::GetMaxHealthAttribute(), UCombatAttributeSet::GetCriticalChanceAttribute(),
-		UWeaponSlotAttributeSet::GetSharedMaxEnergyAttribute(), UCombatAttributeSet::GetMoveSpeedMultiplierAttribute(),
-		UCombatAttributeSet::GetDamageDealtMultiplierAttribute(), UCombatAttributeSet::GetDamageTakenMultiplierAttribute()
-	};
-	for (const FGameplayAttribute& Attribute : Attributes)
-	{
-		AttributeSubscriptions.Add(Attribute, ASC->GetGameplayAttributeValueChangeDelegate(Attribute).AddWeakLambda(this,
-			[this](const FOnAttributeChangeData&) { RefreshStats(); }));
-	}
 	RefreshCores(true);
-	RefreshStats();
 	return true;
 }
 
@@ -174,43 +160,26 @@ void UOwnedCoreWidget::SelectCore(FName CoreId)
 	if (NextScroll) NextScroll->ScrollToStart();
 }
 
+void UOwnedCoreWidget::MoveSelection(int32 Offset)
+{
+	TArray<FName> Ids;
+	for (const FOwnedCoreEntry& Entry : Entries)
+		if (Entry.CoreData && Entry.CoreData->CoreCategory == ActiveCategory) Ids.Add(Entry.CoreData->CoreId);
+	if (Ids.IsEmpty()) return;
+	const int32 Current = Ids.IndexOfByKey(SelectedByCategory.FindRef(ActiveCategory));
+	const int32 Next = Current == INDEX_NONE ? 0 : (Current + Offset + Ids.Num()) % Ids.Num();
+	SelectCore(Ids[Next]);
+}
+
 void UOwnedCoreWidget::HandleCoreChanged(FName CoreId, int32 OldLevel, int32 NewLevel)
 {
 	RefreshCores();
 }
 
-void UOwnedCoreWidget::RefreshStats()
-{
-	UAbilitySystemComponent* ASC = AttributeSource.Get();
-	if (!ASC) return;
-	FNumberFormattingOptions Options;
-	Options.UseGrouping = false;
-	Options.MaximumFractionalDigits = 1;
-	const auto Show = [&](UTextBlock* Text, const FGameplayAttribute& Attribute, bool bPercent, bool bMultiplier)
-	{
-		if (!ASC->HasAttributeSetForAttribute(Attribute)) { Text->SetText(LOCTEXT("Unavailable", "—")); return; }
-		const float RawValue = ASC->GetNumericAttribute(Attribute);
-		const float Display = bMultiplier ? (RawValue - 1.f) * 100.f : (bPercent ? RawValue * 100.f : RawValue);
-		const FString Number = FText::AsNumber(FMath::IsNearlyZero(Display) ? 0.f : Display, &Options).ToString();
-		Text->SetText(FText::FromString((bMultiplier && Display >= 0.f ? TEXT("+") : TEXT("")) + Number + (bPercent ? TEXT("%") : TEXT(""))));
-	};
-	// 코어 외의 효과도 포함하도록 ASC의 현재 최종 스탯을 표시한다.
-	Show(MaxHealthValue, UCombatAttributeSet::GetMaxHealthAttribute(), false, false);
-	Show(CriticalChanceValue, UCombatAttributeSet::GetCriticalChanceAttribute(), true, false);
-	Show(MaxEnergyValue, UWeaponSlotAttributeSet::GetSharedMaxEnergyAttribute(), false, false);
-	Show(MoveSpeedValue, UCombatAttributeSet::GetMoveSpeedMultiplierAttribute(), true, true);
-	Show(DamageDealtValue, UCombatAttributeSet::GetDamageDealtMultiplierAttribute(), true, true);
-	Show(DamageTakenValue, UCombatAttributeSet::GetDamageTakenMultiplierAttribute(), true, true);
-}
-
 void UOwnedCoreWidget::ReleaseSources()
 {
 	if (CoreSource.IsValid()) CoreSource->OnCoreChanged.RemoveDynamic(this, &ThisClass::HandleCoreChanged);
-	if (UAbilitySystemComponent* ASC = AttributeSource.Get())
-		for (const auto& Subscription : AttributeSubscriptions) ASC->GetGameplayAttributeValueChangeDelegate(Subscription.Key).Remove(Subscription.Value);
-	AttributeSubscriptions.Reset();
 	CoreSource.Reset();
-	AttributeSource.Reset();
 }
 
 void UOwnedCoreWidget::Close()
@@ -221,13 +190,28 @@ void UOwnedCoreWidget::Close()
 FReply UOwnedCoreWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, const FKeyEvent& Event)
 {
 	const FKey Key = Event.GetKey();
-	if (Key == EKeys::Escape || Key == ToggleKey)
+	if (Key == EKeys::Escape || GamepadUI::IsBack(Key) || Key == ToggleKey)
 	{
 		if (!Event.IsRepeat())
 		{
 			FactoryUI::PlayUISound(FactoryUI::ESound::Cancel);
 			Close();
 		}
+		return FReply::Handled();
+	}
+	// 패드: LB/RB 분류 탭, 십자키·왼쪽 스틱으로 코어 선택.
+	if (const int32 Step = GamepadUI::ShoulderStep(Key))
+	{
+		if (!Event.IsRepeat())
+		{
+			FactoryUI::PlayUISound(FactoryUI::ESound::Click);
+			SetActiveCategory(ActiveCategory == ECoreCategory::Ability ? ECoreCategory::Stat : ECoreCategory::Ability);
+		}
+		return FReply::Handled();
+	}
+	if (const int32 Step = GamepadUI::HorizontalStep(Key) + GamepadUI::VerticalStep(Key))
+	{
+		MoveSelection(Step);
 		return FReply::Handled();
 	}
 	if (Key == EKeys::SpaceBar || Key == EKeys::Enter || Key == EKeys::Tab

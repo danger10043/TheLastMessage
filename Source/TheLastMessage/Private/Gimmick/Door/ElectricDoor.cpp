@@ -114,6 +114,12 @@ void AElectricDoor::CloseDoor()
 
 void AElectricDoor::ApplyActiveState(bool bNewActive)
 {
+    // 개방을 유지하는 문은 스위치 해제/기믹 비활성화로도 다시 닫히지 않는다.
+    if (!bNewActive && bKeepOpenAfterActivation && bOpenLatched)
+    {
+        return;
+    }
+
     // 사용 불가 상태에서는 문을 여는 요청 차단
     // 문을 닫는 요청은 허용
     if (!bIsEnabled && bNewActive)
@@ -125,6 +131,12 @@ void AElectricDoor::ApplyActiveState(bool bNewActive)
     if (bIsActive == bNewActive)
     {
         return;
+    }
+
+    // 연결 장치 알림에서 닫기 신호가 되돌아와도 개방이 취소되지 않게 먼저 기록한다.
+    if (bNewActive && bKeepOpenAfterActivation)
+    {
+        bOpenLatched = true;
     }
 
     // 활성 상태 기록 및 연결 장치 알림
@@ -187,6 +199,8 @@ void AElectricDoor::BeginPlay()
     // BeginPlay 이전에 활성 신호를 받은 경우도 반영
     const float InitialPosition = bIsActive ? 1.0f : 0.0f;
 
+    bOpenLatched = bKeepOpenAfterActivation && bIsActive;
+
     DoorTimeline->SetPlaybackPosition(InitialPosition, false, true);
 }
 
@@ -201,8 +215,23 @@ void AElectricDoor::UpdateDoorTransform(float Alpha)
     DoorMesh->SetRelativeTransform(NewTransform);
 }
 
+void AElectricDoor::RestoreProgress(const FProgressActorState& State)
+{
+    // 이전 체크포인트로 돌아갈 때는 현재 플레이에서 기록한 개방 고정도 되돌린다.
+    // 열린 문은 bActive에 이미 기록되므로 기존 저장 형식을 그대로 사용한다.
+    bOpenLatched = bKeepOpenAfterActivation && State.bActive;
+    Super::RestoreProgress(State);
+}
+
 void AElectricDoor::RefreshRestoredState()
 {
+    // 플래그/연결 장치의 즉시 동기화는 ApplyActiveState를 거치지 않으므로 여기서도 유지한다.
+    if (bKeepOpenAfterActivation)
+    {
+        bOpenLatched |= bIsActive;
+        bIsActive = bOpenLatched;
+    }
+
     DoorTimeline->Stop();
     DoorTimeline->SetPlaybackPosition(bIsActive ? 1.0f : 0.0f, false, false);
     UpdateDoorTransform(bIsActive ? 1.0f : 0.0f);

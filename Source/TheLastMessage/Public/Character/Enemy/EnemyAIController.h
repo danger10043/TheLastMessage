@@ -39,6 +39,9 @@ public:
 	/** 이동을 멈추고 BT 실행을 일시정지한다(돌진처럼 몬스터가 직접 움직임을 제어하는 동안). */
 	void PauseEnemyAI();
 
+	/** PauseEnemyAI로 일시정지된 상태인지 */
+	bool IsAIPaused() const { return bAIPaused; }
+
 	/** PauseEnemyAI로 멈춘 BT를 다시 실행한다. 일시정지 상태가 아니면 아무것도 하지 않는다. */
 	void ResumeEnemyAI();
 

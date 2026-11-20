@@ -16,6 +16,8 @@ class THELASTMESSAGE_API UOwnedCoreViewerSubsystem : public ULocalPlayerSubsyste
 	GENERATED_BODY()
 public:
 	UOwnedCoreViewerSubsystem();
+	FKey GetDefaultToggleKey() const { return ToggleKey; }
+	void RefreshToggleBinding();
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
 	virtual void PlayerControllerChanged(APlayerController* NewPlayerController) override;

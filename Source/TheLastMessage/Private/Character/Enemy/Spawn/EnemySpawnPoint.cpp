@@ -1,5 +1,6 @@
 #include "Character/Enemy/Spawn/EnemySpawnPoint.h"
 #include "Character/Enemy/Spawn/EnemySpawnSubsystem.h"
+#include "Character/Enemy/SentryEnemy.h"
 #include "Framework/ActorPoolSubsystem.h"
 #include "Components/ArrowComponent.h"
 #include "Components/BoxComponent.h"
@@ -93,6 +94,13 @@ void AEnemySpawnPoint::UpdateStreaming(const FVector& PlayerLocation)
 
 void AEnemySpawnPoint::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	// 방 레벨이 내려가면서 스포너만 사라지면 이 스포너가 낸 몬스터가 주인 없이 남아, 바닥(충돌)이 없는 허공으로 떨어진다.
+	// 해제 반경을 크게 잡으면 방이 내려가기 전에 거리로 회수되지 않으므로, 사라질 때 함께 회수한다.
+	if (EndPlayReason == EEndPlayReason::RemovedFromWorld)
+	{
+		DespawnEnemies();
+	}
+
 	if (UWorld* World = GetWorld())
 	{
 		if (UEnemySpawnSubsystem* Subsystem = World->GetSubsystem<UEnemySpawnSubsystem>())
@@ -157,8 +165,16 @@ void AEnemySpawnPoint::BuildSlots()
 		const FEnemySpawnEntry& Entry = Entries[EntryIndices[Index]];
 
 		const float SlotStart = -SpawnRangeX + SlotWidth * Index;
-		const float OffsetX = FMath::FRandRange(SlotStart + Margin, SlotStart + SlotWidth - Margin);
-		const float OffsetZ = SpawnRangeZ > 0.f ? FMath::FRandRange(-SpawnRangeZ, SpawnRangeZ) : 0.f;
+		float OffsetX = FMath::FRandRange(SlotStart + Margin, SlotStart + SlotWidth - Margin);
+		float OffsetZ = SpawnRangeZ > 0.f ? FMath::FRandRange(-SpawnRangeZ, SpawnRangeZ) : 0.f;
+
+		// 센트리는 벽·천장에 붙여 두는 고정 포탑이라, 범위 안에서 무작위로 흩으면 벽 속이나 허공에 스폰된다.
+		// 스폰 포인트를 둔 자리 그대로 스폰한다.
+		if (Entry.EnemyClass->IsChildOf(ASentryEnemy::StaticClass()))
+		{
+			OffsetX = 0.f;
+			OffsetZ = 0.f;
+		}
 
 		FSpawnSlot& Slot = Slots.AddDefaulted_GetRef();
 		Slot.EnemyClass = Entry.EnemyClass;

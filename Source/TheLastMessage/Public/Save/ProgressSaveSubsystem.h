@@ -29,7 +29,7 @@ public:
 	UFUNCTION(BlueprintPure, Category="Save") FProgressSlotInfo GetSlotInfo(int32 SlotId) const;
 	UFUNCTION(BlueprintCallable, Category="Save") bool ContinueGame(int32 SlotId);
 	/** Re-read the current slot without permitting a slot switch; failure preserves the session. */
-	UFUNCTION(BlueprintCallable, Category="Save") bool ReloadActiveProgress();
+	UFUNCTION(BlueprintCallable, Category = "Save") bool ReloadActiveProgress(bool bFromDeath = false);
 	/** Explicitly return to menu before selecting another playthrough. Fails during a write. */
 	UFUNCTION(BlueprintCallable, Category="Save") bool EndSession();
 	/** Both checkpoint and autosave must call this, after updating the checkpoint snapshot. */
@@ -38,12 +38,21 @@ public:
 	bool RestorePlayerIfPending(APlayerBase* Player);
 	bool RestoreCheckpointInPlace(APlayerBase* Player);
 	void QueueGimmickRestore(class AGimmickBase* Gimmick);
+	/**
+	 * 방 레벨이 내려가기 직전에 그 방 기믹의 현재 상태를 세션 메모리에 저장한다(체크포인트 파일과는 별개).
+	 * 같은 방이 다시 올라오면 체크포인트 기록보다 이 상태를 먼저 쓴다. 체크포인트를 저장하면 파일에 합쳐지고,
+	 * 슬롯을 다시 읽거나(사망·이어하기) 새로 시작하면 버려진다.
+	 */
+	void CaptureGimmickForUnload(class AGimmickBase* Gimmick);
 	bool IsRestoringGimmicks() const { return bRestoringGimmicks; }
 	void ApplyCheckpointState(APlayerCheckpoint* Checkpoint) const;
 	bool IsRestoringProgress() const { return bRestorePending || bRestoring; }
 	bool IsLoadedSession() const { return bLoadedSession; }
 	bool IsLoadedMap(FName Map) const { return bLoadedSession && LoadedMap == Map; }
 	bool HasPlayedCinematic(FName Map, FName Cinematic) const;
+	bool IsDeathCheckpointRetry(FName Map) const { return bDeathCheckpointReload && IsLoadedMap(Map); }
+	bool HasPlayedCinematicOnRetry(FName Id) const { return RetryPlayedCinematics.Contains(Id); }
+	void MarkCinematicPlayedOnRetry(FName Id) { RetryPlayedCinematics.Add(Id); }
 	bool MarkCinematicPlayed(FName Map, FName Cinematic);
 	UFUNCTION(BlueprintPure, Category="Save") int32 GetActiveSlot() const { return ActiveSlot; }
 	UFUNCTION(BlueprintPure, Category="Save") bool IsSaving() const { return bSaving || PendingCheckpointSnapshot != nullptr || bCinematicHistoryDirty; }
@@ -75,10 +84,14 @@ private:
 	bool bRestoring = false;
 	bool bLoadedSession = false;
 	FName LoadedMap;
+	bool bDeathCheckpointReload = false;
+	TSet<FName> RetryPlayedCinematics;
 	bool bCinematicHistoryDirty = false;
 	UPROPERTY(Transient) TObjectPtr<UProgressSaveGame> PendingCheckpointSnapshot;
 	void WriteCheckpointSnapshot(UProgressSaveGame* Snapshot);
 	TArray<TWeakObjectPtr<class AGimmickBase>> PendingGimmickRestores;
+	/** 맵 이름 -> 기믹 고유 ID -> 방이 내려가기 직전의 상태 */
+	TMap<FName, TMap<FGuid, FProgressActorState>> UnloadedGimmickStates;
 	void RestoreQueuedGimmicks();
 	bool bRestoringGimmicks = false;
 };

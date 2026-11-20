@@ -8,6 +8,7 @@ class THELASTMESSAGE_API ULoadingTransitionSubsystem : public UGameInstanceSubsy
 {
  GENERATED_BODY()
 public:
+ ULoadingTransitionSubsystem();
  virtual void Initialize(FSubsystemCollectionBase& Collection) override;
  virtual void Deinitialize() override;
  bool BeginDeath(class APlayerBase* Player, float Delay);
@@ -18,10 +19,14 @@ public:
 private:
  void PreLoad(const FString& Map);
  void OnMapLoaded(UWorld* World);
+ void TickPrologue(UWorld* World, double Now);
+ UFUNCTION() void FinishPrologue();
  bool Tick(float Delta);
  FDelegateHandle PreHandle, PostHandle;
  FTSTicker::FDelegateHandle TickHandle;
  TSharedPtr<class SWidget> Overlay;
+ UPROPERTY() TSubclassOf<class UUserWidget> LoadingScreenClass;
+ UPROPERTY(Transient) TObjectPtr<class UUserWidget> LoadingScreen;
  TWeakObjectPtr<class APlayerBase> DyingPlayer;
  TWeakObjectPtr<class APlayerBase> PendingDeathPlayer;
  TWeakObjectPtr<class APlayerBase> LockedSpawnPlayer;

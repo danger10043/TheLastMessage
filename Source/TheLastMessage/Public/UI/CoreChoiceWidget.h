@@ -172,6 +172,8 @@ private:
 
 	/** 방향키 또는 마우스로 가리킨 카드의 위치. 강조 표시와 카드 순번 표시에 사용한다. */
 	int32 ActiveCardIndex = 0;
+	/** 이 시각(FPlatformTime) 전에는 패드 A로 카드를 고르지 않는다. 점프하던 A가 열리자마자 카드를 고르는 것을 막는다. */
+	double GamepadAcceptReadyTime = 0.0;
 	/** 이 화면이 플레이어 입력을 UI로 전환했는지 기록한다. 중복 복구를 막는 데 사용한다. */
 	bool bCapturedInput = false;
 	/** 입력을 가져온 컨트롤러와 월드. 맵이 바뀐 뒤 새 월드의 입력·일시정지를 건드리지 않는다. */

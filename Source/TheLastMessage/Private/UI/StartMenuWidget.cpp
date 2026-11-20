@@ -1,4 +1,7 @@
 #include "UI/StartMenuWidget.h"
+#include "UI/GamepadUIKeys.h"
+#include "UI/GameKeySettingsSubsystem.h"
+#include "Engine/LocalPlayer.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/Border.h"
 #include "Components/Button.h"
@@ -9,6 +12,8 @@
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
 #include "Components/SizeBox.h"
+#include "Components/ScrollBox.h"
+#include "Framework/Application/SlateApplication.h"
 #include "Components/TextBlock.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
@@ -133,6 +138,28 @@ bool UStartMenuWidget::AddCreditsLayout(UWidgetTree* Tree)
 	return true;
 }
 
+void UStartMenuWidget::UpdateCreditsNotice(UWidgetTree* Tree)
+{
+	if (auto* Notice = Cast<UTextBlock>(Tree->FindWidget(TEXT("FontCreditsText"))))
+	{
+		Notice->SetText(NSLOCTEXT("StartMenu", "ThirdPartyCredits",
+			"사용 글꼴 · SIL Open Font License 1.1\n"
+			"Orbit · © 2022 The Orbit Project Authors\n"
+			"Black Han Sans · © 2015 The Black Han Sans Project Authors\n"
+			"Pretendard, Pretendard JP · © 2021 Kil Hyung-jin\n"
+			"Russo One · © 2011-2012 Jovanny Lemonad\n"
+			"Exo 2 · © 2013 The Exo 2 Project Authors\n"
+			"Dela Gothic One · © 2020 The Dela Gothic Project Authors\n"
+			"Noto Sans JP/SC/TC · © 2014-2021 Adobe\n"
+			"Reserved Font Names: Pretendard, Russo"));
+		Notice->SetAutoWrapText(true);
+		// 줄이 늘어났으므로 크레딧 화면 안에 들어가도록 글자를 조금 줄인다.
+		FSlateFontInfo Font = Notice->GetFont();
+		Font.Size = FMath::Min(Font.Size, 16.f);
+		Notice->SetFont(Font);
+	}
+}
+
 bool UStartMenuWidget::AddConfirmationLayout(UWidgetTree* Tree)
 {
 	UWidgetSwitcher* Switcher = Cast<UWidgetSwitcher>(Tree->FindWidget(TEXT("Pages")));
@@ -166,6 +193,10 @@ void UStartMenuWidget::NativeConstruct()
 	MENU_CONTROL(SelectionText, UTextBlock);
 	MENU_CONTROL(ConfirmText, UTextBlock); MENU_CONTROL(ConfirmButton, UButton); MENU_CONTROL(CancelButton, UButton);
 #undef MENU_CONTROL
+	if (const auto* Credits = Cast<UUserWidget>(WidgetTree->FindWidget(TEXT("CreditsPage"))))
+		CreditsBackButton = Cast<UButton>(Credits->GetWidgetFromName(TEXT("CreditsBackButton")));
+	else
+		UpdateCreditsNotice(WidgetTree);
 	SettingsButton = Cast<UButton>(WidgetTree->FindWidget(TEXT("StartSettingsButton")));
 	if (SettingsButton) SettingsButton->OnClicked.AddUniqueDynamic(this, &ThisClass::OpenSettings);
 	if (NewGameButton) NewGameButton->OnClicked.AddUniqueDynamic(this, &UStartMenuWidget::ShowNewGameSlots);
@@ -330,7 +361,19 @@ void UStartMenuWidget::ShowError(const FText& Message)
 FReply UStartMenuWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, const FKeyEvent& Event)
 {
 	const FKey Key = Event.GetKey();
-	if (Pages && (Key == EKeys::Up || Key == EKeys::Down))
+	// 패드 B는 버튼보다 먼저 여기서 받아 Esc와 똑같이 처리한다(버블링 단계까지 오지 않는 경우가 있었다).
+	if (GamepadUI::IsBack(Key))
+	{
+		const FKeyEvent EscapeEvent(EKeys::Escape, Event.GetModifierKeys(), Event.GetUserIndex(), Event.IsRepeat(), 0, 0);
+		NativeOnKeyDown(Geometry, EscapeEvent);
+		return FReply::Handled();
+	}
+	if (Key == EKeys::SpaceBar && Pages && Pages->GetActiveWidget() == WidgetTree->FindWidget(TEXT("CreditsPage")))
+	{
+		bCreditsSpaceHeld = true;
+		return FReply::Handled();
+	}
+	if (Pages && (Key == EKeys::Up || Key == EKeys::Down || GamepadUI::VerticalStep(Key) != 0))
 	{
 		if (bWorking) return FReply::Handled();
 		TArray<UButton*> Buttons;
@@ -345,7 +388,7 @@ FReply UStartMenuWidget::NativeOnPreviewKeyDown(const FGeometry& Geometry, const
 		int32 Current = INDEX_NONE;
 		for (int32 Index = 0; Index < Buttons.Num(); ++Index)
 			if (Buttons[Index] && Buttons[Index]->HasAnyUserFocus()) { Current = Index; break; }
-		const int32 Direction = Key == EKeys::Down ? 1 : -1;
+		const int32 Direction = (Key == EKeys::Down || GamepadUI::VerticalStep(Key) > 0) ? 1 : -1;
 		if (Current == INDEX_NONE) Current = Direction > 0 ? Buttons.Num() - 1 : 0;
 		for (int32 Step = 1; Step <= Buttons.Num(); ++Step)
 		{
@@ -374,4 +417,54 @@ FReply UStartMenuWidget::NativeOnKeyDown(const FGeometry& Geometry, const FKeyEv
 	return Super::NativeOnKeyDown(Geometry, Event);
 }
 
-void UStartMenuWidget::NativeTick(const FGeometry& Geometry, float DeltaTime) { Super::NativeTick(Geometry, DeltaTime); FactoryMenuStyle::UpdateFocus(WidgetTree); }
+FReply UStartMenuWidget::NativeOnKeyUp(const FGeometry& Geometry, const FKeyEvent& Event)
+{
+	if (Event.GetKey() == EKeys::SpaceBar && bCreditsSpaceHeld)
+	{
+		bCreditsSpaceHeld = false;
+		return FReply::Handled();
+	}
+	return Super::NativeOnKeyUp(Geometry, Event);
+}
+
+void UStartMenuWidget::NativeTick(const FGeometry& Geometry, float DeltaTime)
+{
+	Super::NativeTick(Geometry, DeltaTime);
+	FactoryMenuStyle::UpdateFocus(WidgetTree);
+	// 패드 조작 중 포커스를 잃으면 지금 페이지의 첫 버튼으로 되돌린다.
+	if (!SettingsScreen && !bWorking && Pages && !HasAnyUserFocus() && !HasFocusedDescendants())
+		if (const auto* Settings = ULocalPlayer::GetSubsystem<UGameKeySettingsSubsystem>(GetOwningLocalPlayer()); Settings && Settings->IsUsingGamepad())
+		{
+			UButton* First = nullptr;
+			switch (Pages->GetActiveWidgetIndex())
+			{
+			case 0: First = NewGameButton; break;
+			case 1: First = Slot1Button; break;
+			case 2: First = CancelButton; break;
+			case 3: First = CreditsBackButton; break;
+			default: break;
+			}
+			if (First) First->SetKeyboardFocus();
+		}
+
+	auto* Credits = Cast<UUserWidget>(Pages ? Pages->GetActiveWidget() : nullptr);
+	if (!Credits || Credits->GetFName() != TEXT("CreditsPage"))
+	{
+		bCreditsSpaceHeld = false;
+		return;
+	}
+
+	if (!HasAnyUserFocus() && !HasFocusedDescendants())
+		bCreditsSpaceHeld = false;
+
+	const bool bLeftMouseHeld = FSlateApplication::IsInitialized() &&
+		FSlateApplication::Get().GetPressedMouseButtons().Contains(EKeys::LeftMouseButton);
+	if (!bCreditsSpaceHeld && !bLeftMouseHeld) return;
+
+	if (auto* Scroll = Cast<UScrollBox>(Credits->GetWidgetFromName(TEXT("CreditsScroll"))))
+	{
+		// WBP_StartMenu supplies the normal 40 units/sec and handles looping.
+		constexpr float ExtraScrollSpeed = 120.0f;
+		Scroll->SetScrollOffset(FMath::Min(Scroll->GetScrollOffset() + ExtraScrollSpeed * DeltaTime, Scroll->GetScrollOffsetOfEnd()));
+	}
+}

@@ -27,4 +27,22 @@ public:
 	static bool ConfigureCompositeFont(UFont* Font,
 		const TArray<FName>& TypefaceNames, const TArray<UFontFace*>& Faces,
 		const TArray<FName>& FallbackNames, const TArray<UFontFace*>& FallbackFaces);
+
+	/**
+	 * Font 에 Sub-Font Family 를 하나 추가한다. ConfigureCompositeFont 가 Sub-Font 를 모두 지우므로 그 다음에 부른다.
+	 * Cultures 는 세미콜론으로 구분한 컬처 목록(예: "ja", "zh-Hans"). 비우면 언어와 상관없이 문자 범위로만 고른다.
+	 * CharacterRanges 의 각 값은 (첫 코드포인트, 마지막 코드포인트) 이며 둘 다 포함한다.
+	 * TypefaceNames[i] 이름(기본 서체의 Regular/Bold 등과 같은 이름)으로 Faces[i] 를 넣는다. 성공하면 true.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "TLM|Fonts", meta = (DevelopmentOnly))
+	static bool AddSubFont(UFont* Font, FName EditorName, const FString& Cultures, const TArray<FIntPoint>& CharacterRanges,
+		const TArray<FName>& TypefaceNames, const TArray<UFontFace*>& Faces);
+
+	/**
+	 * 폰트 파일(ttf/otf)로 Font Face 에셋을 만들어 저장한다(힌팅 Default, 필요할 때 불러오기 LazyLoad).
+	 * 엔진의 폰트 가져오기는 Slate 앱이 있어야 해서 커맨드렛(-run=pythonscript)에서는 멈춘다. 이 함수는 Slate 없이도 된다.
+	 * AssetPath 예: /Game/Main/UI/Fonts/Faces/FF_NotoSansSC_Regular. 실패하면 nullptr.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "TLM|Fonts", meta = (DevelopmentOnly))
+	static UFontFace* ImportFontFace(const FString& AssetPath, const FString& SourceFile);
 };

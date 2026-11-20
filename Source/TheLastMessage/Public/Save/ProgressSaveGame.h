@@ -28,10 +28,45 @@ struct FProgressRoomFog
 	UPROPERTY(SaveGame, BlueprintReadWrite) TArray<uint8> Bits;
 };
 
+/** 방 하나의 지도 지형. 방이 내려가 있어도 지도에 그릴 수 있게 가 본 방의 지형을 저장한다. 네 값씩(MinX, MinZ, MaxX, MaxZ) 묶어 이어 붙인다. */
+USTRUCT(BlueprintType)
+struct FProgressRoomSurfaces
+{
+	GENERATED_BODY()
+	UPROPERTY(SaveGame, BlueprintReadWrite) TArray<float> Boxes;
+};
+
+/** 방 하나의 지도 리전(범위와 이름). 리전 액터가 방 레벨 안에 있어서, 방이 내려가면 지도에서 방이 사라지지 않게 가 본 방의 리전을 저장한다. 범위는 네 값씩(MinX, MinZ, MaxX, MaxZ) 이어 붙인다. */
+USTRUCT(BlueprintType)
+struct FProgressRoomRegions
+{
+	GENERATED_BODY()
+	UPROPERTY(SaveGame, BlueprintReadWrite) TArray<float> Boxes;
+	UPROPERTY(SaveGame, BlueprintReadWrite) FText Name;
+	UPROPERTY(SaveGame, BlueprintReadWrite) FSoftObjectPath Silhouette;
+};
+
+/** 지도에 그릴 체크포인트 정보. 체크포인트가 방 레벨 안에 있어서, 방이 내려가도 지도에 아이콘이 남게 가 본 체크포인트를 저장한다. */
+USTRUCT(BlueprintType)
+struct FProgressCheckpointMarker
+{
+	GENERATED_BODY()
+	UPROPERTY(SaveGame, BlueprintReadWrite) FVector Location = FVector::ZeroVector;
+	UPROPERTY(SaveGame, BlueprintReadWrite) FVector RespawnLocation = FVector::ZeroVector;
+	UPROPERTY(SaveGame, BlueprintReadWrite) FRotator RespawnRotation = FRotator::ZeroRotator;
+	UPROPERTY(SaveGame, BlueprintReadWrite) bool bAllowFastTravel = false;
+};
+
 USTRUCT(BlueprintType)
 struct FProgressMapState
 {
 	GENERATED_BODY()
+	/** 체크포인트 고유 ID -> 지도 아이콘 정보(가 본 체크포인트만). 방이 내려가 있어도 지도에 아이콘을 그리고 빠른 이동에 쓴다. */
+	UPROPERTY(SaveGame, BlueprintReadWrite) TMap<FGuid, FProgressCheckpointMarker> CheckpointMarkers;
+	/** 방 이름 -> 그 방의 지도 리전. 방 레벨이 내려가 있어도 지도에 방을 그리는 데 쓴다. */
+	UPROPERTY(SaveGame, BlueprintReadWrite) TMap<FName, FProgressRoomRegions> RoomRegions;
+	/** 방 이름 -> 그 방의 지도 지형. 방 레벨이 내려가 있을 때 지도에 쓴다. 없는 방은 로드된 동안에 새로 읽는다. */
+	UPROPERTY(SaveGame, BlueprintReadWrite) TMap<FName, FProgressRoomSurfaces> RoomSurfaces;
 	/** 들어가 본 방. 지도에 방 이름이 표시된다. 칸 기록(RevealedCells)이 없는 방은 방 전체가 밝혀진 것으로 본다(이전 세이브 호환). */
 	UPROPERTY(SaveGame, BlueprintReadWrite) TSet<FName> ExploredRooms;
 	/** 방 이름 -> 그 방에서 시야가 닿은 칸. */

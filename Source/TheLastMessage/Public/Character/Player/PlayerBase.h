@@ -247,6 +247,7 @@ public:
 
 	UFUNCTION(BlueprintPure, Category="Player|Death")
 	bool IsDead() const;
+	void SetAppearanceTint(class UMaterialInterface* TintMaterial, const FLinearColor& Color);
 
 	UPROPERTY(BlueprintAssignable, Category="Player|Events")
 	FOnPlayerDiedSignature OnPlayerDied;
@@ -485,6 +486,8 @@ protected:
 	FTimerHandle EnergyRechargeTimerHandle;
 
 private:
+	UPROPERTY(Transient) TObjectPtr<class UMaterialInterface> UntintedPlayerMaterial;
+	UPROPERTY(Transient) TObjectPtr<class UMaterialInstanceDynamic> PlayerTintInstance;
 	UPROPERTY(EditDefaultsOnly, Category="Player|Audio", meta=(ShowOnlyInnerProperties))
 	FPlayerMovementAudio MovementAudio;
 
@@ -560,6 +563,21 @@ private:
 	// 클라이언트가 취소 요청을 매 프레임 보내지 않도록 마지막 요청 시각을 기억한다.
 	double LastAttackCancelRequestTime = -1.0;
 	void UpdateMouseAim();
+	/** 패드 조준: 오른쪽 스틱으로 조준 커서를 마우스처럼 화면 어디로든 움직인다. 조준을 처리했으면 true. */
+	bool UpdateGamepadAim(APlayerController& PC);
+	/** 오른쪽 스틱이 이보다 덜 기울면 커서가 움직이지 않는다. */
+	UPROPERTY(EditDefaultsOnly, Category="Player|Input|Gamepad", meta=(ClampMin="0.05", ClampMax="0.9"))
+	float GamepadAimDeadZone = 0.2f;
+	/** 스틱을 끝까지 기울였을 때 커서 속도(초당 화면 높이 배수). 살짝 기울이면 느리게 움직인다. */
+	UPROPERTY(EditDefaultsOnly, Category="Player|Input|Gamepad", meta=(ClampMin="0.1", ClampMax="5.0"))
+	float GamepadCursorSpeed = 1.2f;
+	bool bGamepadAimActive = false;
+	/** 패드 커서를 아직 놓지 않았으면 false. 처음에는 캐릭터 앞쪽에 놓는다. */
+	bool bGamepadCursorPlaced = false;
+	FVector2D LastGamepadCursorPosition = FVector2D::ZeroVector;
+	int32 GamepadCursorMismatchFrames = 0;
+	uint64 GamepadAimFrame = 0;
+	bool bGamepadAimHandledThisFrame = false;
 	bool SetAimTarget(FVector WorldPoint);
 	FVector GetAimPlaneNormal() const;
 	UFUNCTION(Server, Unreliable)

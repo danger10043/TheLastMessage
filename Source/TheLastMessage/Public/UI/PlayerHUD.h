@@ -27,6 +27,24 @@ public:
 	void SetPlayerUIVisible(bool bVisible);
 	UFUNCTION(BlueprintPure, Category="Player UI") UPlayerStatusWidget* GetStatusWidget() const { return StatusWidget; }
 	UFUNCTION(BlueprintPure, Category="Player UI") UWeaponChargeWidget* GetChargeWidget() const { return ChargeWidget; }
+
+	void ShowLaserPuzzleIntro();
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player UI|Boss")
+	TSubclassOf<class UBossPuzzleIntroWidget> LaserPuzzleIntroWidgetClass;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UBossPuzzleIntroWidget> LaserPuzzleIntroWidget;
+
+	void ShowCorePuzzleIntro();
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Player UI|Boss")
+	TSubclassOf<class UBossPuzzleIntroWidget> CorePuzzleIntroWidgetClass;
+
+	UPROPERTY(Transient)
+	TObjectPtr<class UBossPuzzleIntroWidget> CorePuzzleIntroWidget;
+
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -47,7 +65,9 @@ private:
 	void DrawDamageVignette();
 	double DamageVignetteStartTime = -1.0;
 	TWeakObjectPtr<APawn> DamageVignettePawn;
-	UPROPERTY() TObjectPtr<UFont> RoomTitleFont;
+	UPROPERTY(EditDefaultsOnly, Category="Player UI") TSubclassOf<class UUserWidget> RoomTitleClass;
+ UPROPERTY(Transient) TObjectPtr<class UUserWidget> RoomTitleWidget;
+ UPROPERTY(Transient) TObjectPtr<class UWidgetAnimation> RoomTitleAnimation;
 	TWeakObjectPtr<APawn> RoomTitlePawn;
 	FName AnnouncedRoom;
 	double RoomTitleEndTime = 0.0;

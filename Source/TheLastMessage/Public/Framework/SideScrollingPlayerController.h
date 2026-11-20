@@ -23,6 +23,38 @@ class ASideScrollingPlayerController : public APlayerController
 	GENERATED_BODY()
 public:
 	ASideScrollingPlayerController();
+
+	UFUNCTION(Client, Reliable)
+	void ClientSetBossSequenceInputBlocked(class ABossMonster* SourceBoss, bool bBlocked);
+
+	UFUNCTION(Client, Reliable)
+	void ClientShowLaserPuzzleIntroWidget();
+
+	UFUNCTION(Client, Reliable)
+	void ClientShowCorePuzzleIntroWidget();
+
+	UFUNCTION(Client, Reliable)
+	void ClientSetBossDeathUIHidden(bool bHideDeathUI);
+
+	bool IsBossSequenceInputBlocked() const { return bBossSequenceInputBlocked; }
+
+protected:
+	virtual void BuildInputStack(TArray<UInputComponent*>& InputStack) override;
+
+private:
+	void ApplyBossSequenceInputBlock(bool bBlocked);
+	TSet<TWeakObjectPtr<class ABossMonster>> BossSequenceInputSources;
+	TSharedPtr<class IInputProcessor> BossSequenceInputProcessor;
+	TWeakObjectPtr<class UCharacterMovementComponent> BossSequenceMovement;
+	uint8 SavedBossSequenceMovementMode = 0;
+	uint8 SavedBossSequenceCustomMode = 0;
+	bool bBossSequenceInputBlocked = false;
+
+	TWeakObjectPtr<class APlayerHUD> BossDeathHUD;
+	bool bBossDeathHUDStateSaved = false;
+	bool bBossDeathPreviousHUDVisible = true;
+
+public:
 	// +추가----
 	virtual void SetPawn(APawn* InPawn) override;
 	// +--------
@@ -39,6 +71,8 @@ public:
 	/** 구역 지도 화면 클래스 */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Area Map", meta=(ToolTip="구역 지도 화면 클래스"))
 	TSubclassOf<UAreaMapWidget> MapWidgetClass;
+public:
+	TSubclassOf<UAreaMapWidget> GetAreaMapWidgetClass() const { return MapWidgetClass; }
 protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	UPROPERTY(Transient) TObjectPtr<UAreaMapWidget> AreaMapWidget;

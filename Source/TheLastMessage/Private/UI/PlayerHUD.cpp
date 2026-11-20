@@ -1,6 +1,14 @@
 #include "UI/PlayerHUD.h"
+#include "Blueprint/UserWidget.h"
+#include "Blueprint/WidgetBlueprintGeneratedClass.h"
+#include "Animation/WidgetAnimation.h"
+#include "MovieScene.h"
+#include "Components/TextBlock.h"
+#include "UObject/ConstructorHelpers.h"
+#include "UI/GameVisualSettingsSubsystem.h"
 #include "UI/PlayerStatusWidget.h"
 #include "UI/WeaponChargeWidget.h"
+#include "Character/Boss/BossPuzzleIntroWidget.h"
 #include "Character/Player/PlayerBase.h"
 #include "Components/CapsuleComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -33,12 +41,69 @@ APlayerHUD::APlayerHUD()
 	PrimaryActorTick.bCanEverTick = true;
 	PrimaryActorTick.bStartWithTickEnabled = true;
 	SaveNotificationClass = USaveNotificationWidget::StaticClass();
+ static ConstructorHelpers::FClassFinder<UUserWidget> TitleBP(TEXT("/Game/Main/UI/WBP_RoomTitle"));
+ RoomTitleClass = TitleBP.Class;
+}
+
+void APlayerHUD::ShowLaserPuzzleIntro()
+{
+	APlayerController* PC = GetOwningPlayerController();
+	if (!IsValid(PC) || !PC->IsLocalController() || !PC->GetLocalPlayer())
+	{
+		return;
+	}
+	if (!LaserPuzzleIntroWidgetClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("HUD에 LaserPuzzleIntroWidgetClass를 지정하세요."));
+		return;
+	}
+
+	if (IsValid(LaserPuzzleIntroWidget.Get()))
+	{
+		LaserPuzzleIntroWidget->RemoveFromParent();
+	}
+	LaserPuzzleIntroWidget = CreateWidget<UBossPuzzleIntroWidget>(
+		PC, LaserPuzzleIntroWidgetClass);
+	if (!IsValid(LaserPuzzleIntroWidget.Get()))
+	{
+		return;
+	}
+
+	LaserPuzzleIntroWidget->AddToViewport(50);
+	LaserPuzzleIntroWidget->PlayIntro();
+}
+
+void APlayerHUD::ShowCorePuzzleIntro()
+{
+	APlayerController* PC = GetOwningPlayerController();
+	if (!IsValid(PC) || !PC->IsLocalController() || !PC->GetLocalPlayer())
+	{
+		return;
+	}
+	if (!CorePuzzleIntroWidgetClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("HUD에 CorePuzzleIntroWidgetClass를 지정하세요."));
+		return;
+	}
+
+	if (IsValid(CorePuzzleIntroWidget.Get()))
+	{
+		CorePuzzleIntroWidget->RemoveFromParent();
+	}
+	CorePuzzleIntroWidget = CreateWidget<UBossPuzzleIntroWidget>(
+		PC, CorePuzzleIntroWidgetClass);
+	if (!IsValid(CorePuzzleIntroWidget.Get()))
+	{
+		return;
+	}
+
+	CorePuzzleIntroWidget->AddToViewport(50);
+	CorePuzzleIntroWidget->PlayIntro();
 }
 
 void APlayerHUD::BeginPlay()
 {
 	Super::BeginPlay();
-	RoomTitleFont = GetDefault<UFactoryUIAssetSettings>()->TitleFont.LoadSynchronous();
 	EnsureWidgets();
 	UpdatePlayerUI();
 }
@@ -47,6 +112,18 @@ void APlayerHUD::EnsureWidgets()
 {
 	APlayerController* PC = GetOwningPlayerController();
 	if (!PC || !PC->IsLocalController() || !PC->GetLocalPlayer()) return;
+ if (!RoomTitleWidget && RoomTitleClass)
+ {
+  RoomTitleWidget = CreateWidget<UUserWidget>(PC, RoomTitleClass);
+  if (RoomTitleWidget)
+  {
+   RoomTitleWidget->AddToPlayerScreen(30);
+   RoomTitleWidget->SetVisibility(ESlateVisibility::Collapsed);
+   if (const auto* WidgetClass = Cast<UWidgetBlueprintGeneratedClass>(RoomTitleWidget->GetClass()))
+    for (UWidgetAnimation* Animation : WidgetClass->Animations)
+     if (Animation && Animation->GetMovieScene()->GetFName() == TEXT("TitleAnimation")) RoomTitleAnimation = Animation;
+  }
+ }
 	if (!SaveNotification && SaveNotificationClass)
 	{
 		SaveNotification = CreateWidget<USaveNotificationWidget>(PC, SaveNotificationClass);
@@ -82,13 +159,13 @@ void APlayerHUD::Tick(float DeltaSeconds)
 	Super::Tick(DeltaSeconds);
 	EnsureWidgets();
 	UpdatePlayerUI();
+ DrawRoomTitle();
 }
 
 void APlayerHUD::DrawHUD()
 {
 	Super::DrawHUD();
 	DrawDamageVignette();
-	DrawRoomTitle();
 }
 
 void APlayerHUD::PlayDamageVignette()
@@ -117,7 +194,7 @@ void APlayerHUD::DrawDamageVignette()
 		return;
 	}
 	const float Fade = 1.0f - FMath::Clamp((Age - 0.035f) / (Duration - 0.035f), 0.0f, 1.0f);
-	const float Opacity = 0.65f * Fade * Fade;
+	const float Opacity = 0.65f * Fade * Fade * UGameVisualSettingsSubsystem::GetFlashIntensity(GetWorld());
 	// A small vertex-colored mesh gives soft edges without a texture or material asset.
 	constexpr int32 Columns = 48, Rows = 32;
 	FCanvasTriangleItem Item(FVector2D::ZeroVector, FVector2D::ZeroVector, FVector2D::ZeroVector, GWhiteTexture);
@@ -161,7 +238,11 @@ void APlayerHUD::DrawRoomTitle()
 		AnnouncedRoom = NAME_None;
 		RoomTitleEndTime = 0.0;
 	}
-	if (!Map || !Canvas || !RoomTitleFont) return;
+	if (!Map || !RoomTitleWidget)
+ {
+  if (RoomTitleWidget) RoomTitleWidget->SetVisibility(ESlateVisibility::Collapsed);
+  return;
+ }
 	const FName RoomId = Map->GetCurrentRoomId();
 	const FAreaMapRoom* Room = Map->GetRooms().FindByPredicate([RoomId](const FAreaMapRoom& Candidate)
 	{
@@ -172,26 +253,20 @@ void APlayerHUD::DrawRoomTitle()
 	{
 		AnnouncedRoom = RoomId;
 		RoomTitleEndTime = Room ? Now + 2.5 : 0.0;
+  if (Room)
+  {
+   if (auto* Name = Cast<UTextBlock>(RoomTitleWidget->GetWidgetFromName(TEXT("RoomName")))) Name->SetText(Room->Name);
+   if (RoomTitleAnimation)
+   {
+    RoomTitleWidget->StopAnimation(RoomTitleAnimation);
+    RoomTitleWidget->PlayAnimation(RoomTitleAnimation, 0.f, 1, EUMGSequencePlayMode::Forward, 0.f);
+   }
+  }
 	}
-	if (!Room || !bShowHUD || Now >= RoomTitleEndTime) return;
-
-	const float Alpha = FMath::Clamp((RoomTitleEndTime - Now) / 0.3, 0.0, 1.0);
-	const float Scale = FMath::Clamp(Canvas->SizeY / 1080.0f, 0.55f, 2.0f);
-	const FSlateFontInfo Font(RoomTitleFont, 32 * Scale, TEXT("Regular"));
-	FCanvasTextItem Title(FVector2D::ZeroVector, Room->Name, Font,
-		FactoryUI::Text.CopyWithNewOpacity(Alpha));
-	const FVector2D TextSize = FSlateApplication::Get().GetRenderer()->GetFontMeasureService()->Measure(Room->Name, Font);
-	const FVector2D Size = TextSize + FVector2D(66, 22) * Scale;
-	const FVector2D Position((Canvas->SizeX - Size.X) * 0.5, Canvas->SizeY * 0.09);
-	FCanvasTileItem Background(Position, Size, FactoryUI::Panel.CopyWithNewOpacity(0.92f * Alpha));
-	Background.BlendMode = SE_BLEND_Translucent;
-	Canvas->DrawItem(Background);
-	FCanvasTileItem Accent(Position + FVector2D(Size.X * 0.27, Size.Y), FVector2D(Size.X * 0.46, 2 * Scale),
-		FactoryUI::Cyan.CopyWithNewOpacity(Alpha));
-	Accent.BlendMode = SE_BLEND_Translucent;
-	Canvas->DrawItem(Accent);
-	Title.Position = Position + (Size - TextSize) * 0.5;
-	Canvas->DrawItem(Title);
+ if (Room && Now < RoomTitleEndTime && RoomTitleAnimation)
+  RoomTitleWidget->SetAnimationCurrentTime(RoomTitleAnimation, FMath::Max(0.0, Now-(RoomTitleEndTime-2.5)));
+ RoomTitleWidget->SetVisibility(Room && bShowHUD && Now < RoomTitleEndTime
+  ? ESlateVisibility::HitTestInvisible : ESlateVisibility::Collapsed);
 }
 
 bool APlayerHUD::ShouldUseGrappleCursor() const
@@ -272,14 +347,28 @@ void APlayerHUD::ShowHUD()
 void APlayerHUD::SetPlayerUIVisible(bool bVisible)
 {
 	bShowHUD = bVisible;
+ if (!bVisible && RoomTitleWidget) RoomTitleWidget->SetVisibility(ESlateVisibility::Collapsed);
 	UpdatePlayerUI();
 }
 
 void APlayerHUD::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (IsValid(CorePuzzleIntroWidget.Get()))
+	{
+		CorePuzzleIntroWidget->RemoveFromParent();
+	}
+	CorePuzzleIntroWidget = nullptr;
+	if (IsValid(LaserPuzzleIntroWidget.Get()))
+	{
+		LaserPuzzleIntroWidget->RemoveFromParent();
+	}
+	LaserPuzzleIntroWidget = nullptr;
 	if (GetGameInstance()) GetGameInstance()->GetSubsystem<UProgressSaveSubsystem>()->OnCheckpointSaveFinished.RemoveDynamic(this, &APlayerHUD::CheckpointSaveFinished);
 	if (SaveNotification) SaveNotification->RemoveFromParent();
 	SaveNotification = nullptr;
+ if (RoomTitleWidget) RoomTitleWidget->RemoveFromParent();
+ RoomTitleWidget = nullptr;
+ RoomTitleAnimation = nullptr;
 	if (StatusWidget) { StatusWidget->SetObservedPlayer(nullptr); StatusWidget->RemoveFromParent(); }
 	if (ChargeWidget) ChargeWidget->RemoveFromParent();
 	StatusWidget = nullptr;

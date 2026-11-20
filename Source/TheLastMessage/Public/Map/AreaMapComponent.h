@@ -18,6 +18,25 @@ struct FAreaMapRoom
 	FBox2D Bounds = FBox2D(ForceInit);
 	TWeakObjectPtr<UTexture2D> Silhouette;
 	bool bAutomatic = false;
+	/** 리전 액터가 지금 월드에 없어서(방이 내려감) 마지막으로 본 정보를 쓰는 방 */
+	bool bCached = false;
+	/**
+	 * 안개 기록(칸 배열)의 이름. 같은 RegionId를 여러 조각이 쓰면 조각 크기가 달라서 칸 배열을 같이 쓸 수 없으므로
+	 * 조각마다 따로 만든다("Id|x_z"). 조각이 하나뿐이면 Id 그대로라서 기존 세이브와 호환된다.
+	 */
+	FName FogKey;
+};
+
+/** 지도에 그리는 체크포인트. 체크포인트 액터가 방 레벨 안에 있으면 방이 내려갈 때 사라지므로, 마지막으로 본 정보를 기억한다. */
+struct FAreaMapCheckpointMarker
+{
+	FGuid Id;
+	/** 지도 아이콘 위치(체크포인트 액터 위치) */
+	FVector Location = FVector::ZeroVector;
+	FVector RespawnLocation = FVector::ZeroVector;
+	FRotator RespawnRotation = FRotator::ZeroRotator;
+	bool bAllowFastTravel = false;
+	bool bVisited = false;
 };
 
 /** 방 하나의 안개 상태. 방을 Columns x Rows 칸으로 나눠 시야가 닿은 칸을 1로 기록한다(칸 번호 = Row * Columns + Column, Row 0이 방의 맨 아래). */
@@ -89,6 +108,8 @@ public:
 
 	/** 방이 지도에 그려져야 하는지(들어가 본 방이거나 일부 칸이 밝혀진 방) */
 	bool IsRoomShown(FName Id) const;
+	/** 이 조각이 지도에 그려져야 하는지. 같은 RegionId의 다른 조각을 봤다고 아직 못 본 조각까지 그려지지 않게 조각마다 따로 본다. */
+	bool IsRoomShown(const FAreaMapRoom& Room) const;
 
 	/** 방의 안개 상태. 없으면 nullptr. 들어가 본 방인데 nullptr이면 방 전체가 밝혀진 것으로 본다(이전 세이브). */
 	const FAreaMapFog* FindFog(FName Id) const { return Fog.Find(Id); }
@@ -113,12 +134,46 @@ public:
 	void SaveExploration();
 	void LoadExploration();
 	/** CellsToRestore가 nullptr이면 칸 기록이 없는 것으로 보고, 들어가 본 방은 전체가 밝혀진 것으로 처리한다. */
-	void RestoreExploration(const TSet<FName>& RoomsToRestore, const TMap<FName, FProgressRoomFog>* CellsToRestore = nullptr);
+	void RestoreExploration(const TSet<FName>& RoomsToRestore, const TMap<FName, FProgressRoomFog>* CellsToRestore = nullptr,
+		const TMap<FName, FProgressRoomSurfaces>* SurfacesToRestore = nullptr,
+		const TMap<FName, FProgressRoomRegions>* RegionsToRestore = nullptr,
+		const TMap<FGuid, FProgressCheckpointMarker>* MarkersToRestore = nullptr);
+
+	/** 마지막으로 본 체크포인트 목록(방이 내려가 있어 액터가 없는 것 포함) */
+	const TMap<FGuid, FAreaMapCheckpointMarker>& GetCheckpointMarkers() const { return CheckpointMarkers; }
+	/**
+	 * 체크포인트 액터가 없는(방이 내려간) 곳으로 빠른 이동을 요청한다. 그 방을 먼저 올리고 바닥이 확인되면 이동한다.
+	 * 시작할 수 있으면 true. 실제 이동은 이후 몇 초에 걸쳐 일어난다.
+	 */
+	bool RequestTravelToMarker(const FGuid& MarkerId);
 private:
+	TMap<FGuid, FAreaMapCheckpointMarker> CheckpointMarkers;
+	void ExportMarkers(TMap<FGuid, FProgressCheckpointMarker>& Out) const;
+	void ImportMarkers(const TMap<FGuid, FProgressCheckpointMarker>* Source);
+	FName FindRegionAtPoint(const FVector2D& Point) const;
+	void UpdatePendingTravel(class APlayerBase* Player);
+	FGuid PendingTravelId;
+	FName PendingTravelRegion;
+	double PendingTravelStart = 0.0;
+	/** 지금까지 본 리전(방) 정보. 방 레벨이 내려가면 그 안의 리전 액터도 사라지므로, 마지막으로 본 값을 지도에 쓴다. */
+	TArray<FAreaMapRoom> CachedRooms;
+	void ExportRegions(TMap<FName, FProgressRoomRegions>& Out) const;
+	void ImportRegions(const TMap<FName, FProgressRoomRegions>* Source);
+	/** 방별 지형 기록. 로드된 방은 2초마다 새로 읽고, 내려간 방은 마지막으로 읽은 것을 그대로 쓴다. */
+	TMap<FName, TArray<FBox2D>> RoomSurfaces;
+	void ExportSurfaces(TMap<FName, FProgressRoomSurfaces>& Out) const;
+	void ImportSurfaces(const TMap<FName, FProgressRoomSurfaces>* Source);
+
 	static constexpr int32 MaxFogDimension = 64;
 
 	/** 방 영역을 FogCellSize로 나눈 칸 수 */
 	void ComputeFogGrid(const FBox2D& Bounds, int32& OutColumns, int32& OutRows) const;
+	/** 각 조각의 FogKey를 정하고, 조각이 여럿인 Id의 옛 기록(칸 배열 공유)은 버린다. */
+	void AssignFogKeys();
+	/** 이 Id의 어느 조각이라도 칸 기록이 있는가. */
+	bool HasAnyFogForId(FName Id) const;
+	/** 칸 기록 없이 들어가 본 것으로만 남은 방(이전 세이브): 전체가 밝혀진 것으로 본다. */
+	bool IsLegacyFullyRevealed(const FAreaMapRoom& Room) const;
 	FAreaMapFog& CreateFog(const FAreaMapRoom& Room);
 	void MarkRoomExplored(const FAreaMapRoom& Room);
 	void ImportFog(const TMap<FName, FProgressRoomFog>* Source);

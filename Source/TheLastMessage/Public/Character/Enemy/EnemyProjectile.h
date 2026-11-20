@@ -38,6 +38,9 @@ public:
 protected:
 	virtual void BeginPlay() override;
 
+	/** 투사체의 모든 충돌 컴포넌트가 캐릭터의 바닥(발판·이동 기준)이 되지 못하게 한다. 올라타서 같이 날아가는 일을 막는다. */
+	void MakeNotWalkable();
+
 	UFUNCTION()
 	void OnCollisionBeginOverlap(UPrimitiveComponent* OverlappedComp, AActor* OtherActor, UPrimitiveComponent* OtherComp,
 		int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult);

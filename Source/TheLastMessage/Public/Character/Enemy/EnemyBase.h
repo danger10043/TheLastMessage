@@ -93,6 +93,9 @@ public:
 	/** 착지했을 때 호출된다. 홈과 높이가 많이 다른 곳에 떨어졌으면 그 자리를 새 홈으로 삼는다. */
 	virtual void Landed(const FHitResult& Hit) override;
 
+	/** 이동 기준(밟고 선 대상)이 바뀔 때 호출된다. 투사체를 밟은 경우를 로그로 남긴다(원인 추적용). */
+	virtual void BaseChange() override;
+
 	UFUNCTION(BlueprintCallable, Category = "Enemy")
 	virtual void HandleDeath();
 

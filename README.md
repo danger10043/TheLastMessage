@@ -6,11 +6,20 @@
 ![Windows](https://img.shields.io/badge/Windows-PC-0078D4)
 [![Latest release](https://img.shields.io/badge/Release-Latest-2EA44F)](https://github.com/danger10043/TheLastMessage/releases/latest)
 
+[![유튜브 플레이 영상](https://img.shields.io/badge/YouTube-Gameplay-FF0000?logo=youtube&logoColor=white)](https://www.youtube.com/watch?v=8Y0GvvK_usM)
+[![노션 프로젝트 페이지](https://img.shields.io/badge/Notion-Project-000000?logo=notion&logoColor=white)](https://app.notion.com/p/3f17bd5c987980fa9c0ef7ca058c1daf?source=copy_link)
+
 ![The Last Message 게임 로고](Content/ReadmeMedia/title.png)
 
 **폐쇄된 로봇 공장과 연구시설을 탐사하는 싱글 플레이 2.5D 메트로배니아 액션 게임**
 
 공장 통로와 실험 구역을 오가며 로봇과 싸우고, 시설에 남은 장치를 조작해 다음 구역으로 향하는 길을 엽니다. 탐사와 전투에서 획득한 무기와 코어를 활용해 전투 방식을 바꾸고, 구역 지도에서 현재 위치와 체크포인트 방문 상태를 확인할 수 있습니다.
+
+## 영상
+
+| 티저 영상 | 플레이 영상 |
+| --- | --- |
+| [![The Last Message 티저 영상](https://i.ytimg.com/vi/ZTZcqHGBABo/mqdefault.jpg)](https://youtu.be/ZTZcqHGBABo) | [![The Last Message 플레이 영상](https://i.ytimg.com/vi/8Y0GvvK_usM/mqdefault.jpg)](https://youtu.be/8Y0GvvK_usM) |
 
 ## 다운로드
 

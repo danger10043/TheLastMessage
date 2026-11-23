@@ -65,6 +65,8 @@ Unreal Engine 5.8에서 C++과 Blueprint로 구현했습니다. 전투 능력과
 | 지도 · 방 스트리밍 · 진행 저장 | [Map](Source/TheLastMessage/Private/Map/) · [Checkpoint](Source/TheLastMessage/Private/Checkpoint/) · [Save](Source/TheLastMessage/Private/Save/) |
 | UI | [C++ 위젯](Source/TheLastMessage/Private/UI/) · [UMG 에셋](Content/Main/UI/) |
 
+[기술문서 보기 (PDF)](Content/ReadmeMedia/TheLastMessage_Technical.pdf) · [PDF 다운로드](Content/ReadmeMedia/TheLastMessage_Technical.pdf?raw=1)
+
 ## 에디터에서 실행
 
 1. Windows에 Unreal Engine 5.8과 Visual Studio의 **C++를 사용한 게임 개발** 워크로드를 설치합니다. 프로젝트의 [`.vsconfig`](.vsconfig)를 가져와 구성 요소를 설치할 수 있습니다.

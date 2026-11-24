@@ -58,13 +58,16 @@ void ABossCircularMissile::StartMissile()
     }
 
     SourceBoss = Cast<ABossMonster>(GetOwner());
+    const TSubclassOf<UGameplayEffect> EffectClass = IsValid(SourceBoss.Get())
+        ? SourceBoss->ResolveOutgoingDamageEffect(DamageEffectClass) : nullptr;
+
     if (!IsValid(SourceBoss.Get())
         || !FMath::IsFinite(LaunchTime) || LaunchTime < 0.01f
         || !FMath::IsFinite(Damage) || Damage < 0.f
         || !FMath::IsFinite(DamageRadius) || DamageRadius < 1.f
         || !FMath::IsFinite(MissileLaunchDelta) || MissileLaunchDelta < 0.f
-        || FireLocation.ContainsNaN() || !DamageEffectClass
-        || DamageEffectClass.GetDefaultObject()->DurationPolicy
+        || FireLocation.ContainsNaN() || !EffectClass
+        || EffectClass.GetDefaultObject()->DurationPolicy
         != EGameplayEffectDurationType::Instant)
     {
         UE_LOG(LogTemp, Error,
@@ -370,7 +373,8 @@ void ABossCircularMissile::ApplyExplosionDamage()
         Context.AddOrigin(ImpactLocation);
 
         FGameplayEffectSpecHandle Spec = SourceASC->MakeOutgoingSpec(
-            DamageEffectClass, 1.f, Context);
+            SourceBoss->ResolveOutgoingDamageEffect(DamageEffectClass),
+            1.f, Context);
         if (!Spec.IsValid())
         {
             continue;

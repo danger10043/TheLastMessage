@@ -1,6 +1,8 @@
 #include "Character/Boss/GA_BossAttackBase.h"
 #include "Character/Boss/BossMonster.h"
 #include "Character/Player/PlayerBase.h"
+#include "Character/Boss/BossCombatData.h"
+#include "GAS/WeaponGameplayTags.h"
 #include "GAS/CombatAttributeSet.h"
 #include "AbilitySystemBlueprintLibrary.h"
 #include "AbilitySystemComponent.h"
@@ -124,7 +126,17 @@ void UGA_BossAttackBase::ApplyAttackDamage(AActor* Target)
         Spec.Data->AddDynamicAssetTag(MeleeTag);
     }
 
-    // The GE defines the amount added to CombatAttributeSet.IncomingDamage.
+    if (const UBossCombatData* Data = Boss->GetCombatData())
+    {
+        if (Data->MeleeDamage <= 0.f)
+        {
+            return;
+        }
+
+        Spec.Data->SetSetByCallerMagnitude(
+            WeaponGameplayTags::Data_Damage, Data->MeleeDamage);
+    }
+
     TargetASC->ApplyGameplayEffectSpecToSelf(*Spec.Data.Get());
     UE_LOG(LogTemp, Log, TEXT("BossMelee: damage GE submitted -> %s"),
         *GetNameSafe(Player));

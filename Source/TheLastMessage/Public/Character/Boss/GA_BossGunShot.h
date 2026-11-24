@@ -35,6 +35,7 @@ class THELASTMESSAGE_API UGA_BossGunShot : public UGA_BossAttackBase
 
 public:
     UGA_BossGunShot();
+    void ApplyCombatData(const UBossCombatData& Data) override;
     virtual bool CanActivateAbility(const FGameplayAbilitySpecHandle Handle,
         const FGameplayAbilityActorInfo* ActorInfo,
         const FGameplayTagContainer* SourceTags = nullptr,

@@ -21,6 +21,7 @@ class THELASTMESSAGE_API UGA_BossPullAttack
 
 public:
     UGA_BossPullAttack();
+    void ApplyCombatData(const UBossCombatData& Data) override;
 
     virtual bool CanActivateAbility(
         const FGameplayAbilitySpecHandle Handle,

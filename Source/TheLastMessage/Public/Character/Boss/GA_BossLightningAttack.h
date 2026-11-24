@@ -48,6 +48,7 @@ class THELASTMESSAGE_API UGA_BossLightningAttack : public UGA_BossAttackBase
 
 public:
     UGA_BossLightningAttack();
+    void ApplyCombatData(const UBossCombatData& Data) override;
 
     virtual void ActivateAbility(
         const FGameplayAbilitySpecHandle Handle,

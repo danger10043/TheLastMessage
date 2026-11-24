@@ -20,6 +20,7 @@ class THELASTMESSAGE_API UGA_BossRockThrow : public UGA_BossAttackBase
 
 public:
     UGA_BossRockThrow();
+    void ApplyCombatData(const UBossCombatData& Data) override;
 
     virtual bool CanActivateAbility(
         const FGameplayAbilitySpecHandle Handle,

@@ -44,6 +44,7 @@ class THELASTMESSAGE_API UGA_BossCrossLaser : public UGA_BossLandingAttackBase
 
 public:
     UGA_BossCrossLaser();
+    void ApplyCombatData(const UBossCombatData& Data) override;
     virtual void ActivateAbility(const FGameplayAbilitySpecHandle Handle,
         const FGameplayAbilityActorInfo* ActorInfo,
         const FGameplayAbilityActivationInfo ActivationInfo,

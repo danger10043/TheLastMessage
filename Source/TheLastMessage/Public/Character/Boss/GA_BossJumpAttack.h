@@ -21,6 +21,7 @@ class THELASTMESSAGE_API UGA_BossJumpAttack : public UGA_BossLandingAttackBase
 
 public:
     UGA_BossJumpAttack();
+    void ApplyCombatData(const UBossCombatData& Data) override;
 
     virtual bool CanActivateAbility(
         const FGameplayAbilitySpecHandle Handle,

@@ -19,6 +19,7 @@ class THELASTMESSAGE_API UGA_BossCircularMissile : public UGA_BossAttackBase
 
 public:
     UGA_BossCircularMissile();
+    void ApplyCombatData(const UBossCombatData& Data) override;
 
     virtual void ActivateAbility(
         const FGameplayAbilitySpecHandle Handle,

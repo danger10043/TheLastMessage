@@ -59,8 +59,9 @@ bool ABossLightning::StartLightning(
     WarningTime = InWarningTime;
     SourceBoss = Cast<ABossMonster>(GetOwner());                         
     const UStaticMesh* Mesh = WarningCylinder->GetStaticMesh();
-    const UGameplayEffect* EffectDefaults = DamageEffectClass
-        ? DamageEffectClass.GetDefaultObject() : nullptr;
+    const TSubclassOf<UGameplayEffect> EffectClass = IsValid(SourceBoss.Get())
+        ? SourceBoss->ResolveOutgoingDamageEffect(DamageEffectClass) : nullptr;
+    const UGameplayEffect* EffectDefaults = EffectClass.GetDefaultObject();
 
     if (!IsValid(SourceBoss.Get()) || !IsValid(Mesh)
         || !IsValid(LightningEffect.Get()) || !EffectDefaults
@@ -275,7 +276,8 @@ void ABossLightning::ApplyStrikeDamage()
         Context.AddOrigin(StrikeLocation);
 
         FGameplayEffectSpecHandle Spec = SourceASC->MakeOutgoingSpec(
-            DamageEffectClass, 1.f, Context);
+            SourceBoss->ResolveOutgoingDamageEffect(DamageEffectClass),
+            1.f, Context);
         if (!Spec.IsValid())
         {
             continue;

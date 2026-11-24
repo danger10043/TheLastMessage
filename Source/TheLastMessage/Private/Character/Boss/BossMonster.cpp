@@ -1,6 +1,7 @@
 #include "Character/Boss/BossMonster.h"
 #include "AIController.h"
 #include "BrainComponent.h"
+#include "Character/Boss/BossCombatData.h"
 #include "GameplayEffect.h"
 #include "GameplayAbilitySpec.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -247,6 +248,36 @@ void ABossMonster::InitializeBoss()
             TEXT("BossMonster::InitializeBoss [%s] - 권한이 없어 초기 스탯 적용과 능력 부여를 생략합니다."),
             *GetName());
         return;
+    }
+
+    if (!bInitialStatsApplied && CombatData)
+    {
+        const UGameplayEffect* DamageDefaults =
+            CombatData->OutgoingDamageEffect.GetDefaultObject();
+        if (!FMath::IsFinite(CombatData->MaxHealth) || CombatData->MaxHealth <= 0.f
+            || !FMath::IsFinite(CombatData->InitialHealth) || CombatData->InitialHealth <= 0.f
+            || CombatData->InitialHealth > CombatData->MaxHealth
+            || !FMath::IsFinite(CombatData->MoveSpeed) || CombatData->MoveSpeed < 0.f
+            || !FMath::IsFinite(CombatData->MeleeDamage) || CombatData->MeleeDamage < 0.f
+            || !DamageDefaults
+            || DamageDefaults->DurationPolicy != EGameplayEffectDurationType::Instant)
+        {
+            UE_LOG(LogTemp, Error, TEXT("%s: Invalid Boss Combat Data."), *GetName());
+            return;
+        }
+
+        AbilitySystemComponent->SetNumericAttributeBase(
+            UBossAttributeSet::GetMaxHealthAttribute(), CombatData->MaxHealth);
+        AbilitySystemComponent->SetNumericAttributeBase(
+            UBossAttributeSet::GetMoveSpeedAttribute(), CombatData->MoveSpeed);
+        AbilitySystemComponent->SetNumericAttributeBase(
+            UBossAttributeSet::GetHealthAttribute(), CombatData->InitialHealth);
+        bInitialStatsApplied = true;
+
+        if (UCharacterMovementComponent* Movement = GetCharacterMovement())
+        {
+            Movement->MaxWalkSpeed = AttributeSet->GetMoveSpeed();
+        }
     }
 
     if (!bInitialStatsApplied)
@@ -568,12 +599,32 @@ bool ABossMonster::ResetBossForCheckpoint(bool bResetEntranceGate)
 
 FBossMissileConfig ABossMonster::GetMissileConfig(EBossPhase Phase)
 {
+    if (CombatData)
+    {
+        const FBossCircularMissileSettings& Settings = CombatData->CircularMissile;
+        switch (Phase)
+        {
+        case EBossPhase::Phase1: return Settings.Phase1MissileConfig;
+        case EBossPhase::Phase2: return Settings.Phase2MissileConfig;
+        case EBossPhase::Phase3: return Settings.Phase3MissileConfig;
+        default:
+            UE_LOG(LogTemp, Error, TEXT("BossMonster: invalid missile phase."));
+            return FBossMissileConfig{};
+        }
+    }
+
     if (!IsValid(PatternComponent.Get()))
     {
         UE_LOG(LogTemp, Error, TEXT("BossMonster: PatternComponent is missing."));
         return FBossMissileConfig{};
     }
     return PatternComponent->GetMissileConfig(Phase);
+}
+
+TSubclassOf<UGameplayEffect> ABossMonster::ResolveOutgoingDamageEffect(
+    TSubclassOf<UGameplayEffect> Fallback) const
+{
+    return CombatData ? CombatData->OutgoingDamageEffect : Fallback;
 }
 
 EBossPhase ABossMonster::GetBossPhase()

@@ -4,6 +4,8 @@
 #include "Weapon/MeleeReachRibbon.h"
 #include "UI/LoadingTransitionSubsystem.h"
 #include "Engine/GameInstance.h"
+#include "Character/Boss/BossBullet.h"
+#include "Character/Boss/BossMonster.h"
 #include "Character/Player/GrapplingHookComponent.h"
 #include "Map/AreaMapComponent.h"
 #include "Map/RoomStreamingSubsystem.h"
@@ -1603,14 +1605,12 @@ float APlayerBase::TakeDamage(float DamageAmount, const FDamageEvent& DamageEven
 	if (const UCutsceneFreezeSubsystem* Freeze = UCutsceneFreezeSubsystem::Get(this)) if (Freeze->IsFrozen()) return 0.0f;
 	const float AcceptedDamage = Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
 	if (IsDead() || !FMath::IsFinite(AcceptedDamage) || AcceptedDamage <= 0.0f) return 0.0f;
-	// 엔진 기본 피해도 GAS와 같은 IncomingDamage 경로로 전달한다.
-	UGameplayEffect* DamageEffect = NewObject<UGameplayEffect>();
-	DamageEffect->DurationPolicy = EGameplayEffectDurationType::Instant;
-	FGameplayModifierInfo Modifier;
-	Modifier.Attribute = UCombatAttributeSet::GetIncomingDamageAttribute();
-	Modifier.ModifierOp = EGameplayModOp::Additive;
-	Modifier.ModifierMagnitude = FGameplayEffectModifierMagnitude(FScalableFloat(AcceptedDamage));
-	DamageEffect->Modifiers.Add(Modifier);
+	const ABossBullet* BossProjectile = Cast<ABossBullet>(DamageCauser);
+	const ABossMonster* Boss = BossProjectile
+		? Cast<ABossMonster>(BossProjectile->GetOwner()) : nullptr;
+	const UGameplayEffect* BossDamageEffect = IsValid(Boss)
+		? Boss->ResolveOutgoingDamageEffect().GetDefaultObject() : nullptr;
+
 	FGameplayEffectContextHandle Context = AbilitySystemComponent->MakeEffectContext();
 	Context.AddInstigator(EventInstigator ? EventInstigator->GetPawn() : DamageCauser, DamageCauser);
 	FHitResult HitInfo;
@@ -1624,8 +1624,27 @@ float APlayerBase::TakeDamage(float DamageAmount, const FDamageEvent& DamageEven
 	}
 	Context.AddHitResult(HitInfo, true);
 	const float PreviousHealth = CombatAttributes->GetHealth();
-	FGameplayEffectSpec Spec(DamageEffect, Context, 1.0f);
-	AbilitySystemComponent->ApplyGameplayEffectSpecToSelf(Spec);
+
+	if (BossDamageEffect)
+	{
+		FGameplayEffectSpec Spec(BossDamageEffect, Context, 1.0f);
+		Spec.SetSetByCallerMagnitude(WeaponGameplayTags::Data_Damage, AcceptedDamage);
+		AbilitySystemComponent->ApplyGameplayEffectSpecToSelf(Spec);
+	}
+	else
+	{
+		// 엔진 기본 피해도 GAS와 같은 IncomingDamage 경로로 전달한다.
+		UGameplayEffect* DamageEffect = NewObject<UGameplayEffect>();
+		DamageEffect->DurationPolicy = EGameplayEffectDurationType::Instant;
+		FGameplayModifierInfo Modifier;
+		Modifier.Attribute = UCombatAttributeSet::GetIncomingDamageAttribute();
+		Modifier.ModifierOp = EGameplayModOp::Additive;
+		Modifier.ModifierMagnitude = FGameplayEffectModifierMagnitude(FScalableFloat(AcceptedDamage));
+		DamageEffect->Modifiers.Add(Modifier);
+		FGameplayEffectSpec Spec(DamageEffect, Context, 1.0f);
+		AbilitySystemComponent->ApplyGameplayEffectSpecToSelf(Spec);
+	}
+
 	return FMath::Max(0.0f, PreviousHealth - CombatAttributes->GetHealth());
 }
 

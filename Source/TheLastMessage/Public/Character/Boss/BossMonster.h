@@ -110,6 +110,10 @@ public:
     UFUNCTION(BlueprintPure, Category = "Boss|Phase")
     EBossPhase GetBossPhase();
 
+    const class UBossCombatData* GetCombatData() const { return CombatData.Get(); }
+    TSubclassOf<UGameplayEffect> ResolveOutgoingDamageEffect(
+        TSubclassOf<UGameplayEffect> Fallback = nullptr) const;
+
     FBossMissileConfig GetMissileConfig(EBossPhase Phase);
 
     EBossState GetBossState();
@@ -348,6 +352,9 @@ protected:
 
     UPROPERTY(EditDefaultsOnly)
     TArray<TSubclassOf<UGameplayAbility>> DefaultAbilities;
+
+    UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Boss|Combat")
+    TObjectPtr<class UBossCombatData> CombatData;
 
     // 초기 스탯 설정용 Instant GE. 명세에 추가하는 설정 멤버다.
     UPROPERTY(EditDefaultsOnly, Category = "Boss|Initialization")

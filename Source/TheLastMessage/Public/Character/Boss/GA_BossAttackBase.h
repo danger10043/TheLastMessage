@@ -16,6 +16,11 @@ class THELASTMESSAGE_API UGA_BossAttackBase : public UGameplayAbility
 public:
     UGA_BossAttackBase();
 
+    virtual void OnGiveAbility(const FGameplayAbilityActorInfo* ActorInfo,
+        const FGameplayAbilitySpec& Spec) override;
+
+    virtual void ApplyCombatData(const class UBossCombatData& Data);
+
     virtual bool CanActivateAbility(
         const FGameplayAbilitySpecHandle Handle,
         const FGameplayAbilityActorInfo* ActorInfo,
